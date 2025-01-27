@@ -1,16 +1,22 @@
-// Package claudemd loads CLAUDE.md instruction files from the project
+// Package instructions loads agent instruction files from the project
 // directory hierarchy and injects them into the agent system prompt.
 //
-// Load order (mirrors utils/claudemd.ts):
+// Supported conventions (loaded in this order, lowest → highest priority):
 //  1. User global:   ~/.claude/CLAUDE.md  and ~/.claude/rules/*.md
-//  2. Project:       CLAUDE.md, .claude/CLAUDE.md, .claude/rules/*.md
-//     discovered by walking from cwd up to filesystem root
-//     (closer to cwd = higher priority = loaded later)
-//  3. Local private: CLAUDE.local.md (gitignored, per-directory)
+//  2. Project walk-up from cwd to filesystem root, per directory:
+//     - CLAUDE.md          (Anthropic / Claude Code)
+//     - AGENTS.md          (cross-tool standard: OpenAI, Aider, Zed, Cursor, …)
+//     - .claude/CLAUDE.md
+//     - .claude/rules/*.md
+//     - CLAUDE.local.md    (gitignored)
+//  3. Git-root only:
+//     - .github/copilot-instructions.md  (GitHub Copilot)
+//     - .cursor/rules/*.mdc              (Cursor; honours `globs:` frontmatter)
 //
 // Within each directory, files closer to cwd override files from parents.
-// @include directives are resolved recursively with circular-reference protection.
-package claudemd
+// @include directives in markdown files are resolved recursively with
+// circular-reference protection.
+package instructions
 
 import (
 	"fmt"
@@ -33,6 +39,9 @@ const (
 	TypeUser    MemoryType = iota // ~/.claude/CLAUDE.md
 	TypeProject                   // CLAUDE.md or .claude/CLAUDE.md in project tree
 	TypeLocal                     // CLAUDE.local.md (private, gitignored)
+	TypeAgents                    // AGENTS.md (cross-tool convention)
+	TypeCopilot                   // .github/copilot-instructions.md
+	TypeCursor                    // .cursor/rules/*.mdc
 )
 
 // File is one loaded CLAUDE.md file.
@@ -128,6 +137,10 @@ func load(cwd string) []File {
 		if f, err := loadFile(filepath.Join(dir, "CLAUDE.md"), TypeProject, seen); err == nil && f != nil {
 			files = append(files, *f)
 		}
+		// AGENTS.md (cross-tool convention)
+		if f, err := loadFile(filepath.Join(dir, "AGENTS.md"), TypeAgents, seen); err == nil && f != nil {
+			files = append(files, *f)
+		}
 		// .claude/CLAUDE.md
 		if f, err := loadFile(filepath.Join(dir, ".claude", "CLAUDE.md"), TypeProject, seen); err == nil && f != nil {
 			files = append(files, *f)
@@ -139,6 +152,19 @@ func load(cwd string) []File {
 		if f, err := loadFile(filepath.Join(dir, "CLAUDE.local.md"), TypeLocal, seen); err == nil && f != nil {
 			files = append(files, *f)
 		}
+	}
+
+	// 3. Git-root only sources: copilot-instructions and Cursor rules.
+	// Pick the lowest ancestor that has a .git entry; fall back to cwd.
+	gitRoot := findGitRoot(dirs)
+	if gitRoot != "" {
+		// .github/copilot-instructions.md
+		if f, err := loadFile(filepath.Join(gitRoot, ".github", "copilot-instructions.md"), TypeCopilot, seen); err == nil && f != nil {
+			files = append(files, *f)
+		}
+		// .cursor/rules/*.mdc — honour `globs:` / `alwaysApply:` frontmatter
+		cursorFiles, _ := loadCursorRulesDir(filepath.Join(gitRoot, ".cursor", "rules"), gitRoot, cwd, seen)
+		files = append(files, cursorFiles...)
 	}
 
 	// Resolve @include directives in all loaded files.
@@ -301,4 +327,189 @@ func resolveIncludePath(ref, baseDir string) string {
 	default:
 		return filepath.Join(baseDir, ref)
 	}
+}
+
+// findGitRoot returns the deepest directory in dirs (root→cwd order) that
+// contains a .git entry. Returns "" if no ancestor is a git repo.
+// dirs[0] is the filesystem root, dirs[len-1] is cwd.
+func findGitRoot(dirs []string) string {
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if _, err := os.Stat(filepath.Join(dirs[i], ".git")); err == nil {
+			return dirs[i]
+		}
+	}
+	return ""
+}
+
+// loadCursorRulesDir loads .cursor/rules/*.mdc files from gitRoot, parsing the
+// YAML-like frontmatter to decide whether each rule applies to cwd.
+//
+// Frontmatter shape (Cursor convention):
+//
+//	---
+//	description: short description
+//	globs: src/**/*.ts, docs/**/*.md
+//	alwaysApply: true
+//	---
+//
+// A rule is included when:
+//   - `alwaysApply: true`, OR
+//   - `globs:` is empty/missing (treated as always-apply), OR
+//   - any glob pattern matches the cwd path relative to gitRoot.
+//
+// We don't try to match file-level globs at injection time — the rule is
+// either in-context for this session or not. This keeps context cost bounded
+// and predictable while still respecting per-project scoping.
+func loadCursorRulesDir(dir, gitRoot, cwd string, seen map[string]bool) ([]File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".mdc") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	relCwd, err := filepath.Rel(gitRoot, cwd)
+	if err != nil {
+		relCwd = "."
+	}
+	relCwd = filepath.ToSlash(relCwd)
+
+	var files []File
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		abs, _ := filepath.Abs(path)
+		if seen[abs] {
+			continue
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			continue
+		}
+		body, fm := splitCursorFrontmatter(string(data))
+		if !cursorRuleApplies(fm, relCwd) {
+			continue
+		}
+		seen[abs] = true
+		if len(body) > MaxCharCount {
+			body = body[:MaxCharCount] + fmt.Sprintf("\n\n[truncated: file exceeds %d characters]", MaxCharCount)
+		}
+		files = append(files, File{Path: abs, Content: body, Type: TypeCursor})
+	}
+	return files, nil
+}
+
+// cursorFrontmatter holds the parsed fields we care about.
+type cursorFrontmatter struct {
+	globs       []string
+	alwaysApply bool
+	hasGlobs    bool
+}
+
+// splitCursorFrontmatter returns (body, frontmatter). If no frontmatter is
+// present, fm is zero-valued and body is the original content.
+func splitCursorFrontmatter(content string) (string, cursorFrontmatter) {
+	var fm cursorFrontmatter
+	if !strings.HasPrefix(content, "---") {
+		return content, fm
+	}
+	// Find the closing `---` on its own line.
+	rest := content[3:]
+	// Tolerate leading \n or \r\n after the opener.
+	rest = strings.TrimLeft(rest, "\r\n")
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return content, fm
+	}
+	header := rest[:end]
+	body := rest[end+4:]
+	body = strings.TrimLeft(body, "\r\n")
+
+	for _, raw := range strings.Split(header, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		val = strings.Trim(val, "\"'")
+		switch key {
+		case "globs":
+			fm.hasGlobs = true
+			if val == "" {
+				continue
+			}
+			for _, g := range strings.Split(val, ",") {
+				g = strings.TrimSpace(g)
+				g = strings.Trim(g, "\"'")
+				if g != "" {
+					fm.globs = append(fm.globs, g)
+				}
+			}
+		case "alwaysApply":
+			fm.alwaysApply = strings.EqualFold(val, "true")
+		}
+	}
+	return body, fm
+}
+
+// cursorRuleApplies returns true when a rule should be loaded for the given
+// cwd (expressed as a slash-separated path relative to the git root).
+func cursorRuleApplies(fm cursorFrontmatter, relCwd string) bool {
+	if fm.alwaysApply {
+		return true
+	}
+	if !fm.hasGlobs || len(fm.globs) == 0 {
+		// No scoping declared → behave like alwaysApply.
+		return true
+	}
+	for _, g := range fm.globs {
+		if matchCursorGlob(g, relCwd) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchCursorGlob reports whether glob g matches relPath or any ancestor of
+// relPath. We accept the common Cursor patterns: directory-anchored globs
+// like `src/**/*.ts`, `docs/**`, plain prefixes like `src/`, and `**`.
+//
+// Matching strategy: peel the trailing file-pattern off the glob and check
+// whether the directory portion is a prefix of relPath. This avoids pulling
+// in a heavy glob library while covering the dominant real-world cases.
+func matchCursorGlob(g, relPath string) bool {
+	g = filepath.ToSlash(strings.TrimSpace(g))
+	if g == "" || g == "**" || g == "**/*" || g == "*" {
+		return true
+	}
+	// Strip a leading "./".
+	g = strings.TrimPrefix(g, "./")
+	// Drop the trailing file pattern segment (anything after the last `/`)
+	// because we're matching at directory granularity, not per-file.
+	if idx := strings.LastIndex(g, "/"); idx >= 0 {
+		g = g[:idx]
+	} else {
+		// No slash → single-segment pattern; treat as a directory name.
+	}
+	// Normalize `**` segments to a wildcard prefix match.
+	g = strings.TrimSuffix(g, "/**")
+	g = strings.TrimSuffix(g, "**")
+	g = strings.TrimSuffix(g, "/")
+	if g == "" {
+		return true
+	}
+	// Match if relPath is exactly g, a child of g, or g is "." (root).
+	if g == "." || relPath == g {
+		return true
+	}
+	return strings.HasPrefix(relPath, g+"/")
 }

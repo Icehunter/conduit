@@ -1,4 +1,4 @@
-package claudemd
+package instructions
 
 import (
 	"os"
@@ -276,7 +276,237 @@ func TestLoad_AtInclude_NonExistentSilentlyIgnored(t *testing.T) {
 	}
 }
 
-// --- BuildPrompt ---
+// --- AGENTS.md ---
+
+func TestLoad_AgentsMd(t *testing.T) {
+	cwd := t.TempDir()
+	isolateHome(t)
+	writeFile(t, filepath.Join(cwd, "AGENTS.md"), "# Agents convention")
+
+	files, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var got *File
+	for i := range files {
+		if strings.Contains(files[i].Content, "Agents convention") {
+			got = &files[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("AGENTS.md not loaded")
+	}
+	if got.Type != TypeAgents {
+		t.Errorf("expected TypeAgents; got %v", got.Type)
+	}
+}
+
+func TestLoad_AgentsMd_WalksUp(t *testing.T) {
+	parent := t.TempDir()
+	sub := filepath.Join(parent, "sub", "nested")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateHome(t)
+	writeFile(t, filepath.Join(parent, "AGENTS.md"), "# Parent agents")
+
+	files, err := Load(sub)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	found := false
+	for _, f := range files {
+		if strings.Contains(f.Content, "Parent agents") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("parent AGENTS.md not found via walk-up")
+	}
+}
+
+// --- Copilot ---
+
+func TestLoad_CopilotInstructions_RequiresGitRoot(t *testing.T) {
+	cwd := t.TempDir()
+	isolateHome(t)
+	// No .git → copilot file should be ignored even if present.
+	writeFile(t, filepath.Join(cwd, ".github", "copilot-instructions.md"), "# copilot")
+
+	files, err := Load(cwd)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, f := range files {
+		if f.Type == TypeCopilot {
+			t.Error("copilot file loaded without .git root")
+		}
+	}
+}
+
+func TestLoad_CopilotInstructions_AtGitRoot(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateHome(t)
+	writeFile(t, filepath.Join(root, ".github", "copilot-instructions.md"), "# copilot rules")
+
+	files, err := Load(sub)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var got *File
+	for i := range files {
+		if files[i].Type == TypeCopilot {
+			got = &files[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("copilot-instructions.md not loaded from git root")
+	}
+	if !strings.Contains(got.Content, "copilot rules") {
+		t.Errorf("unexpected content: %q", got.Content)
+	}
+}
+
+// --- Cursor rules ---
+
+func TestLoad_CursorRules_AlwaysApply(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateHome(t)
+	writeFile(t, filepath.Join(root, ".cursor", "rules", "always.mdc"),
+		"---\ndescription: foo\nalwaysApply: true\n---\n# Always content\n")
+
+	files, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	found := false
+	for _, f := range files {
+		if f.Type == TypeCursor && strings.Contains(f.Content, "Always content") {
+			found = true
+			if strings.Contains(f.Content, "alwaysApply") {
+				t.Error("frontmatter leaked into body")
+			}
+		}
+	}
+	if !found {
+		t.Error("alwaysApply cursor rule not loaded")
+	}
+}
+
+func TestLoad_CursorRules_NoFrontmatter_LoadsAlways(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateHome(t)
+	writeFile(t, filepath.Join(root, ".cursor", "rules", "bare.mdc"), "# Bare content\n")
+
+	files, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	found := false
+	for _, f := range files {
+		if f.Type == TypeCursor && strings.Contains(f.Content, "Bare content") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("bare cursor rule not loaded")
+	}
+}
+
+func TestLoad_CursorRules_GlobsScopeToCwd(t *testing.T) {
+	root := t.TempDir()
+	srcDir := filepath.Join(root, "src", "components")
+	docsDir := filepath.Join(root, "docs")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateHome(t)
+	writeFile(t, filepath.Join(root, ".cursor", "rules", "src-only.mdc"),
+		"---\nglobs: src/**/*.ts\n---\n# Src rule\n")
+	writeFile(t, filepath.Join(root, ".cursor", "rules", "docs-only.mdc"),
+		"---\nglobs: docs/**\n---\n# Docs rule\n")
+
+	// From src/components: src rule applies, docs rule does not.
+	files, err := Load(srcDir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var sawSrc, sawDocs bool
+	for _, f := range files {
+		if f.Type != TypeCursor {
+			continue
+		}
+		if strings.Contains(f.Content, "Src rule") {
+			sawSrc = true
+		}
+		if strings.Contains(f.Content, "Docs rule") {
+			sawDocs = true
+		}
+	}
+	if !sawSrc {
+		t.Error("src-scoped cursor rule should apply when cwd is under src/")
+	}
+	if sawDocs {
+		t.Error("docs-scoped cursor rule should NOT apply when cwd is under src/")
+	}
+}
+
+func TestSplitCursorFrontmatter_HandlesQuotedGlobs(t *testing.T) {
+	body, fm := splitCursorFrontmatter("---\nglobs: \"src/**/*.ts\", 'docs/**'\nalwaysApply: false\n---\nbody\n")
+	if body != "body\n" {
+		t.Errorf("body = %q", body)
+	}
+	if len(fm.globs) != 2 || fm.globs[0] != "src/**/*.ts" || fm.globs[1] != "docs/**" {
+		t.Errorf("globs = %v", fm.globs)
+	}
+	if fm.alwaysApply {
+		t.Error("alwaysApply should be false")
+	}
+}
+
+func TestMatchCursorGlob(t *testing.T) {
+	tests := []struct {
+		glob, rel string
+		want      bool
+	}{
+		{"src/**/*.ts", "src", true},
+		{"src/**/*.ts", "src/components", true},
+		{"src/**/*.ts", "docs", false},
+		{"docs/**", "docs/foo", true},
+		{"docs/**", "src", false},
+		{"**", ".", true},
+		{"**/*", "anywhere", true},
+		{"./", ".", true},
+		{"foo", "foo", true},
+		{"foo", "foo/bar", true},
+		{"foo", "bar", false},
+	}
+	for _, tt := range tests {
+		got := matchCursorGlob(tt.glob, tt.rel)
+		if got != tt.want {
+			t.Errorf("matchCursorGlob(%q, %q) = %v; want %v", tt.glob, tt.rel, got, tt.want)
+		}
+	}
+}
 
 func TestBuildPrompt_Empty(t *testing.T) {
 	p := BuildPrompt(nil)

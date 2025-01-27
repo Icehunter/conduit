@@ -14,8 +14,8 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/app"
 	"github.com/icehunter/conduit/internal/auth"
-	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/compact"
+	"github.com/icehunter/conduit/internal/instructions"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -46,8 +46,8 @@ func runPrint(args []string) error {
 	skillEntries := app.BuildSkillEntries(loadedPlugins)
 	_ = memdir.EnsureDir(cwd)
 	mem := memdir.BuildPrompt(cwd)
-	claudeMdFiles, _ := claudemd.Load(cwd)
-	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
+	claudeMdFiles, _ := instructions.Load(cwd)
+	claudeMdPrompt := instructions.BuildPrompt(claudeMdFiles)
 	c := app.NewAPIClient(p, Version)
 	reg := app.BuildRegistry(c, nil, lsp.NewManager(), nil, nil)
 	modelName := internalmodel.Resolve()

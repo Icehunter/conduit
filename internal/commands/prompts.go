@@ -6,7 +6,7 @@ package commands
 func RegisterPromptCommands(r *Registry) {
 	r.Register(Command{
 		Name:        "init",
-		Description: "Initialize a CLAUDE.md file for this project",
+		Description: "Initialize an AGENTS.md file for this project",
 		Handler: func(args string) Result {
 			return Result{Type: "prompt", Text: initPrompt}
 		},
@@ -49,18 +49,36 @@ func RegisterPromptCommands(r *Registry) {
 	})
 }
 
-const initPrompt = `Set up a minimal CLAUDE.md for this repo. CLAUDE.md is loaded into every Claude Code session, so it must be concise — only include what Claude would get wrong without it.
+// initPrompt is the body the agent receives when the user runs `/init`.
+const initPrompt = `Analyze this codebase and create/update **AGENTS.md** to help future agents work effectively in this repository.
 
-Steps:
-1. Check if a CLAUDE.md already exists. If it does, suggest improvements to it.
-2. Read the README.md and any existing documentation.
-3. Identify the build system, test runner, and common workflows.
-4. Create or update CLAUDE.md with:
-   - How to build, test, and lint the project (exact commands)
-   - High-level architecture overview (only what requires reading multiple files to understand)
-   - Any non-obvious conventions or gotchas
+**First**: Check if the directory is empty or contains only config files. If so, stop and say "Directory appears empty or only contains config. Add source code first, then run /init to generate AGENTS.md."
 
-Keep it concise. Do not include obvious advice or generic best practices. Do not list every file or component.`
+**Goal**: Document what an agent needs to know to work in this codebase — commands, patterns, conventions, gotchas, overall architecture, how components fit together.
+
+**Discovery process**:
+
+1. Check directory contents
+2. Look for existing rule files (` + "`AGENTS.md`" + `, ` + "`CLAUDE.md`" + `, ` + "`.cursor/rules/*.md`" + `, ` + "`.cursorrules`" + `, ` + "`.github/copilot-instructions.md`" + `) — read them if they exist, then improve on their content
+3. Identify project type from config files and directory structure
+4. Find build/test/lint commands from config files, scripts, Makefiles, or CI configs
+5. Read representative source files to understand code patterns, architecture, and control/data flow
+6. If AGENTS.md already exists, read it and improve it rather than replacing wholesale
+
+**Content to include**:
+
+- Essential commands (build, test, run, lint, deploy) — whatever is relevant for this project
+- Code organisation and structure, application architecture, control/data flow
+- Naming conventions and style patterns
+- Testing approach and patterns
+- Important gotchas or non-obvious patterns
+- Any project-specific context from existing rule files
+
+**Note**: LLM agents learn and adapt as they read files, so documenting obvious details they would immediately pick up from reading a file or two is actively detrimental. Focus on non-obvious knowledge that saves the agent from trial-and-error discovery: gotchas, implicit conventions, commands with surprising flags, and context that is not self-evident from a single file.
+
+**Format**: Clear markdown sections. Use your judgment on structure based on what you find. Aim for completeness over brevity — include everything an agent would need to know.
+
+**Critical**: Only document what you actually observe. Never invent commands, patterns, or conventions. If you cannot find something, do not include it.`
 
 func reviewPrompt(args string) string {
 	if args == "" {

@@ -295,7 +295,7 @@ defined in full.
 | C-O2: Model catalog | Catalog fetch/cache; `/models --refresh`; catalog-assisted provider form; provider credentials expose catalog models; capability display in picker | ✅ | Catwalk evaluation recorded below |
 | C-O3: Provider auth | Provider-auth interface; Accounts tab; API-key flows (OpenAI/Gemini/OpenRouter); provider entries reference secure credential aliases | ✅ | Copilot/ChatGPT deferred by plan constraint |
 | C-O4: Local server spine | `conduit serve`; `conduit attach`; session/message/permission/event/file-read endpoints | 🔲 | Plan §4; file-read tracker is a C-O4 deliverable, not C-O4.5 |
-| C-O4.5: Runtime polish | Config JSON schema; background job tracking; broader project instruction files; prompt-submit hook | 🔲 | Plan §4.5 |
+| C-O4.5: Runtime polish | Config JSON schema; background job tracking; broader project instruction files (AGENTS.md, copilot-instructions, .cursor/rules ✅); prompt-submit hook | 🔶 | Plan §4.5; instruction files done in `internal/instructions` |
 | C-O5: Multi-session UI | Session switcher; new session creation; background status; fork/parent navigation | 🔲 | Needs C-O4 |
 | C-O6: Share & import | Local bundle export/import; optional remote endpoint; redaction checklist | 🔲 | Plan §6; two-phase: local bundle first, remote second |
 | C-O7: Editor & desktop | `conduit acp`; Zed extension; VS Code/Cursor/Windsurf; desktop sidecar | 🔲 | Plan §7; needs C-O4 server API stable |

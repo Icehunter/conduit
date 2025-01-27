@@ -19,10 +19,10 @@ import (
 	"github.com/icehunter/conduit/internal/bgreview"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/catalog"
-	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/globalconfig"
 	"github.com/icehunter/conduit/internal/hooks"
+	"github.com/icehunter/conduit/internal/instructions"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -358,12 +358,12 @@ func runREPL(continueMode bool, resumeID string) error {
 	_ = memdir.EnsureDir(cwd)
 	mem := memdir.BuildPrompt(cwd)
 
-	// Load CLAUDE.md instruction files (project + user + local).
-	claudeMdFiles, claudeMdErr := claudemd.Load(cwd)
+	// Load agent instruction files (CLAUDE.md, AGENTS.md, copilot, cursor).
+	claudeMdFiles, claudeMdErr := instructions.Load(cwd)
 	if claudeMdErr != nil {
 		warnf("Could not load instruction files: %v", claudeMdErr)
 	}
-	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
+	claudeMdPrompt := instructions.BuildPrompt(claudeMdFiles)
 
 	c := app.NewAPIClient(tok, Version)
 

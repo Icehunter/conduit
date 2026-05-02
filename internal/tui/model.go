@@ -50,6 +50,7 @@ type Message struct {
 type (
 	agentMsg     struct{ event agent.LoopEvent }
 	agentDoneMsg struct {
+		turnID  int
 		history []api.Message
 		err     error
 	}
@@ -81,6 +82,7 @@ type Model struct {
 	running    bool
 	cancelTurn context.CancelFunc
 	streaming  string
+	turnID     int // incremented each turn; agentDoneMsg with stale ID is ignored
 
 	totalInputTokens  int
 	totalOutputTokens int
@@ -152,6 +154,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentDoneMsg:
+		if msg.turnID != m.turnID {
+			// Stale completion from a previous (interrupted) turn — discard.
+			return m, nil
+		}
 		m.running = false
 		m.cancelTurn = nil
 		if m.streaming != "" {
@@ -252,9 +258,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.refreshViewport()
 		m.vp.GotoBottom()
 
+		m.turnID++
 		prog := *m.cfg.Program
 		histCopy := make([]api.Message, len(m.history))
 		copy(histCopy, m.history)
+		turnID := m.turnID
 
 		return m, func() tea.Msg {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -262,7 +270,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 				prog.Send(agentMsg{event: ev})
 			})
-			return agentDoneMsg{history: newHist, err: err}
+			return agentDoneMsg{turnID: turnID, history: newHist, err: err}
 		}
 	}
 	return m, nil

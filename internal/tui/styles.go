@@ -41,13 +41,10 @@ var (
 	styleInlineCode = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#79C0FF")) // soft blue for inline code
 
-	// Code block — rounded border, dark bg, NO top/bottom padding (causes gaps)
+	// Code block — no border, no background, just a left indent to visually
+	// separate it from prose. Syntax colors do the work.
 	styleCodeBorder = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(colorBorder).
-				Background(colorCodeBg).
-				PaddingLeft(1).
-				PaddingRight(1)
+				PaddingLeft(2)
 
 	// Language label — explicit NoColor background so it's transparent on the viewport.
 	styleCodeLang = lipgloss.NewStyle().

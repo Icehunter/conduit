@@ -103,17 +103,10 @@ func renderMarkdown(text string, width int) string {
 // width is the usable inner width (outer padding already excluded).
 // Language label appears as a dim line above the rounded box.
 func renderCodeBlock(code, lang string, width int) string {
-	// lipgloss Width() = content + padding area (border adds 2 more cols on top).
-	// To fit in `width` total cols: Width() = width - 2.
-	// Inner text area = Width() - 2(padding) = width - 4.
-	boxW := width - 2
-	if boxW < 6 {
-		boxW = 6
-	}
-
 	highlighted := highlightCode(code, lang)
-
-	block := styleCodeBorder.Width(boxW).Render(highlighted)
+	// No border — styleCodeBorder is just a left-padding indent.
+	// Width() here sets max content width to prevent long lines overflowing.
+	block := styleCodeBorder.Width(width).Render(highlighted)
 
 	if lang != "" {
 		label := styleCodeLang.Render(lang)
@@ -134,17 +127,15 @@ func highlightCode(code, lang string) string {
 	return strings.Join(out, "\n")
 }
 
-// Token color styles — all include Background(colorCodeBg) so they don't
-// reset the parent block's background between tokens (avoids black gaps).
+// Token color styles — foreground only, transparent background.
 var (
-	codeBg    = colorCodeBg
-	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")).Background(codeBg)
-	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(codeBg)
-	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(codeBg).Italic(true)
-	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C")).Background(codeBg)
-	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(codeBg)
-	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B")).Background(codeBg)
-	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(codeBg)
+	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA"))
+	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D"))
+	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
+	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C"))
+	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
+	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B"))
+	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
 )
 
 var langKeywords = map[string][]string{

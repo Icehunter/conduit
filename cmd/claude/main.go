@@ -47,7 +47,11 @@ import (
 	"github.com/icehunter/conduit/internal/tools/todowritetool"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
+	"github.com/icehunter/conduit/internal/tools/askusertool"
+	"github.com/icehunter/conduit/internal/tools/configtool"
+	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
+	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
 	"github.com/icehunter/conduit/internal/tools/webfetchtool"
 	"github.com/icehunter/conduit/internal/tools/websearchtool"
@@ -159,8 +163,17 @@ func buildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
 	return entries
 }
 
+// registryOpts holds optional callbacks wired after the TUI program starts.
+// These are nil in --print mode (no interactive terminal).
+type registryOpts struct {
+	enterPlan  *planmodetool.EnterPlanMode
+	exitPlan   *planmodetool.ExitPlanMode
+	askUser    *askusertool.AskUserQuestion
+	synthetic  *syntheticoutputtool.SyntheticOutput
+}
+
 // buildRegistry builds the tool registry, including MCP server tools.
-func buildRegistry(client *api.Client, mcpManager *mcp.Manager) *tool.Registry {
+func buildRegistry(client *api.Client, mcpManager *mcp.Manager, rOpts *registryOpts) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
 	reg.Register(fileedittool.New())
@@ -181,6 +194,14 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager) *tool.Registry {
 	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
 	reg.Register(websearchtool.New(client))
+	reg.Register(&configtool.ConfigTool{})
+	// Interactive tools — callbacks are wired by the TUI after prog.Start().
+	if rOpts != nil {
+		reg.Register(rOpts.enterPlan)
+		reg.Register(rOpts.exitPlan)
+		reg.Register(rOpts.askUser)
+		reg.Register(rOpts.synthetic)
+	}
 	// Register MCP server tools (if any servers are configured).
 	if mcpManager != nil {
 		mcptool.RegisterAll(reg, mcpManager)
@@ -269,7 +290,18 @@ func runREPL(continueMode bool) error {
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 
 	c := newAPIClient(bearer)
-	reg := buildRegistry(c, mcpManager)
+
+	// Build interactive-tool stubs with nil callbacks; the TUI wires the real
+	// callbacks after prog.Start() via the same send-to-channel pattern used
+	// by SetAskPermission. Nil callbacks produce graceful error results.
+	rOpts := &registryOpts{
+		enterPlan: &planmodetool.EnterPlanMode{},
+		exitPlan:  &planmodetool.ExitPlanMode{},
+		askUser:   &askusertool.AskUserQuestion{},
+		synthetic: &syntheticoutputtool.SyntheticOutput{},
+	}
+
+	reg := buildRegistry(c, mcpManager, rOpts)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
@@ -296,6 +328,9 @@ func runREPL(continueMode bool) error {
 		ResumedHistory:  resumedHistory,
 		Resumed:         continueMode && len(resumedHistory) > 0,
 		MCPManager:      mcpManager,
+		EnterPlan:       rOpts.enterPlan,
+		ExitPlan:        rOpts.exitPlan,
+		AskUser:         rOpts.askUser,
 		LoadAuth: func(ctx context.Context) (string, *profile.Info, error) {
 			tok, err := loadAuth(ctx)
 			if err != nil {
@@ -356,7 +391,7 @@ func runPrint(args []string) error {
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 	c := newAPIClient(bearer)
-	reg := buildRegistry(c, nil)
+	reg := buildRegistry(c, nil, nil)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{

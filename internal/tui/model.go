@@ -111,6 +111,10 @@ type (
 		alwaysAllow bool // add to session allow list
 	}
 	clearFlash struct{}
+
+	// setPermissionModeMsg is sent by EnterPlanMode/ExitPlanMode tool
+	// callbacks to change the active permission mode from outside the TUI event loop.
+	setPermissionModeMsg struct{ mode permissions.Mode }
 )
 
 // Config is passed from main to the TUI.
@@ -487,6 +491,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clearFlash:
 		m.flashMsg = ""
+		return m, nil
+
+	case setPermissionModeMsg:
+		m.permissionMode = msg.mode
+		if m.cfg.Gate != nil {
+			m.cfg.Gate.SetMode(msg.mode)
+		}
 		return m, nil
 
 	case pluginCountsMsg:

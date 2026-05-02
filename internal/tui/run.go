@@ -19,6 +19,8 @@ import (
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/tools/askusertool"
+	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
 
 // altScreenExit/clearScreen are ANSI sequences for terminal cleanup.
@@ -58,6 +60,11 @@ type RunOptions struct {
 
 	// NewAPIClient constructs a fresh API client for the given bearer token.
 	NewAPIClient func(bearer string) *api.Client
+
+	// Interactive tool stubs — the TUI wires their callbacks after startup.
+	EnterPlan *planmodetool.EnterPlanMode
+	ExitPlan  *planmodetool.ExitPlanMode
+	AskUser   *askusertool.AskUserQuestion
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -181,6 +188,81 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		})
 	}
 
+	// Wire EnterPlanMode — asks user consent via the permission prompt machinery.
+	if runOpts.EnterPlan != nil {
+		runOpts.EnterPlan.AskEnter = func(ctx context.Context) bool {
+			reply := make(chan permissionReply, 1)
+			prog.Send(permissionAskMsg{
+				toolName:  "EnterPlanMode",
+				toolInput: "Enter plan mode? (read-only exploration and design phase)",
+				reply:     reply,
+			})
+			select {
+			case r := <-reply:
+				return r.allow
+			case <-ctx.Done():
+				return false
+			}
+		}
+		runOpts.EnterPlan.SetMode = func(m permissions.Mode) {
+			prog.Send(setPermissionModeMsg{mode: m})
+		}
+	}
+
+	// Wire ExitPlanMode — presents plan and asks for approval.
+	if runOpts.ExitPlan != nil {
+		runOpts.ExitPlan.AskApprove = func(ctx context.Context, plan string) bool {
+			reply := make(chan permissionReply, 1)
+			prog.Send(permissionAskMsg{
+				toolName:  "ExitPlanMode",
+				toolInput: "Approve this implementation plan?\n\n" + plan,
+				reply:     reply,
+			})
+			select {
+			case r := <-reply:
+				return r.allow
+			case <-ctx.Done():
+				return false
+			}
+		}
+		runOpts.ExitPlan.SetMode = func(m permissions.Mode) {
+			prog.Send(setPermissionModeMsg{mode: m})
+		}
+	}
+
+	// Wire AskUserQuestion — uses the permission prompt as a simple yes/no for now.
+	// Full multi-choice UI is M-D (TUI polish milestone).
+	if runOpts.AskUser != nil {
+		runOpts.AskUser.Ask = func(ctx context.Context, question string, opts []askusertool.Option, multi bool) []string {
+			reply := make(chan permissionReply, 1)
+			// Format options inline in the prompt text.
+			prompt := question
+			if len(opts) > 0 {
+				prompt += "\n\nOptions:"
+				for i, o := range opts {
+					prompt += "\n" + itoa(i+1) + ". " + o.Label
+					if o.Description != "" {
+						prompt += " — " + o.Description
+					}
+				}
+			}
+			prog.Send(permissionAskMsg{
+				toolName:  "AskUserQuestion",
+				toolInput: prompt,
+				reply:     reply,
+			})
+			select {
+			case r := <-reply:
+				if r.allow {
+					return []string{"yes"}
+				}
+				return nil
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}
+
 	// Re-enter alt-screen after SIGWINCH (iTerm2 resize) so the terminal
 	// doesn't leave ghost frames in the main buffer's scrollback.
 	winch := make(chan os.Signal, 1)
@@ -208,6 +290,10 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	signal.Stop(sigs)
 	close(winch)
 	return err
+}
+
+func itoa(n int) string {
+	return fmt.Sprintf("%d", n)
 }
 
 // logoutCredentials deletes the stored credentials from the keychain.

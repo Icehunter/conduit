@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/undercover"
 )
 
 // BillingHeader is the `cc_version=…; cc_entrypoint=…; cch=…` line the real
@@ -146,6 +147,9 @@ func BuildSystemBlocks(memory string, skills ...SkillEntry) []api.SystemBlock {
 	}
 	if reminder := SkillsReminder(skills); reminder != "" {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: reminder})
+	}
+	if instructions := undercover.GetUndercoverInstructions(); instructions != "" {
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: instructions})
 	}
 	return blocks
 }

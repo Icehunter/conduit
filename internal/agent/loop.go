@@ -323,14 +323,17 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if rawInput == nil {
 			rawInput = json.RawMessage("{}")
 		}
-		rawInputStr := string(rawInput)
+
+		// Extract the meaningful input string for permission rule matching.
+		// Rules like Bash(git log *) match against the command, not raw JSON.
+		permInput := toolPermissionInput(block.Name, block.Input)
 
 		var resultText string
 		var isError bool
 
 		// --- Permission gate check ---
 		if l.cfg.Gate != nil {
-			decision := l.cfg.Gate.Check(block.Name, rawInputStr)
+			decision := l.cfg.Gate.Check(block.Name, permInput)
 			switch decision {
 			case permissions.DecisionDeny:
 				resultText = "Tool denied by permission rules"
@@ -436,6 +439,35 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		})
 	}
 	return results, nil
+}
+
+// toolPermissionInput extracts the meaningful string to match against permission
+// rules for a given tool. Rules like Bash(git log *) match the shell command,
+// not the raw JSON input blob.
+func toolPermissionInput(toolName string, input map[string]any) string {
+	switch toolName {
+	case "Bash":
+		if cmd, ok := input["command"].(string); ok {
+			return cmd
+		}
+	case "Edit":
+		if p, ok := input["file_path"].(string); ok {
+			return p
+		}
+	case "Write":
+		if p, ok := input["file_path"].(string); ok {
+			return p
+		}
+	case "Read":
+		if p, ok := input["file_path"].(string); ok {
+			return p
+		}
+	case "WebFetch":
+		if u, ok := input["url"].(string); ok {
+			return u
+		}
+	}
+	return ""
 }
 
 // buildToolDefs converts the registry into the API tool definitions array.

@@ -62,6 +62,11 @@ type (
 		summary    string
 		err        error
 	}
+	// loginStartMsg triggers the OAuth flow after the user picks a login method.
+	loginStartMsg struct{ claudeAI bool }
+	// loginDoneMsg is sent when the OAuth flow completes.
+	loginDoneMsg struct{ err error }
+
 	// permissionAskMsg is sent by the agent goroutine when a tool needs
 	// interactive permission. The goroutine blocks on reply until the user
 	// chooses Allow once / Always allow / Deny.
@@ -121,7 +126,10 @@ type Model struct {
 	modelName string
 
 	// Permission prompt state — non-nil when a tool is waiting for approval.
-	permPrompt    *permissionPromptState
+	permPrompt *permissionPromptState
+
+	// Login picker state — non-nil when /login is active.
+	loginPrompt *loginPromptState
 
 	ready bool // true once we've received the first WindowSizeMsg
 }
@@ -210,6 +218,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, nil
 
+	case loginStartMsg:
+		useClaudeAI := msg.claudeAI
+		cfg := m.cfg
+		return m, func() tea.Msg {
+			err := runLoginFlow(useClaudeAI, cfg)
+			return loginDoneMsg{err: err}
+		}
+
+	case loginDoneMsg:
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Login failed: %v", msg.err)})
+		} else {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Logged in successfully."})
+		}
+		m.refreshViewport()
+		return m, nil
+
 	case permissionAskMsg:
 		m.permPrompt = &permissionPromptState{
 			toolName:  msg.toolName,
@@ -260,6 +285,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// Login picker intercepts all keys when active.
+	if m.loginPrompt != nil {
+		return m.handleLoginKey(msg)
+	}
 	// Permission prompt intercepts all keys when active.
 	if m.permPrompt != nil {
 		return m.handlePermissionKey(msg)
@@ -546,6 +575,90 @@ func (m Model) tabComplete(input string) string {
 	}
 }
 
+// loginPromptState holds the /login account picker state.
+type loginPromptState struct {
+	selected int
+}
+
+var loginOptions = []struct {
+	label       string
+	description string
+	claudeAI    bool
+}{
+	{"Claude.ai account", "Max, Pro, or Team subscription", true},
+	{"Anthropic Console", "Console / Platform / API account", false},
+}
+
+func (m Model) handleLoginKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	p := m.loginPrompt
+	switch msg.String() {
+	case "up", "left":
+		if p.selected > 0 {
+			p.selected--
+		}
+	case "down", "right", "tab":
+		if p.selected < len(loginOptions)-1 {
+			p.selected++
+		}
+	case "enter", " ":
+		opt := loginOptions[p.selected]
+		m.loginPrompt = nil
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Opening browser to sign in…"})
+		m.refreshViewport()
+		useClaudeAI := opt.claudeAI
+		prog := *m.cfg.Program
+		return m, func() tea.Msg {
+			prog.Send(loginStartMsg{claudeAI: useClaudeAI})
+			return nil
+		}
+	case "escape", "ctrl+c":
+		m.loginPrompt = nil
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Login cancelled."})
+		m.refreshViewport()
+		return m, nil
+	case "1":
+		p.selected = 0
+		m.loginPrompt = p
+		return m.handleLoginKey(tea.KeyMsg{Type: tea.KeyEnter})
+	case "2":
+		p.selected = 1
+		m.loginPrompt = p
+		return m.handleLoginKey(tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	m.loginPrompt = p
+	return m, nil
+}
+
+func (m Model) renderLoginPicker() string {
+	p := m.loginPrompt
+	if p == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Sign in to Claude") + "\n\n")
+	sb.WriteString(stylePickerDesc.Render("Choose your account type:") + "\n\n")
+
+	for i, opt := range loginOptions {
+		var line string
+		if i == p.selected {
+			line = stylePickerItemSelected.Render(fmt.Sprintf("▶ %d. %s", i+1, opt.label)) +
+				"  " + stylePickerDesc.Render(opt.description)
+		} else {
+			line = stylePickerItem.Render(fmt.Sprintf("  %d. %s", i+1, opt.label)) +
+				"  " + stylePickerDesc.Render(opt.description)
+		}
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1/2 quick pick · Escape cancel"))
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
+
 // permissionPromptState holds the active permission prompt data.
 type permissionPromptState struct {
 	toolName  string
@@ -698,6 +811,18 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 	case "error":
 		m.messages = append(m.messages, Message{Role: RoleError, Content: res.Text})
+		m.refreshViewport()
+		return m, nil
+	case "login":
+		m.loginPrompt = &loginPromptState{selected: 0}
+		m.refreshViewport()
+		return m, nil
+	case "add-dir":
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Added directory: " + res.Text})
+		m.refreshViewport()
+		return m, nil
+	case "export":
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Export to file not yet implemented. Path would be: " + res.Text})
 		m.refreshViewport()
 		return m, nil
 	default: // "text"
@@ -893,9 +1018,11 @@ func (m Model) View() string {
 	rPad := space - lPad
 	statusBar := appName + strings.Repeat(" ", lPad) + mid + strings.Repeat(" ", rPad) + right
 
-	// Permission prompt takes over the chrome area when active.
+	// Overlays: login picker > permission prompt > command picker.
 	var overlayBox string
-	if m.permPrompt != nil {
+	if m.loginPrompt != nil {
+		overlayBox = m.renderLoginPicker()
+	} else if m.permPrompt != nil {
 		overlayBox = m.renderPermissionPrompt()
 	} else if len(m.cmdMatches) > 0 {
 		overlayBox = m.renderCommandPicker()

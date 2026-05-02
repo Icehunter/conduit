@@ -56,6 +56,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterCompactCommand(reg)
 	commands.RegisterPermissionsCommand(reg, opts.gate)
 	commands.RegisterHooksCommand(reg, opts.hooksConfig)
+	commands.RegisterMiscCommands(reg)
 
 	// Session state shared between commands and the TUI model.
 	// The model pointer is set after New() — use a pointer-to-pointer so

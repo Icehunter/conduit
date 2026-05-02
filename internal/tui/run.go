@@ -18,10 +18,12 @@ func Run(version, modelName string, loop *agent.Loop) error {
 	}
 
 	m := New(cfg)
+	// No mouse capture — lets the user select/copy text normally with the
+	// terminal's native selection. Mouse scrolling added in M5 when we wire
+	// the viewport scroll handler.
 	prog = tea.NewProgram(
 		m,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 	_, err := prog.Run()
 	return err

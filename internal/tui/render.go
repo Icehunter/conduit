@@ -101,22 +101,23 @@ func renderMarkdown(text string, width int) string {
 
 // renderCodeBlock renders a fenced code block.
 // width is the usable inner width (outer padding already excluded).
-// We show the language as a dim label on the line above the border.
+// Language label appears as a dim line above the rounded box.
 func renderCodeBlock(code, lang string, width int) string {
 	highlighted := highlightCode(code, lang)
 
-	// The border style has left+right border (2) + left+right padding (2) = 4 cols total.
-	// Content width must be exactly width-4 so the box fits within width.
-	innerW := width - 4
-	if innerW < 4 {
-		innerW = 4
+	// lipgloss Width() on a bordered+padded style sets the *content* width.
+	// Total rendered width = contentW + 2 (border) + 2 (padding) = contentW + 4.
+	// We want total = width, so contentW = width - 4.
+	contentW := width - 4
+	if contentW < 4 {
+		contentW = 4
 	}
 
-	block := styleCodeBorder.Width(innerW).Render(highlighted)
+	block := styleCodeBorder.Width(contentW).Render(highlighted)
 
-	// Language label as a plain-text line above the box — no ANSI splicing into borders.
 	if lang != "" {
-		label := styleCodeLang.Render(" " + lang + " ")
+		// Plain dim label — no background fill, just text above the box.
+		label := styleCodeLang.Render(lang)
 		return label + "\n" + block
 	}
 	return block

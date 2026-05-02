@@ -142,6 +142,9 @@ type Config struct {
 	LoadAuth func(ctx context.Context) (string, *profile.Info, error)
 	// NewAPIClient constructs a fresh client for the given bearer.
 	NewAPIClient func(bearer string) *api.Client
+	// Live is the shared state bag readable from command callbacks outside
+	// the Bubble Tea event loop. Populated by the model on each Update.
+	Live *LiveState
 }
 
 // Model is the Bubble Tea model.
@@ -498,6 +501,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg.Gate != nil {
 			m.cfg.Gate.SetMode(msg.mode)
 		}
+		m.syncLive()
 		return m, nil
 
 	case pluginCountsMsg:
@@ -638,6 +642,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		if m.cfg.Gate != nil {
 			m.cfg.Gate.SetMode(m.permissionMode)
 		}
+		m.syncLive()
 		switch m.permissionMode {
 		case permissions.ModeAcceptEdits:
 			m.flashMsg = "⏵⏵ accept edits on (shift+tab to cycle)"
@@ -1916,6 +1921,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 	case "model":
 		m.modelName = res.Model
 		m.cfg.Loop.SetModel(res.Model)
+		m.syncLive()
 		if res.Text != "" {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
 		}
@@ -2134,40 +2140,6 @@ func (m *Model) CostSummary() string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// StatusSummary returns a one-liner for /status.
-func (m *Model) StatusSummary() string {
-	mode := "default"
-	switch m.permissionMode {
-	case permissions.ModeAcceptEdits:
-		mode = "accept-edits"
-	case permissions.ModePlan:
-		mode = "plan"
-	case permissions.ModeBypassPermissions:
-		mode = "auto"
-	}
-	pct := 0
-	if m.totalInputTokens > 0 {
-		pct = m.totalInputTokens * 100 / 200000
-		if pct > 100 {
-			pct = 100
-		}
-	}
-	var sb strings.Builder
-	sb.WriteString("Model:   " + m.modelName + "\n")
-	sb.WriteString("Mode:    " + mode + "\n")
-	sb.WriteString(fmt.Sprintf("Context: %d%% (%d tokens)\n", pct, m.totalInputTokens))
-	if m.costUSD > 0 {
-		sb.WriteString(fmt.Sprintf("Cost:    $%.4f\n", m.costUSD))
-	}
-	if m.cfg.Session != nil {
-		sb.WriteString("Session: " + m.cfg.Session.ID + "\n")
-	}
-	if m.rateLimitWarning != "" {
-		sb.WriteString("Limits:  " + m.rateLimitWarning + "\n")
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
-
 // TasksSummary returns the list of active tasks for /tasks.
 // Tasks are tracked by the TaskTool — for now we surface the tool messages.
 func (m *Model) TasksSummary() string {
@@ -2257,6 +2229,7 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 
 	case agent.EventRateLimit:
 		m.rateLimitWarning = ev.RateLimitWarning
+		m.syncLive()
 	}
 	return m
 }
@@ -2446,6 +2419,23 @@ func (m *Model) tallyTokens() {
 	m.totalInputTokens = total
 	// Opus 4.7: ~$15/$75 per M in/out, blended ~$45/M estimate.
 	m.costUSD = float64(total) * 45.0 / 1_000_000
+	m.syncLive()
+}
+
+// syncLive pushes frequently-read fields into the thread-safe LiveState bag
+// so command callbacks running outside the Bubble Tea event loop always see
+// current values, not the stale initial snapshot from New().
+func (m *Model) syncLive() {
+	if m.cfg.Live == nil {
+		return
+	}
+	m.cfg.Live.SetModelName(m.modelName)
+	m.cfg.Live.SetPermissionMode(m.permissionMode)
+	m.cfg.Live.SetTokens(m.totalInputTokens, m.costUSD)
+	m.cfg.Live.SetRateLimitWarning(m.rateLimitWarning)
+	if m.cfg.Session != nil {
+		m.cfg.Live.SetSessionID(m.cfg.Session.ID)
+	}
 }
 
 // shortModelName converts "claude-opus-4-7" → "Opus 4.7".

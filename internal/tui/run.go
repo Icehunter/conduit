@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -118,8 +119,13 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
 
 	// Session state shared between commands and the TUI model.
-	// The model pointer is set after New() — use a pointer-to-pointer so
-	// closures always see the live model.
+	// live is a thread-safe bag updated by Model.syncLive() on every relevant
+	// state change; command callbacks read from it so they see current values.
+	live := &LiveState{}
+	live.SetModelName(modelName) // seed with startup value
+
+	// modelPtr is still used for methods that can only run inside the event loop
+	// (TasksSummary, LastThinking, CopyLastResponse — they read m.messages).
 	var modelPtr *Model
 	state := &commands.SessionState{
 		GetCost: func() string {
@@ -139,10 +145,37 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		// applyCommandResult when it receives the "rewind" result type.
 		Rewind: func(n int) int { return n },
 		GetStatus: func() string {
-			if modelPtr == nil {
-				return "Status unavailable."
+			tokens, cost := live.Tokens()
+			mode := "default"
+			switch live.PermissionMode() {
+			case permissions.ModeAcceptEdits:
+				mode = "accept-edits"
+			case permissions.ModePlan:
+				mode = "plan"
+			case permissions.ModeBypassPermissions:
+				mode = "auto"
 			}
-			return modelPtr.StatusSummary()
+			pct := 0
+			if tokens > 0 {
+				pct = tokens * 100 / 200000
+				if pct > 100 {
+					pct = 100
+				}
+			}
+			var sb strings.Builder
+			sb.WriteString("Model:   " + live.ModelName() + "\n")
+			sb.WriteString("Mode:    " + mode + "\n")
+			sb.WriteString(fmt.Sprintf("Context: %d%% (%d tokens)\n", pct, tokens))
+			if cost > 0 {
+				sb.WriteString(fmt.Sprintf("Cost:    $%.4f\n", cost))
+			}
+			if id := live.SessionID(); id != "" {
+				sb.WriteString("Session: " + id + "\n")
+			}
+			if w := live.RateLimitWarning(); w != "" {
+				sb.WriteString("Limits:  " + w + "\n")
+			}
+			return strings.TrimRight(sb.String(), "\n")
 		},
 		GetTasks: func() string {
 			if modelPtr == nil {
@@ -188,6 +221,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		Resumed:        runOpts.Resumed,
 		LoadAuth:       runOpts.LoadAuth,
 		NewAPIClient:   runOpts.NewAPIClient,
+		Live:           live,
+	}
+	// Seed session ID into LiveState once it's known.
+	if runOpts.Session != nil {
+		live.SetSessionID(runOpts.Session.ID)
 	}
 
 	m := New(cfg)

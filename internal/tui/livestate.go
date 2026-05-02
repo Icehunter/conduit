@@ -1,0 +1,81 @@
+package tui
+
+import (
+	"sync"
+
+	"github.com/icehunter/conduit/internal/permissions"
+)
+
+// LiveState holds a small set of frequently-read Model fields that
+// command callbacks need to access from outside the Bubble Tea event loop.
+// All methods are safe to call from any goroutine.
+type LiveState struct {
+	mu             sync.RWMutex
+	modelName      string
+	permissionMode permissions.Mode
+	inputTokens    int
+	costUSD        float64
+	sessionID      string
+	rateLimitWarn  string
+}
+
+func (s *LiveState) SetModelName(name string) {
+	s.mu.Lock()
+	s.modelName = name
+	s.mu.Unlock()
+}
+
+func (s *LiveState) ModelName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.modelName
+}
+
+func (s *LiveState) SetPermissionMode(m permissions.Mode) {
+	s.mu.Lock()
+	s.permissionMode = m
+	s.mu.Unlock()
+}
+
+func (s *LiveState) PermissionMode() permissions.Mode {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.permissionMode
+}
+
+func (s *LiveState) SetTokens(input int, costUSD float64) {
+	s.mu.Lock()
+	s.inputTokens = input
+	s.costUSD = costUSD
+	s.mu.Unlock()
+}
+
+func (s *LiveState) Tokens() (input int, costUSD float64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.inputTokens, s.costUSD
+}
+
+func (s *LiveState) SetSessionID(id string) {
+	s.mu.Lock()
+	s.sessionID = id
+	s.mu.Unlock()
+}
+
+func (s *LiveState) SessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionID
+}
+
+func (s *LiveState) SetRateLimitWarning(w string) {
+	s.mu.Lock()
+	s.rateLimitWarn = w
+	s.mu.Unlock()
+}
+
+func (s *LiveState) RateLimitWarning() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.rateLimitWarn
+}

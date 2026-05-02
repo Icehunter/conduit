@@ -26,7 +26,9 @@ import (
 	"github.com/icehunter/claude-go/internal/api"
 	"github.com/icehunter/claude-go/internal/auth"
 	internalmodel "github.com/icehunter/claude-go/internal/model"
+	"github.com/icehunter/claude-go/internal/permissions"
 	"github.com/icehunter/claude-go/internal/secure"
+	"github.com/icehunter/claude-go/internal/settings"
 	"github.com/icehunter/claude-go/internal/tool"
 	"github.com/icehunter/claude-go/internal/tools/bashtool"
 	"github.com/icehunter/claude-go/internal/tools/fileedittool"
@@ -173,6 +175,16 @@ func runREPL() error {
 		bearer = tok.AccessToken
 	}
 
+	// Load settings (missing/invalid files are fine — defaults apply).
+	cwd, _ := os.Getwd()
+	s, _ := settings.Load(cwd)
+	if s == nil {
+		s = &settings.Merged{DefaultMode: "default"}
+	}
+
+	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
+	sessionID := newSessionID()
+
 	c := newAPIClient(bearer)
 	reg := buildRegistry(c)
 	modelName := internalmodel.Resolve()
@@ -182,9 +194,12 @@ func runREPL() error {
 		MaxTokens: internalmodel.MaxTokens,
 		System:    agent.BuildSystemBlocks(),
 		MaxTurns:  50,
+		Gate:      gate,
+		Hooks:     &s.Hooks,
+		SessionID: sessionID,
 	})
 
-	return tui.Run(Version, modelName, lp, c)
+	return tui.Run(Version, modelName, lp, c, gate, &s.Hooks)
 }
 
 // stdoutDisplay shows OAuth URLs on stderr (so stdout stays clean for piping).

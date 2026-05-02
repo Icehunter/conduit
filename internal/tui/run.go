@@ -12,6 +12,8 @@ import (
 	"github.com/icehunter/claude-go/internal/api"
 	"github.com/icehunter/claude-go/internal/commands"
 	internalmodel "github.com/icehunter/claude-go/internal/model"
+	"github.com/icehunter/claude-go/internal/permissions"
+	"github.com/icehunter/claude-go/internal/settings"
 )
 
 // altScreenEnter/Exit are the ANSI sequences for the alternate screen buffer.
@@ -21,9 +23,28 @@ const (
 	clearScreen    = "\x1b[2J\x1b[H"         // erase display + cursor home
 )
 
+type runOptions struct {
+	apiClient   *api.Client
+	gate        *permissions.Gate
+	hooksConfig *settings.HooksSettings
+}
+
 // Run starts the full-screen TUI and blocks until the user exits.
-func Run(version, modelName string, loop *agent.Loop, client ...*api.Client) error {
+// Variadic tail accepts: *api.Client, *permissions.Gate, *settings.HooksSettings (in any order).
+func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	var prog *tea.Program
+
+	opts := &runOptions{}
+	for _, extra := range extras {
+		switch v := extra.(type) {
+		case *api.Client:
+			opts.apiClient = v
+		case *permissions.Gate:
+			opts.gate = v
+		case *settings.HooksSettings:
+			opts.hooksConfig = v
+		}
+	}
 
 	reg := commands.New()
 	commands.RegisterBuiltins(reg)
@@ -32,11 +53,10 @@ func Run(version, modelName string, loop *agent.Loop, client ...*api.Client) err
 		func(name string) { loop.SetModel(name) },
 	)
 	commands.RegisterCompactCommand(reg)
+	commands.RegisterPermissionsCommand(reg, opts.gate)
+	commands.RegisterHooksCommand(reg, opts.hooksConfig)
 
-	var apiClient *api.Client
-	if len(client) > 0 {
-		apiClient = client[0]
-	}
+	var apiClient *api.Client = opts.apiClient
 
 	cfg := Config{
 		Version:   version,

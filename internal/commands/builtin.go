@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	internalmodel "github.com/icehunter/claude-go/internal/model"
+	"github.com/icehunter/claude-go/internal/permissions"
+	"github.com/icehunter/claude-go/internal/settings"
 )
 
 // RegisterBuiltins adds the standard slash commands to r.
@@ -72,6 +74,90 @@ func helpHandler(r *Registry) Handler {
 		}
 		return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 	}
+}
+
+// RegisterPermissionsCommand adds /permissions showing current mode and allow/deny/ask lists.
+func RegisterPermissionsCommand(r *Registry, gate *permissions.Gate) {
+	r.Register(Command{
+		Name:        "permissions",
+		Description: "Show current permission mode and allow/deny/ask rules",
+		Handler: func(_ string) Result {
+			if gate == nil {
+				return Result{Type: "text", Text: "Permissions: no gate configured (all tools allowed)"}
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Permission mode: %s\n", gate.Mode()))
+
+			allow, deny, ask := gate.Lists()
+
+			if len(allow) == 0 {
+				sb.WriteString("\nAllow list: (empty)\n")
+			} else {
+				sb.WriteString("\nAllow list:\n")
+				for _, r := range allow {
+					sb.WriteString(fmt.Sprintf("  %s\n", r))
+				}
+			}
+
+			if len(deny) == 0 {
+				sb.WriteString("\nDeny list: (empty)\n")
+			} else {
+				sb.WriteString("\nDeny list:\n")
+				for _, r := range deny {
+					sb.WriteString(fmt.Sprintf("  %s\n", r))
+				}
+			}
+
+			if len(ask) == 0 {
+				sb.WriteString("\nAsk list: (empty)\n")
+			} else {
+				sb.WriteString("\nAsk list:\n")
+				for _, r := range ask {
+					sb.WriteString(fmt.Sprintf("  %s\n", r))
+				}
+			}
+
+			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+		},
+	})
+}
+
+// RegisterHooksCommand adds /hooks showing configured hook matchers.
+func RegisterHooksCommand(r *Registry, hooksConfig *settings.HooksSettings) {
+	r.Register(Command{
+		Name:        "hooks",
+		Description: "Show configured PreToolUse/PostToolUse/SessionStart/Stop hooks",
+		Handler: func(_ string) Result {
+			if hooksConfig == nil {
+				return Result{Type: "text", Text: "Hooks: no hooks configured"}
+			}
+
+			var sb strings.Builder
+			printMatchers := func(label string, matchers []settings.HookMatcher) {
+				if len(matchers) == 0 {
+					sb.WriteString(fmt.Sprintf("%s: (none)\n", label))
+					return
+				}
+				sb.WriteString(fmt.Sprintf("%s:\n", label))
+				for _, m := range matchers {
+					matcher := m.Matcher
+					if matcher == "" {
+						matcher = "(all tools)"
+					}
+					for _, h := range m.Hooks {
+						sb.WriteString(fmt.Sprintf("  [%s] %s\n", matcher, h.Command))
+					}
+				}
+			}
+
+			printMatchers("PreToolUse", hooksConfig.PreToolUse)
+			printMatchers("PostToolUse", hooksConfig.PostToolUse)
+			printMatchers("SessionStart", hooksConfig.SessionStart)
+			printMatchers("Stop", hooksConfig.Stop)
+
+			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+		},
+	})
 }
 
 // resolveModelName expands shorthand model names to their full API IDs.

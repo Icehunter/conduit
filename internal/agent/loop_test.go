@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/claude-go/internal/permissions"
+	"github.com/icehunter/claude-go/internal/settings"
 	"github.com/icehunter/claude-go/internal/tool"
 )
 
@@ -299,3 +301,193 @@ func TestLoop_ToolResultErrorPropagated(t *testing.T) {
 
 // errorReader is a helper for the errors package import.
 var _ = errors.New
+
+// newTestLoopWithConfig builds a Loop with a custom LoopConfig (beyond defaults).
+func newTestLoopWithConfig(t *testing.T, sseBodies []string, reg *tool.Registry, cfg LoopConfig) (*Loop, *httptest.Server) {
+	t.Helper()
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if callCount < len(sseBodies) {
+			_, _ = w.Write([]byte(sseBodies[callCount]))
+			callCount++
+		} else {
+			_, _ = w.Write([]byte(textOnlySSE("done")))
+		}
+	}))
+
+	c := api.NewClient(api.Config{
+		BaseURL:   srv.URL,
+		AuthToken: "test",
+	}, srv.Client())
+
+	cfg.Model = "test-model"
+	cfg.MaxTokens = 1024
+	if cfg.System == nil {
+		cfg.System = []api.SystemBlock{{Type: "text", Text: "test"}}
+	}
+
+	lp := NewLoop(c, reg, cfg)
+	return lp, srv
+}
+
+// singleToolUseSSE builds an SSE stream for exactly one tool_use turn (stop_reason=tool_use).
+// The loop will execute tools then make a second HTTP call for the follow-up.
+func singleToolUseSSE(toolName, toolID, inputJSON string) string {
+	inputJSONEscaped := strings.ReplaceAll(inputJSON, `"`, `\"`)
+	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + toolID + "\",\"name\":\"" + toolName + "\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"" + inputJSONEscaped + "\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+}
+
+func TestLoop_PermissionDeny(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "should not run"})
+
+	// First call: tool_use turn. Second call: follow-up after tool result.
+	sse1 := singleToolUseSSE("Bash", "toolu_01", `{}`)
+	sse2 := textOnlySSE("understood")
+
+	gate := newDenyGate("Bash")
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{Gate: gate})
+	defer srv.Close()
+
+	var toolResults []LoopEvent
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run bash"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults = append(toolResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolResults) == 0 {
+		t.Fatal("expected a tool result event")
+	}
+	if !toolResults[0].IsError {
+		t.Error("denied tool should produce IsError=true result")
+	}
+	if !strings.Contains(toolResults[0].ResultText, "denied") {
+		t.Errorf("result text should mention denial, got: %q", toolResults[0].ResultText)
+	}
+}
+
+func TestLoop_PermissionAllow(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "allowed output"})
+
+	sse1 := singleToolUseSSE("Bash", "toolu_02", `{}`)
+	sse2 := textOnlySSE("done")
+
+	gate := newAllowGate()
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{Gate: gate})
+	defer srv.Close()
+
+	var toolResults []LoopEvent
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run bash"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults = append(toolResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolResults) == 0 {
+		t.Fatal("expected a tool result event")
+	}
+	if toolResults[0].IsError {
+		t.Errorf("allowed tool should not produce error result: %q", toolResults[0].ResultText)
+	}
+	if toolResults[0].ResultText != "allowed output" {
+		t.Errorf("result text = %q, want 'allowed output'", toolResults[0].ResultText)
+	}
+}
+
+func TestLoop_PreToolUseHookBlocks(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "should not run"})
+
+	sse1 := singleToolUseSSE("Bash", "toolu_03", `{}`)
+	sse2 := textOnlySSE("understood")
+
+	hooksConfig := newBlockingPreToolHooks("Bash")
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{Hooks: hooksConfig, SessionID: "test-sess"})
+	defer srv.Close()
+
+	var toolResults []LoopEvent
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run bash"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults = append(toolResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolResults) == 0 {
+		t.Fatal("expected a tool result event")
+	}
+	if !toolResults[0].IsError {
+		t.Error("blocked tool should produce IsError=true result")
+	}
+	if !strings.Contains(toolResults[0].ResultText, "hook") {
+		t.Errorf("result text should mention hook, got: %q", toolResults[0].ResultText)
+	}
+}
+
+func TestLoop_NoGateAllowsAll(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "ran fine"})
+
+	sse1 := singleToolUseSSE("Bash", "toolu_04", `{}`)
+	sse2 := textOnlySSE("done")
+
+	// No gate configured — all tools should run.
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{})
+	defer srv.Close()
+
+	var toolResults []LoopEvent
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults = append(toolResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolResults) == 0 {
+		t.Fatal("expected a tool result event")
+	}
+	if toolResults[0].IsError {
+		t.Errorf("nil gate should allow all tools; got error: %q", toolResults[0].ResultText)
+	}
+}
+
+// --- helpers for M5 tests ---
+
+func newDenyGate(toolName string) *permissions.Gate {
+	return permissions.New(permissions.ModeDefault, nil, []string{toolName}, nil)
+}
+
+func newAllowGate() *permissions.Gate {
+	return permissions.New(permissions.ModeBypassPermissions, nil, nil, nil)
+}
+
+func newBlockingPreToolHooks(toolName string) *settings.HooksSettings {
+	return &settings.HooksSettings{
+		PreToolUse: []settings.HookMatcher{{
+			Matcher: toolName,
+			Hooks:   []settings.Hook{{Type: "command", Command: "false"}},
+		}},
+	}
+}

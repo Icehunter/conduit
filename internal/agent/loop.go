@@ -1,17 +1,20 @@
 // Package agent implements the M2 query loop — the streaming agentic
 // turn cycle that drives tool dispatch and multi-turn conversation.
 //
-// The loop mirrors src/query.ts's queryLoop() but without the M5+
-// features: no autocompact, microcompact, thinking, snip, hooks, or
-// multi-agent coordinator. Those land in later milestones.
+// The loop mirrors src/query.ts's queryLoop() but with M5 additions:
+// permission gate checks and PreToolUse/PostToolUse hook runners around
+// each tool execution.
 //
 // Loop behaviour:
 //  1. POST /v1/messages with current conversation history.
 //  2. Stream SSE events; collect text deltas and tool_use blocks.
 //  3. If the stop_reason is "tool_use":
-//     a. Execute each tool in sequence (M2 is serial; concurrency in M4).
-//     b. Append assistant message + user tool_result message to history.
-//     c. Go to 1 (unless MaxTurns exceeded).
+//     a. Check permissions gate for each tool.
+//     b. Run PreToolUse hooks.
+//     c. Execute each tool in sequence (serial; concurrency in M4).
+//     d. Run PostToolUse hooks.
+//     e. Append assistant message + user tool_result message to history.
+//     f. Go to 1 (unless MaxTurns exceeded).
 //  4. If stop_reason is "end_turn": return.
 package agent
 
@@ -24,6 +27,9 @@ import (
 	"strings"
 
 	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/claude-go/internal/hooks"
+	"github.com/icehunter/claude-go/internal/permissions"
+	"github.com/icehunter/claude-go/internal/settings"
 	"github.com/icehunter/claude-go/internal/tool"
 )
 
@@ -62,6 +68,17 @@ type LoopConfig struct {
 	// MaxTurns caps the number of API calls (tool-use follow-ups each count
 	// as one turn). 0 means no limit (use carefully).
 	MaxTurns int
+
+	// Gate is the permission gate to consult before each tool call.
+	// nil means no gate (all tools allowed).
+	Gate *permissions.Gate
+
+	// Hooks is the hooks configuration to run around tool calls.
+	// nil means no hooks.
+	Hooks *settings.HooksSettings
+
+	// SessionID is used when invoking hooks (passed as session_id in hook input).
+	SessionID string
 }
 
 // Loop drives the agentic query cycle.
@@ -289,6 +306,12 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 
 // executeTools runs all tool_use blocks in the assistant message sequentially
 // and returns the tool_result content blocks for the follow-up user message.
+//
+// For each tool:
+//  1. Permission gate check (if configured).
+//  2. PreToolUse hooks (if configured).
+//  3. Tool execution.
+//  4. PostToolUse hooks (if configured).
 func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, error) {
 	var results []api.ContentBlock
 	for _, block := range assistantBlocks {
@@ -300,10 +323,81 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if rawInput == nil {
 			rawInput = json.RawMessage("{}")
 		}
+		rawInputStr := string(rawInput)
 
 		var resultText string
 		var isError bool
 
+		// --- Permission gate check ---
+		if l.cfg.Gate != nil {
+			decision := l.cfg.Gate.Check(block.Name, rawInputStr)
+			switch decision {
+			case permissions.DecisionDeny:
+				resultText = "Tool denied by permission rules"
+				isError = true
+				handler(LoopEvent{
+					Type:       EventToolResult,
+					ToolID:     block.ID,
+					ToolName:   block.Name,
+					ResultText: resultText,
+					IsError:    isError,
+				})
+				results = append(results, api.ContentBlock{
+					Type:          "tool_result",
+					ToolUseID:     block.ID,
+					IsError:       isError,
+					ResultContent: resultText,
+				})
+				continue
+			case permissions.DecisionAsk:
+				// M5.1: non-interactive path — allow but note it in the event.
+				// Interactive prompting lands in M5.2.
+				handler(LoopEvent{
+					Type:      EventToolUse,
+					ToolID:    block.ID,
+					ToolName:  block.Name,
+					ToolInput: rawInput,
+					// Note: IsError=false, ResultText="" signals "allowed but asked"
+				})
+				// fall through to execution
+			}
+			// DecisionAllow: proceed normally.
+		}
+
+		// --- PreToolUse hooks ---
+		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PreToolUse) > 0 {
+			// block.Input is already map[string]any; copy it for the hook.
+			inputMap := block.Input
+			if inputMap == nil {
+				inputMap = make(map[string]any)
+				_ = json.Unmarshal(rawInput, &inputMap)
+			}
+			r := hooks.RunPreToolUse(ctx, l.cfg.Hooks.PreToolUse, l.cfg.SessionID, block.Name, inputMap)
+			if r.Blocked {
+				reason := r.Reason
+				if reason == "" {
+					reason = "blocked by PreToolUse hook"
+				}
+				resultText = "Tool blocked by hook: " + reason
+				isError = true
+				handler(LoopEvent{
+					Type:       EventToolResult,
+					ToolID:     block.ID,
+					ToolName:   block.Name,
+					ResultText: resultText,
+					IsError:    isError,
+				})
+				results = append(results, api.ContentBlock{
+					Type:          "tool_result",
+					ToolUseID:     block.ID,
+					IsError:       isError,
+					ResultContent: resultText,
+				})
+				continue
+			}
+		}
+
+		// --- Tool execution ---
 		t, ok := l.reg.Lookup(block.Name)
 		if !ok {
 			resultText = fmt.Sprintf("Tool %q not found", block.Name)
@@ -319,6 +413,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				}
 				isError = res.IsError
 			}
+		}
+
+		// --- PostToolUse hooks ---
+		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PostToolUse) > 0 && !isError {
+			hooks.RunPostToolUse(ctx, l.cfg.Hooks.PostToolUse, l.cfg.SessionID, block.Name, resultText)
 		}
 
 		handler(LoopEvent{

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // Tool implements the Edit tool.

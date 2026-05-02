@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
+
+	"github.com/icehunter/conduit/internal/session"
 )
 
 // SessionState holds mutable session state that slash commands can read/modify.
@@ -49,7 +52,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if err := state.Logout(); err != nil {
 					return Result{Type: "error", Text: fmt.Sprintf("Logout failed: %v", err)}
 				}
-				return Result{Type: "text", Text: "Logged out. Run `claude login` to sign in again."}
+				return Result{Type: "text", Text: "Logged out. Use /login to sign in again."}
 			}
 			return Result{Type: "text", Text: "Logout not available in this session."}
 		},
@@ -179,14 +182,8 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			}
 			sb.WriteByte('\n')
 
-			// Credentials
-			home, _ := os.UserHomeDir()
-			credPath := home + "/Library/Application Support/claude-code/credentials.json"
-			if _, err := os.Stat(credPath); err == nil {
-				sb.WriteString("Credentials: found ✓")
-			} else {
-				sb.WriteString("Credentials: not found (run `claude login`)")
-			}
+			// Credentials hint — actual check is via keyring, just note the state
+			sb.WriteString("Credentials: use /login if not authenticated")
 			sb.WriteByte('\n')
 
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
@@ -221,30 +218,25 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /export
+	// /export — write conversation markdown to disk
 	r.Register(Command{
 		Name:        "export",
-		Description: "Export the current conversation to a file",
+		Description: "Export the current conversation to a markdown file",
 		Handler: func(args string) Result {
 			path := strings.TrimSpace(args)
 			if path == "" {
 				path = "claude-conversation.md"
 			}
-			// The TUI will handle actual export via ExportConversation type.
 			return Result{Type: "export", Text: path}
 		},
 	})
 
-	// /rename
+	// /rename — session persistence not yet implemented
 	r.Register(Command{
 		Name:        "rename",
-		Description: "Rename the current conversation",
+		Description: "Rename the current conversation (coming soon)",
 		Handler: func(args string) Result {
-			name := strings.TrimSpace(args)
-			if name == "" {
-				return Result{Type: "error", Text: "Usage: /rename <new name>"}
-			}
-			return Result{Type: "text", Text: fmt.Sprintf("Conversation renamed to: %s", name)}
+			return Result{Type: "text", Text: "Conversation naming requires session persistence, which is not yet implemented."}
 		},
 	})
 
@@ -326,25 +318,44 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		Name:        "usage",
 		Description: "Show plan usage limits",
 		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Usage limits are visible at: https://claude.ai/settings/limits\n\nYou are on a Claude Max subscription (OAuth bearer)."}
+			return Result{Type: "text", Text: "View your usage and limits at: https://claude.ai/settings/limits"}
 		},
 	})
 
-	// /resume
+	// /resume — show navigable session picker
 	r.Register(Command{
 		Name:        "resume",
 		Description: "Resume a previous conversation",
-		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Session resumption is not yet implemented.\nSession transcripts are stored in ~/.claude/projects/"}
+		Handler: func(args string) Result {
+			cwd := "."
+			if state.GetCwd != nil {
+				cwd = state.GetCwd()
+			}
+			sessions, err := session.List(cwd)
+			if err != nil || len(sessions) == 0 {
+				return Result{Type: "text", Text: "No previous sessions found for this directory.\nTip: use --continue / -c when starting claude to resume the latest session automatically."}
+			}
+			// Cap to 20 most recent sessions.
+			if len(sessions) > 20 {
+				sessions = sessions[:20]
+			}
+			// Encode sessions as tab-separated lines for the TUI to parse.
+			// Format: "resume\t<filePath>\t<age>\t<preview>"
+			var lines []string
+			for _, s := range sessions {
+				age := time.Since(s.Modified).Round(time.Minute).String()
+				lines = append(lines, s.FilePath+"\t"+age+"\t"+s.ID[:min(8, len(s.ID))])
+			}
+			return Result{Type: "resume-pick", Text: strings.Join(lines, "\n")}
 		},
 	})
 
-	// /rewind
+	// /rewind — depends on session history snapshots
 	r.Register(Command{
 		Name:        "rewind",
-		Description: "Restore conversation to a previous point",
+		Description: "Restore conversation to a previous point (coming soon)",
 		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Rewind not yet implemented. Use /clear to start fresh."}
+			return Result{Type: "text", Text: "Rewind is not yet implemented."}
 		},
 	})
 
@@ -375,6 +386,13 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			return Result{Type: "text", Text: "Theme switching not yet implemented.\nThe TUI uses a dark coral theme by default."}
 		},
 	})
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func makeBar(pct, width int) string {

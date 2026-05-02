@@ -12,7 +12,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/conduit/internal/api"
 )
 
 // compactModel is the model used for summarization sub-calls.

@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // MaxSleepSeconds caps a single sleep call to prevent runaway sessions.

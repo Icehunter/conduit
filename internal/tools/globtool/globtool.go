@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // MaxResults caps the number of returned paths to keep tool_result blocks

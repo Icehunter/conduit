@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	internalmodel "github.com/icehunter/claude-go/internal/model"
-	"github.com/icehunter/claude-go/internal/permissions"
-	"github.com/icehunter/claude-go/internal/settings"
+	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // RegisterBuiltins adds the standard slash commands to r.

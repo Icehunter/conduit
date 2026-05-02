@@ -1,10 +1,8 @@
-// Package main is the claude-go entrypoint.
+// Package main is the conduit entrypoint.
 //
-// M3 surface:
+// Surface:
 //
 //	claude                      Full-screen Bubble Tea TUI.
-//	claude login                Run OAuth flow, persist tokens.
-//	claude logout               Clear persisted tokens.
 //	claude --print "prompt"     One-shot streaming response.
 //	claude version              Print binary version.
 package main
@@ -15,33 +13,42 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/icehunter/claude-go/internal/agent"
-	"github.com/icehunter/claude-go/internal/api"
-	"github.com/icehunter/claude-go/internal/auth"
-	internalmodel "github.com/icehunter/claude-go/internal/model"
-	"github.com/icehunter/claude-go/internal/permissions"
-	"github.com/icehunter/claude-go/internal/secure"
-	"github.com/icehunter/claude-go/internal/settings"
-	"github.com/icehunter/claude-go/internal/tool"
-	"github.com/icehunter/claude-go/internal/tools/bashtool"
-	"github.com/icehunter/claude-go/internal/tools/fileedittool"
-	"github.com/icehunter/claude-go/internal/tools/filereadtool"
-	"github.com/icehunter/claude-go/internal/tools/filewritetool"
-	"github.com/icehunter/claude-go/internal/tools/globtool"
-	"github.com/icehunter/claude-go/internal/tools/greptool"
-	"github.com/icehunter/claude-go/internal/tools/notebookedittool"
-	"github.com/icehunter/claude-go/internal/tools/sleeptool"
-	"github.com/icehunter/claude-go/internal/tools/todowritetool"
-	"github.com/icehunter/claude-go/internal/tools/webfetchtool"
-	"github.com/icehunter/claude-go/internal/tools/websearchtool"
-	"github.com/icehunter/claude-go/internal/tui"
+	"github.com/icehunter/conduit/internal/agent"
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/mcp"
+	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/secure"
+	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/tools/bashtool"
+	"github.com/icehunter/conduit/internal/tools/fileedittool"
+	"github.com/icehunter/conduit/internal/tools/filereadtool"
+	"github.com/icehunter/conduit/internal/tools/filewritetool"
+	"github.com/icehunter/conduit/internal/tools/globtool"
+	"github.com/icehunter/conduit/internal/tools/greptool"
+	"github.com/icehunter/conduit/internal/tools/mcptool"
+	"github.com/icehunter/conduit/internal/tools/notebookedittool"
+	"github.com/icehunter/conduit/internal/tools/repltool"
+	"github.com/icehunter/conduit/internal/tools/sleeptool"
+	"github.com/icehunter/conduit/internal/tools/tasktool"
+	"github.com/icehunter/conduit/internal/tools/todowritetool"
+	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/tools/agenttool"
+	"github.com/icehunter/conduit/internal/tools/skilltool"
+	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
+	"github.com/icehunter/conduit/internal/tools/webfetchtool"
+	"github.com/icehunter/conduit/internal/tools/websearchtool"
+	"github.com/icehunter/conduit/internal/tui"
 )
 
 // Version is the wire version we identify as. We match the exact value the
@@ -62,10 +69,14 @@ func main() {
 
 func run() error {
 	var printMode bool
+	var continueMode bool
 	flag.BoolVar(&printMode, "print", false, "non-interactive: send a one-shot prompt and print the response")
 	flag.BoolVar(&printMode, "p", false, "alias for --print")
+	flag.BoolVar(&continueMode, "continue", false, "resume the most recent conversation for the current directory")
+	flag.BoolVar(&continueMode, "c", false, "alias for --continue")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: claude [login|logout|version] | claude --print \"prompt\" | claude (REPL)")
+		fmt.Fprintln(os.Stderr, "usage: claude [version] | claude --print \"prompt\" | claude [--continue] (REPL)")
+		fmt.Fprintln(os.Stderr, "       Login and logout are managed via /login and /logout inside the REPL.")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -75,15 +86,10 @@ func run() error {
 		return runPrint(args)
 	}
 	if len(args) == 0 {
-		// No subcommand — drop into REPL.
-		return runREPL()
+		return runREPL(continueMode)
 	}
 
 	switch args[0] {
-	case "login":
-		return runLogin()
-	case "logout":
-		return runLogout()
 	case "version":
 		fmt.Println(Version)
 		return nil
@@ -125,6 +131,7 @@ func newAPIClient(bearer string) *api.Client {
 }
 
 // loadAuth loads and refreshes tokens from the credential store.
+// Returns an empty PersistedTokens and non-nil error when no credentials exist.
 func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	store := secure.NewDefault()
 	cfg := auth.ProdConfig
@@ -132,8 +139,23 @@ func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	return auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
 }
 
-// buildRegistry builds the tool registry.
-func buildRegistry(client *api.Client) *tool.Registry {
+// buildSkillEntries converts loaded plugin commands into SkillEntry values for
+// the system prompt skill listing.
+func buildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
+	var entries []agent.SkillEntry
+	for _, p := range ps {
+		for _, cmd := range p.Commands {
+			entries = append(entries, agent.SkillEntry{
+				Name:        cmd.QualifiedName,
+				Description: cmd.Description,
+			})
+		}
+	}
+	return entries
+}
+
+// buildRegistry builds the tool registry, including MCP server tools.
+func buildRegistry(client *api.Client, mcpManager *mcp.Manager) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
 	reg.Register(fileedittool.New())
@@ -142,10 +164,22 @@ func buildRegistry(client *api.Client) *tool.Registry {
 	reg.Register(globtool.New())
 	reg.Register(greptool.New())
 	reg.Register(notebookedittool.New())
+	reg.Register(repltool.New())
 	reg.Register(sleeptool.New())
+	reg.Register(tasktool.NewCreate())
+	reg.Register(tasktool.NewGet())
+	reg.Register(tasktool.NewList())
+	reg.Register(tasktool.NewUpdate())
+	reg.Register(tasktool.NewOutput())
+	reg.Register(tasktool.NewStop())
 	reg.Register(todowritetool.New())
+	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
 	reg.Register(websearchtool.New(client))
+	// Register MCP server tools (if any servers are configured).
+	if mcpManager != nil {
+		mcptool.RegisterAll(reg, mcpManager)
+	}
 	return reg
 }
 
@@ -161,109 +195,106 @@ func buildMetadata() map[string]any {
 }
 
 // runREPL launches the full-screen Bubble Tea TUI.
-func runREPL() error {
-	// Auth check before entering alt-screen so errors print clearly.
+// If credentials are absent or invalid the TUI still starts — it shows a
+// "not logged in" welcome message and the user can /login from within.
+func runREPL(continueMode bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	tok, err := loadAuth(ctx)
-	if err != nil {
-		return fmt.Errorf("authentication: %w (run `claude login` first)", err)
-	}
+	// Try auth — failure is not fatal here. The TUI handles the no-auth state.
+	tok, authErr := loadAuth(ctx)
 	bearer := tok.APIKey
 	if bearer == "" {
 		bearer = tok.AccessToken
 	}
 
-	// Load settings (missing/invalid files are fine — defaults apply).
+	// Fetch profile info in the background; non-fatal if unavailable.
+	var prof profile.Info
+	if authErr == nil && tok.AccessToken != "" {
+		prof, _ = profile.Fetch(ctx, tok.AccessToken)
+	}
+
+	// Session persistence — create or resume.
 	cwd, _ := os.Getwd()
+	sessionID := newSessionID()
+	var resumedHistory []api.Message
+
+	if continueMode {
+		// Load the most recent session for this directory.
+		sessions, err := session.List(cwd)
+		if err == nil && len(sessions) > 0 {
+			most := sessions[0]
+			sessionID = most.ID
+			resumedHistory, _ = session.LoadMessages(most.FilePath)
+		}
+	}
+
+	sess, err := session.New(cwd, sessionID)
+	if err != nil {
+		// Non-fatal — session persistence failure shouldn't block the REPL.
+		sess = nil
+	}
+
+	// Load settings (missing/invalid files are fine — defaults apply).
 	s, _ := settings.Load(cwd)
 	if s == nil {
 		s = &settings.Merged{DefaultMode: "default"}
 	}
 
 	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
-	sessionID := newSessionID()
+
+	// Connect MCP servers in the background; non-fatal if config missing or servers fail.
+	mcpManager := mcp.NewManager()
+	_ = mcpManager.ConnectAll(ctx, cwd)
+
+	// Load plugins (non-fatal — missing plugins don't block startup).
+	loadedPlugins, _ := plugins.LoadAll(cwd)
+
+	// Build skill listing for the system prompt.
+	skillEntries := buildSkillEntries(loadedPlugins)
 
 	c := newAPIClient(bearer)
-	reg := buildRegistry(c)
+	reg := buildRegistry(c, mcpManager)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(),
+		System:    agent.BuildSystemBlocks(skillEntries...),
 		MaxTurns:  50,
 		Gate:      gate,
 		Hooks:     &s.Hooks,
 		SessionID: sessionID,
 	})
 
-	return tui.Run(Version, modelName, lp, c, gate, &s.Hooks)
-}
+	// Register AgentTool and SkillTool now that the loop exists.
+	reg.Register(agenttool.New(lp.RunSubAgent))
+	skillLoader := plugins.NewSkillLoader(loadedPlugins)
+	reg.Register(skilltool.New(skillLoader, lp.RunSubAgent))
 
-// stdoutDisplay shows OAuth URLs on stderr (so stdout stays clean for piping).
-type stdoutDisplay struct{ w io.Writer }
-
-func (d stdoutDisplay) Show(automatic, manual string) {
-	fmt.Fprintln(d.w)
-	fmt.Fprintln(d.w, "Opening browser to log in to Claude.")
-	fmt.Fprintln(d.w, "If the browser doesn't open, paste this URL:")
-	fmt.Fprintln(d.w)
-	fmt.Fprintln(d.w, "  ", automatic)
-	fmt.Fprintln(d.w)
-	fmt.Fprintln(d.w, "Or, for a code-paste flow, use:")
-	fmt.Fprintln(d.w)
-	fmt.Fprintln(d.w, "  ", manual)
-	fmt.Fprintln(d.w)
-}
-
-func (d stdoutDisplay) BrowserOpenFailed(err error) {
-	fmt.Fprintf(d.w, "Couldn't open the browser automatically (%v). Paste the URL above into your browser to continue.\n", err)
-}
-
-func runLogin() error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	cfg := auth.ProdConfig
-	tc := auth.NewTokenClient(cfg, nil)
-	flow := &auth.LoginFlow{
-		Cfg:     cfg,
-		Tokens:  tc,
-		Browser: auth.SystemBrowser{},
-		Display: stdoutDisplay{w: os.Stderr},
-	}
-
-	tok, err := flow.Login(ctx, auth.LoginOptions{
-		LoginWithClaudeAI: true,
-		Timeout:           5 * time.Minute,
+	return tui.Run(Version, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
+		AuthErr:         authErr,
+		Profile:         prof,
+		Session:         sess,
+		ResumedHistory:  resumedHistory,
+		Resumed:         continueMode && len(resumedHistory) > 0,
+		MCPManager:      mcpManager,
+		LoadAuth: func(ctx context.Context) (string, *profile.Info, error) {
+			tok, err := loadAuth(ctx)
+			if err != nil {
+				return "", nil, err
+			}
+			bearer := tok.APIKey
+			if bearer == "" {
+				bearer = tok.AccessToken
+			}
+			p, _ := profile.Fetch(ctx, tok.AccessToken)
+			return bearer, &p, nil
+		},
+		NewAPIClient: func(bearer string) *api.Client {
+			return newAPIClient(bearer)
+		},
 	})
-	if err != nil {
-		return fmt.Errorf("login: %w", err)
-	}
-
-	// 403 is expected for Max/Pro subscribers — the access token works directly.
-	apiKey, _ := tc.CreateAPIKey(ctx, tok.AccessToken)
-
-	store := secure.NewDefault()
-	persisted := auth.FromTokens(tok, time.Now())
-	persisted.APIKey = apiKey
-	if err := auth.Save(store, persisted); err != nil {
-		return fmt.Errorf("persist tokens: %w", err)
-	}
-
-	fmt.Fprintln(os.Stderr, "Logged in.")
-	return nil
-}
-
-func runLogout() error {
-	store := secure.NewDefault()
-	if err := store.Delete(auth.Service, auth.PersistKey); err != nil {
-		return fmt.Errorf("logout: %w", err)
-	}
-	fmt.Fprintln(os.Stderr, "Logged out.")
-	return nil
 }
 
 func runPrint(args []string) error {
@@ -277,7 +308,7 @@ func runPrint(args []string) error {
 
 	p, err := loadAuth(ctx)
 	if err != nil {
-		return fmt.Errorf("authentication: %w (run `claude login` first)", err)
+		return fmt.Errorf("authentication: %w (use /login inside the REPL to sign in)", err)
 	}
 
 	bearer := p.APIKey
@@ -285,17 +316,22 @@ func runPrint(args []string) error {
 		bearer = p.AccessToken
 	}
 
+	cwd, _ := os.Getwd()
+	loadedPlugins, _ := plugins.LoadAll(cwd)
+	skillEntries := buildSkillEntries(loadedPlugins)
 	c := newAPIClient(bearer)
-	reg := buildRegistry(c)
+	reg := buildRegistry(c, nil)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(),
+		System:    agent.BuildSystemBlocks(skillEntries...),
 		Metadata:  buildMetadata(),
 		MaxTurns:  10,
 	})
+	reg.Register(agenttool.New(lp.RunSubAgent))
+	reg.Register(skilltool.New(plugins.NewSkillLoader(loadedPlugins), lp.RunSubAgent))
 
 	_, err = lp.Run(ctx, []api.Message{{
 		Role:    "user",

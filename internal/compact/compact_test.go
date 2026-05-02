@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/conduit/internal/api"
 )
 
 func TestExtractSummary_Found(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/icehunter/claude-go/internal/secure"
+	"github.com/icehunter/conduit/internal/secure"
 )
 
 func TestSaveLoad_RoundTrip(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // DefaultHeadLimit matches the real tool: 250 lines when unspecified.

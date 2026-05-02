@@ -1,4 +1,4 @@
-// Package commands implements the slash-command registry for claude-go.
+// Package commands implements the slash-command registry for conduit.
 //
 // Mirrors src/commands/ from the TS source. Each command is a function that
 // receives the argument string and returns a Result. The TUI dispatches slash
@@ -13,9 +13,9 @@ import (
 
 // Result is what a command returns to the TUI.
 type Result struct {
-	// Type is "text", "clear", "model", "compact", "error".
+	// Type is "text", "clear", "model", "compact", "prompt", "error", etc.
 	Type string
-	// Text is the message to display (for Type=="text" or "error").
+	// Text is the message to display or the prompt to inject (for Type=="prompt").
 	Text string
 	// Model is the new model name (for Type=="model").
 	Model string

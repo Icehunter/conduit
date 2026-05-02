@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/icehunter/claude-go/internal/secure"
+	"github.com/icehunter/conduit/internal/secure"
 )
 
 // Service is the keyring service identifier under which we stash tokens.
@@ -103,4 +103,4 @@ func EnsureFresh(ctx context.Context, s secure.Storage, c *TokenClient, now time
 }
 
 // ErrNotLoggedIn is returned by EnsureFresh when no token bundle exists.
-var ErrNotLoggedIn = errors.New("auth: not logged in (run `claude login` first)")
+var ErrNotLoggedIn = errors.New("auth: not logged in")

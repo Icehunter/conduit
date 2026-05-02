@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // Tool implements the NotebookEdit tool.

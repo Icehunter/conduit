@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/icehunter/claude-go/internal/settings"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // HookEvent identifies when a hook fires.

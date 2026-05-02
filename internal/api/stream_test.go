@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/icehunter/claude-go/internal/sse"
+	"github.com/icehunter/conduit/internal/sse"
 )
 
 // TestStreamMessage_FixtureReplay: server replays the captured SSE stream

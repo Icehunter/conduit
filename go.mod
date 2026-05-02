@@ -1,4 +1,4 @@
-module github.com/icehunter/claude-go
+module github.com/icehunter/conduit
 
 go 1.26
 

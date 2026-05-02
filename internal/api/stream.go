@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/icehunter/claude-go/internal/sse"
+	"github.com/icehunter/conduit/internal/sse"
 )
 
 // Stream is an open SSE connection. Call Next() until io.EOF; always Close().

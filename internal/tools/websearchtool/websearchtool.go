@@ -18,8 +18,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/icehunter/claude-go/internal/api"
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // searchModel is the small fast model used for web search sub-calls.

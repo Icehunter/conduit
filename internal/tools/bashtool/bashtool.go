@@ -20,7 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/rtk"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // DefaultTimeout matches the leaked TS reference (BashTool.tsx ~882 line
@@ -145,8 +146,10 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	if sb.Len() == 0 {
-		// Empty output is still success.
-		sb.WriteString("(no output)")
+		return tool.TextResult("(no output)"), nil
 	}
-	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+
+	output := strings.TrimRight(sb.String(), "\n")
+	filtered := rtk.Filter(in.Command, output)
+	return tool.TextResult(filtered.Filtered), nil
 }

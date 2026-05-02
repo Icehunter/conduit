@@ -21,7 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // MaxContentBytes caps the response body size.

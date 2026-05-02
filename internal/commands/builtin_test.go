@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/icehunter/claude-go/internal/permissions"
-	"github.com/icehunter/claude-go/internal/settings"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 func TestRegisterPermissionsCommand_NilGate(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/icehunter/claude-go/internal/settings"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 func TestMatchesTool_Empty(t *testing.T) {

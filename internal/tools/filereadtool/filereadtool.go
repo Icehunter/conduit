@@ -16,7 +16,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // MaxReadBytes is the maximum file size we'll read in one call.

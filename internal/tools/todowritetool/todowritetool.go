@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // Status values mirror the TS TodoListSchema.

@@ -103,27 +103,31 @@ func renderMarkdown(text string, width int) string {
 // width is the usable inner width (outer padding already excluded).
 // Language label appears as a dim line above the rounded box.
 func renderCodeBlock(code, lang string, width int) string {
-	highlighted := highlightCode(code, lang)
-
-	// lipgloss Width() on a bordered+padded style sets the *content* width.
-	// Total rendered width = contentW + 2 (border) + 2 (padding) = contentW + 4.
-	// We want total = width, so contentW = width - 4.
+	// contentW = usable text columns inside the box.
+	// styleCodeBorder adds: 1 border + 1 padding each side = 4 total.
 	contentW := width - 4
 	if contentW < 4 {
 		contentW = 4
 	}
 
+	highlighted := highlightCode(code, lang)
+	// Pad every line to contentW so the dark bg fills the full box width.
+	highlighted = padCodeLines(highlighted, contentW)
+
 	block := styleCodeBorder.Width(contentW).Render(highlighted)
 
 	if lang != "" {
-		// Plain dim label — no background fill, just text above the box.
+		// Label line above the box: explicitly no background so it inherits
+		// the viewport bg (transparent), avoiding the filled-rectangle artifact.
 		label := styleCodeLang.Render(lang)
 		return label + "\n" + block
 	}
 	return block
 }
 
-// highlightCode colorizes code by language.
+// highlightCode colorizes code by language and pads every line to width
+// so the dark background fills the full code block (no terminal-default
+// black gaps on short lines).
 func highlightCode(code, lang string) string {
 	lines := strings.Split(code, "\n")
 	out := make([]string, len(lines))
@@ -131,6 +135,20 @@ func highlightCode(code, lang string) string {
 		out[i] = highlightLine(line, lang)
 	}
 	return strings.Join(out, "\n")
+}
+
+// padCodeLines pads each highlighted line to w visible columns with the
+// code background color, ensuring the dark bg fills the full block width.
+func padCodeLines(highlighted string, w int) string {
+	codeBgStyle := lipgloss.NewStyle().Background(colorCodeBg)
+	lines := strings.Split(highlighted, "\n")
+	for i, line := range lines {
+		vis := lipgloss.Width(line)
+		if vis < w {
+			lines[i] = line + codeBgStyle.Render(strings.Repeat(" ", w-vis))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Token color styles.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -51,7 +52,8 @@ type (
 		history []api.Message
 		err     error
 	}
-	cancelMsg struct{ cancel context.CancelFunc }
+	cancelMsg  struct{ cancel context.CancelFunc }
+	clearFlash struct{}
 )
 
 // Config is passed from main to the TUI.
@@ -82,6 +84,9 @@ type Model struct {
 	totalInputTokens  int
 	totalOutputTokens int
 	costUSD           float64
+
+	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
+	flashMsg string
 
 	ready bool // true once we've received the first WindowSizeMsg
 }
@@ -158,6 +163,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var spCmd tea.Cmd
 		m.spinner, spCmd = m.spinner.Update(msg)
 		cmds = append(cmds, spCmd)
+
+	case clearFlash:
+		m.flashMsg = ""
+		return m, nil
 	}
 
 	// Always propagate remaining messages to sub-components.
@@ -178,6 +187,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Quit
+
+	case "ctrl+y":
+		// Copy the raw code from the most recent assistant code block to
+		// the system clipboard via OSC 52 (works in iTerm2, kitty, WezTerm).
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleAssistant {
+				blocks := extractCodeBlocks(m.messages[i].Content)
+				if len(blocks) > 0 {
+					copyToClipboard(blocks[len(blocks)-1].code)
+					m.flashMsg = "✓ Copied to clipboard"
+					return m, tea.Tick(2000000000, func(_ time.Time) tea.Msg { return clearFlash{} })
+				}
+			}
+		}
+		m.flashMsg = "No code block found"
+		return m, tea.Tick(1500000000, func(_ time.Time) tea.Msg { return clearFlash{} })
 
 	case "enter":
 		if m.running {
@@ -329,10 +354,13 @@ func (m Model) View() string {
 
 	// Spinner row — always 1 line to prevent layout shift.
 	var spinRow string
-	if m.running {
+	switch {
+	case m.flashMsg != "":
+		spinRow = styleStatusAccent.Render(m.flashMsg)
+	case m.running:
 		spinRow = m.spinner.View() + " " + styleStatus.Render("Thinking…")
-	} else {
-		spinRow = "" // empty but we still join it — JoinVertical handles empty strings
+	default:
+		spinRow = ""
 	}
 
 	// Input box.
@@ -362,7 +390,7 @@ func (m Model) View() string {
 		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
 	}
 	mid := strings.Join(midParts, barSep)
-	right := styleStatus.Render("^C interrupt  /clear  /exit") + edgePad
+	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit") + edgePad
 
 	leftW := lipgloss.Width(appName)
 	midW := lipgloss.Width(mid)

@@ -49,9 +49,10 @@ var (
 				PaddingLeft(1).
 				PaddingRight(1)
 
-	// Language label — just dim text, NO background (avoids filled rectangle artifact)
+	// Language label — explicit NoColor background so it's transparent on the viewport.
 	styleCodeLang = lipgloss.NewStyle().
-			Foreground(colorMuted)
+			Foreground(colorMuted).
+			Background(lipgloss.NoColor{})
 
 	// Input borders
 	styleInputBorder = lipgloss.NewStyle().

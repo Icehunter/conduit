@@ -49,6 +49,9 @@ type Settings struct {
 	Hooks       HooksSettings `json:"hooks"`
 	// Env holds extra environment variables for tool execution.
 	Env map[string]string `json:"env"`
+	// EnabledPlugins mirrors the real Claude Code enabledPlugins field.
+	// Key is "pluginName@marketplace", value is true/false.
+	EnabledPlugins map[string]bool `json:"enabledPlugins,omitempty"`
 }
 
 // Merged is the result of loading and merging all settings layers.
@@ -131,4 +134,70 @@ func mergeHooks(dst, src *HooksSettings) {
 	dst.PostToolUse = append(dst.PostToolUse, src.PostToolUse...)
 	dst.SessionStart = append(dst.SessionStart, src.SessionStart...)
 	dst.Stop = append(dst.Stop, src.Stop...)
+}
+
+// UserSettingsPath returns the path to the user-global settings file.
+func UserSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// SetPluginEnabled sets enabledPlugins[pluginID] in the user settings file.
+func SetPluginEnabled(pluginID string, enabled bool) error {
+	return updateSettingsFile(UserSettingsPath(), func(s *Settings) {
+		if s.EnabledPlugins == nil {
+			s.EnabledPlugins = make(map[string]bool)
+		}
+		s.EnabledPlugins[pluginID] = enabled
+	})
+}
+
+// RemovePlugin removes a plugin from enabledPlugins in the user settings file.
+func RemovePlugin(pluginID string) error {
+	return updateSettingsFile(UserSettingsPath(), func(s *Settings) {
+		if s.EnabledPlugins != nil {
+			delete(s.EnabledPlugins, pluginID)
+		}
+	})
+}
+
+// updateSettingsFile reads, mutates only enabledPlugins, and writes the settings file.
+// It uses a raw JSON map so that unknown fields (and fields written by real Claude Code
+// in formats we don't model, like null arrays or non-standard enum values) are preserved
+// exactly — we never clobber them by round-tripping through our typed Settings struct.
+func updateSettingsFile(path string, fn func(*Settings)) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	// Read the raw JSON as an opaque map so unknown fields survive.
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+
+	// Extract just the enabledPlugins section so fn can operate on it.
+	var s Settings
+	if ep, ok := raw["enabledPlugins"]; ok {
+		_ = json.Unmarshal(ep, &s.EnabledPlugins)
+	}
+
+	fn(&s)
+
+	// Write enabledPlugins back into the raw map.
+	if s.EnabledPlugins == nil {
+		delete(raw, "enabledPlugins")
+	} else {
+		ep, err := json.Marshal(s.EnabledPlugins)
+		if err != nil {
+			return err
+		}
+		raw["enabledPlugins"] = ep
+	}
+
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

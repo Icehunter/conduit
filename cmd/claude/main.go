@@ -53,6 +53,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 	"github.com/icehunter/conduit/internal/tools/mcpresourcetool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
+	"github.com/icehunter/conduit/internal/tools/worktreeTool"
 	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
 	"github.com/icehunter/conduit/internal/tools/webfetchtool"
 	"github.com/icehunter/conduit/internal/tools/websearchtool"
@@ -167,10 +168,12 @@ func buildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
 // registryOpts holds optional callbacks wired after the TUI program starts.
 // These are nil in --print mode (no interactive terminal).
 type registryOpts struct {
-	enterPlan  *planmodetool.EnterPlanMode
-	exitPlan   *planmodetool.ExitPlanMode
-	askUser    *askusertool.AskUserQuestion
-	synthetic  *syntheticoutputtool.SyntheticOutput
+	enterPlan     *planmodetool.EnterPlanMode
+	exitPlan      *planmodetool.ExitPlanMode
+	askUser       *askusertool.AskUserQuestion
+	synthetic     *syntheticoutputtool.SyntheticOutput
+	enterWorktree *worktreeTool.EnterWorktree
+	exitWorktree  *worktreeTool.ExitWorktree
 }
 
 // buildRegistry builds the tool registry, including MCP server tools.
@@ -199,6 +202,10 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, rOpts *registryO
 	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
 	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
 	// Interactive tools — callbacks are wired by the TUI after prog.Start().
+	if rOpts != nil && rOpts.enterWorktree != nil {
+		reg.Register(rOpts.enterWorktree)
+		reg.Register(rOpts.exitWorktree)
+	}
 	if rOpts != nil {
 		reg.Register(rOpts.enterPlan)
 		reg.Register(rOpts.exitPlan)
@@ -303,10 +310,18 @@ func runREPL(continueMode bool) error {
 	// callbacks after prog.Start() via the same send-to-channel pattern used
 	// by SetAskPermission. Nil callbacks produce graceful error results.
 	rOpts := &registryOpts{
-		enterPlan: &planmodetool.EnterPlanMode{},
-		exitPlan:  &planmodetool.ExitPlanMode{},
-		askUser:   &askusertool.AskUserQuestion{},
-		synthetic: &syntheticoutputtool.SyntheticOutput{},
+		enterPlan:      &planmodetool.EnterPlanMode{},
+		exitPlan:       &planmodetool.ExitPlanMode{},
+		askUser:        &askusertool.AskUserQuestion{},
+		synthetic:      &syntheticoutputtool.SyntheticOutput{},
+		enterWorktree: &worktreeTool.EnterWorktree{GetCwd: func() string {
+			d, _ := os.Getwd()
+			return d
+		}},
+		exitWorktree: &worktreeTool.ExitWorktree{GetCwd: func() string {
+			d, _ := os.Getwd()
+			return d
+		}, OriginalCwd: cwd},
 	}
 
 	reg := buildRegistry(c, mcpManager, rOpts)

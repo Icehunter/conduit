@@ -32,10 +32,9 @@ func runLoginFlow(claudeAI bool, _ Config) error {
 		return fmt.Errorf("oauth flow: %w", err)
 	}
 
-	apiKey, keyErr := tc.CreateAPIKey(ctx, tok.AccessToken)
-	if keyErr != nil {
-		fmt.Fprintln(os.Stderr, "Warning: could not mint API key:", keyErr)
-	}
+	// CreateAPIKey may return 403 for Max/Pro subscribers — that's fine,
+	// the access token itself works for inference. Suppress the warning.
+	apiKey, _ := tc.CreateAPIKey(ctx, tok.AccessToken)
 
 	store := secure.NewDefault()
 	persisted := auth.FromTokens(tok, time.Now())

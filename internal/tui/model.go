@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -221,8 +222,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginStartMsg:
 		useClaudeAI := msg.claudeAI
 		cfg := m.cfg
+		// Exit alt-screen before the OAuth flow so URLs print cleanly,
+		// then re-enter when done.
 		return m, func() tea.Msg {
+			// Exit alt-screen.
+			fmt.Fprint(os.Stdout, "\x1b[?1049l\x1b[?25h")
 			err := runLoginFlow(useClaudeAI, cfg)
+			// Re-enter alt-screen.
+			fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[?25l")
 			return loginDoneMsg{err: err}
 		}
 
@@ -233,7 +240,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Logged in successfully."})
 		}
 		m.refreshViewport()
-		return m, nil
+		return m, tea.ClearScreen
 
 	case permissionAskMsg:
 		m.permPrompt = &permissionPromptState{

@@ -243,10 +243,8 @@ func runLogin() error {
 		return fmt.Errorf("login: %w", err)
 	}
 
-	apiKey, keyErr := tc.CreateAPIKey(ctx, tok.AccessToken)
-	if keyErr != nil {
-		fmt.Fprintln(os.Stderr, "Warning: could not mint API key from OAuth token:", keyErr)
-	}
+	// 403 is expected for Max/Pro subscribers — the access token works directly.
+	apiKey, _ := tc.CreateAPIKey(ctx, tok.AccessToken)
 
 	store := secure.NewDefault()
 	persisted := auth.FromTokens(tok, time.Now())

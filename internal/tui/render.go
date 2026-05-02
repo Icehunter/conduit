@@ -105,33 +105,41 @@ func renderMarkdown(text string, width int) string {
 
 // renderCodeBlock renders a fenced code block with rounded border and
 // language-aware syntax highlighting.
+// width is the available content width (already excluding outer padding).
+// The border adds 2 cols (left+right), so the inner highlight width is width-2-2(padding).
 func renderCodeBlock(code, lang string, width int) string {
 	highlighted := highlightCode(code, lang)
 
-	// Language tag in top-left of border if known.
-	label := ""
-	if lang != "" {
-		label = " " + styleCodeLang.Render(lang) + " "
+	// styleCodeBorder has PaddingLeft(1)+PaddingRight(1) and a 1-col border each side.
+	// Total horizontal chrome = 4. Inner content gets width-4 cols.
+	innerW := width - 4
+	if innerW < 10 {
+		innerW = 10
 	}
 
-	// Rounded border, same style as input box but dimmer.
+	// Render the block at the correct inner width so lipgloss doesn't wrap.
 	block := styleCodeBorder.
-		Width(width).
+		Width(innerW).
 		Render(highlighted)
 
-	if label != "" {
-		// Splice label into the top border line after the corner character.
+	// Splice language label into the top border after the corner glyph.
+	// "╭──────" → "╭─ go ──────"
+	if lang != "" {
 		lines := strings.SplitN(block, "\n", 2)
 		if len(lines) == 2 {
-			// Replace "╭──" with "╭─ lang ─"
-			top := lines[0]
-			// Find the second rune (first dash after corner).
-			runes := []rune(top)
-			if len(runes) > 2 {
-				insert := []rune(label)
-				// Place label after position 1 (the corner).
-				merged := string(runes[:1]) + string(insert) + string(runes[1+len(insert):])
-				block = merged + "\n" + lines[1]
+			top := []rune(lines[0])
+			// top[0] is "╭", top[1] is "─". Insert " lang " after top[1].
+			if len(top) > 2 {
+				label := []rune(" " + lang + " ")
+				// Keep corner + one dash, then label, then remaining dashes.
+				rest := top[2:]
+				if len(label) < len(rest) {
+					rest = rest[len(label):]
+				} else {
+					rest = nil
+				}
+				newTop := string(top[:2]) + string(label) + string(rest)
+				block = newTop + "\n" + lines[1]
 			}
 		}
 	}

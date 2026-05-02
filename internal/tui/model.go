@@ -16,20 +16,16 @@ import (
 	"github.com/icehunter/claude-go/internal/api"
 )
 
-// Layout constants — all in terminal rows/cols.
-const (
-	// inputRows is how many text rows the textarea shows.
-	// 1 = single-line feel; Shift+Enter expands it naturally.
-	inputRows = 1
-	// inputBorderRows: top + bottom border = 2, inner padding = 0
-	inputBorderRows = 2
-	// statusRows: one line at the very bottom
-	statusRows = 1
-	// spinnerRows: one line above the input
-	spinnerRows = 1
-	// totalChrome = everything that isn't the message viewport
-	totalChrome = inputRows + inputBorderRows + statusRows + spinnerRows
-)
+// chromeHeight returns the number of terminal rows consumed by everything
+// except the viewport. Called dynamically so it's always accurate.
+//
+//   spinner row:   1
+//   input border:  1 (top) + 1 (bottom) = 2
+//   input text:    1
+//   status bar:    1
+//   ─────────────────
+//   total:         5
+func chromeHeight() int { return 5 }
 
 // Role identifies who sent a message.
 type Role int
@@ -83,14 +79,11 @@ type Model struct {
 	cancelTurn context.CancelFunc
 	streaming  string
 
-	// Cost tracking — updated by agent events.
 	totalInputTokens  int
 	totalOutputTokens int
-	// Rough cost: opus-4-7 is $15/$75 per M tokens in/out.
-	// We track a running estimate.
-	costUSD float64
+	costUSD           float64
 
-	vpReady bool
+	ready bool // true once we've received the first WindowSizeMsg
 }
 
 // New builds the initial Model.
@@ -98,11 +91,11 @@ func New(cfg Config) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Message claude-go  (Enter ↵ send · Shift+Enter newline)"
 	ta.Focus()
-	ta.SetHeight(inputRows)
+	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
-	// Remove the default newline binding; remap to shift+enter.
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
+	// Remove default enter binding from the textarea — we handle it ourselves.
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -125,7 +118,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m = m.applyLayout()
-		return m, nil
+		// Don't propagate to sub-components here — applyLayout handles it.
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
 		m2, cmd := m.handleKey(msg)
@@ -136,6 +130,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cancelMsg:
 		m.cancelTurn = msg.cancel
+		return m, nil
 
 	case agentMsg:
 		m = m.applyAgentEvent(msg.event)
@@ -152,7 +147,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 		} else if msg.err == nil {
 			m.history = msg.history
-			// Tally tokens from history for context% and cost display.
 			m.tallyTokens()
 		}
 		m.refreshViewport()
@@ -166,6 +160,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, spCmd)
 	}
 
+	// Always propagate remaining messages to sub-components.
 	var taCmd, vpCmd tea.Cmd
 	m.input, taCmd = m.input.Update(msg)
 	m.vp, vpCmd = m.vp.Update(msg)
@@ -266,39 +261,42 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	return m
 }
 
-// applyLayout recalculates component sizes on window resize.
+// applyLayout recalculates component dimensions.
 func (m Model) applyLayout() Model {
-	vpHeight := m.height - totalChrome
-	if vpHeight < 3 {
-		vpHeight = 3
+	if m.width == 0 || m.height == 0 {
+		return m
 	}
-	// Inner width for textarea: full width minus border(2) minus padding(2)
-	innerW := m.width - 4
-	if innerW < 10 {
-		innerW = 10
+	vpHeight := m.height - chromeHeight()
+	if vpHeight < 1 {
+		vpHeight = 1
+	}
+	// Input inner width: full width minus left+right border (2) minus left+right padding (2).
+	inputW := m.width - 4
+	if inputW < 10 {
+		inputW = 10
 	}
 
-	if !m.vpReady {
+	if !m.ready {
 		m.vp = viewport.New(m.width, vpHeight)
-		m.vpReady = true
+		m.vp.Style = lipgloss.NewStyle() // no extra styling on the viewport itself
+		m.ready = true
 	} else {
 		m.vp.Width = m.width
 		m.vp.Height = vpHeight
 	}
-
-	m.input.SetWidth(innerW)
+	m.input.SetWidth(inputW)
 	m.refreshViewport()
 	return m
 }
 
 // refreshViewport rebuilds the viewport content string.
 func (m *Model) refreshViewport() {
-	if !m.vpReady {
+	if !m.ready {
 		return
 	}
 	w := m.vp.Width
-	if w < 20 {
-		w = 80
+	if w <= 0 {
+		return
 	}
 	var sb strings.Builder
 	for i, msg := range m.messages {
@@ -322,102 +320,104 @@ func (m *Model) refreshViewport() {
 
 // View renders the full TUI frame.
 func (m Model) View() string {
-	if !m.vpReady {
+	if !m.ready {
 		return "Loading…\n"
 	}
 
-	// ── viewport ────────────────────────────────────────────────────────
+	// Viewport.
 	vp := m.vp.View()
 
-	// ── spinner row (always present to keep layout stable) ──────────────
+	// Spinner row — always 1 line to prevent layout shift.
 	var spinRow string
 	if m.running {
 		spinRow = m.spinner.View() + " " + styleStatus.Render("Thinking…")
 	} else {
-		// blank placeholder keeps layout from jumping
-		spinRow = " "
+		spinRow = "" // empty but we still join it — JoinVertical handles empty strings
 	}
 
-	// ── input box ────────────────────────────────────────────────────────
+	// Input box.
 	bStyle := styleInputBorder
 	if !m.running {
 		bStyle = styleInputBorderActive
 	}
+	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
 	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
 
-	// ── status bar — mirrors Claude Code's format ────────────────────────
-	// Left: app name  |  Center: model · context · cost  |  Right: shortcuts
+	// Status bar.
 	appName := styleStatusAccent.Render("claude-go")
-
 	modelSeg := styleStatusModel.Render(shortModelName(m.cfg.ModelName))
+	sep := styleStatus.Render(" | ")
 
-	var costSeg string
-	if m.costUSD > 0 {
-		costSeg = styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD))
-	}
-
-	// Context % — rough proxy: 200k window, count tokens we've used.
-	var ctxSeg string
-	totalToks := m.totalInputTokens + m.totalOutputTokens
-	if totalToks > 0 {
-		pct := totalToks * 100 / 200000
+	var midParts []string
+	midParts = append(midParts, modelSeg)
+	if m.totalInputTokens > 0 {
+		pct := m.totalInputTokens * 100 / 200000
 		if pct > 100 {
 			pct = 100
 		}
-		ctxSeg = styleStatus.Render(fmt.Sprintf("%d%% ctx", pct))
+		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("%d%% ctx", pct)))
 	}
-
-	// Build center segment.
-	var midParts []string
-	midParts = append(midParts, modelSeg)
-	if ctxSeg != "" {
-		midParts = append(midParts, ctxSeg)
+	if m.costUSD > 0 {
+		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
 	}
-	if costSeg != "" {
-		midParts = append(midParts, costSeg)
-	}
-	mid := strings.Join(midParts, styleStatus.Render(" | "))
-
+	mid := strings.Join(midParts, sep)
 	right := styleStatus.Render("^C interrupt  /clear  /exit")
 
-	// Three-column layout.
 	leftW := lipgloss.Width(appName)
 	midW := lipgloss.Width(mid)
 	rightW := lipgloss.Width(right)
-	space := m.width - leftW - midW - rightW
+	totalUsed := leftW + midW + rightW
+	space := m.width - totalUsed
 	if space < 2 {
 		space = 2
 	}
-	leftPad := space / 2
-	rightPad := space - leftPad
-	statusBar := appName +
-		strings.Repeat(" ", leftPad) + mid +
-		strings.Repeat(" ", rightPad) + right
+	lPad := space / 2
+	rPad := space - lPad
+	statusBar := appName + strings.Repeat(" ", lPad) + mid + strings.Repeat(" ", rPad) + right
 
-	return lipgloss.JoinVertical(lipgloss.Left, vp, spinRow, inputBox, statusBar)
+	// JoinVertical with explicit newlines between non-empty parts.
+	parts := []string{vp}
+	if spinRow != "" {
+		parts = append(parts, spinRow)
+	} else {
+		// blank line holds the space so input doesn't jump up
+		parts = append(parts, "")
+	}
+	parts = append(parts, inputBox, statusBar)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-// tallyTokens estimates total tokens and cost from the conversation history.
-// Rough character-based estimate: 1 token ≈ 4 chars.
+// tallyTokens estimates token usage from conversation history.
 func (m *Model) tallyTokens() {
 	total := 0
 	for _, msg := range m.history {
 		for _, b := range msg.Content {
-			total += len(b.Text) / 4
+			total += len([]rune(b.Text)) / 4
 		}
 	}
 	m.totalInputTokens = total
-	// Opus 4.7 pricing: $15/$75 per M in/out — use blended $45/M as rough estimate.
+	// Opus 4.7: ~$15/$75 per M in/out, blended ~$45/M estimate.
 	m.costUSD = float64(total) * 45.0 / 1_000_000
 }
 
-// shortModelName strips the "claude-" prefix for compact display.
+// shortModelName converts "claude-opus-4-7" → "Opus 4.7".
 func shortModelName(name string) string {
+	// Strip leading "claude-"
 	name = strings.TrimPrefix(name, "claude-")
-	// "opus-4-7" → "Opus 4.7"  etc.
-	parts := strings.SplitN(name, "-", 3)
-	if len(parts) >= 1 {
-		parts[0] = strings.Title(parts[0]) //nolint:staticcheck
+	// Split on first "-" to get family, then the rest is the version.
+	// "opus-4-7" → family="opus", ver="4-7"
+	idx := strings.Index(name, "-")
+	if idx < 0 {
+		return capitalize(name)
 	}
-	return strings.Join(parts, " ")
+	family := capitalize(name[:idx])
+	ver := strings.ReplaceAll(name[idx+1:], "-", ".")
+	return family + " " + ver
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

@@ -50,9 +50,10 @@ type Message struct {
 type (
 	agentMsg     struct{ event agent.LoopEvent }
 	agentDoneMsg struct {
-		turnID  int
-		history []api.Message
-		err     error
+		turnID    int
+		history   []api.Message
+		err       error
+		cancelled bool // ctx was cancelled before the loop finished
 	}
 	clearFlash struct{}
 )
@@ -154,7 +155,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stale completion from a previous (interrupted) turn — discard.
 			return m, nil
 		}
-		wasCancelled := m.cancelled
 		m.running = false
 		m.cancelled = false
 		m.cancelTurn = nil
@@ -162,8 +162,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		if wasCancelled {
-			// Ctrl+C already cleaned up history — nothing more to do.
+		if msg.cancelled {
+			// Context was cancelled — Ctrl+C already cleaned up or will shortly.
+			// Roll back dangling user message if Ctrl+C hasn't done it yet.
+			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
+				m.history = m.history[:len(m.history)-1]
+			}
 		} else if msg.err != nil {
 			if !isCancelError(msg.err) {
 				m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
@@ -277,7 +281,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 				prog.Send(agentMsg{event: ev})
 			})
-			return agentDoneMsg{turnID: turnID, history: newHist, err: err}
+			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil}
 		}
 	}
 	return m, nil

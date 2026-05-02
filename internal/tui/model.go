@@ -54,7 +54,6 @@ type (
 		history []api.Message
 		err     error
 	}
-	cancelMsg  struct{ cancel context.CancelFunc }
 	clearFlash struct{}
 )
 
@@ -144,10 +143,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-
-	case cancelMsg:
-		m.cancelTurn = msg.cancel
-		return m, nil
 
 	case agentMsg:
 		m = m.applyAgentEvent(msg.event)
@@ -267,14 +262,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.vp.GotoBottom()
 
 		m.turnID++
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelTurn = cancel
 		prog := *m.cfg.Program
 		histCopy := make([]api.Message, len(m.history))
 		copy(histCopy, m.history)
 		turnID := m.turnID
 
 		return m, func() tea.Msg {
-			ctx, cancel := context.WithCancel(context.Background())
-			prog.Send(cancelMsg{cancel: cancel})
 			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 				prog.Send(agentMsg{event: ev})
 			})

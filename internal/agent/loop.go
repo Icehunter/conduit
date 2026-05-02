@@ -28,8 +28,10 @@ import (
 	"sync"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 )
@@ -45,6 +47,7 @@ const (
 	EventText       EventType = iota // a text delta streamed from the model
 	EventToolUse                     // a tool_use block completed; tool is about to run
 	EventToolResult                  // tool execution finished
+	EventRateLimit                   // rate-limit headers received; RateLimitWarning may be non-empty
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -62,6 +65,10 @@ type LoopEvent struct {
 	// EventToolResult
 	ResultText string
 	IsError    bool
+
+	// EventRateLimit
+	RateLimitWarning string       // non-empty when quota is running low
+	RateLimitInfo    ratelimit.Info
 }
 
 // LoopConfig controls the loop's behaviour.
@@ -84,6 +91,16 @@ type LoopConfig struct {
 
 	// SessionID is used when invoking hooks (passed as session_id in hook input).
 	SessionID string
+
+	// AutoCompact enables automatic history compaction when input token usage
+	// exceeds 80% of MaxTokens. Mirrors the auto-compact behavior in
+	// src/services/compact/compact.ts and QueryEngine.ts.
+	AutoCompact bool
+
+	// ThinkingBudget, when > 0, sends thinking:{type:"enabled",budget_tokens:N}
+	// in each API request. Requires the interleaved-thinking-2025-05-14 beta header.
+	// Set via /effort command or CLAUDE_THINKING_BUDGET env var.
+	ThinkingBudget int
 
 	// AskPermission is called when a tool needs interactive approval.
 	// It blocks until the user responds. Returns (allow, alwaysAllow).
@@ -201,13 +218,28 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			Tools:     tools,
 			Metadata:  l.cfg.Metadata,
 		}
+		if l.cfg.ThinkingBudget > 0 {
+			req.Thinking = &api.ThinkingConfig{
+				Type:         "enabled",
+				BudgetTokens: l.cfg.ThinkingBudget,
+			}
+		}
 
 		stream, err := l.client.StreamMessage(ctx, req)
 		if err != nil {
 			return msgs, fmt.Errorf("agent: stream: %w", err)
 		}
 
-		assistantBlocks, stopReason, err := l.drainStream(ctx, stream, handler)
+		// Emit rate-limit info from response headers before draining.
+		if rlInfo := ratelimit.Parse(stream.ResponseHeader); rlInfo.HasData() {
+			handler(LoopEvent{
+				Type:             EventRateLimit,
+				RateLimitInfo:    rlInfo,
+				RateLimitWarning: rlInfo.WarningMessage(),
+			})
+		}
+
+		assistantBlocks, stopReason, inputTokens, err := l.drainStream(ctx, stream, handler)
 		stream.Close()
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -224,7 +256,27 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 		if stopReason != "tool_use" {
 			// end_turn or unknown — we're done.
+			// Auto-compact check: if context is approaching capacity, compact
+			// so future turns don't hit the limit. Non-fatal if it fails.
+			if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
+				threshold := int(float64(l.cfg.MaxTokens) * 0.8)
+				if inputTokens > threshold {
+					if result, err := compact.Compact(ctx, l.client, msgs, ""); err == nil {
+						msgs = result.NewHistory
+					}
+				}
+			}
 			return msgs, nil
+		}
+
+		// Auto-compact check before next tool-use turn.
+		if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
+			threshold := int(float64(l.cfg.MaxTokens) * 0.8)
+			if inputTokens > threshold {
+				if result, err := compact.Compact(ctx, l.client, msgs, ""); err == nil {
+					msgs = result.NewHistory
+				}
+			}
 		}
 
 		// Execute tools, build a user message with all tool_results.
@@ -240,8 +292,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 }
 
 // drainStream reads all SSE events from the stream and returns the accumulated
-// assistant content blocks plus the stop reason.
-func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent)) ([]api.ContentBlock, string, error) {
+// assistant content blocks, the stop reason, and the input token count from
+// the message_start event (used by auto-compact to gauge context pressure).
+func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent)) ([]api.ContentBlock, string, int, error) {
 	// blockTexts accumulates text/input_json across deltas per block index.
 	blockTexts := map[int]*strings.Builder{}
 	// blockMeta stores the block type and tool metadata per index.
@@ -253,10 +306,11 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 	metas := map[int]blockMeta{}
 
 	stopReason := "end_turn"
+	inputTokens := 0
 
 	for {
 		if ctx.Err() != nil {
-			return nil, "", ctx.Err()
+			return nil, "", 0, ctx.Err()
 		}
 
 		ev, err := stream.Next()
@@ -264,10 +318,16 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			break
 		}
 		if err != nil {
-			return nil, "", err
+			return nil, "", 0, err
 		}
 
 		switch ev.Type {
+		case "message_start":
+			// Extract input_tokens for auto-compact threshold checking.
+			if ms, err := ev.AsMessageStart(); err == nil {
+				inputTokens = ms.Message.Usage.InputTokens
+			}
+
 		case "content_block_start":
 			cbs, err := ev.AsContentBlockStart()
 			if err != nil {
@@ -371,7 +431,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 		}
 	}
 
-	return blocks, stopReason, nil
+	return blocks, stopReason, inputTokens, nil
 }
 
 // executeTools runs all tool_use blocks in the assistant message sequentially

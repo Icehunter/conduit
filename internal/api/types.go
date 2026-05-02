@@ -16,6 +16,16 @@ type MessageRequest struct {
 	Stream    bool           `json:"stream,omitempty"`
 	Tools     []ToolDef      `json:"tools,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	// Thinking enables extended thinking (interleaved-thinking-2025-05-14 beta).
+	// When non-nil, sent as {"type":"enabled","budget_tokens":N}.
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+// ThinkingConfig enables the extended thinking feature.
+// Reference: interleaved-thinking-2025-05-14 beta, effort-2025-11-24 beta.
+type ThinkingConfig struct {
+	Type         string `json:"type"`          // always "enabled"
+	BudgetTokens int    `json:"budget_tokens"` // token budget for thinking
 }
 
 // SystemBlock is one block of the multi-block `system` field.

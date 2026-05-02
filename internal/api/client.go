@@ -244,6 +244,39 @@ func stainlessArch() string {
 	}
 }
 
+// decodeErrorFromResp is the package-level error decoder used by retry logic
+// before the Client is available (e.g. inside withRetry).
+func decodeErrorFromResp(resp *http.Response) error {
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var rl string
+	if resp.StatusCode == http.StatusTooManyRequests {
+		var bits []string
+		if v := resp.Header.Get("retry-after"); v != "" {
+			bits = append(bits, "retry-after="+v+"s")
+		}
+		for _, h := range []string{
+			"anthropic-ratelimit-unified-status",
+			"anthropic-ratelimit-requests-remaining",
+			"anthropic-ratelimit-input-tokens-remaining",
+		} {
+			if v := resp.Header.Get(h); v != "" {
+				bits = append(bits, strings.TrimPrefix(h, "anthropic-ratelimit-")+"="+v)
+			}
+		}
+		if len(bits) > 0 {
+			rl = " [" + strings.Join(bits, " ") + "]"
+		}
+	}
+	var env APIErrorEnvelope
+	if err := json.Unmarshal(raw, &env); err == nil && env.Error.Type != "" {
+		return fmt.Errorf("api: %d %s: %s: %s%s",
+			resp.StatusCode, http.StatusText(resp.StatusCode),
+			env.Error.Type, env.Error.Message, rl)
+	}
+	return fmt.Errorf("api: %d %s: %s%s",
+		resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(raw)), rl)
+}
+
 func (c *Client) decodeError(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 

@@ -170,6 +170,10 @@ type Model struct {
 	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
 	flashMsg string
 
+	// rateLimitWarning is non-empty when a recent turn's rate-limit headers
+	// indicate quota is running low (<20% remaining). Shown in the status bar.
+	rateLimitWarning string
+
 	// modelName is the currently active model (can be changed via /model).
 	modelName string
 
@@ -2168,6 +2172,9 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 			}
 		}
 		m.refreshViewport()
+
+	case agent.EventRateLimit:
+		m.rateLimitWarning = ev.RateLimitWarning
 	}
 	return m
 }
@@ -2294,6 +2301,9 @@ func (m Model) View() string {
 	}
 	if m.costUSD > 0 {
 		leftParts = append(leftParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
+	}
+	if m.rateLimitWarning != "" {
+		leftParts = append(leftParts, styleModeYellow.Render("⚠ "+m.rateLimitWarning))
 	}
 	left := strings.Join(leftParts, barSep)
 	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit  shift+tab mode") + edgePad

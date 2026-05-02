@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -108,7 +109,7 @@ func newAPIClient(bearer string) *api.Client {
 		entrypoint = "sdk-cli"
 	}
 	ua := fmt.Sprintf("claude-cli/%s (external, %s)", Version, entrypoint)
-	return api.NewClient(api.Config{
+	cfg := api.Config{
 		BaseURL:   auth.ProdConfig.BaseAPIURL,
 		AuthToken: bearer,
 		BetaHeaders: []string{
@@ -129,7 +130,9 @@ func newAPIClient(bearer string) *api.Client {
 			"X-Stainless-Retry-Count":                   "0",
 			"X-Stainless-Timeout":                       "600",
 		},
-	}, nil)
+	}
+	// Use a proxy-aware transport when HTTPS_PROXY / HTTP_PROXY env vars are set.
+	return api.NewClientWithProxy(cfg)
 }
 
 // loadAuth loads and refreshes tokens from the credential store.
@@ -270,13 +273,15 @@ func runREPL(continueMode bool) error {
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
-		Model:     modelName,
-		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
-		MaxTurns:  50,
-		Gate:      gate,
-		Hooks:     &s.Hooks,
-		SessionID: sessionID,
+		Model:          modelName,
+		MaxTokens:      internalmodel.MaxTokens,
+		System:         agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
+		MaxTurns:       50,
+		Gate:           gate,
+		Hooks:          &s.Hooks,
+		SessionID:      sessionID,
+		AutoCompact:    true,
+		ThinkingBudget: thinkingBudget(),
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.
@@ -376,6 +381,18 @@ func runPrint(args []string) error {
 		fmt.Println()
 	}
 	return err
+}
+
+// thinkingBudget returns the token budget for extended thinking from
+// CLAUDE_THINKING_BUDGET env var. 0 means thinking disabled.
+func thinkingBudget() int {
+	if v := os.Getenv("CLAUDE_THINKING_BUDGET"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // keep json import used (for ContentBlock marshaling in history tracking)

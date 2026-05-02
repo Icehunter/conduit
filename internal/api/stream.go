@@ -14,8 +14,11 @@ import (
 
 // Stream is an open SSE connection. Call Next() until io.EOF; always Close().
 type Stream struct {
-	body   io.ReadCloser
-	parser *sse.Parser
+	body        io.ReadCloser
+	parser      *sse.Parser
+	// ResponseHeader holds the HTTP response headers from the initial connection.
+	// Use this to read rate-limit headers (anthropic-ratelimit-*).
+	ResponseHeader http.Header
 }
 
 // Next returns the next non-skipped event, or io.EOF when the stream ends.
@@ -52,7 +55,9 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 		return nil, fmt.Errorf("api: marshal stream request: %w", err)
 	}
 
-	resp, err := c.doStream(ctx, body)
+	resp, err := withRetry(ctx, func() (*http.Response, error) {
+		return c.doStream(ctx, body)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +68,9 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 		if err := c.cfg.OnAuth401(ctx); err != nil {
 			return nil, fmt.Errorf("api: refresh on 401: %w", err)
 		}
-		resp, err = c.doStream(ctx, body)
+		resp, err = withRetry(ctx, func() (*http.Response, error) {
+			return c.doStream(ctx, body)
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -85,8 +92,9 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 	}
 
 	return &Stream{
-		body:   resp.Body,
-		parser: sse.NewParser(resp.Body),
+		body:           resp.Body,
+		parser:         sse.NewParser(resp.Body),
+		ResponseHeader: resp.Header,
 	}, nil
 }
 

@@ -3,18 +3,17 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	colorAccent  = lipgloss.Color("#DA7756") // coral — Claude brand
-	colorMuted   = lipgloss.Color("#555F6E") // darker gray for secondary text
-	colorDim     = lipgloss.Color("#3D4554") // very dim for separators
-	colorError   = lipgloss.Color("#F87171") // red
-	colorTool    = lipgloss.Color("#60A5FA") // blue
-	colorCode    = lipgloss.Color("#A3E635") // green
-	colorFg      = lipgloss.Color("#D4D8E0") // primary text
-	colorCodeBg  = lipgloss.Color("#1A1E2A") // code block background
+	colorAccent = lipgloss.Color("#DA7756") // coral — Claude brand
+	colorMuted  = lipgloss.Color("#555F6E") // gray for secondary text
+	colorDim    = lipgloss.Color("#3D4554") // very dim for separators/status
+	colorError  = lipgloss.Color("#F87171") // red
+	colorTool   = lipgloss.Color("#60A5FA") // blue
+	colorFg     = lipgloss.Color("#D4D8E0") // primary text
+	colorCodeBg = lipgloss.Color("#141820") // code block background (darker)
 )
 
 var (
-	// Message prefixes — compact, single-line
+	// Message prefixes
 	styleYouPrefix = lipgloss.NewStyle().
 			Foreground(colorAccent).
 			Bold(true)
@@ -44,19 +43,26 @@ var (
 			Foreground(colorDim).
 			Italic(true)
 
-	// Code
-	styleCodeBlock = lipgloss.NewStyle().
-			Foreground(colorCode).
-			Background(colorCodeBg).
-			PaddingLeft(2).
-			PaddingRight(2).
-			PaddingTop(0).
-			PaddingBottom(0)
-
+	// Inline code
 	styleInlineCode = lipgloss.NewStyle().
-				Foreground(colorCode)
+			Foreground(lipgloss.Color("#A3E635"))
 
-	// Input box — no padding inside, border does the framing
+	// Code block: rounded border matching input, dark bg, 1-col inner padding
+	styleCodeBorder = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(colorDim).
+				Background(colorCodeBg).
+				PaddingLeft(1).
+				PaddingRight(1).
+				PaddingTop(0).
+				PaddingBottom(0)
+
+	// Language label inside the top border
+	styleCodeLang = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Background(colorCodeBg)
+
+	// Input box borders
 	styleInputBorder = lipgloss.NewStyle().
 				BorderStyle(lipgloss.RoundedBorder()).
 				BorderForeground(colorDim).
@@ -76,11 +82,15 @@ var (
 	styleStatusModel = lipgloss.NewStyle().
 				Foreground(colorMuted)
 
+	styleStatusAccent = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
+
 	// Spinner
 	styleSpinner = lipgloss.NewStyle().
 			Foreground(colorAccent)
 
-	// Separator line between messages
+	// Separator between messages
 	styleSep = lipgloss.NewStyle().
 			Foreground(colorDim)
 )

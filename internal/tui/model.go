@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -82,6 +83,13 @@ type Model struct {
 	cancelTurn context.CancelFunc
 	streaming  string
 
+	// Cost tracking — updated by agent events.
+	totalInputTokens  int
+	totalOutputTokens int
+	// Rough cost: opus-4-7 is $15/$75 per M tokens in/out.
+	// We track a running estimate.
+	costUSD float64
+
 	vpReady bool
 }
 
@@ -144,6 +152,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 		} else if msg.err == nil {
 			m.history = msg.history
+			// Tally tokens from history for context% and cost display.
+			m.tallyTokens()
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -335,18 +345,79 @@ func (m Model) View() string {
 	}
 	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
 
-	// ── status bar ───────────────────────────────────────────────────────
-	left := styleStatus.Render("claude-go " + m.cfg.Version)
-	mid := styleStatusModel.Render(m.cfg.ModelName)
-	right := styleStatus.Render("^C interrupt · /clear · /exit")
-	// right-align: pad left side to push right to edge
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(mid) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+	// ── status bar — mirrors Claude Code's format ────────────────────────
+	// Left: app name  |  Center: model · context · cost  |  Right: shortcuts
+	appName := styleStatusAccent.Render("claude-go")
+
+	modelSeg := styleStatusModel.Render(shortModelName(m.cfg.ModelName))
+
+	var costSeg string
+	if m.costUSD > 0 {
+		costSeg = styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD))
 	}
-	statusBar := left +
-		strings.Repeat(" ", gap/2) + mid +
-		strings.Repeat(" ", gap-gap/2) + right
+
+	// Context % — rough proxy: 200k window, count tokens we've used.
+	var ctxSeg string
+	totalToks := m.totalInputTokens + m.totalOutputTokens
+	if totalToks > 0 {
+		pct := totalToks * 100 / 200000
+		if pct > 100 {
+			pct = 100
+		}
+		ctxSeg = styleStatus.Render(fmt.Sprintf("%d%% ctx", pct))
+	}
+
+	// Build center segment.
+	var midParts []string
+	midParts = append(midParts, modelSeg)
+	if ctxSeg != "" {
+		midParts = append(midParts, ctxSeg)
+	}
+	if costSeg != "" {
+		midParts = append(midParts, costSeg)
+	}
+	mid := strings.Join(midParts, styleStatus.Render(" | "))
+
+	right := styleStatus.Render("^C interrupt  /clear  /exit")
+
+	// Three-column layout.
+	leftW := lipgloss.Width(appName)
+	midW := lipgloss.Width(mid)
+	rightW := lipgloss.Width(right)
+	space := m.width - leftW - midW - rightW
+	if space < 2 {
+		space = 2
+	}
+	leftPad := space / 2
+	rightPad := space - leftPad
+	statusBar := appName +
+		strings.Repeat(" ", leftPad) + mid +
+		strings.Repeat(" ", rightPad) + right
 
 	return lipgloss.JoinVertical(lipgloss.Left, vp, spinRow, inputBox, statusBar)
+}
+
+// tallyTokens estimates total tokens and cost from the conversation history.
+// Rough character-based estimate: 1 token ≈ 4 chars.
+func (m *Model) tallyTokens() {
+	total := 0
+	for _, msg := range m.history {
+		for _, b := range msg.Content {
+			total += len(b.Text) / 4
+		}
+	}
+	m.totalInputTokens = total
+	// Opus 4.7 pricing: $15/$75 per M in/out — use blended $45/M as rough estimate.
+	m.costUSD = float64(total) * 45.0 / 1_000_000
+}
+
+// shortModelName strips the "claude-" prefix for compact display.
+func shortModelName(name string) string {
+	name = strings.TrimPrefix(name, "claude-")
+	// "opus-4-7" → "Opus 4.7"  etc.
+	parts := strings.SplitN(name, "-", 3)
+	if len(parts) >= 1 {
+		parts[0] = strings.Title(parts[0]) //nolint:staticcheck
+	}
+	return strings.Join(parts, " ")
 }

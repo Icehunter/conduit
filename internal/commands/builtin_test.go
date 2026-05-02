@@ -131,3 +131,57 @@ func TestRegisterHooksCommand_EmptyHooks(t *testing.T) {
 		t.Errorf("empty hooks should show '(none)', got: %q", result.Text)
 	}
 }
+
+func TestRewindCommand_NoCallback(t *testing.T) {
+	r := New()
+	state := &SessionState{}
+	RegisterSessionCommands(r, state)
+
+	result, ok := r.Dispatch("/rewind")
+	if !ok {
+		t.Fatal("expected /rewind to be registered")
+	}
+	if result.Type != "text" {
+		t.Errorf("result type = %q, want 'text'", result.Type)
+	}
+}
+
+func TestRewindCommand_WithCallback_DefaultN(t *testing.T) {
+	removed := 0
+	r := New()
+	state := &SessionState{
+		Rewind: func(n int) int {
+			removed = n
+			return n
+		},
+	}
+	RegisterSessionCommands(r, state)
+
+	result, _ := r.Dispatch("/rewind")
+	if result.Type != "rewind" {
+		t.Errorf("expected type 'rewind'; got %q", result.Type)
+	}
+	if removed != 1 {
+		t.Errorf("expected Rewind(1) called; got Rewind(%d)", removed)
+	}
+}
+
+func TestRewindCommand_WithCallback_ExplicitN(t *testing.T) {
+	removed := 0
+	r := New()
+	state := &SessionState{
+		Rewind: func(n int) int {
+			removed = n
+			return n
+		},
+	}
+	RegisterSessionCommands(r, state)
+
+	result, _ := r.Dispatch("/rewind 3")
+	if result.Type != "rewind" {
+		t.Errorf("expected type 'rewind'; got %q", result.Type)
+	}
+	if removed != 3 {
+		t.Errorf("expected Rewind(3) called; got Rewind(%d)", removed)
+	}
+}

@@ -134,7 +134,7 @@ func BuildPrompt(cwd string) string {
 	sb.WriteByte('\n')
 
 	// How to save (2-step: write file + update MEMORY.md index).
-	sb.WriteString(fmt.Sprintf(howToSaveSection, EntrypointName, MaxLines, EntrypointName))
+	sb.WriteString(fmt.Sprintf(howToSaveSection, EntrypointName, EntrypointName, EntrypointName, MaxLines))
 	sb.WriteByte('\n')
 
 	// When to access.

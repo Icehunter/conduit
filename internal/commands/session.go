@@ -23,6 +23,9 @@ type SessionState struct {
 	Logout      func() error
 	GetHistory  func() []string // message contents for /files, /context
 	GetCwd      func() string
+	// Rewind removes the last n conversation turns from in-memory history.
+	// Returns the number of turns actually removed.
+	Rewind      func(n int) int
 }
 
 // RegisterSessionCommands registers all session-dependent slash commands.
@@ -350,12 +353,22 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /rewind — depends on session history snapshots (stub)
+	// /rewind [n] — remove the last n turns (default 1) from in-memory history
 	r.Register(Command{
 		Name:        "rewind",
-		Description: "Rewind conversation to a previous point",
-		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Rewind is not yet implemented. Use /resume to load a previous session."}
+		Description: "Rewind conversation by N turns (default 1). /rewind 3 removes last 3 exchanges.",
+		Handler: func(args string) Result {
+			if state.Rewind == nil {
+				return Result{Type: "text", Text: "Rewind is not available in this session."}
+			}
+			n := 1
+			if trimmed := strings.TrimSpace(args); trimmed != "" {
+				if _, err := fmt.Sscanf(trimmed, "%d", &n); err != nil || n < 1 {
+					return Result{Type: "error", Text: "Usage: /rewind [n] — n must be a positive integer"}
+				}
+			}
+			removed := state.Rewind(n)
+			return Result{Type: "rewind", Text: fmt.Sprintf("%d", removed)}
 		},
 	})
 

@@ -117,13 +117,15 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return modelPtr.CostSummary()
 		},
 		Logout: func() error {
-			// Perform logout by deleting the credentials from the keychain.
 			return logoutCredentials()
 		},
 		GetCwd: func() string {
 			cwd, _ := os.Getwd()
 			return cwd
 		},
+		// Rewind passes through n — the actual history mutation happens in
+		// applyCommandResult when it receives the "rewind" result type.
+		Rewind: func(n int) int { return n },
 	}
 	commands.RegisterSessionCommands(reg, state)
 

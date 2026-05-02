@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/hooks"
@@ -32,6 +33,10 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 )
+
+// maxConcurrentTools is the worker pool size for parallel tool execution.
+// Mirrors the coordinator's concurrency limit in src/coordinator/coordinatorMode.ts.
+const maxConcurrentTools = 4
 
 // EventType identifies what kind of loop event the caller receives.
 type EventType int
@@ -372,27 +377,39 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 //  2. PreToolUse hooks (if configured).
 //  3. Tool execution.
 //  4. PostToolUse hooks (if configured).
+// toolTask holds the pre-checked state for one tool ready to execute.
+type toolTask struct {
+	block    api.ContentBlock
+	rawInput json.RawMessage
+	tool     tool.Tool // nil if tool not found or permission denied
+	denied   bool
+	denyMsg  string
+}
+
+// toolResult holds the outcome of one tool execution.
+type toolResult struct {
+	idx     int
+	text    string
+	isError bool
+}
+
 func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, error) {
-	var results []api.ContentBlock
+	// Phase 1: collect tool_use blocks and run interactive checks serially
+	// (hooks + permission gate may prompt the user — must be sequential).
+	var tasks []toolTask
 	for _, block := range assistantBlocks {
 		if block.Type != "tool_use" {
 			continue
 		}
-
 		rawInput, _ := json.Marshal(block.Input)
 		if rawInput == nil {
 			rawInput = json.RawMessage("{}")
 		}
-
-		// Extract the meaningful input string for permission rule matching.
-		// Rules like Bash(git log *) match against the command, not raw JSON.
 		permInput := toolPermissionInput(block.Name, block.Input)
 
-		var resultText string
-		var isError bool
+		task := toolTask{block: block, rawInput: rawInput}
 
-		// --- PreToolUse hooks (run before permission gate, mirroring TS order) ---
-		// A hook returning approve=true skips the interactive AskPermission prompt.
+		// --- PreToolUse hooks ---
 		hookApproved := false
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PreToolUse) > 0 {
 			inputMap := block.Input
@@ -406,10 +423,9 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				if reason == "" {
 					reason = "blocked by PreToolUse hook"
 				}
-				resultText = "Tool blocked by hook: " + reason
-				isError = true
-				handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: isError})
-				results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: isError, ResultContent: resultText})
+				task.denied = true
+				task.denyMsg = "Tool blocked by hook: " + reason
+				tasks = append(tasks, task)
 				continue
 			}
 			hookApproved = r.Approved
@@ -420,66 +436,123 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			decision := l.cfg.Gate.Check(block.Name, permInput)
 			switch decision {
 			case permissions.DecisionDeny:
-				resultText = "Tool denied by permission rules"
-				isError = true
-				handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: isError})
-				results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: isError, ResultContent: resultText})
+				task.denied = true
+				task.denyMsg = "Tool denied by permission rules"
+				tasks = append(tasks, task)
 				continue
 			case permissions.DecisionAsk:
 				if !hookApproved && l.cfg.AskPermission != nil {
 					allow, alwaysAllow := l.cfg.AskPermission(ctx, block.Name, permInput)
 					if !allow {
-						resultText = fmt.Sprintf("%s denied by user", block.Name)
-						isError = true
-						handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: true})
-						results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: true, ResultContent: resultText})
+						task.denied = true
+						task.denyMsg = fmt.Sprintf("%s denied by user", block.Name)
+						tasks = append(tasks, task)
 						continue
 					}
 					if alwaysAllow {
 						l.cfg.Gate.AllowForSession(permissions.SuggestRule(block.Name, permInput))
 					}
 				}
-				// fall through to execution (hook approved or user allowed)
 			}
-			// DecisionAllow: proceed normally.
 		}
 
-		// --- Tool execution ---
+		// Resolve the tool for execution.
 		t, ok := l.reg.Lookup(block.Name)
 		if !ok {
-			resultText = fmt.Sprintf("Tool %q not found", block.Name)
-			isError = true
+			task.denied = true
+			task.denyMsg = fmt.Sprintf("Tool %q not found", block.Name)
 		} else {
-			res, err := t.Execute(ctx, rawInput)
-			if err != nil {
-				resultText = fmt.Sprintf("tool error: %v", err)
-				isError = true
-			} else {
-				if len(res.Content) > 0 {
-					resultText = res.Content[0].Text
+			task.tool = t
+		}
+		tasks = append(tasks, task)
+	}
+
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+
+	// Phase 2: execute tools. Run concurrency-safe tools in parallel (bounded
+	// pool of maxConcurrentTools); non-safe or denied tools emit inline.
+	taskResults := make([]toolResult, len(tasks))
+
+	// Separate into parallel-eligible and must-be-serial.
+	type workItem struct{ idx int; task toolTask }
+	var parallel, serial []workItem
+	for i, task := range tasks {
+		if task.denied || task.tool == nil {
+			serial = append(serial, workItem{i, task})
+			continue
+		}
+		if task.tool.IsConcurrencySafe(task.rawInput) {
+			parallel = append(parallel, workItem{i, task})
+		} else {
+			serial = append(serial, workItem{i, task})
+		}
+	}
+
+	// Run parallel tasks with a bounded worker pool.
+	if len(parallel) > 0 {
+		sem := make(chan struct{}, maxConcurrentTools)
+		var wg sync.WaitGroup
+		for _, wi := range parallel {
+			wi := wi
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				res, err := wi.task.tool.Execute(ctx, wi.task.rawInput)
+				if err != nil {
+					taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true}
+					return
 				}
-				isError = res.IsError
-			}
+				text := ""
+				if len(res.Content) > 0 {
+					text = res.Content[0].Text
+				}
+				taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError}
+			}()
 		}
+		wg.Wait()
+	}
 
-		// --- PostToolUse hooks ---
-		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PostToolUse) > 0 && !isError {
-			hooks.RunPostToolUse(ctx, l.cfg.Hooks.PostToolUse, l.cfg.SessionID, block.Name, resultText)
+	// Run serial tasks (denied, not-found, or not concurrency-safe).
+	for _, wi := range serial {
+		if wi.task.denied || wi.task.tool == nil {
+			taskResults[wi.idx] = toolResult{idx: wi.idx, text: wi.task.denyMsg, isError: true}
+			continue
 		}
+		res, err := wi.task.tool.Execute(ctx, wi.task.rawInput)
+		if err != nil {
+			taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true}
+			continue
+		}
+		text := ""
+		if len(res.Content) > 0 {
+			text = res.Content[0].Text
+		}
+		taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError}
+	}
 
+	// Phase 3: assemble results in original order + run PostToolUse hooks.
+	var results []api.ContentBlock
+	for i, task := range tasks {
+		tr := taskResults[i]
+		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PostToolUse) > 0 && !tr.isError {
+			hooks.RunPostToolUse(ctx, l.cfg.Hooks.PostToolUse, l.cfg.SessionID, task.block.Name, tr.text)
+		}
 		handler(LoopEvent{
 			Type:       EventToolResult,
-			ToolID:     block.ID,
-			ToolName:   block.Name,
-			ResultText: resultText,
-			IsError:    isError,
+			ToolID:     task.block.ID,
+			ToolName:   task.block.Name,
+			ResultText: tr.text,
+			IsError:    tr.isError,
 		})
-
 		results = append(results, api.ContentBlock{
 			Type:          "tool_result",
-			ToolUseID:     block.ID,
-			IsError:       isError,
-			ResultContent: resultText,
+			ToolUseID:     task.block.ID,
+			IsError:       tr.isError,
+			ResultContent: tr.text,
 		})
 	}
 	return results, nil

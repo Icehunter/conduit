@@ -2021,6 +2021,41 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case "rewind":
+		// res.Text is the number of turns removed (as string from the command).
+		// Trim from m.history: each "turn" is one user+assistant message pair.
+		n := 1
+		fmt.Sscanf(res.Text, "%d", &n)
+		removed := 0
+		for i := 0; i < n && len(m.history) >= 2; i++ {
+			// Remove the last user+assistant pair from the API history.
+			m.history = m.history[:len(m.history)-2]
+			removed++
+		}
+		// Also trim display messages — keep system messages, remove last n user+assistant pairs.
+		for i := 0; i < removed; i++ {
+			// Walk backwards to find and remove the last assistant then user display message.
+			for j := len(m.messages) - 1; j >= 0; j-- {
+				if m.messages[j].Role == RoleAssistant {
+					m.messages = append(m.messages[:j], m.messages[j+1:]...)
+					break
+				}
+			}
+			for j := len(m.messages) - 1; j >= 0; j-- {
+				if m.messages[j].Role == RoleUser {
+					m.messages = append(m.messages[:j], m.messages[j+1:]...)
+					break
+				}
+			}
+		}
+		if removed > 0 {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Rewound %d turn(s).", removed)})
+		} else {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Nothing to rewind."})
+		}
+		m.refreshViewport()
+		return m, nil
+
 	case "export":
 		path := res.Text
 		if err := m.exportConversation(path); err != nil {

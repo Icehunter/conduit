@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/permissions"
@@ -441,6 +443,179 @@ func TestLoop_PreToolUseHookBlocks(t *testing.T) {
 	if !strings.Contains(toolResults[0].ResultText, "hook") {
 		t.Errorf("result text should mention hook, got: %q", toolResults[0].ResultText)
 	}
+}
+
+// twoToolUseSSE builds an SSE stream where the model calls two tools in one turn.
+// Only contains the tool_use message (stop_reason=tool_use); the caller provides
+// a separate SSE body for the follow-up response.
+func twoToolUseSSE(tool1Name, tool1ID, tool2Name, tool2ID string) string {
+	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + tool1ID + "\",\"name\":\"" + tool1Name + "\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + tool2ID + "\",\"name\":\"" + tool2Name + "\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+}
+
+func TestLoop_ParallelTools_BothExecute(t *testing.T) {
+	var calls []string
+	var mu sync.Mutex
+
+	reg := tool.NewRegistry()
+	reg.Register(&callRecordingTool{name: "ToolA", result: "a-result", calls: &calls, mu: &mu})
+	reg.Register(&callRecordingTool{name: "ToolB", result: "b-result", calls: &calls, mu: &mu})
+
+	// Two HTTP responses: first with two tool_use blocks, second with text.
+	sse1 := twoToolUseSSE("ToolA", "toolu_01", "ToolB", "toolu_02")
+	sse2 := textOnlySSE("done")
+
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{})
+	defer srv.Close()
+
+	var toolResults []LoopEvent
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults = append(toolResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolResults) != 2 {
+		t.Fatalf("expected 2 tool results; got %d", len(toolResults))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 2 {
+		t.Errorf("expected both tools called; got %v", calls)
+	}
+}
+
+func TestLoop_ParallelTools_ResultOrderPreserved(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "ToolA", result: "result-a"})
+	reg.Register(&fakeTool{name: "ToolB", result: "result-b"})
+
+	sse1 := twoToolUseSSE("ToolA", "toolu_01", "ToolB", "toolu_02")
+	sse2 := textOnlySSE("done")
+
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{})
+	defer srv.Close()
+
+	var toolResults []LoopEvent
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults = append(toolResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolResults) != 2 {
+		t.Fatalf("expected 2 tool results; got %d", len(toolResults))
+	}
+	if toolResults[0].ToolName != "ToolA" {
+		t.Errorf("expected first result from ToolA; got %q", toolResults[0].ToolName)
+	}
+	if toolResults[1].ToolName != "ToolB" {
+		t.Errorf("expected second result from ToolB; got %q", toolResults[1].ToolName)
+	}
+}
+
+func TestLoop_ParallelTools_ConcurrentExecution(t *testing.T) {
+	// Two slow tools should complete faster together than sequentially.
+	// We use a barrier to verify both Execute calls are active simultaneously.
+	started := make(chan struct{}, 2)
+	barrier := make(chan struct{})
+
+	reg := tool.NewRegistry()
+	reg.Register(&barrierTool{name: "ToolA", result: "a", started: started, barrier: barrier})
+	reg.Register(&barrierTool{name: "ToolB", result: "b", started: started, barrier: barrier})
+
+	sse1 := twoToolUseSSE("ToolA", "toolu_01", "ToolB", "toolu_02")
+	sse2 := textOnlySSE("done")
+
+	lp, srv := newTestLoopWithConfig(t, []string{sse1, sse2}, reg, LoopConfig{})
+	defer srv.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := lp.Run(context.Background(), []api.Message{
+			{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}},
+		}, func(LoopEvent) {})
+		done <- err
+	}()
+
+	// Wait for both tools to start, then release the barrier.
+	// If tools were sequential, the second would never start while the first is blocked.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-timer.C:
+			t.Fatal("timeout waiting for both tools to start (not running concurrently)")
+		}
+	}
+	close(barrier) // release both tools
+
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+// barrierTool blocks until a barrier channel is closed, for concurrency testing.
+type barrierTool struct {
+	name    string
+	result  string
+	started chan<- struct{}
+	barrier <-chan struct{}
+}
+
+func (b *barrierTool) Name() string             { return b.name }
+func (b *barrierTool) Description() string      { return "barrier" }
+func (b *barrierTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (b *barrierTool) IsReadOnly(_ json.RawMessage) bool        { return true }
+func (b *barrierTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
+func (b *barrierTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
+	b.started <- struct{}{}
+	select {
+	case <-b.barrier:
+	case <-ctx.Done():
+		return tool.ErrorResult("cancelled"), nil
+	}
+	return tool.TextResult(b.result), nil
+}
+
+// callRecordingTool records which tool was called (for parallel concurrency checks).
+type callRecordingTool struct {
+	name   string
+	result string
+	calls  *[]string
+	mu     *sync.Mutex
+}
+
+func (c *callRecordingTool) Name() string             { return c.name }
+func (c *callRecordingTool) Description() string      { return "records calls" }
+func (c *callRecordingTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (c *callRecordingTool) IsReadOnly(_ json.RawMessage) bool        { return true }
+func (c *callRecordingTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
+func (c *callRecordingTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
+	c.mu.Lock()
+	*c.calls = append(*c.calls, c.name)
+	c.mu.Unlock()
+	return tool.TextResult(c.result), nil
 }
 
 func TestLoop_NoGateAllowsAll(t *testing.T) {

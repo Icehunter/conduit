@@ -45,7 +45,10 @@ func renderMessage(msg Message, width int) string {
 		return pad + styleErrorText.Render("✗ "+msg.Content)
 
 	case RoleSystem:
-		return pad + styleSystemText.Render("· "+msg.Content)
+		// Indent continuation lines to align with text after "· ".
+		const sysPrefix = "· "
+		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
+		return pad + styleSystemText.Render(sysPrefix+content)
 	}
 	return msg.Content
 }

@@ -77,9 +77,13 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 }
 
 // Run executes the agentic loop starting with the given messages. handler is
-// called synchronously for each event; it must not block. Returns nil on
-// clean end_turn; returns an error on API failure or context cancellation.
-func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(LoopEvent)) error {
+// called synchronously for each event; it must not block.
+//
+// Returns the full accumulated message history (including all tool turns) and
+// nil error on clean end_turn. On error, returns whatever history was built
+// before the failure. Callers should replace their history slice with the
+// returned messages to correctly track multi-turn tool use.
+func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(LoopEvent)) ([]api.Message, error) {
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
 
@@ -89,10 +93,10 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	turn := 0
 	for {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return msgs, ctx.Err()
 		}
 		if l.cfg.MaxTurns > 0 && turn >= l.cfg.MaxTurns {
-			return nil
+			return msgs, nil
 		}
 		turn++
 
@@ -108,16 +112,16 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 		stream, err := l.client.StreamMessage(ctx, req)
 		if err != nil {
-			return fmt.Errorf("agent: stream: %w", err)
+			return msgs, fmt.Errorf("agent: stream: %w", err)
 		}
 
 		assistantBlocks, stopReason, err := l.drainStream(ctx, stream, handler)
 		stream.Close()
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
+				return msgs, err
 			}
-			return fmt.Errorf("agent: drain: %w", err)
+			return msgs, fmt.Errorf("agent: drain: %w", err)
 		}
 
 		// Append the assistant message to history.
@@ -128,13 +132,13 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 		if stopReason != "tool_use" {
 			// end_turn or unknown — we're done.
-			return nil
+			return msgs, nil
 		}
 
 		// Execute tools, build a user message with all tool_results.
 		toolResults, err := l.executeTools(ctx, assistantBlocks, handler)
 		if err != nil {
-			return fmt.Errorf("agent: execute tools: %w", err)
+			return msgs, fmt.Errorf("agent: execute tools: %w", err)
 		}
 		msgs = append(msgs, api.Message{
 			Role:    "user",

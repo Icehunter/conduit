@@ -204,57 +204,35 @@ func runREPL() error {
 		})
 
 		// Run one agent turn (may make multiple API calls for tool use).
-		var assistantText strings.Builder
-		var toolResultMsgs []api.ContentBlock
-
-		runErr := lp.Run(ctx, history, func(ev agent.LoopEvent) {
+		// Loop.Run returns the full accumulated history so we don't need to
+		// reconstruct it from events.
+		newHistory, runErr := lp.Run(ctx, history, func(ev agent.LoopEvent) {
 			switch ev.Type {
 			case agent.EventText:
 				fmt.Print(ev.Text)
-				assistantText.WriteString(ev.Text)
 			case agent.EventToolUse:
 				fmt.Fprintf(os.Stderr, "\n[tool: %s]\n", ev.ToolName)
 			case agent.EventToolResult:
 				if ev.IsError {
 					fmt.Fprintf(os.Stderr, "[tool error: %s]\n", ev.ResultText)
 				}
-				toolResultMsgs = append(toolResultMsgs, api.ContentBlock{
-					Type:          "tool_result",
-					ToolUseID:     ev.ToolID,
-					IsError:       ev.IsError,
-					ResultContent: ev.ResultText,
-				})
 			}
 		})
 		fmt.Println()
 
+		// Always adopt whatever history the loop built, even on error, so the
+		// next turn starts from the correct state.
+		history = newHistory
+
 		if runErr != nil {
 			if errors.Is(runErr, context.Canceled) {
 				fmt.Fprintln(os.Stderr, "[interrupted]")
-				// Reset context for next turn.
 				ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 				_ = cancel
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "error: %v\n", runErr)
 			continue
-		}
-
-		// Append assistant response to history.
-		// The Loop already handled tool dispatch internally; the history we
-		// maintain here needs both the assistant message and the tool results
-		// from the last tool-use turn.
-		if assistantText.Len() > 0 {
-			history = append(history, api.Message{
-				Role:    "assistant",
-				Content: []api.ContentBlock{{Type: "text", Text: assistantText.String()}},
-			})
-		}
-		if len(toolResultMsgs) > 0 {
-			history = append(history, api.Message{
-				Role:    "user",
-				Content: toolResultMsgs,
-			})
 		}
 	}
 
@@ -361,7 +339,7 @@ func runPrint(args []string) error {
 		MaxTurns:  10,
 	})
 
-	return lp.Run(ctx, []api.Message{{
+	_, err = lp.Run(ctx, []api.Message{{
 		Role:    "user",
 		Content: []api.ContentBlock{{Type: "text", Text: prompt}},
 	}}, func(ev agent.LoopEvent) {
@@ -369,6 +347,10 @@ func runPrint(args []string) error {
 			fmt.Print(ev.Text)
 		}
 	})
+	if err != nil {
+		fmt.Println()
+	}
+	return err
 }
 
 // keep json import used (for ContentBlock marshaling in history tracking)

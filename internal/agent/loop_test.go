@@ -95,7 +95,7 @@ func TestLoop_TextOnlyResponse(t *testing.T) {
 	defer srv.Close()
 
 	var texts []string
-	err := lp.Run(context.Background(), []api.Message{
+	_, err := lp.Run(context.Background(), []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
 	}, func(ev LoopEvent) {
 		if ev.Type == EventText {
@@ -125,7 +125,7 @@ func TestLoop_ToolUseDispatchAndContinue(t *testing.T) {
 
 	var texts []string
 	var toolCalls []string
-	err := lp.Run(context.Background(), []api.Message{
+	_, err := lp.Run(context.Background(), []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run something"}}},
 	}, func(ev LoopEvent) {
 		switch ev.Type {
@@ -164,7 +164,7 @@ func TestLoop_UnknownToolReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	var toolEvents []LoopEvent
-	err := lp.Run(context.Background(), []api.Message{
+	_, err := lp.Run(context.Background(), []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
 	}, func(ev LoopEvent) {
 		if ev.Type == EventToolResult {
@@ -201,7 +201,7 @@ func TestLoop_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := lp.Run(ctx, []api.Message{
+	_, err := lp.Run(ctx, []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
 	}, func(ev LoopEvent) {})
 	if err == nil {
@@ -235,7 +235,7 @@ func TestLoop_MaxTurnsRespected(t *testing.T) {
 		MaxTurns:  3,
 	})
 
-	_ = lp.Run(context.Background(), []api.Message{
+	_, _ = lp.Run(context.Background(), []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "loop"}}},
 	}, func(ev LoopEvent) {})
 
@@ -255,7 +255,7 @@ func TestLoop_APIError(t *testing.T) {
 	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
 	lp := NewLoop(c, reg, LoopConfig{Model: "m", MaxTokens: 1})
 
-	err := lp.Run(context.Background(), []api.Message{
+	_, err := lp.Run(context.Background(), []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
 	}, func(ev LoopEvent) {})
 	if err == nil {
@@ -282,7 +282,7 @@ func TestLoop_ToolResultErrorPropagated(t *testing.T) {
 	defer srv.Close()
 
 	var errResults []LoopEvent
-	err := lp.Run(context.Background(), []api.Message{
+	_, err := lp.Run(context.Background(), []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run"}}},
 	}, func(ev LoopEvent) {
 		if ev.Type == EventToolResult && ev.IsError {

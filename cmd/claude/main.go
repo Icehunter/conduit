@@ -34,6 +34,8 @@ import (
 	"github.com/icehunter/claude-go/internal/tools/filewritetool"
 	"github.com/icehunter/claude-go/internal/tools/globtool"
 	"github.com/icehunter/claude-go/internal/tools/greptool"
+	"github.com/icehunter/claude-go/internal/tools/todowritetool"
+	"github.com/icehunter/claude-go/internal/tools/webfetchtool"
 	"github.com/icehunter/claude-go/internal/tui"
 )
 
@@ -125,7 +127,7 @@ func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	return auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
 }
 
-// buildRegistry builds the tool registry with all M4 tools.
+// buildRegistry builds the tool registry.
 func buildRegistry() *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
@@ -134,6 +136,8 @@ func buildRegistry() *tool.Registry {
 	reg.Register(filewritetool.New())
 	reg.Register(globtool.New())
 	reg.Register(greptool.New())
+	reg.Register(todowritetool.New())
+	reg.Register(webfetchtool.New())
 	return reg
 }
 

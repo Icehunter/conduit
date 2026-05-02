@@ -87,6 +87,10 @@ type Model struct {
 	streaming   string
 	turnID      int // incremented each turn; agentDoneMsg with stale ID is ignored
 
+	// slash command picker state
+	cmdMatches  []commands.Command // currently matching commands
+	cmdSelected int                // selected index in cmdMatches
+
 	totalInputTokens  int
 	totalOutputTokens int
 	costUSD           float64
@@ -199,19 +203,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.input, taCmd = m.input.Update(msg)
 	m.vp, vpCmd = m.vp.Update(msg)
 	cmds = append(cmds, taCmd, vpCmd)
+
+	// Recompute command picker matches after every key so the list stays live.
+	if !m.running && m.cfg.Commands != nil {
+		m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
+	}
+
 	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-	case "tab":
-		if !m.running && m.cfg.Commands != nil {
+	case "up":
+		if len(m.cmdMatches) > 0 {
+			if m.cmdSelected > 0 {
+				m.cmdSelected--
+			}
+			return m, nil
+		}
+
+	case "down":
+		if len(m.cmdMatches) > 0 {
+			if m.cmdSelected < len(m.cmdMatches)-1 {
+				m.cmdSelected++
+			}
+			return m, nil
+		}
+
+	case "tab", "escape":
+		if len(m.cmdMatches) > 0 {
+			if msg.String() == "tab" {
+				// Accept selected match.
+				m.input.SetValue("/" + m.cmdMatches[m.cmdSelected].Name + " ")
+				m.input.CursorEnd()
+			}
+			m.cmdMatches = nil
+			m.cmdSelected = 0
+			return m, nil
+		}
+		if msg.String() == "tab" && !m.running && m.cfg.Commands != nil {
+			// Fallback tab completion when picker isn't open.
 			text := m.input.Value()
 			if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
 				completed := m.tabComplete(text)
 				if completed != text {
 					m.input.SetValue(completed)
-					// Move cursor to end.
 					m.input.CursorEnd()
 				}
 			}
@@ -261,6 +297,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if m.running {
 			return m, nil
 		}
+
+		// If the command picker is open, select the highlighted entry.
+		if len(m.cmdMatches) > 0 {
+			selected := m.cmdMatches[m.cmdSelected]
+			m.cmdMatches = nil
+			m.cmdSelected = 0
+			m.input.SetValue("/" + selected.Name + " ")
+			m.input.CursorEnd()
+			return m, nil
+		}
+
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			return m, nil
@@ -307,6 +354,75 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// renderCommandPicker renders the slash command picker dropdown.
+func (m Model) renderCommandPicker() string {
+	const maxItems = 8
+	nameColW := 14
+
+	// Compute visible window around the selected index.
+	start := m.cmdSelected - maxItems/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxItems
+	if end > len(m.cmdMatches) {
+		end = len(m.cmdMatches)
+		start = end - maxItems
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	descMax := m.width - nameColW - 10
+	var sb strings.Builder
+	for i := start; i < end; i++ {
+		cmd := m.cmdMatches[i]
+		name := fmt.Sprintf("/%-*s", nameColW, cmd.Name)
+		desc := cmd.Description
+		if descMax > 10 && len(desc) > descMax {
+			desc = desc[:descMax] + "…"
+		}
+		var line string
+		if i == m.cmdSelected {
+			line = stylePickerItemSelected.Render(name) + "  " + stylePickerDesc.Render(desc)
+		} else {
+			line = stylePickerItem.Render(name) + "  " + stylePickerDesc.Render(desc)
+		}
+		sb.WriteString(line)
+		if i < end-1 {
+			sb.WriteByte('\n')
+		}
+	}
+
+	return stylePickerBorder.Width(m.width - 2).Render(sb.String())
+}
+
+// computeCommandMatches returns commands matching the current input and resets
+// the selection index if the match set changed.
+func (m Model) computeCommandMatches() ([]commands.Command, int) {
+	text := m.input.Value()
+	if !strings.HasPrefix(text, "/") || strings.Contains(text, " ") || m.running {
+		return nil, 0
+	}
+	query := strings.ToLower(strings.TrimPrefix(text, "/"))
+	all := m.cfg.Commands.All()
+	var matches []commands.Command
+	for _, c := range all {
+		if c.Name == "quit" {
+			continue // deduplicate with exit
+		}
+		if strings.Contains(c.Name, query) || strings.Contains(strings.ToLower(c.Description), query) {
+			matches = append(matches, c)
+		}
+	}
+	// Preserve selection if the same set, otherwise reset.
+	sel := m.cmdSelected
+	if sel >= len(matches) {
+		sel = 0
+	}
+	return matches, sel
 }
 
 // tabComplete returns the best completion for a partial slash command.
@@ -545,13 +661,21 @@ func (m Model) View() string {
 	rPad := space - lPad
 	statusBar := appName + strings.Repeat(" ", lPad) + mid + strings.Repeat(" ", rPad) + right
 
+	// Command picker — rendered just above the input box when active.
+	var pickerBox string
+	if len(m.cmdMatches) > 0 {
+		pickerBox = m.renderCommandPicker()
+	}
+
 	// JoinVertical with explicit newlines between non-empty parts.
 	parts := []string{vp}
 	if spinRow != "" {
 		parts = append(parts, spinRow)
 	} else {
-		// blank line holds the space so input doesn't jump up
 		parts = append(parts, "")
+	}
+	if pickerBox != "" {
+		parts = append(parts, pickerBox)
 	}
 	parts = append(parts, inputBox, statusBar)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)

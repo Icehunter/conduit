@@ -77,4 +77,19 @@ var (
 
 	styleSep = lipgloss.NewStyle().
 			Foreground(colorDim)
+
+	// Command picker
+	stylePickerBorder = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(colorAccent).
+				PaddingLeft(1).PaddingRight(1)
+
+	stylePickerItem = lipgloss.NewStyle().
+				Foreground(colorFg)
+
+	stylePickerItemSelected = lipgloss.NewStyle().
+					Foreground(colorAccent).Bold(true)
+
+	stylePickerDesc = lipgloss.NewStyle().
+				Foreground(colorMuted)
 )

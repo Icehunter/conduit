@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -157,7 +158,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		if msg.err == context.Canceled {
+		if errors.Is(msg.err, context.Canceled) {
 			// Trim the dangling user message from history so the next turn
 			// starts from a clean state. The user message was appended before
 			// the loop ran; without a paired assistant reply it would confuse

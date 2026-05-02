@@ -157,9 +157,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		if msg.err != nil && msg.err != context.Canceled {
+		if msg.err == context.Canceled {
+			// Trim the dangling user message from history so the next turn
+			// starts from a clean state. The user message was appended before
+			// the loop ran; without a paired assistant reply it would confuse
+			// the model on the next request.
+			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
+				m.history = m.history[:len(m.history)-1]
+			}
+		} else if msg.err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
-		} else if msg.err == nil {
+		} else {
 			m.history = msg.history
 			m.tallyTokens()
 		}

@@ -1,17 +1,18 @@
 // Package main is the claude-go entrypoint.
 //
-// M1 surface:
+// M2 surface:
 //
+//	claude                      Interactive REPL (streaming, with tools).
 //	claude login                Run OAuth flow, persist tokens.
 //	claude logout               Clear persisted tokens.
 //	claude --print "prompt"     One-shot non-streaming Messages call.
 //	claude version              Print binary version.
-//
-// Subcommands grow per milestone (M2 adds streaming + tools + REPL, etc.).
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,7 +26,14 @@ import (
 	"github.com/icehunter/claude-go/internal/agent"
 	"github.com/icehunter/claude-go/internal/api"
 	"github.com/icehunter/claude-go/internal/auth"
+	internalmodel "github.com/icehunter/claude-go/internal/model"
 	"github.com/icehunter/claude-go/internal/secure"
+	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/claude-go/internal/tools/bashtool"
+	"github.com/icehunter/claude-go/internal/tools/filereadtool"
+	"github.com/icehunter/claude-go/internal/tools/filewritetool"
+	"github.com/icehunter/claude-go/internal/tools/globtool"
+	"github.com/icehunter/claude-go/internal/tools/greptool"
 )
 
 // Version is the wire version we identify as. We match the exact value the
@@ -37,10 +45,6 @@ import (
 // in a different direction.
 var Version = "2.1.126"
 
-// DefaultModel for `claude --print` in M1. M2 will pull this from config.
-// Matches what real claude 2.1.126 sends in --print captures.
-const DefaultModel = "claude-opus-4-7"
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "claude:", err)
@@ -49,13 +53,11 @@ func main() {
 }
 
 func run() error {
-	// Single-pass flag parsing for the simple M1 surface. Cobra wires in
-	// when we add the full ~86 slash-command tree in M5.
 	var printMode bool
 	flag.BoolVar(&printMode, "print", false, "non-interactive: send a one-shot prompt and print the response")
 	flag.BoolVar(&printMode, "p", false, "alias for --print")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: claude [login|logout|version] | claude --print \"prompt\"")
+		fmt.Fprintln(os.Stderr, "usage: claude [login|logout|version] | claude --print \"prompt\" | claude (REPL)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -65,8 +67,8 @@ func run() error {
 		return runPrint(args)
 	}
 	if len(args) == 0 {
-		flag.Usage()
-		return errors.New("subcommand required")
+		// No subcommand — drop into REPL.
+		return runREPL()
 	}
 
 	switch args[0] {
@@ -81,6 +83,185 @@ func run() error {
 		flag.Usage()
 		return fmt.Errorf("unknown subcommand: %s", args[0])
 	}
+}
+
+// newAPIClient builds a configured API client using the persisted token.
+func newAPIClient(bearer string) *api.Client {
+	entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
+	if entrypoint == "" {
+		entrypoint = "sdk-cli"
+	}
+	ua := fmt.Sprintf("claude-cli/%s (external, %s)", Version, entrypoint)
+	return api.NewClient(api.Config{
+		BaseURL:   auth.ProdConfig.BaseAPIURL,
+		AuthToken: bearer,
+		BetaHeaders: []string{
+			"claude-code-20250219",
+			"oauth-2025-04-20",
+			"interleaved-thinking-2025-05-14",
+			"context-management-2025-06-27",
+			"prompt-caching-scope-2026-01-05",
+			"advisor-tool-2026-03-01",
+			"advanced-tool-use-2025-11-20",
+			"effort-2025-11-24",
+			"cache-diagnosis-2026-04-07",
+		},
+		SessionID: newSessionID(),
+		UserAgent: ua,
+		ExtraHeaders: map[string]string{
+			"anthropic-dangerous-direct-browser-access": "true",
+			"X-Stainless-Retry-Count":                   "0",
+			"X-Stainless-Timeout":                       "600",
+		},
+	}, nil)
+}
+
+// loadAuth loads and refreshes tokens from the credential store.
+func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
+	store := secure.NewDefault()
+	cfg := auth.ProdConfig
+	tc := auth.NewTokenClient(cfg, nil)
+	return auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
+}
+
+// buildRegistry builds the tool registry with all M2 tools.
+func buildRegistry() *tool.Registry {
+	reg := tool.NewRegistry()
+	reg.Register(bashtool.New())
+	reg.Register(filereadtool.New())
+	reg.Register(filewritetool.New())
+	reg.Register(globtool.New())
+	reg.Register(greptool.New())
+	return reg
+}
+
+// buildMetadata returns the API metadata block.
+func buildMetadata() map[string]any {
+	deviceID := os.Getenv("CLAUDE_CODE_DEVICE_ID")
+	if deviceID == "" {
+		deviceID = "00000000000000000000000000000000"
+	}
+	accountUUID := os.Getenv("CLAUDE_CODE_ACCOUNT_UUID")
+	sessionID := newSessionID()
+	return agent.BuildMetadata(deviceID, accountUUID, sessionID)
+}
+
+// runREPL runs the interactive REPL. Reads lines from stdin, sends them to
+// the agent loop, and prints streaming responses.
+func runREPL() error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	tok, err := loadAuth(ctx)
+	if err != nil {
+		return fmt.Errorf("authentication: %w (run `claude login` first)", err)
+	}
+	bearer := tok.APIKey
+	if bearer == "" {
+		bearer = tok.AccessToken
+	}
+
+	c := newAPIClient(bearer)
+	reg := buildRegistry()
+	modelName := internalmodel.Resolve()
+
+	lp := agent.NewLoop(c, reg, agent.LoopConfig{
+		Model:     modelName,
+		MaxTokens: internalmodel.MaxTokens,
+		System:    agent.BuildSystemBlocks(),
+		MaxTurns:  50,
+	})
+
+	// Conversation history persisted across turns within the session.
+	var history []api.Message
+
+	fmt.Fprintf(os.Stderr, "claude-go v%s  (model: %s)\n", Version, modelName)
+	fmt.Fprintln(os.Stderr, "Type your message and press Enter. Ctrl-C or /exit to quit.")
+	fmt.Fprintln(os.Stderr)
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		// Print prompt.
+		fmt.Fprint(os.Stderr, "> ")
+
+		if !scanner.Scan() {
+			// EOF (Ctrl-D) — clean exit.
+			fmt.Fprintln(os.Stderr)
+			break
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if line == "/exit" || line == "/quit" {
+			break
+		}
+
+		// Add user message to history.
+		history = append(history, api.Message{
+			Role:    "user",
+			Content: []api.ContentBlock{{Type: "text", Text: line}},
+		})
+
+		// Run one agent turn (may make multiple API calls for tool use).
+		var assistantText strings.Builder
+		var toolResultMsgs []api.ContentBlock
+
+		runErr := lp.Run(ctx, history, func(ev agent.LoopEvent) {
+			switch ev.Type {
+			case agent.EventText:
+				fmt.Print(ev.Text)
+				assistantText.WriteString(ev.Text)
+			case agent.EventToolUse:
+				fmt.Fprintf(os.Stderr, "\n[tool: %s]\n", ev.ToolName)
+			case agent.EventToolResult:
+				if ev.IsError {
+					fmt.Fprintf(os.Stderr, "[tool error: %s]\n", ev.ResultText)
+				}
+				toolResultMsgs = append(toolResultMsgs, api.ContentBlock{
+					Type:          "tool_result",
+					ToolUseID:     ev.ToolID,
+					IsError:       ev.IsError,
+					ResultContent: ev.ResultText,
+				})
+			}
+		})
+		fmt.Println()
+
+		if runErr != nil {
+			if errors.Is(runErr, context.Canceled) {
+				fmt.Fprintln(os.Stderr, "[interrupted]")
+				// Reset context for next turn.
+				ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+				_ = cancel
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", runErr)
+			continue
+		}
+
+		// Append assistant response to history.
+		// The Loop already handled tool dispatch internally; the history we
+		// maintain here needs both the assistant message and the tool results
+		// from the last tool-use turn.
+		if assistantText.Len() > 0 {
+			history = append(history, api.Message{
+				Role:    "assistant",
+				Content: []api.ContentBlock{{Type: "text", Text: assistantText.String()}},
+			})
+		}
+		if len(toolResultMsgs) > 0 {
+			history = append(history, api.Message{
+				Role:    "user",
+				Content: toolResultMsgs,
+			})
+		}
+	}
+
+	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("stdin: %w", err)
+	}
+	return nil
 }
 
 // stdoutDisplay shows OAuth URLs on stderr (so stdout stays clean for piping).
@@ -124,9 +305,6 @@ func runLogin() error {
 		return fmt.Errorf("login: %w", err)
 	}
 
-	// Mint the long-lived API key the real CLI uses on /v1/messages.
-	// Failure here is non-fatal — we'll fall back to the OAuth bearer,
-	// which works for some endpoints even if /v1/messages rate-limits it.
 	apiKey, keyErr := tc.CreateAPIKey(ctx, tok.AccessToken)
 	if keyErr != nil {
 		fmt.Fprintln(os.Stderr, "Warning: could not mint API key from OAuth token:", keyErr)
@@ -161,92 +339,37 @@ func runPrint(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	store := secure.NewDefault()
-	cfg := auth.ProdConfig
-	tc := auth.NewTokenClient(cfg, nil)
-
-	p, err := auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
+	p, err := loadAuth(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("authentication: %w (run `claude login` first)", err)
 	}
 
-	// Match the real CLI's User-Agent shape exactly:
-	// `claude-cli/<version> (external, <entrypoint>[, agent-sdk/x][, client-app/x][, workload/x])`
-	// Reference: decoded/1969.js:15-25 (function Ib()).
-	//
-	// The entrypoint is "sdk-cli" for --print invocations (matches what
-	// real claude 2.1.126 sets when CLAUDE_CODE_ENTRYPOINT is unset and
-	// --print is used). Verified via mitmproxy capture.
-	entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
-	if entrypoint == "" {
-		entrypoint = "sdk-cli"
-	}
-	ua := fmt.Sprintf("claude-cli/%s (external, %s)", Version, entrypoint)
-
-	// Prefer the minted API key — it's what real Claude Code uses on
-	// /v1/messages. If we don't have one (older login or mint failure),
-	// fall back to the OAuth access token as a bearer.
 	bearer := p.APIKey
 	if bearer == "" {
 		bearer = p.AccessToken
 	}
 
-	c := api.NewClient(api.Config{
-		BaseURL: cfg.BaseAPIURL,
-		AuthToken: bearer,
-		// Beta set captured from real claude 2.1.126 (mitmproxy 2026-05-01).
-		// Without claude-code-20250219 the API treats us as a non-CC client
-		// and rate-limits accordingly.
-		BetaHeaders: []string{
-			"claude-code-20250219",
-			"oauth-2025-04-20",
-			"interleaved-thinking-2025-05-14",
-			"context-management-2025-06-27",
-			"prompt-caching-scope-2026-01-05",
-			"advisor-tool-2026-03-01",
-			"advanced-tool-use-2025-11-20",
-			"effort-2025-11-24",
-			"cache-diagnosis-2026-04-07",
-		},
-		SessionID:    newSessionID(),
-		UserAgent:    ua,
-		ExtraHeaders: map[string]string{
-			"anthropic-dangerous-direct-browser-access": "true",
-			"X-Stainless-Retry-Count":                   "0",
-			"X-Stainless-Timeout":                       "600",
-		},
-	}, nil)
+	c := newAPIClient(bearer)
+	reg := buildRegistry()
+	modelName := internalmodel.Resolve()
 
-	// Build a request body that matches the shape Anthropic expects from a
-	// real Claude Code client (system blocks with billing/identity marker,
-	// metadata block, larger max_tokens). A minimal {model,messages,max_tokens}
-	// body is rejected as 429 on Max subscriptions — see /tmp/claude-go-capture
-	// flow analysis.
-	deviceID := os.Getenv("CLAUDE_CODE_DEVICE_ID")
-	if deviceID == "" {
-		deviceID = "00000000000000000000000000000000"
-	}
-	accountUUID := os.Getenv("CLAUDE_CODE_ACCOUNT_UUID")
-	sessionID := newSessionID()
-
-	resp, err := c.CreateMessage(ctx, &api.MessageRequest{
-		Model:     DefaultModel,
-		MaxTokens: 1024,
+	lp := agent.NewLoop(c, reg, agent.LoopConfig{
+		Model:     modelName,
+		MaxTokens: internalmodel.MaxTokens,
 		System:    agent.BuildSystemBlocks(),
-		Metadata:  agent.BuildMetadata(deviceID, accountUUID, sessionID),
-		Messages: []api.Message{{
-			Role:    "user",
-			Content: []api.ContentBlock{{Type: "text", Text: prompt}},
-		}},
+		Metadata:  buildMetadata(),
+		MaxTurns:  10,
 	})
-	if err != nil {
-		return err
-	}
-	for _, b := range resp.Content {
-		if b.Type == "text" {
-			fmt.Print(b.Text)
+
+	return lp.Run(ctx, []api.Message{{
+		Role:    "user",
+		Content: []api.ContentBlock{{Type: "text", Text: prompt}},
+	}}, func(ev agent.LoopEvent) {
+		if ev.Type == agent.EventText {
+			fmt.Print(ev.Text)
 		}
-	}
-	fmt.Println()
-	return nil
+	})
 }
+
+// keep json import used (for ContentBlock marshaling in history tracking)
+var _ = json.Marshal

@@ -1,0 +1,301 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/claude-go/internal/tool"
+)
+
+// fakeTool implements tool.Tool and records calls.
+type fakeTool struct {
+	name   string
+	result string
+	isErr  bool
+}
+
+func (f *fakeTool) Name() string                                          { return f.name }
+func (f *fakeTool) Description() string                                   { return "fake" }
+func (f *fakeTool) InputSchema() json.RawMessage                          { return json.RawMessage(`{"type":"object"}`) }
+func (f *fakeTool) IsReadOnly(_ json.RawMessage) bool                     { return true }
+func (f *fakeTool) IsConcurrencySafe(_ json.RawMessage) bool              { return true }
+func (f *fakeTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
+	if f.isErr {
+		return tool.ErrorResult(f.result), nil
+	}
+	return tool.TextResult(f.result), nil
+}
+
+// sseBody builds a minimal SSE stream with text-only response (no tools).
+func textOnlySSE(text string) string {
+	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"" + text + "\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+}
+
+// toolUseSSE builds an SSE stream where the model calls a tool then responds.
+func toolUseSSE(toolName, toolID, inputJSON, responseText string) string {
+	inputJSONEscaped := strings.ReplaceAll(inputJSON, `"`, `\"`)
+	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + toolID + "\",\"name\":\"" + toolName + "\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"" + inputJSONEscaped + "\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n" +
+		// Second turn response after tool result
+		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_2\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":20,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"" + responseText + "\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":8}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+}
+
+// newTestLoop builds a Loop backed by a test HTTP server returning the given SSE bodies in sequence.
+func newTestLoop(t *testing.T, sseBodies []string, reg *tool.Registry) (*Loop, *httptest.Server) {
+	t.Helper()
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if callCount < len(sseBodies) {
+			_, _ = w.Write([]byte(sseBodies[callCount]))
+			callCount++
+		} else {
+			// Fallback: end_turn with no content
+			_, _ = w.Write([]byte(textOnlySSE("done")))
+		}
+	}))
+
+	c := api.NewClient(api.Config{
+		BaseURL:   srv.URL,
+		AuthToken: "test",
+	}, srv.Client())
+
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		System:    []api.SystemBlock{{Type: "text", Text: "test"}},
+	})
+	return lp, srv
+}
+
+func TestLoop_TextOnlyResponse(t *testing.T) {
+	reg := tool.NewRegistry()
+	lp, srv := newTestLoop(t, []string{textOnlySSE("Hello!")}, reg)
+	defer srv.Close()
+
+	var texts []string
+	err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventText {
+			texts = append(texts, ev.Text)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(texts) == 0 {
+		t.Error("no text events received")
+	}
+	full := strings.Join(texts, "")
+	if !strings.Contains(full, "Hello!") {
+		t.Errorf("expected 'Hello!' in text, got: %q", full)
+	}
+}
+
+func TestLoop_ToolUseDispatchAndContinue(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "command output"})
+
+	// First call: tool use. Second call: final text response.
+	sse1 := toolUseSSE("Bash", "toolu_01", `{}`, "Done!")
+	lp, srv := newTestLoop(t, []string{sse1}, reg)
+	defer srv.Close()
+
+	var texts []string
+	var toolCalls []string
+	err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run something"}}},
+	}, func(ev LoopEvent) {
+		switch ev.Type {
+		case EventText:
+			texts = append(texts, ev.Text)
+		case EventToolUse:
+			toolCalls = append(toolCalls, ev.ToolName)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolCalls) == 0 {
+		t.Error("expected tool call event")
+	}
+	if toolCalls[0] != "Bash" {
+		t.Errorf("tool name = %q, want Bash", toolCalls[0])
+	}
+	if !strings.Contains(strings.Join(texts, ""), "Done!") {
+		t.Errorf("expected 'Done!' in final text")
+	}
+}
+
+func TestLoop_UnknownToolReturnsError(t *testing.T) {
+	reg := tool.NewRegistry()
+	// Don't register any tools — model asks for "MissingTool"
+	sse1 := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_99\",\"name\":\"MissingTool\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	// Second call returns end_turn
+	sse2 := textOnlySSE("ok")
+	lp, srv := newTestLoop(t, []string{sse1, sse2}, reg)
+	defer srv.Close()
+
+	var toolEvents []LoopEvent
+	err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolEvents = append(toolEvents, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolEvents) == 0 {
+		t.Error("expected tool result event for unknown tool")
+	}
+	// The tool result should be an error
+	if !toolEvents[0].IsError {
+		t.Error("unknown tool should produce IsError=true tool result")
+	}
+}
+
+func TestLoop_ContextCancellation(t *testing.T) {
+	reg := tool.NewRegistry()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block until context cancelled
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "m",
+		MaxTokens: 1,
+		System:    nil,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := lp.Run(ctx, []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+	}, func(ev LoopEvent) {})
+	if err == nil {
+		t.Error("expected error from cancelled context")
+	}
+}
+
+func TestLoop_MaxTurnsRespected(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "out"})
+
+	// Every response is another tool call — loop should stop at MaxTurns.
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Always respond with a tool_use — infinite loop unless MaxTurns cuts it.
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_" + strings.Repeat("0", callCount) + "\",\"name\":\"Bash\",\"input\":{}}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
+			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "m",
+		MaxTokens: 1024,
+		MaxTurns:  3,
+	})
+
+	_ = lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "loop"}}},
+	}, func(ev LoopEvent) {})
+
+	if callCount > 3 {
+		t.Errorf("MaxTurns=3 not respected: made %d API calls", callCount)
+	}
+}
+
+func TestLoop_APIError(t *testing.T) {
+	reg := tool.NewRegistry()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"bad token"}}`)
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{Model: "m", MaxTokens: 1})
+
+	err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+	}, func(ev LoopEvent) {})
+	if err == nil {
+		t.Error("expected error from 401")
+	}
+	if !strings.Contains(err.Error(), "authentication_error") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestLoop_ToolResultErrorPropagated(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "it failed", isErr: true})
+
+	// One tool call then end_turn
+	sse1 := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"Bash\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	sse2 := textOnlySSE("understood")
+	lp, srv := newTestLoop(t, []string{sse1, sse2}, reg)
+	defer srv.Close()
+
+	var errResults []LoopEvent
+	err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult && ev.IsError {
+			errResults = append(errResults, ev)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(errResults) == 0 {
+		t.Error("expected error tool result event")
+	}
+}
+
+// errorReader is a helper for the errors package import.
+var _ = errors.New

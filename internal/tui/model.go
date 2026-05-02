@@ -123,8 +123,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m = m.applyLayout()
-		// Don't propagate to sub-components here — applyLayout handles it.
-		return m, tea.Batch(cmds...)
+		// Clear the screen on resize so stale content doesn't ghost in the
+		// terminal's scroll buffer before the viewport redraws.
+		return m, tea.Batch(append(cmds, tea.ClearScreen)...)
 
 	case tea.KeyMsg:
 		m2, cmd := m.handleKey(msg)

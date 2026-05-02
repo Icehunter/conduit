@@ -184,7 +184,7 @@ func runREPL() error {
 		MaxTurns:  50,
 	})
 
-	return tui.Run(Version, modelName, lp)
+	return tui.Run(Version, modelName, lp, c)
 }
 
 // stdoutDisplay shows OAuth URLs on stderr (so stdout stays clean for piping).

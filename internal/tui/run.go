@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/icehunter/claude-go/internal/agent"
+	"github.com/icehunter/claude-go/internal/api"
 	"github.com/icehunter/claude-go/internal/commands"
 	internalmodel "github.com/icehunter/claude-go/internal/model"
 )
@@ -21,7 +22,7 @@ const (
 )
 
 // Run starts the full-screen TUI and blocks until the user exits.
-func Run(version, modelName string, loop *agent.Loop) error {
+func Run(version, modelName string, loop *agent.Loop, client ...*api.Client) error {
 	var prog *tea.Program
 
 	reg := commands.New()
@@ -32,12 +33,18 @@ func Run(version, modelName string, loop *agent.Loop) error {
 	)
 	commands.RegisterCompactCommand(reg)
 
+	var apiClient *api.Client
+	if len(client) > 0 {
+		apiClient = client[0]
+	}
+
 	cfg := Config{
 		Version:   version,
 		ModelName: modelName,
 		Loop:      loop,
 		Program:   &prog,
 		Commands:  reg,
+		APIClient: apiClient,
 	}
 
 	m := New(cfg)

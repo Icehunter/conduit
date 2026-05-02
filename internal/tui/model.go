@@ -17,6 +17,7 @@ import (
 	"github.com/icehunter/claude-go/internal/agent"
 	"github.com/icehunter/claude-go/internal/api"
 	"github.com/icehunter/claude-go/internal/commands"
+	"github.com/icehunter/claude-go/internal/compact"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
@@ -56,16 +57,22 @@ type (
 		err       error
 		cancelled bool // ctx was cancelled before the loop finished
 	}
+	compactDoneMsg struct {
+		newHistory []api.Message
+		summary    string
+		err        error
+	}
 	clearFlash struct{}
 )
 
 // Config is passed from main to the TUI.
 type Config struct {
-	Version   string
-	ModelName string
-	Loop      *agent.Loop
-	Program   **tea.Program
-	Commands  *commands.Registry
+	Version    string
+	ModelName  string
+	Loop       *agent.Loop
+	Program    **tea.Program
+	Commands   *commands.Registry
+	APIClient  *api.Client
 }
 
 // Model is the Bubble Tea model.
@@ -181,6 +188,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.history = msg.history
+			m.tallyTokens()
+		}
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		m.input.Focus()
+		return m, nil
+
+	case compactDoneMsg:
+		m.running = false
+		m.cancelTurn = nil
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Compact failed: %v", msg.err)})
+		} else {
+			m.history = msg.newHistory
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Conversation compacted. Summary:\n\n%s", msg.summary)})
 			m.tallyTokens()
 		}
 		m.refreshViewport()
@@ -475,9 +497,30 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	case "compact":
-		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Compact not yet implemented."})
+		if m.cfg.APIClient == nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Compact unavailable: no API client."})
+			m.refreshViewport()
+			return m, nil
+		}
+		if len(m.history) == 0 {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Nothing to compact."})
+			m.refreshViewport()
+			return m, nil
+		}
+		m.running = true
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Compacting conversation…"})
 		m.refreshViewport()
-		return m, nil
+		customInstructions := res.Text
+		client := m.cfg.APIClient
+		histCopy := make([]api.Message, len(m.history))
+		copy(histCopy, m.history)
+		return m, func() tea.Msg {
+			result, err := compact.Compact(context.Background(), client, histCopy, customInstructions)
+			if err != nil {
+				return compactDoneMsg{err: err}
+			}
+			return compactDoneMsg{newHistory: result.NewHistory, summary: result.Summary}
+		}
 	case "error":
 		m.messages = append(m.messages, Message{Role: RoleError, Content: res.Text})
 		m.refreshViewport()

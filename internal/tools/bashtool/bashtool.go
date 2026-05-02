@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -31,6 +32,10 @@ var (
 	trackOnce sync.Once
 	trackDB   *track.DB
 )
+
+// SessionEnv is injected by the loop at startup from settings.Merged.Env.
+// When non-nil, each subprocess inherits the base environment plus these vars.
+var SessionEnv map[string]string
 
 func getTrackDB() *track.DB {
 	trackOnce.Do(func() {
@@ -122,6 +127,14 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// Use exec.CommandContext so cancel-after-timeout sends SIGKILL.
 	// `bash -c` matches the real tool's shell-out behavior.
 	cmd := exec.CommandContext(cctx, "bash", "-c", in.Command)
+	// Inherit process env + any session-level env injected from settings.
+	if len(SessionEnv) > 0 {
+		base := os.Environ()
+		for k, v := range SessionEnv {
+			base = append(base, k+"="+v)
+		}
+		cmd.Env = base
+	}
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined

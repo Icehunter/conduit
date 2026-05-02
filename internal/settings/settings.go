@@ -123,9 +123,8 @@ func loadPaths(paths []string) (*Merged, error) {
 }
 
 func settingsFiles(cwd string) []string {
-	home, _ := os.UserHomeDir()
 	paths := []string{
-		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(claudeDir(), "settings.json"),
 	}
 	if cwd != "" {
 		paths = append(paths,
@@ -157,8 +156,7 @@ func mergeHooks(dst, src *HooksSettings) {
 
 // UserSettingsPath returns the path to the user-global settings file.
 func UserSettingsPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "settings.json")
+	return filepath.Join(claudeDir(), "settings.json")
 }
 
 // SetPluginEnabled sets enabledPlugins[pluginID] in the user settings file.

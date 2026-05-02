@@ -269,6 +269,11 @@ func runREPL(continueMode bool) error {
 
 	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
 
+	// Inject session env vars into the bash tool so every subprocess inherits them.
+	if len(s.Env) > 0 {
+		bashtool.SessionEnv = s.Env
+	}
+
 	// Connect MCP servers in the background; non-fatal if config missing or servers fail.
 	mcpManager := mcp.NewManager()
 	_ = mcpManager.ConnectAll(ctx, cwd)

@@ -78,10 +78,11 @@ type Model struct {
 	width  int
 	height int
 
-	running    bool
-	cancelTurn context.CancelFunc
-	streaming  string
-	turnID     int // incremented each turn; agentDoneMsg with stale ID is ignored
+	running     bool
+	cancelled   bool // true after Ctrl+C; cleared when next turn starts
+	cancelTurn  context.CancelFunc
+	streaming   string
+	turnID      int // incremented each turn; agentDoneMsg with stale ID is ignored
 
 	totalInputTokens  int
 	totalOutputTokens int
@@ -153,18 +154,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Stale completion from a previous (interrupted) turn — discard.
 			return m, nil
 		}
+		wasCancelled := m.cancelled
 		m.running = false
+		m.cancelled = false
 		m.cancelTurn = nil
 		if m.streaming != "" {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		if msg.err != nil {
-			// Real (non-cancel) error — show it.
+		if wasCancelled {
+			// Ctrl+C already cleaned up history — nothing more to do.
+		} else if msg.err != nil {
 			if !isCancelError(msg.err) {
 				m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 			}
-			// On any error, roll back the dangling user message.
 			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
 				m.history = m.history[:len(m.history)-1]
 			}
@@ -200,7 +203,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "ctrl+c":
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
-			m.turnID++ // invalidate any in-flight agentDoneMsg from this turn
+			m.cancelled = true
 			m.running = false
 			m.cancelTurn = nil
 			m.streaming = ""
@@ -257,6 +260,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			Content: []api.ContentBlock{{Type: "text", Text: text}},
 		})
 		m.running = true
+		m.cancelled = false
 		m.streaming = ""
 		m.refreshViewport()
 		m.vp.GotoBottom()

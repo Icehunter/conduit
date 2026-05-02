@@ -383,6 +383,9 @@ func (m Model) renderCommandPicker() string {
 	const maxItems = 8
 	nameColW := 14
 
+	// The current query (text after "/").
+	query := strings.ToLower(strings.TrimPrefix(m.input.Value(), "/"))
+
 	// Compute visible window around the selected index.
 	start := m.cmdSelected - maxItems/2
 	if start < 0 {
@@ -401,24 +404,59 @@ func (m Model) renderCommandPicker() string {
 	var sb strings.Builder
 	for i := start; i < end; i++ {
 		cmd := m.cmdMatches[i]
-		name := fmt.Sprintf("/%-*s", nameColW, cmd.Name)
-		desc := cmd.Description
-		if descMax > 10 && len(desc) > descMax {
-			desc = desc[:descMax] + "…"
-		}
-		var line string
+
+		// Render name with query highlighted.
+		rawName := fmt.Sprintf("/%-*s", nameColW, cmd.Name)
+		var namePart string
 		if i == m.cmdSelected {
-			line = stylePickerItemSelected.Render(name) + "  " + stylePickerDesc.Render(desc)
+			namePart = highlightMatch(rawName, query, stylePickerItemSelected, stylePickerHighlight)
 		} else {
-			line = stylePickerItem.Render(name) + "  " + stylePickerDesc.Render(desc)
+			namePart = highlightMatch(rawName, query, stylePickerItem, stylePickerHighlight)
 		}
-		sb.WriteString(line)
+
+		// Render description with query highlighted.
+		desc := cmd.Description
+		if descMax > 10 && len([]rune(desc)) > descMax {
+			desc = string([]rune(desc)[:descMax]) + "…"
+		}
+		descPart := highlightMatch(desc, query, stylePickerDesc, stylePickerHighlight)
+
+		sb.WriteString(namePart + "  " + descPart)
 		if i < end-1 {
 			sb.WriteByte('\n')
 		}
 	}
 
 	return stylePickerBorder.Width(m.width - 2).Render(sb.String())
+}
+
+// highlightMatch renders s with every case-insensitive occurrence of query
+// highlighted using highlightStyle, and the rest in baseStyle.
+// Returns the base-styled string unchanged if query is empty.
+func highlightMatch(s, query string, baseStyle, highlightStyle lipgloss.Style) string {
+	if query == "" {
+		return baseStyle.Render(s)
+	}
+	lower := strings.ToLower(s)
+	var out strings.Builder
+	pos := 0
+	for {
+		idx := strings.Index(lower[pos:], query)
+		if idx < 0 {
+			out.WriteString(baseStyle.Render(s[pos:]))
+			break
+		}
+		abs := pos + idx
+		if abs > pos {
+			out.WriteString(baseStyle.Render(s[pos:abs]))
+		}
+		out.WriteString(highlightStyle.Render(s[abs : abs+len(query)]))
+		pos = abs + len(query)
+		if pos >= len(s) {
+			break
+		}
+	}
+	return out.String()
 }
 
 // computeCommandMatches returns commands matching the current input and resets

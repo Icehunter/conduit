@@ -92,4 +92,7 @@ var (
 
 	stylePickerDesc = lipgloss.NewStyle().
 				Foreground(colorMuted)
+
+	stylePickerHighlight = lipgloss.NewStyle().
+					Foreground(colorAccent).Bold(true).Underline(true)
 )

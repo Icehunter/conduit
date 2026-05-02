@@ -23,10 +23,29 @@ type Permissions struct {
 	AdditionalDirs     []string `json:"additionalDirectories"`
 }
 
-// Hook is one hook command entry.
+// Hook is one hook entry. Type determines which fields are used.
+// Mirrors src/schemas/hooks.ts (BashCommandHookSchema, HttpHookSchema,
+// PromptHookSchema, AgentHookSchema).
 type Hook struct {
-	Type    string `json:"type"`    // "command"
-	Command string `json:"command"` // shell command to run
+	// Common fields
+	Type          string `json:"type"`                    // "command" | "http" | "prompt" | "agent"
+	StatusMessage string `json:"statusMessage,omitempty"` // spinner text while running
+	If            string `json:"if,omitempty"`            // permission rule to gate firing
+	TimeoutSecs   int    `json:"timeout,omitempty"`       // per-hook timeout override (seconds)
+	Once          bool   `json:"once,omitempty"`          // remove after first execution
+	Async         bool   `json:"async,omitempty"`         // fire-and-forget (non-blocking)
+
+	// type="command"
+	Command string `json:"command,omitempty"` // shell command
+
+	// type="http"
+	URL            string            `json:"url,omitempty"`            // POST target
+	Headers        map[string]string `json:"headers,omitempty"`        // extra headers
+	AllowedEnvVars []string          `json:"allowedEnvVars,omitempty"` // vars to interpolate in headers
+
+	// type="prompt" | "agent"
+	Prompt string `json:"prompt,omitempty"` // LLM prompt (may contain $ARGUMENTS)
+	Model  string `json:"model,omitempty"`  // model override
 }
 
 // HookMatcher is a matcher + hooks pair.

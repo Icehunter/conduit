@@ -36,6 +36,7 @@ import (
 	"github.com/icehunter/conduit/internal/tool"
 )
 
+
 // maxConcurrentTools is the worker pool size for parallel tool execution.
 // Mirrors the coordinator's concurrency limit in src/coordinator/coordinatorMode.ts.
 const maxConcurrentTools = 4
@@ -102,6 +103,10 @@ type LoopConfig struct {
 	// Set via /effort command or CLAUDE_THINKING_BUDGET env var.
 	ThinkingBudget int
 
+	// NotifyOnComplete, when true, fires a desktop notification after each
+	// end_turn (not after tool-use turns). Mirrors the notifs hook behavior.
+	NotifyOnComplete bool
+
 	// AskPermission is called when a tool needs interactive approval.
 	// It blocks until the user responds. Returns (allow, alwaysAllow).
 	// nil means DecisionAsk → allow through silently.
@@ -117,7 +122,12 @@ type Loop struct {
 
 // NewLoop constructs a Loop.
 func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
-	return &Loop{client: client, reg: reg, cfg: cfg}
+	l := &Loop{client: client, reg: reg, cfg: cfg}
+	// Wire the sub-agent runner into the hooks package so prompt/agent hooks
+	// can spawn LLM calls. This overwrites any previously set runner on the
+	// last NewLoop call — single-process usage, so that's fine.
+	hooks.SubAgentRunner = l.RunSubAgent
+	return l
 }
 
 // SetModel updates the model used for new requests (from /model slash command).
@@ -265,6 +275,10 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 						msgs = result.NewHistory
 					}
 				}
+			}
+			// Desktop notification on turn complete.
+			if l.cfg.NotifyOnComplete {
+				hooks.Notify("conduit", "Turn complete")
 			}
 			return msgs, nil
 		}

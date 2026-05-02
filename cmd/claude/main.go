@@ -312,8 +312,9 @@ func runREPL(continueMode bool) error {
 		Gate:           gate,
 		Hooks:          &s.Hooks,
 		SessionID:      sessionID,
-		AutoCompact:    true,
-		ThinkingBudget: thinkingBudget(),
+		AutoCompact:      true,
+		ThinkingBudget:   thinkingBudget(),
+		NotifyOnComplete: true,
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.

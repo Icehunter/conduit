@@ -98,16 +98,42 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 			continue
 		}
 		for _, hook := range m.Hooks {
-			if hook.Type != "command" || hook.Command == "" {
+			if hook.Async {
+				// Fire-and-forget: run in background, never block the caller.
+				h := hook
+				in := input
+				go func() {
+					bgCtx := context.Background()
+					_ = dispatchHook(bgCtx, h, in)
+				}()
 				continue
 			}
-			r := runHook(ctx, hook.Command, input)
+			r := dispatchHook(ctx, hook, input)
 			if r.Blocked || r.Approved {
 				return r
 			}
 		}
 	}
 	return Result{}
+}
+
+// dispatchHook routes a hook to the appropriate runner based on its type.
+func dispatchHook(ctx context.Context, hook settings.Hook, input HookInput) Result {
+	switch hook.Type {
+	case "command", "":
+		if hook.Command == "" {
+			return Result{}
+		}
+		return runHook(ctx, hook.Command, input)
+	case "http":
+		return runHTTPHook(ctx, hook, input)
+	case "prompt":
+		return runPromptHook(ctx, hook, input)
+	case "agent":
+		return runAgentHook(ctx, hook, input)
+	default:
+		return Result{} // unknown type is advisory
+	}
 }
 
 // matchesTool returns true if the matcher applies to toolName.

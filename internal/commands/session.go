@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/session"
 )
 
@@ -284,18 +285,63 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /memory
+	// /memory [list|show|scan]
 	r.Register(Command{
 		Name:        "memory",
-		Description: "Edit Claude memory files (~/.claude/MEMORY.md)",
-		Handler: func(string) Result {
-			home, _ := os.UserHomeDir()
-			path := home + "/.claude/MEMORY.md"
-			editor := os.Getenv("EDITOR")
-			if editor == "" {
-				editor = "nano"
+		Description: "Manage memory files. Subcommands: list (default), show, scan",
+		Handler: func(args string) Result {
+			sub := strings.ToLower(strings.TrimSpace(args))
+			cwd := "."
+			if state.GetCwd != nil {
+				cwd = state.GetCwd()
 			}
-			return Result{Type: "text", Text: fmt.Sprintf("To edit memory: %s %s", editor, path)}
+
+			switch sub {
+			case "", "list":
+				files, err := memdir.ScanMemories(cwd)
+				if err != nil {
+					return Result{Type: "error", Text: fmt.Sprintf("scan: %v", err)}
+				}
+				if len(files) == 0 {
+					path := memdir.EntrypointPath(cwd)
+					return Result{Type: "text", Text: fmt.Sprintf("No memory files yet.\nMEMORY.md location: %s", path)}
+				}
+				return Result{Type: "text", Text: memdir.FormatMemoryList(files)}
+
+			case "show":
+				content := memdir.BuildPrompt(cwd)
+				if content == "" {
+					return Result{Type: "text", Text: "No memory content found."}
+				}
+				// Strip the system prompt wrapper, show raw content.
+				return Result{Type: "text", Text: content}
+
+			case "scan":
+				files, err := memdir.ScanMemories(cwd)
+				if err != nil {
+					return Result{Type: "error", Text: fmt.Sprintf("scan: %v", err)}
+				}
+				if len(files) == 0 {
+					return Result{Type: "text", Text: "No memory files to scan."}
+				}
+				// Summarize stale or very old files.
+				var sb strings.Builder
+				sb.WriteString(fmt.Sprintf("Memory scan (%d files):\n\n", len(files)))
+				for _, f := range files {
+					age := time.Since(f.ModTime)
+					status := "✓"
+					if age > 30*24*time.Hour {
+						status = "⚠ stale (>30d)"
+					} else if age > 7*24*time.Hour {
+						status = "~ aging (>7d)"
+					}
+					sb.WriteString(fmt.Sprintf("  %s [%s] %s\n", status, f.Type, f.Name))
+				}
+				return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+
+			default:
+				return Result{Type: "error", Text: "Usage: /memory [list|show|scan]"}
+			}
 		},
 	})
 

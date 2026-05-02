@@ -57,6 +57,30 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPermissionsCommand(reg, opts.gate)
 	commands.RegisterHooksCommand(reg, opts.hooksConfig)
 
+	// Session state shared between commands and the TUI model.
+	// The model pointer is set after New() — use a pointer-to-pointer so
+	// closures always see the live model.
+	var modelPtr *Model
+	state := &commands.SessionState{
+		GetCost: func() string {
+			if modelPtr == nil {
+				return "No session data."
+			}
+			return modelPtr.CostSummary()
+		},
+		Logout: func() error {
+			// Perform logout by deleting the credentials file.
+			home, _ := os.UserHomeDir()
+			credPath := home + "/Library/Application Support/claude-code/credentials.json"
+			return os.Remove(credPath)
+		},
+		GetCwd: func() string {
+			cwd, _ := os.Getwd()
+			return cwd
+		},
+	}
+	commands.RegisterSessionCommands(reg, state)
+
 	var apiClient *api.Client = opts.apiClient
 
 	cfg := Config{
@@ -69,6 +93,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	}
 
 	m := New(cfg)
+	modelPtr = &m
 	prog = tea.NewProgram(
 		m,
 		tea.WithAltScreen(),

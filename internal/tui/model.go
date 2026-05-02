@@ -709,6 +709,20 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 	}
 }
 
+// CostSummary returns a human-readable cost/token summary for the /cost command.
+func (m *Model) CostSummary() string {
+	if m.totalInputTokens == 0 && m.costUSD == 0 {
+		return "No API calls made yet in this session."
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Input tokens:  %d\n", m.totalInputTokens))
+	sb.WriteString(fmt.Sprintf("Output tokens: %d\n", m.totalOutputTokens))
+	if m.costUSD > 0 {
+		sb.WriteString(fmt.Sprintf("Estimated cost: $%.4f", m.costUSD))
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
 // isCancelError reports whether err represents a user-initiated cancellation.
 // Covers context.Canceled, context.DeadlineExceeded, and the network-level
 // "use of closed network connection" that appears when the HTTP response body

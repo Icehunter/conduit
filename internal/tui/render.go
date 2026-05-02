@@ -103,31 +103,28 @@ func renderMarkdown(text string, width int) string {
 // width is the usable inner width (outer padding already excluded).
 // Language label appears as a dim line above the rounded box.
 func renderCodeBlock(code, lang string, width int) string {
-	// contentW = usable text columns inside the box.
-	// styleCodeBorder adds: 1 border + 1 padding each side = 4 total.
-	contentW := width - 4
-	if contentW < 4 {
-		contentW = 4
+	// lipgloss Width() = content + padding area (border adds 2 more cols on top).
+	// To fit in `width` total cols: Width() = width - 2.
+	// Inner text area = Width() - 2(padding) = width - 4.
+	boxW := width - 2
+	if boxW < 6 {
+		boxW = 6
 	}
 
 	highlighted := highlightCode(code, lang)
-	// Pad every line to contentW so the dark bg fills the full box width.
-	highlighted = padCodeLines(highlighted, contentW)
 
-	block := styleCodeBorder.Width(contentW).Render(highlighted)
+	block := styleCodeBorder.Width(boxW).Render(highlighted)
 
 	if lang != "" {
-		// Label line above the box: explicitly no background so it inherits
-		// the viewport bg (transparent), avoiding the filled-rectangle artifact.
 		label := styleCodeLang.Render(lang)
 		return label + "\n" + block
 	}
 	return block
 }
 
-// highlightCode colorizes code by language and pads every line to width
-// so the dark background fills the full code block (no terminal-default
-// black gaps on short lines).
+// highlightCode colorizes code by language.
+// All token styles include Background(colorCodeBg) so they don't reset
+// the parent container's background between tokens.
 func highlightCode(code, lang string) string {
 	lines := strings.Split(code, "\n")
 	out := make([]string, len(lines))
@@ -137,29 +134,17 @@ func highlightCode(code, lang string) string {
 	return strings.Join(out, "\n")
 }
 
-// padCodeLines pads each highlighted line to w visible columns with the
-// code background color, ensuring the dark bg fills the full block width.
-func padCodeLines(highlighted string, w int) string {
-	codeBgStyle := lipgloss.NewStyle().Background(colorCodeBg)
-	lines := strings.Split(highlighted, "\n")
-	for i, line := range lines {
-		vis := lipgloss.Width(line)
-		if vis < w {
-			lines[i] = line + codeBgStyle.Render(strings.Repeat(" ", w-vis))
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-// Token color styles.
+// Token color styles — all include Background(colorCodeBg) so they don't
+// reset the parent block's background between tokens (avoids black gaps).
 var (
-	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")) // purple
-	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")) // green
-	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
-	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C")) // orange
-	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")) // cyan
-	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B")) // yellow
-	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
+	codeBg    = colorCodeBg
+	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")).Background(codeBg)
+	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(codeBg)
+	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(codeBg).Italic(true)
+	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C")).Background(codeBg)
+	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(codeBg)
+	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B")).Background(codeBg)
+	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(codeBg)
 )
 
 var langKeywords = map[string][]string{

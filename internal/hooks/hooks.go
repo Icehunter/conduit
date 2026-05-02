@@ -54,6 +54,9 @@ type Result struct {
 	Blocked bool
 	// Reason is the block reason if Blocked.
 	Reason string
+	// Approved is true if a hook returned decision=approve, bypassing further
+	// permission prompts for this tool call.
+	Approved bool
 }
 
 // RunPreToolUse runs all PreToolUse hooks matching toolName.
@@ -77,8 +80,14 @@ func RunPostToolUse(ctx context.Context, hooks []settings.HookMatcher, sessionID
 	return runMatching(ctx, hooks, toolName, input)
 }
 
-// RunSessionStart runs all SessionStart hooks.
+// RunSessionStart runs all SessionStart hooks. Results are advisory — never blocks.
 func RunSessionStart(ctx context.Context, hooks []settings.HookMatcher, sessionID string) {
+	input := HookInput{SessionID: sessionID}
+	runMatching(ctx, hooks, "", input)
+}
+
+// RunStop runs all Stop hooks. Results are advisory — never blocks.
+func RunStop(ctx context.Context, hooks []settings.HookMatcher, sessionID string) {
 	input := HookInput{SessionID: sessionID}
 	runMatching(ctx, hooks, "", input)
 }
@@ -93,7 +102,7 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 				continue
 			}
 			r := runHook(ctx, hook.Command, input)
-			if r.Blocked {
+			if r.Blocked || r.Approved {
 				return r
 			}
 		}
@@ -146,12 +155,15 @@ func runHook(ctx context.Context, command string, input HookInput) Result {
 	if err := json.Unmarshal([]byte(out), &directive); err != nil {
 		return Result{} // non-JSON stdout is advisory only
 	}
-	if strings.ToLower(directive.Decision) == "block" {
+	switch strings.ToLower(directive.Decision) {
+	case "block":
 		reason := directive.Reason
 		if reason == "" {
 			reason = "blocked by hook"
 		}
 		return Result{Blocked: true, Reason: reason}
+	case "approve":
+		return Result{Approved: true}
 	}
 	return Result{}
 }

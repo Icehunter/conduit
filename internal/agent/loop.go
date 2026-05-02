@@ -159,6 +159,16 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
 
+	// Fire SessionStart hooks once before the first turn.
+	if l.cfg.Hooks != nil && len(l.cfg.Hooks.SessionStart) > 0 {
+		hooks.RunSessionStart(ctx, l.cfg.Hooks.SessionStart, l.cfg.SessionID)
+	}
+	defer func() {
+		if l.cfg.Hooks != nil && len(l.cfg.Hooks.Stop) > 0 {
+			hooks.RunStop(context.Background(), l.cfg.Hooks.Stop, l.cfg.SessionID)
+		}
+	}()
+
 	// Build tool definitions from registry.
 	tools := buildToolDefs(l.reg)
 
@@ -381,49 +391,10 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		var resultText string
 		var isError bool
 
-		// --- Permission gate check ---
-		if l.cfg.Gate != nil {
-			decision := l.cfg.Gate.Check(block.Name, permInput)
-			switch decision {
-			case permissions.DecisionDeny:
-				resultText = "Tool denied by permission rules"
-				isError = true
-				handler(LoopEvent{
-					Type:       EventToolResult,
-					ToolID:     block.ID,
-					ToolName:   block.Name,
-					ResultText: resultText,
-					IsError:    isError,
-				})
-				results = append(results, api.ContentBlock{
-					Type:          "tool_result",
-					ToolUseID:     block.ID,
-					IsError:       isError,
-					ResultContent: resultText,
-				})
-				continue
-			case permissions.DecisionAsk:
-				if l.cfg.AskPermission != nil {
-					allow, alwaysAllow := l.cfg.AskPermission(ctx, block.Name, permInput)
-					if !allow {
-						resultText = fmt.Sprintf("%s denied by user", block.Name)
-						isError = true
-						handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: true})
-						results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: true, ResultContent: resultText})
-						continue
-					}
-					if alwaysAllow {
-						l.cfg.Gate.AllowForSession(permissions.SuggestRule(block.Name, permInput))
-					}
-				}
-				// fall through to execution
-			}
-			// DecisionAllow: proceed normally.
-		}
-
-		// --- PreToolUse hooks ---
+		// --- PreToolUse hooks (run before permission gate, mirroring TS order) ---
+		// A hook returning approve=true skips the interactive AskPermission prompt.
+		hookApproved := false
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PreToolUse) > 0 {
-			// block.Input is already map[string]any; copy it for the hook.
 			inputMap := block.Input
 			if inputMap == nil {
 				inputMap = make(map[string]any)
@@ -437,21 +408,40 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				}
 				resultText = "Tool blocked by hook: " + reason
 				isError = true
-				handler(LoopEvent{
-					Type:       EventToolResult,
-					ToolID:     block.ID,
-					ToolName:   block.Name,
-					ResultText: resultText,
-					IsError:    isError,
-				})
-				results = append(results, api.ContentBlock{
-					Type:          "tool_result",
-					ToolUseID:     block.ID,
-					IsError:       isError,
-					ResultContent: resultText,
-				})
+				handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: isError})
+				results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: isError, ResultContent: resultText})
 				continue
 			}
+			hookApproved = r.Approved
+		}
+
+		// --- Permission gate check ---
+		if l.cfg.Gate != nil {
+			decision := l.cfg.Gate.Check(block.Name, permInput)
+			switch decision {
+			case permissions.DecisionDeny:
+				resultText = "Tool denied by permission rules"
+				isError = true
+				handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: isError})
+				results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: isError, ResultContent: resultText})
+				continue
+			case permissions.DecisionAsk:
+				if !hookApproved && l.cfg.AskPermission != nil {
+					allow, alwaysAllow := l.cfg.AskPermission(ctx, block.Name, permInput)
+					if !allow {
+						resultText = fmt.Sprintf("%s denied by user", block.Name)
+						isError = true
+						handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: true})
+						results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: true, ResultContent: resultText})
+						continue
+					}
+					if alwaysAllow {
+						l.cfg.Gate.AllowForSession(permissions.SuggestRule(block.Name, permInput))
+					}
+				}
+				// fall through to execution (hook approved or user allowed)
+			}
+			// DecisionAllow: proceed normally.
 		}
 
 		// --- Tool execution ---

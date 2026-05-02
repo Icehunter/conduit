@@ -1,0 +1,648 @@
+# Conduit ↔ Claude Code v2.1.126 Parity Map
+
+> **Purpose:** 1:1 functional mapping between the Claude Code TypeScript source,
+> the decompiled v2.1.126 binary chunks, and the Go conduit implementation.
+> Used for milestone planning, descoping decisions, and tracking new feature
+> ingestion from future deobfuscated releases.
+>
+> **Status legend:**
+> - ✅ Complete — implemented and tested in conduit
+> - 🟡 Partial — exists but missing edge cases or sub-features
+> - ❌ Missing — not yet implemented
+> - ⬛ Descoped — intentionally excluded
+> - 🔲 N/A — not applicable to Go binary (React/Ink UI idioms, etc.)
+
+---
+
+## 1. Auth & OAuth
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| OAuth 2.0 + PKCE flow | `utils/auth.ts` (2002 LOC) | `1220.js`, `0533.js` | `internal/auth/flow.go`, `pkce.go`, `authurl.go` | ✅ | |
+| Token exchange (code → token) | `services/oauth/` | `1220.js` | `internal/auth/token.go` | ✅ | |
+| Token refresh | `utils/auth.ts` | `1220.js` | `internal/auth/persist.go` `EnsureFresh` | ✅ | |
+| Token persistence (keychain) | `utils/auth.ts` | `1220.js` | `internal/secure/`, `internal/auth/persist.go` | ✅ | Uses file-based + go-keyring |
+| OAuth callback HTTP listener | `services/oauth/auth-code-listener.ts` | `0533.js` | `internal/auth/listener.go` | ✅ | |
+| Browser launch for login | `utils/auth.ts` | `0533.js` | `internal/auth/browser.go` | ✅ | |
+| Auth file descriptor tokens | `utils/authFileDescriptor.ts` | — | ❌ | ❌ | FD-based token passing |
+| Portable auth | `utils/authPortable.ts` | — | ❌ | ❌ | |
+| Profile fetch (name, email) | `utils/auth.ts` | `1220.js` | `internal/profile/profile.go` | ✅ | |
+| Multi-account support | `utils/auth.ts` | — | ❌ | ❌ | Single account only |
+| Token revocation | `utils/auth.ts` | — | ❌ | ❌ | |
+| JWT utils (bridge auth) | `bridge/jwtUtils.ts` | — | ❌ | ⬛ | Bridge-only |
+| Trusted device auth | `bridge/trustedDevice.ts` | — | ❌ | ⬛ | Bridge-only |
+| Work secret | `bridge/workSecret.ts` | — | ❌ | ⬛ | Bridge-only |
+| AWS auth status | `components/AwsAuthStatusBox.tsx` | — | ❌ | ⬛ | AWS-specific |
+| mTLS certificate handling | `utils/mtls.ts` | — | ❌ | ⬛ | Enterprise-only |
+| CA certificate management | `utils/caCerts.ts`, `caCertsConfig.ts` | — | ❌ | ⬛ | Enterprise-only |
+
+---
+
+## 2. API Client & SSE Streaming
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| HTTP POST /v1/messages | `utils/api.ts` | `0158.js`, `4500.js` | `internal/api/client.go` | ✅ | |
+| Streaming SSE parsing | `services/api/` | `0137.js`, `0156.js` | `internal/sse/parser.go`, `internal/api/stream.go` | ✅ | |
+| Required headers (User-Agent, x-app, beta) | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | Exact headers matched |
+| Cache-control on system blocks | `services/api/` | `2831.js` | `internal/api/client.go` | ✅ | ephemeral + scope=global |
+| 401 refresh + retry | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | |
+| 429 retry-after handling | `utils/api.ts` | `4500.js` | `internal/api/client.go` | 🟡 | Basic retry, no backoff curve |
+| Request timeout (600s) | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | X-Stainless-Timeout: 600 |
+| Stainless headers | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | |
+| HTTP proxy support | `utils/proxy.ts` | — | ❌ | ❌ | HTTPS_PROXY not honored |
+| VCR request recording/playback | `services/vcr.ts` | — | ❌ | ⬛ | Debug/testing only |
+| API pre-connect optimization | `utils/apiPreconnect.ts` | — | ❌ | ❌ | Cold start optimization |
+| Rate limit quota tracking (5h/7d) | `services/claudeAiLimits.ts` | — | ❌ | ❌ | No quota warnings |
+| Rate limit messages | `services/rateLimitMessages.ts` | — | ❌ | ❌ | |
+| Token estimation | `services/tokenEstimation.ts` | — | ❌ | ❌ | |
+| Cost tracking | `cost-tracker.ts` (323 LOC) | — | `internal/tui/model.go` (partial) | 🟡 | Tracks cost display, no persistence |
+
+---
+
+## 3. Agent Loop & Query Engine
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Main agentic loop (query → tool → response) | `QueryEngine.ts` (1295 LOC), `query.ts` (1729 LOC) | `3585.js`, `3918.js`, `4091.js` | `internal/agent/loop.go` | ✅ | |
+| Multi-turn tool dispatch | `QueryEngine.ts` | `3585.js` | `internal/agent/loop.go` `executeTools` | ✅ | |
+| Parallel tool execution (bounded pool) | `coordinator/coordinatorMode.ts` | — | `internal/agent/loop.go` | ✅ | maxConcurrentTools=4 |
+| System prompt assembly | `constants/prompts.ts` | `2831.js` | `internal/agent/systemprompt.go` | ✅ | |
+| Billing header injection | — | `2831.js` | `internal/agent/systemprompt.go` | ✅ | |
+| Sub-agent spawning | `tools/AgentTool/` | — | `internal/agent/loop.go` `RunSubAgent` | ✅ | |
+| Max turns limit | `query.ts` | — | `internal/agent/loop.go` | ✅ | |
+| Context compaction (auto) | `services/compact/autoCompact.ts` | — | ❌ | ❌ | Manual /compact only |
+| Micro-compaction | `services/compact/microCompact.ts` | — | ❌ | ❌ | |
+| Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ❌ | |
+| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go` (partial) | 🟡 | Shows ctx%, no hard limits |
+| Extended thinking / effort modes | `utils/effort.ts` | — | ❌ | ❌ | No effort parameter sent |
+| Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
+| Stop hooks (clean shutdown) | `query/stopHooks.ts` | — | `internal/hooks/hooks.go` `RunStop` | ✅ | |
+| Query profiler | `utils/queryProfiler.ts` | — | ❌ | ⬛ | Debug only |
+| Conversation recovery on error | `utils/conversationRecovery.ts` | — | ❌ | ❌ | No mid-turn recovery |
+
+---
+
+## 4. Tools
+
+### 4a. Core Tool Framework
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Tool interface & registry | `Tool.ts` (792 LOC), `tools.ts` (389 LOC) | — | `internal/tool/tool.go` | ✅ | |
+| Permission gate per tool | `hooks/toolPermission/` | — | `internal/permissions/permissions.go` | ✅ | |
+| Tool result envelope | `Tool.ts` | — | `internal/tool/tool.go` `Result` | ✅ | |
+| ReadOnly + ConcurrencySafe flags | `Tool.ts` | — | `internal/tool/tool.go` | ✅ | |
+| Tool schema (JSON Schema) | `Tool.ts` | — | `internal/tool/*.go` | ✅ | |
+| Tool search / deferred loading | `tools/ToolSearchTool/` | — | `internal/tools/toolsearchtool/` | ✅ | |
+| Synthetic output tool | `tools/SyntheticOutputTool/` | — | ❌ | ❌ | |
+
+### 4b. Individual Tools
+
+| Tool | TS Source | Decoded Chunk | Go (conduit) | Status | Notes |
+|------|-----------|--------------|--------------|--------|-------|
+| AgentTool (Task) | `tools/AgentTool/` | — | `internal/tools/agenttool/` | ✅ | Wire name "Task" |
+| AskUserQuestion | `tools/AskUserQuestionTool/` | — | ❌ | ❌ | No interactive prompt tool |
+| BashTool | `tools/BashTool/` (18 files) | — | `internal/tools/bashtool/` | ✅ | RTK filtering wired |
+| BriefTool | `tools/BriefTool/` | — | ❌ | ❌ | |
+| ConfigTool | `tools/ConfigTool/` | — | ❌ | ❌ | |
+| EnterPlanMode | `tools/EnterPlanModeTool/` | — | ❌ | ❌ | |
+| EnterWorktree | `tools/EnterWorktreeTool/` | — | ❌ | ❌ | |
+| ExitPlanMode | `tools/ExitPlanModeTool/` | — | ❌ | ❌ | |
+| ExitWorktree | `tools/ExitWorktreeTool/` | — | ❌ | ❌ | |
+| FileEditTool | `tools/FileEditTool/` | — | `internal/tools/fileedittool/` | ✅ | |
+| FileReadTool | `tools/FileReadTool/` | — | `internal/tools/filereadtool/` | ✅ | |
+| FileWriteTool | `tools/FileWriteTool/` | — | `internal/tools/filewritetool/` | ✅ | |
+| GlobTool | `tools/GlobTool/` | — | `internal/tools/globtool/` | ✅ | |
+| GrepTool | `tools/GrepTool/` | — | `internal/tools/greptool/` | ✅ | rg backend |
+| ListMcpResources | `tools/ListMcpResourcesTool/` | — | ❌ | ❌ | MCP resource listing |
+| LSPTool | `tools/LSPTool/` | — | ❌ | ❌ | Language server |
+| McpAuthTool | `tools/McpAuthTool/` | — | ❌ | ❌ | MCP OAuth |
+| MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
+| NotebookEditTool | `tools/NotebookEditTool/` | — | `internal/tools/notebookedittool/` | ✅ | |
+| PowerShellTool | `tools/PowerShellTool/` | — | ❌ | ⬛ | Windows-only |
+| ReadMcpResource | `tools/ReadMcpResourceTool/` | — | ❌ | ❌ | MCP resource read |
+| RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ❌ | Remote execution |
+| REPLTool | `tools/REPLTool/` | — | `internal/tools/repltool/` | ✅ | |
+| ScheduleCronTool | `tools/ScheduleCronTool/` | — | ❌ | ❌ | Cron scheduling |
+| SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ❌ | Team messaging |
+| SkillTool | `tools/SkillTool/` | — | `internal/tools/skilltool/` | ✅ | |
+| SleepTool | `tools/SleepTool/` | — | `internal/tools/sleeptool/` | ✅ | |
+| SyntheticOutputTool | `tools/SyntheticOutputTool/` | — | ❌ | ❌ | |
+| TaskCreateTool | `tools/TaskCreateTool/` | — | `internal/tools/tasktool/` | ✅ | |
+| TaskGetTool | `tools/TaskGetTool/` | — | `internal/tools/tasktool/` | ✅ | |
+| TaskListTool | `tools/TaskListTool/` | — | `internal/tools/tasktool/` | ✅ | |
+| TaskOutputTool | `tools/TaskOutputTool/` | — | `internal/tools/tasktool/` | ✅ | |
+| TaskStopTool | `tools/TaskStopTool/` | — | `internal/tools/tasktool/` | ✅ | |
+| TaskUpdateTool | `tools/TaskUpdateTool/` | — | `internal/tools/tasktool/` | ✅ | |
+| TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ❌ | Multi-agent teams |
+| TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ❌ | |
+| TodoWriteTool | `tools/TodoWriteTool/` | — | `internal/tools/todowritetool/` | ✅ | |
+| ToolSearchTool | `tools/ToolSearchTool/` | — | `internal/tools/toolsearchtool/` | ✅ | |
+| WebFetchTool | `tools/WebFetchTool/` | — | `internal/tools/webfetchtool/` | ✅ | HTML→markdown |
+| WebSearchTool | `tools/WebSearchTool/` | — | `internal/tools/websearchtool/` | ✅ | |
+
+---
+
+## 5. Permissions & Hooks
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Permission modes (default/acceptEdits/plan/bypass) | `utils/permissions/` | — | `internal/permissions/permissions.go` | ✅ | |
+| Allow/deny/ask rule matching | `utils/permissions/` | — | `internal/permissions/permissions.go` | ✅ | Glob + exact match |
+| Session-scoped allow | `utils/permissions/` | — | `internal/permissions/permissions.go` | ✅ | |
+| Shift+Tab mode cycling | `keybindings/defaultBindings.ts` | — | `internal/tui/model.go` | ✅ | |
+| Classifier approvals | `utils/classifierApprovals.ts` | — | ❌ | ❌ | ML-based approval |
+| PreToolUse hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
+| PostToolUse hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
+| SessionStart hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
+| Stop hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
+| Hook approve directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | Bypasses AskPermission |
+| Hook block directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
+| HTTP hooks | `utils/hooks/execHttpHook.ts` | — | ❌ | ❌ | Only command hooks |
+| Prompt hooks | `utils/hooks/execPromptHook.ts` | — | ❌ | ❌ | |
+| Agent hooks | `utils/hooks/execAgentHook.ts` | — | ❌ | ❌ | |
+| Async hook registry | `utils/hooks/AsyncHookRegistry.ts` | — | ❌ | ❌ | Background hooks |
+| Notification hooks | `hooks/notifs/` (16 files) | — | ❌ | ❌ | UI feedback hooks |
+| Bridge permission callbacks | `bridge/bridgePermissionCallbacks.ts` | — | ❌ | ⬛ | Bridge-only |
+| Interactive permission prompt (TUI) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+
+---
+
+## 6. TUI & Rendering
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go` | ✅ | Bubble Tea vs React/Ink |
+| Message display (streaming) | `components/Messages.tsx` | — | `internal/tui/render.go` | ✅ | |
+| Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | 🟡 | Basic, no full GFM tables |
+| Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | 🟡 | Chroma-based |
+| Spinner / thinking indicator | `components/Spinner.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Status bar | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Permission mode badge | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Input box (textarea) | `components/PromptInput/` | — | `internal/tui/model.go` | ✅ | |
+| Input history (up/down) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Slash command picker | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Tab completion | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Session resume picker | `screens/ResumeConversation.tsx` | — | `internal/tui/model.go` | ✅ | |
+| MCP panel | — | — | `internal/tui/model.go` (panel) | ✅ | conduit-only |
+| Plugin panel (full) | `commands/plugin/` | — | `internal/tui/pluginpanel.go` | ✅ | conduit-only |
+| Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | 🟡 | Basic, no fancy UI |
+| Cost display | `components/Stats.tsx` | — | `internal/tui/model.go` | 🟡 | Status bar only |
+| Context visualization | `components/ContextVisualization.tsx` | — | ❌ | ❌ | |
+| Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | 🟡 | No true virtualization |
+| Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
+| Doctor screen | `screens/Doctor.tsx` | — | ❌ | ❌ | |
+| Stats screen | `components/Stats.tsx` | — | ❌ | ❌ | |
+| Log selector | `components/LogSelector.tsx` | — | ❌ | ❌ | |
+| Global search dialog | `components/GlobalSearchDialog.tsx` | — | ❌ | ❌ | |
+| Model picker dialog | `components/ModelPicker.tsx` | — | `/model` command only | 🟡 | No visual picker |
+| Theme picker | `components/ThemePicker.tsx` | — | ❌ | ❌ | |
+| Output style picker | `components/OutputStylePicker.tsx` | — | `/output-style` command | 🟡 | Text-only |
+| Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
+| Onboarding flow | `components/OnboardingComponent.tsx` | — | ❌ | ❌ | |
+| Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
+| Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
+| Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only |
+| Image/PDF paste | `utils/imagePaste.ts`, `pdf.ts` | — | ❌ | ❌ | M13 |
+| Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
+| Ink rendering engine | `ink/` (96 files, 13306 LOC) | — | Bubble Tea | 🔲 | Different framework |
+
+---
+
+## 7. Slash Commands
+
+| Command | TS Source | Go (conduit) | Status | Notes |
+|---------|-----------|--------------|--------|-------|
+| /help | `commands/help/` | `internal/commands/builtin.go` | ✅ | |
+| /clear | `commands/clear/` | `internal/commands/builtin.go` | ✅ | |
+| /exit | `commands/exit/` | `internal/commands/misc.go` | ✅ | |
+| /model | `commands/model/` | `internal/commands/builtin.go` | ✅ | |
+| /compact | `commands/compact/` | `internal/commands/builtin.go` | ✅ | |
+| /permissions | `commands/permissions/` | `internal/commands/builtin.go` | ✅ | |
+| /hooks | `commands/hooks/` | `internal/commands/builtin.go` | ✅ | |
+| /login | `commands/login/` | `internal/commands/misc.go` | ✅ | |
+| /logout | `commands/logout/` | `internal/commands/session.go` | ✅ | |
+| /resume | `commands/resume/` | `internal/commands/session.go` | ✅ | |
+| /rewind | `commands/rewind/` | `internal/commands/session.go` | ✅ | |
+| /cost | `commands/cost/` | `internal/commands/session.go` | ✅ | |
+| /export | `commands/export/` | `internal/commands/session.go` | ✅ | |
+| /add-dir | `commands/add-dir/` | `internal/commands/misc.go` | ✅ | |
+| /privacy-settings | `commands/privacy-settings/` | `internal/commands/misc.go` | ✅ | |
+| /mcp | `commands/mcp/` | `internal/commands/mcp.go` | ✅ | |
+| /plugin | `commands/plugin/` (17 files) | `internal/commands/plugins.go` | ✅ | |
+| /reload-plugins | `commands/reload-plugins/` | `internal/commands/plugins.go` | ✅ | |
+| /skills | `commands/skills/` | `internal/commands/skills.go` | ✅ | |
+| /output-style | `commands/output-style/` | `internal/commands/outputstyle.go` | ✅ | |
+| /rtk gain | — | `internal/commands/rtk.go` | ✅ | conduit-only |
+| /buddy | — | `internal/commands/buddy.go` | ✅ | conduit-only |
+| /keybindings | `commands/keybindings/` | `internal/commands/session.go` | 🟡 | Shows hardcoded list |
+| /plan | `commands/plan/` | `internal/commands/misc.go` | 🟡 | Sets mode only, no EnterPlanMode tool |
+| /memory | `commands/memory/` | ❌ | ❌ | Show/edit memory files |
+| /config | `commands/config/` | ❌ | ❌ | |
+| /context | `commands/context/` | ❌ | ❌ | |
+| /diff | `commands/diff/` | ❌ | ❌ | |
+| /doctor | `commands/doctor/` | ❌ | ❌ | |
+| /effort | `commands/effort/` | ❌ | ❌ | |
+| /fast | `commands/fast/` | ❌ | ❌ | |
+| /feedback | `commands/feedback/` | ❌ | ⬛ | Anthropic-internal |
+| /files | `commands/files/` | ❌ | ❌ | |
+| /ide | `commands/ide/` | ❌ | ⬛ | Bridge-only |
+| /review | `commands/review/` | ❌ | ❌ | |
+| /session | `commands/session/` | ❌ | ❌ | |
+| /stats | `commands/stats/` | ❌ | ❌ | |
+| /status | `commands/status/` | ❌ | ❌ | |
+| /tag | `commands/tag/` | ❌ | ❌ | |
+| /tasks | `commands/tasks/` | ❌ | ❌ | |
+| /theme | `commands/theme/` | ❌ | ❌ | |
+| /usage | `commands/usage/` | ❌ | ❌ | |
+| /vim | `commands/vim/` | ❌ | ❌ | Vim mode not implemented |
+| /voice | `commands/voice/` | ❌ | ❌ | |
+| /rename | `commands/rename/` | ❌ | ❌ | |
+| /sandbox-toggle | `commands/sandbox-toggle/` | ❌ | ⬛ | |
+| /install-github-app | `commands/install-github-app/` | ❌ | ⬛ | Anthropic-internal |
+| /install-slack-app | `commands/install-slack-app/` | ❌ | ⬛ | Anthropic-internal |
+| /bridge | `commands/bridge/` | ❌ | ⬛ | Bridge-only |
+| /remote-env | `commands/remote-env/` | ❌ | ⬛ | Remote-only |
+| /remote-setup | `commands/remote-setup/` | ❌ | ⬛ | Remote-only |
+| /agents | `commands/agents/` | ❌ | ❌ | |
+| /stickers | `commands/stickers/` | ❌ | ⬛ | |
+| /thinkback | `commands/thinkback/` | ❌ | ❌ | Extended thinking review |
+| /thinkback-play | `commands/thinkback-play/` | ❌ | ❌ | |
+| /upgrade | `commands/upgrade/` | ❌ | ⬛ | Auto-update |
+| /color | `commands/color/` | ❌ | ❌ | |
+| /copy | `commands/copy/` | ❌ | ❌ | |
+| /passes | `commands/passes/` | ❌ | ❌ | |
+| /rate-limit-options | `commands/rate-limit-options/` | ❌ | ❌ | |
+| /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
+| /extra-usage | `commands/extra-usage/` | ❌ | ❌ | |
+| /pr_comments | `commands/pr_comments/` | ❌ | ❌ | |
+| /terminalSetup | `commands/terminalSetup/` | ❌ | ❌ | |
+
+---
+
+## 8. MCP Host
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| stdio transport | `services/mcp/` | `0154.js` | `internal/mcp/client.go` | ✅ | |
+| HTTP/SSE transport | `services/mcp/` | `0154.js` | `internal/mcp/client.go` | ✅ | |
+| Tool discovery & proxy | `services/mcp/`, `tools/MCPTool/` | `0402.js` | `internal/tools/mcptool/` | ✅ | |
+| Config loading (claude.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | |
+| Config loading (.mcp.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | |
+| Plugin MCP server registration | `services/mcp/` | — | `internal/mcp/manager.go` `SyncPluginServers` | ✅ | |
+| Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
+| MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | ❌ | ❌ | No per-server approval prompt |
+| OAuth for MCP servers | `services/mcp/` | — | ❌ | ❌ | McpAuthTool not implemented |
+| MCP resource listing | `tools/ListMcpResourcesTool/` | — | ❌ | ❌ | |
+| MCP resource reading | `tools/ReadMcpResourceTool/` | — | ❌ | ❌ | |
+| MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | ❌ | ❌ | |
+| MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | ❌ | ❌ | |
+| LSP integration | `services/lsp/` (7 files) | — | ❌ | ❌ | |
+
+---
+
+## 9. Plugins & Skills
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Plugin manifest loading | `types/plugin.ts`, `services/plugins/` | `2484.js` | `internal/plugins/loader.go` | ✅ | |
+| Plugin installation (git clone) | `commands/plugin/` | — | `internal/plugins/install.go` | ✅ | |
+| Plugin uninstallation | `commands/plugin/` | — | `internal/plugins/install.go` | ✅ | |
+| Marketplace discovery | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | |
+| Install counts (GitHub stats) | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | |
+| Plugin enable/disable | `services/plugins/` | — | `internal/settings/settings.go` | ✅ | |
+| Plugin MCP server sync | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
+| Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | ❌ | ❌ | Plugin-forced styles |
+| Plugin slash commands | `services/plugins/` | — | `internal/plugins/loader.go` | ✅ | |
+| Skill discovery from plugins | `skills/loadSkillsDir.ts` | — | `internal/tools/skilltool/` | ✅ | |
+| Bundled/built-in skills | `skills/bundledSkills.ts` | — | ❌ | ❌ | No bundled skills |
+| Skill listing in system prompt | `skills/` | — | `internal/agent/systemprompt.go` | ✅ | |
+| SkillTool invocation | `tools/SkillTool/` | — | `internal/tools/skilltool/` | ✅ | |
+| Plugin marketplace management | `commands/plugin/` | — | `internal/plugins/marketplace.go` | ✅ | |
+| Plugin signature verification | — | — | ❌ | ❌ | |
+| Plugin version management | — | — | ❌ | ❌ | |
+| Built-in plugins list | `plugins/builtinPlugins.ts` | — | ❌ | ❌ | |
+| MagicDocs | `services/MagicDocs/` | — | ❌ | ⬛ | |
+
+---
+
+## 10. Memory System
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Memory directory path | `memdir/paths.ts` | `2829.js` | `internal/memdir/memdir.go` `Path` | ✅ | |
+| MEMORY.md loading + truncation | `memdir/memdir.ts` | `2830.js` | `internal/memdir/memdir.go` | ✅ | 200-line / 25KB caps |
+| Memory type taxonomy (4 types) | `memdir/memoryTypes.ts` | — | `internal/memdir/memdir.go` | ✅ | user/feedback/project/reference |
+| Full behavioral instructions in prompt | `memdir/memdir.ts` | — | `internal/memdir/memdir.go` | ✅ | |
+| Auto-dream gate (24h + 5 sessions) | `services/autoDream/` | `3899.js` | `internal/memdir/dream.go` | ✅ | |
+| Auto-dream consolidation prompt | `services/autoDream/consolidationPrompt.ts` | — | `internal/memdir/dream.go` | ✅ | 4-phase prompt |
+| Dream lock file | `services/autoDream/` | — | `internal/memdir/dream.go` | ✅ | |
+| Memory scanning utilities | `memdir/memoryScan.ts` | — | ❌ | ❌ | |
+| Memory age tracking | `memdir/memoryAge.ts` | — | ❌ | ❌ | |
+| Relevant memory search | `memdir/findRelevantMemories.ts` | — | ❌ | ❌ | Embedding-based search |
+| Memory extraction from conversations | `services/extractMemories/` | — | ❌ | ❌ | |
+| Session memory management | `services/SessionMemory/` | `3901.js` | ❌ | ❌ | |
+| Team memory paths | `memdir/teamMemPaths.ts` | — | ❌ | ⬛ | Team feature |
+| Team memory prompts | `memdir/teamMemPrompts.ts` | — | ❌ | ⬛ | Team feature |
+| Team memory sync | `services/teamMemorySync/` | — | ❌ | ⬛ | Team feature |
+
+---
+
+## 11. RTK (Token Compression)
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Command classification (75 rules) | RTK Rust source | — | `internal/rtk/registry.go` | ✅ | |
+| Git filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| Go test filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| Cargo/Rust filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| npm/pnpm/yarn filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| Python/pytest filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| JS/TS (eslint, tsc, vitest) filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| AWS filters + secret redaction | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| Docker/kubectl/terraform filters | RTK Rust source | — | `internal/rtk/filters.go` | ✅ | |
+| ANSI stripping | RTK Rust source | — | `internal/rtk/ansi.go` | ✅ | |
+| SQLite tracking (history.db) | RTK Rust source | — | `internal/rtk/track/track.go` | ✅ | modernc.org/sqlite |
+| /rtk gain command | RTK Rust binary | — | `internal/commands/rtk.go` | ✅ | |
+| rtk discover (transcript scan) | RTK Rust binary | — | ❌ | ❌ | Stub only |
+| BashTool integration | — | — | `internal/tools/bashtool/` | ✅ | Filter on every exec |
+| Env var stripping in classify | RTK Rust source | — | `internal/rtk/registry.go` | ✅ | |
+
+---
+
+## 12. Session & History
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| JSONL session transcript | `utils/sessionStorage.ts` | `3096.js` | `internal/session/session.go` | ✅ | |
+| Session path sanitization | `utils/sessionStoragePortable.ts` | — | `internal/session/session.go` | ✅ | djb2 hash fallback |
+| Session list (newest first) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | ✅ | |
+| Session resume (--continue) | `utils/sessionRestore.ts` | — | `cmd/claude/main.go` | ✅ | |
+| Session title | `utils/sessionTitle.ts` | — | `internal/session/session.go` | 🟡 | SetTitle() exists, not displayed |
+| Session summary (compact) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | 🟡 | SetSummary() exists |
+| Message compaction | `services/compact/compact.ts` | — | `internal/compact/compact.go` | ✅ | |
+| Auto-compaction | `services/compact/autoCompact.ts` | — | ❌ | ❌ | Manual only |
+| Conversation recovery | `utils/conversationRecovery.ts` | — | ❌ | ❌ | |
+| File access history | `utils/fileHistory.ts` | — | ❌ | ❌ | |
+| Session activity tracking | `utils/sessionActivity.ts` | — | ❌ | ❌ | |
+| Session environment setup | `utils/sessionEnvironment.ts` | — | ❌ | ❌ | |
+| Session URL handling | `utils/sessionUrl.ts` | — | ❌ | ❌ | |
+| Cost tracking persistence | `cost-tracker.ts` | — | ❌ | ❌ | In-memory only |
+| Transcript search | `utils/transcriptSearch.ts` | — | ❌ | ❌ | |
+
+---
+
+## 13. Config & Settings
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Settings load (global + project) | `utils/config.ts` (1817 LOC) | `0628.js` | `internal/settings/settings.go` | ✅ | |
+| Settings merge (global → project) | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | |
+| Hook settings parsing | `schemas/hooks.ts` | — | `internal/settings/settings.go` | ✅ | |
+| Plugin enable/disable | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | |
+| Settings file preservation on update | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | Raw JSON map |
+| CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | — | ❌ | ❌ | Per-project instructions |
+| Output style setting | `utils/config.ts` | — | ❌ | ❌ | Not persisted |
+| Environment variable management | `utils/env.ts`, `envDynamic.ts` | — | ❌ | ❌ | |
+| Managed env constants | `utils/managedEnvConstants.ts` | — | ❌ | ❌ | |
+| Remote managed settings | `services/remoteManagedSettings/` | — | ❌ | ⬛ | Anthropic-internal |
+| Settings sync service | `services/settingsSync/` | — | ❌ | ⬛ | Anthropic-internal |
+| Platform-specific settings | `utils/platformSettings.ts` | — | ❌ | ❌ | |
+| GrowthBook feature flags | `utils/featureFlags.ts` | — | ❌ | ⬛ | Anthropic-internal |
+| Migrations | `migrations/` (11 files) | — | ❌ | ❌ | Schema migration system |
+| XDG base directory | `utils/xdg.ts` | — | ❌ | ❌ | |
+| Windows paths | `utils/windowsPaths.ts` | — | ❌ | ❌ | |
+
+---
+
+## 14. Bridge (IDE Integration) — M10
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| VS Code bridge (JSON-RPC) | `bridge/bridgeMain.ts` (2999 LOC) | `4910.js` | ❌ | ❌ | M10 |
+| JetBrains bridge | `utils/jetbrains.ts` | — | ❌ | ❌ | M10 |
+| REPL bridge | `bridge/replBridge.ts` (2406 LOC) | `5155.js` | ❌ | ❌ | M10 |
+| Remote bridge core | `bridge/remoteBridgeCore.ts` (1008 LOC) | — | ❌ | ❌ | M10 |
+| Bridge messaging | `bridge/bridgeMessaging.ts` | — | ❌ | ❌ | M10 |
+| Session runner | `bridge/sessionRunner.ts` | — | ❌ | ❌ | M10 |
+| Bridge session creation | `bridge/createSession.ts` | — | ❌ | ❌ | M10 |
+| Bridge API | `bridge/bridgeApi.ts` | — | ❌ | ❌ | M10 |
+| Inbound attachments (IDE) | `bridge/inboundAttachments.ts` | — | ❌ | ❌ | M10 |
+| IDE path conversion | `utils/idePathConversion.ts` | — | ❌ | ❌ | M10 |
+| Bridge UI dialogs | `components/BridgeDialog.tsx` etc. | — | ❌ | ❌ | M10 |
+| All 31 bridge/* files | `bridge/` (31 files, 12613 LOC) | — | ❌ | ❌ | M10 |
+
+---
+
+## 15. Remote & ULTRAPLAN — M10
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Remote session manager | `remote/RemoteSessionManager.ts` | — | ❌ | ❌ | M10 |
+| Remote WebSocket sessions | `remote/SessionsWebSocket.ts` | — | ❌ | ❌ | M10 |
+| Remote permission bridge | `remote/remotePermissionBridge.ts` | — | ❌ | ❌ | M10 |
+| Upstream proxy relay | `upstreamproxy/relay.ts` | — | ❌ | ❌ | M10 |
+| Teleport (session migration) | `utils/teleport.tsx` (1225 LOC) | — | ❌ | ❌ | M10 |
+| RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ❌ | M10 |
+| Direct connect server | `server/directConnectManager.ts` | — | ❌ | ❌ | M10 |
+
+---
+
+## 16. Coordinator / Agent Swarms
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Coordinator mode | `coordinator/coordinatorMode.ts` (369 LOC) | — | `internal/agent/loop.go` (partial) | 🟡 | Parallel tools only, no full coordinator |
+| TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ❌ | |
+| TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ❌ | |
+| SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ❌ | |
+| Teammate mailbox | `utils/teammateMailbox.ts` (1183 LOC) | — | ❌ | ❌ | |
+| Team memory ops | `utils/teamMemoryOps.ts` | — | ❌ | ❌ | |
+| Team discovery | `utils/teamDiscovery.ts` | — | ❌ | ❌ | |
+| ULTRAPLAN | `services/ultraplan/` | — | ❌ | ❌ | |
+| Agent listing delta | `utils/agentContext.ts` | — | ❌ | ❌ | |
+| Coordinator agent status UI | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
+
+---
+
+## 17. Attachments & File Paste — M13
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Image paste from clipboard | `utils/imagePaste.ts` (416 LOC) | — | ❌ | ❌ | M13 |
+| Image resize | `utils/imageResizer.ts` (880 LOC) | — | ❌ | ❌ | M13 |
+| Image storage | `utils/imageStore.ts` | — | ❌ | ❌ | M13 |
+| PDF handling | `utils/pdf.ts` (300 LOC) | — | ❌ | ❌ | M13 |
+| File drag-drop | `utils/attachments.ts` (3997 LOC) | — | ❌ | ❌ | M13 |
+| ANSI to PNG | `utils/ansiToPng.ts` (334 LOC) | — | ❌ | ❌ | M13 |
+| ANSI to SVG | `utils/ansiToSvg.ts` | — | ❌ | ❌ | M13 |
+| Screenshot clipboard | `utils/screenshotClipboard.ts` | — | ❌ | ❌ | M13 |
+| Asciinema recording | `utils/asciicast.ts` | — | ❌ | ❌ | M13 |
+| @file mention parsing | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
+| IDE inbound attachments | `bridge/inboundAttachments.ts` | — | ❌ | ❌ | M13+bridge |
+
+---
+
+## 18. Buddy / Voice / KAIROS
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Companion generation (Mulberry32) | `buddy/companion.ts` | — | `internal/buddy/buddy.go` | ✅ | |
+| 18 species + 5 rarities | `buddy/types.ts` | — | `internal/buddy/buddy.go` | ✅ | |
+| ASCII sprite renderer | `buddy/sprites.ts` (514 LOC) | — | `internal/buddy/buddy.go` | 🟡 | Simplified sprites |
+| Companion soul persistence | `buddy/companion.ts` | — | `internal/buddy/store.go` | ✅ | |
+| /buddy command | `buddy/useBuddyNotification.tsx` | — | `internal/commands/buddy.go` | ✅ | |
+| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | ❌ | ❌ | No live animation |
+| Companion intro injection | `buddy/prompt.ts` | — | ❌ | ❌ | |
+| Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ❌ | |
+| Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ❌ | Requires cgo |
+| Voice STT (WebSocket) | `services/voiceStreamSTT.ts` (544 LOC) | — | ❌ | ❌ | Requires cgo |
+| Voice keyterms | `services/voiceKeyterms.ts` | — | ❌ | ❌ | |
+| KAIROS (assistant mode) | `assistant/` | — | ❌ | ⬛ | GrowthBook-gated |
+
+---
+
+## 19. Output Styles & Undercover
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| Output style loader | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
+| YAML frontmatter parsing | `utils/frontmatterParser.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
+| Project + user dir merge | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
+| Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | ❌ | ❌ | |
+| /output-style command | `commands/output-style/` | — | `internal/commands/outputstyle.go` | ✅ | |
+| Undercover mode | `utils/undercover.ts` | — | `internal/undercover/undercover.go` | ✅ | |
+| Undercover auto-detection | `utils/undercover.ts` | — | ❌ | ❌ | Always off unless env set |
+| Undercover auto-notice | `utils/undercover.ts` | — | ❌ | ❌ | |
+
+---
+
+## 20. Analytics & Telemetry
+
+| Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
+|---------|-----------|-----------------|--------------|--------|-------|
+| tengu_* event names | `services/analytics/` | — | ❌ | ⬛ | No-op intentional |
+| Diagnostic tracking | `services/diagnosticTracking.ts` | — | ❌ | ⬛ | |
+| Query profiler | `utils/queryProfiler.ts` | — | ❌ | ⬛ | |
+| Heap dump service | `utils/heapDumpService.ts` | — | ❌ | ⬛ | |
+| Startup profiler | `utils/startupProfiler.ts` | — | ❌ | ⬛ | |
+| FPS tracker | `utils/fpsTracker.ts` | — | ❌ | ⬛ | |
+| Stats collection | `utils/stats.ts` (1061 LOC) | — | ❌ | ⬛ | |
+
+---
+
+## 21. Utilities (Shared)
+
+| Feature | TS Source | Go (conduit) | Status | Notes |
+|---------|-----------|--------------|--------|-------|
+| Git utilities | `utils/git.ts` (926 LOC) | ❌ | ❌ | Used by commit attribution |
+| Git diff parsing | `utils/gitDiff.ts` | ❌ | ❌ | |
+| Commit attribution | `utils/commitAttribution.ts` | ❌ | ❌ | Used by undercover auto-detect |
+| Ripgrep integration | `utils/ripgrep.ts` (679 LOC) | `internal/tools/greptool/` | 🟡 | In greptool only |
+| File I/O utilities | `utils/file.ts`, `fsOperations.ts` | ❌ | ❌ | Scattered in tools |
+| File read cache | `utils/fileReadCache.ts` | ❌ | ❌ | |
+| Shell command wrapper | `utils/ShellCommand.ts` | ❌ | ❌ | |
+| Shell config | `utils/shellConfig.ts` | ❌ | ❌ | |
+| HTTP proxy | `utils/proxy.ts` | ❌ | ❌ | |
+| Markdown utilities | `utils/markdown.ts` | ❌ | ❌ | |
+| Memoization | `utils/memoize.ts` | ❌ | ❌ | sync.Once used ad-hoc |
+| Cron scheduler | `utils/cronScheduler.ts` (565 LOC) | ❌ | ❌ | |
+| Token counting | `utils/tokens.ts` | ❌ | ❌ | |
+| Theme management | `utils/theme.ts` | ❌ | ❌ | |
+| String utilities | `utils/stringUtils.ts` | ❌ | ❌ | |
+| Word utilities | `utils/words.ts` | ❌ | ❌ | |
+| Context analysis | `utils/analyzeContext.ts` | ❌ | ❌ | |
+| CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | ❌ | ❌ | |
+| Auto-updater | `utils/autoUpdater.ts` | ❌ | ⬛ | |
+| Platform detection | `utils/platform.ts` | `cmd/claude/util.go` | 🟡 | OS/arch only |
+| Glob utilities | `utils/glob.ts` | `internal/tools/globtool/` | 🟡 | In tool only |
+
+---
+
+## 22. State Management
+
+| Feature | TS Source | Go (conduit) | Status | Notes |
+|---------|-----------|--------------|--------|-------|
+| Redux-like app state | `state/` (6 files, 2380 LOC) | ❌ | 🔲 | Bubble Tea model replaces this |
+| Bootstrap state | `bootstrap/state.ts` (1758 LOC) | ❌ | 🔲 | Handled in main.go |
+| React contexts | `context/` (9 files) | ❌ | 🔲 | Bubble Tea model handles |
+
+---
+
+## Summary Scorecard
+
+| Area | ✅ Complete | 🟡 Partial | ❌ Missing | ⬛ Descoped | Total |
+|------|------------|-----------|-----------|------------|-------|
+| Auth & OAuth | 9 | 0 | 6 | 3 | 18 |
+| API Client & SSE | 7 | 2 | 4 | 0 | 13 |
+| Agent Loop | 8 | 2 | 4 | 0 | 14 |
+| Tools (framework) | 5 | 0 | 2 | 0 | 7 |
+| Tools (individual, 40) | 24 | 0 | 14 | 2 | 40 |
+| Permissions & Hooks | 11 | 0 | 7 | 1 | 19 |
+| TUI & Rendering | 12 | 7 | 13 | 0 | 32 |
+| Slash Commands | 22 | 3 | 24 | 11 | 60 |
+| MCP Host | 7 | 0 | 6 | 0 | 13 |
+| Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
+| Memory System | 5 | 0 | 8 | 3 | 16 |
+| RTK | 13 | 0 | 2 | 0 | 15 |
+| Session & History | 5 | 3 | 7 | 0 | 15 |
+| Config & Settings | 5 | 0 | 10 | 3 | 18 |
+| Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
+| Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
+| Coordinator / Swarms | 0 | 1 | 8 | 0 | 9 |
+| Attachments (M13) | 0 | 0 | 11 | 0 | 11 |
+| Buddy / Voice / KAIROS | 5 | 1 | 6 | 1 | 13 |
+| Output Styles & Undercover | 6 | 0 | 3 | 0 | 9 |
+| Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
+| Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
+| State Management | 0 | 0 | 0 | 3 | 3 |
+| **TOTAL** | **156** | **22** | **174** | **37** | **389** |
+
+**Overall parity: 178/352 scoped features (51% complete, 11% partial)**
+**Descoped: 37 features (intentionally excluded)**
+
+---
+
+## Milestone Map (Updated)
+
+| Milestone | Features | Status |
+|-----------|----------|--------|
+| M1 — Auth + bare API call | Auth (9), API basics (5) | ✅ Done |
+| M2 — Streaming + 5 core tools | SSE, BashTool, FileRead/Write/Edit, Grep, Glob | ✅ Done |
+| M3 — TUI | Bubble Tea REPL, status bar, input, viewport | ✅ Done |
+| M4 — All core tools | 24 tools implemented | ✅ Done |
+| M5 — Permissions + hooks + commands | Permissions, all 4 hook types, 22 commands | ✅ Done |
+| M6 — RTK in-process | 75 rules, SQLite tracking, /rtk gain | ✅ Done |
+| M7 — MCP host | stdio/HTTP transports, tool proxy, config | ✅ Done |
+| M8 — Plugins + Skills + memdir | Plugin ecosystem, skill tool, memory/dream | ✅ Done |
+| M9 — Multi-agent | AgentTool, RunSubAgent, parallel tools | ✅ Done |
+| M11 — Cosmetic parity | Buddy, output styles, undercover | ✅ Done |
+| **M10 — Bridge (IDE)** | 21 bridge features | ❌ Not started |
+| **M12 — Hardening** | Conformance tests, benchmarks | ❌ Not started |
+| **M13 — Attachments** | Image/PDF paste, drag-drop | ❌ Not started |
+| **M14 — Missing features (scoped)** | CLAUDE.md, auto-compact, vim mode, 24 missing commands, coordinator full impl | ❌ Planned |
+
+---
+
+## Key Missing Features (Not in Any Milestone Yet)
+
+These are implemented in Claude Code but not yet in conduit and not in M10/M13:
+
+1. **CLAUDE.md loading** — per-project and per-directory instruction files (`utils/claudemd.ts`, 1479 LOC). High value.
+2. **Auto-compact** — automatic context compaction when approaching limits. High value.
+3. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value.
+4. **Custom keybindings** — user-defined key mappings. Low value.
+5. **HTTP proxy support** — `HTTPS_PROXY` env not honored. Medium value.
+6. **Rate limit quota tracking** — 5h/7d window warnings. Medium value.
+7. **AskUserQuestion tool** — model can prompt user for input. Medium value.
+8. **EnterPlanMode / ExitPlanMode tools** — model-initiated plan mode. Medium value.
+9. **MCP resource listing/reading tools** — ListMcpResources, ReadMcpResource. Low value.
+10. **Output style persistence** — active style not saved between sessions. Low value.
+11. **Missing slash commands (24)** — /memory, /config, /context, /diff, /doctor, /effort, /files, /review, /session, /stats, /status, /tasks, /thinkback, /usage, /agents, /vim, etc.
+12. **Conversation recovery** — mid-turn error recovery. Medium value.
+13. **API preconnect** — warm connection on startup. Low value.
+14. **Token counting** — actual token estimation before sending. Medium value.
+15. **KAIROS / Assistant mode** — GrowthBook-gated, probably not worth porting.

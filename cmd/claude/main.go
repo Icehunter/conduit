@@ -22,6 +22,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/mcp"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
@@ -253,6 +254,12 @@ func runREPL(continueMode bool) error {
 	// Build skill listing for the system prompt.
 	skillEntries := buildSkillEntries(loadedPlugins)
 
+	// Load auto-memory: ensure the directory exists and build the full memory
+	// system-prompt block (type taxonomy + MEMORY.md content).
+	// Mirrors loadMemoryPrompt() in src/memdir/memdir.ts.
+	_ = memdir.EnsureDir(cwd)
+	mem := memdir.BuildPrompt(cwd)
+
 	c := newAPIClient(bearer)
 	reg := buildRegistry(c, mcpManager)
 	modelName := internalmodel.Resolve()
@@ -260,7 +267,7 @@ func runREPL(continueMode bool) error {
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(skillEntries...),
+		System:    agent.BuildSystemBlocks(mem, skillEntries...),
 		MaxTurns:  50,
 		Gate:      gate,
 		Hooks:     &s.Hooks,
@@ -272,7 +279,7 @@ func runREPL(continueMode bool) error {
 	skillLoader := plugins.NewSkillLoader(loadedPlugins)
 	reg.Register(skilltool.New(skillLoader, lp.RunSubAgent))
 
-	return tui.Run(Version, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
+	tuiErr := tui.Run(Version, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
 		AuthErr:         authErr,
 		Profile:         prof,
 		Session:         sess,
@@ -295,6 +302,21 @@ func runREPL(continueMode bool) error {
 			return newAPIClient(bearer)
 		},
 	})
+
+	// Auto-dream: after the session ends, check whether memory consolidation
+	// should fire. Mirrors autoDream.ts gate: 24h elapsed + 5 sessions.
+	// Runs synchronously (after TUI exits) so the terminal is restored before
+	// any sub-agent output. Non-fatal — failure doesn't affect the session.
+	if sess != nil {
+		sessionDir := sess.ProjectDir
+		if memdir.ShouldDream(cwd, sessionDir) {
+			dreamCtx, dreamCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer dreamCancel()
+			_ = memdir.RunDream(dreamCtx, cwd, sessionDir, lp.RunSubAgent)
+		}
+	}
+
+	return tuiErr
 }
 
 func runPrint(args []string) error {
@@ -319,6 +341,8 @@ func runPrint(args []string) error {
 	cwd, _ := os.Getwd()
 	loadedPlugins, _ := plugins.LoadAll(cwd)
 	skillEntries := buildSkillEntries(loadedPlugins)
+	_ = memdir.EnsureDir(cwd)
+	mem := memdir.BuildPrompt(cwd)
 	c := newAPIClient(bearer)
 	reg := buildRegistry(c, nil)
 	modelName := internalmodel.Resolve()
@@ -326,7 +350,7 @@ func runPrint(args []string) error {
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(skillEntries...),
+		System:    agent.BuildSystemBlocks(mem, skillEntries...),
 		Metadata:  buildMetadata(),
 		MaxTurns:  10,
 	})

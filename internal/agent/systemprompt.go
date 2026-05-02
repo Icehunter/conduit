@@ -100,12 +100,19 @@ type SkillEntry struct {
 	Description string
 }
 
-// BuildSystemBlocks returns the 4-block system field that mimics the real
-// CLI's request shape. Caller can override BillingHeader via the
-// CLAUDE_GO_BILLING_HEADER env var. If skills is non-empty, a fifth block
-// listing available skills is appended (not cache-controlled — it changes
-// per session as plugins are installed/removed).
-func BuildSystemBlocks(skills ...SkillEntry) []api.SystemBlock {
+// BuildSystemBlocks returns the system field that mimics the real CLI's
+// request shape. Caller can override BillingHeader via the
+// CLAUDE_GO_BILLING_HEADER env var.
+//
+// Block layout:
+//  1. Billing header
+//  2. Identity
+//  3. Agent system prompt (cache_control: ephemeral, scope: global)
+//  4. Output guidance (cache_control: ephemeral)
+//  5. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
+//     Includes type taxonomy, how-to-save instructions, and MEMORY.md content.
+//  6. [optional] Skills reminder (skills non-empty)
+func BuildSystemBlocks(memory string, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
 		billing = v
@@ -130,6 +137,12 @@ func BuildSystemBlocks(skills ...SkillEntry) []api.SystemBlock {
 				TTL:  "1h",
 			},
 		},
+	}
+	if memory != "" {
+		blocks = append(blocks, api.SystemBlock{
+			Type: "text",
+			Text: "# User's persistent memory\n\nThe following is loaded from MEMORY.md:\n\n" + memory,
+		})
 	}
 	if reminder := SkillsReminder(skills); reminder != "" {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: reminder})

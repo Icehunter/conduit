@@ -42,12 +42,21 @@ func RegisterMiscCommands(r *Registry) {
 		},
 	})
 
-	// /plan — deferred, but honest about it
+	// /plan — analysis-only mode: Claude proposes but does not edit
 	r.Register(Command{
 		Name:        "plan",
-		Description: "Enter plan mode (coming soon)",
-		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Plan mode is not yet implemented."}
+		Description: "Enter plan mode — Claude analyzes and proposes but makes no changes",
+		Handler: func(args string) Result {
+			return Result{
+				Type: "prompt",
+				Text: "Enter plan mode. You are now in PLAN MODE. In this mode:\n" +
+					"- Analyze the codebase and understand the problem\n" +
+					"- Propose a detailed implementation plan\n" +
+					"- Do NOT make any edits to files\n" +
+					"- Do NOT run commands that modify state\n" +
+					"- Present your plan and wait for approval before doing anything\n" +
+					"Acknowledge that you are in plan mode and ask what the user wants to plan.",
+			}
 		},
 	})
 

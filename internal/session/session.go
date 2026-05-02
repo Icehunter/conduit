@@ -96,6 +96,16 @@ func (s *Session) SetSummary(summary string) error {
 	return s.Append(Entry{Type: "summary", Summary: summary})
 }
 
+// Snapshot returns the current message count — used as a rewind point.
+// We use the file line count as a proxy. Returns 0 if unavailable.
+func (s *Session) Snapshot() int {
+	data, err := os.ReadFile(s.FilePath)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "\n")
+}
+
 // LoadMessages reads the JSONL file and returns the message history.
 func (s *Session) LoadMessages() ([]api.Message, error) {
 	return LoadMessages(s.FilePath)

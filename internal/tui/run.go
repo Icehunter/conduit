@@ -102,6 +102,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	}
 	commands.RegisterPluginCommands(reg, loadedPlugins)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
+	commands.RegisterSkillsCommand(reg, loadedPlugins)
 
 	// Session state shared between commands and the TUI model.
 	// The model pointer is set after New() — use a pointer-to-pointer so

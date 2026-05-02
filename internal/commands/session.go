@@ -350,12 +350,12 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /rewind — depends on session history snapshots
+	// /rewind — depends on session history snapshots (stub)
 	r.Register(Command{
 		Name:        "rewind",
-		Description: "Restore conversation to a previous point (coming soon)",
+		Description: "Rewind conversation to a previous point",
 		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Rewind is not yet implemented."}
+			return Result{Type: "text", Text: "Rewind is not yet implemented. Use /resume to load a previous session."}
 		},
 	})
 

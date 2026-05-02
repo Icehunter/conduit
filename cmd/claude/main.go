@@ -22,6 +22,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/mcp"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -260,6 +261,10 @@ func runREPL(continueMode bool) error {
 	_ = memdir.EnsureDir(cwd)
 	mem := memdir.BuildPrompt(cwd)
 
+	// Load CLAUDE.md instruction files (project + user + local).
+	claudeMdFiles, _ := claudemd.Load(cwd)
+	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
+
 	c := newAPIClient(bearer)
 	reg := buildRegistry(c, mcpManager)
 	modelName := internalmodel.Resolve()
@@ -267,7 +272,7 @@ func runREPL(continueMode bool) error {
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(mem, skillEntries...),
+		System:    agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
 		MaxTurns:  50,
 		Gate:      gate,
 		Hooks:     &s.Hooks,
@@ -343,6 +348,8 @@ func runPrint(args []string) error {
 	skillEntries := buildSkillEntries(loadedPlugins)
 	_ = memdir.EnsureDir(cwd)
 	mem := memdir.BuildPrompt(cwd)
+	claudeMdFiles, _ := claudemd.Load(cwd)
+	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 	c := newAPIClient(bearer)
 	reg := buildRegistry(c, nil)
 	modelName := internalmodel.Resolve()
@@ -350,7 +357,7 @@ func runPrint(args []string) error {
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(mem, skillEntries...),
+		System:    agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
 		Metadata:  buildMetadata(),
 		MaxTurns:  10,
 	})

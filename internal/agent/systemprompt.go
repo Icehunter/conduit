@@ -110,10 +110,11 @@ type SkillEntry struct {
 //  2. Identity
 //  3. Agent system prompt (cache_control: ephemeral, scope: global)
 //  4. Output guidance (cache_control: ephemeral)
-//  5. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
+//  5. [optional] CLAUDE.md instructions (claudeMd != "")
+//  6. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
 //     Includes type taxonomy, how-to-save instructions, and MEMORY.md content.
-//  6. [optional] Skills reminder (skills non-empty)
-func BuildSystemBlocks(memory string, skills ...SkillEntry) []api.SystemBlock {
+//  7. [optional] Skills reminder (skills non-empty)
+func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
 		billing = v
@@ -138,6 +139,9 @@ func BuildSystemBlocks(memory string, skills ...SkillEntry) []api.SystemBlock {
 				TTL:  "1h",
 			},
 		},
+	}
+	if claudeMd != "" {
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: claudeMd})
 	}
 	if memory != "" {
 		blocks = append(blocks, api.SystemBlock{

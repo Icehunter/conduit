@@ -28,7 +28,11 @@ func renderMessage(msg Message, width int) string {
 
 	switch msg.Role {
 	case RoleUser:
-		return pad + styleYouPrefix.Render(prefixYou) + "  " + styleUserText.Render(msg.Content)
+		// Wrap user text at inner width minus the prefix width ("▶ You  " = 8 cols).
+		prefixStr := styleYouPrefix.Render(prefixYou) + "  "
+		prefixW := lipgloss.Width(prefixStr)
+		body := styleUserText.Width(inner - prefixW).Render(msg.Content)
+		return pad + prefixStr + body
 
 	case RoleAssistant:
 		body := renderMarkdown(msg.Content, inner)
@@ -60,7 +64,7 @@ func indentLines(s, pad string) string {
 }
 
 // renderMarkdown does lightweight markdown rendering with syntax highlighting.
-// width is already the inner usable width (after outer padding is removed).
+// width is the inner usable width (after outer padding is removed).
 func renderMarkdown(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	var out strings.Builder
@@ -88,7 +92,7 @@ func renderMarkdown(text string, width int) string {
 			codeBuf.WriteByte('\n')
 			continue
 		}
-		out.WriteString(renderLine(line))
+		out.WriteString(renderLine(line, width))
 		out.WriteByte('\n')
 	}
 	if inCode && codeBuf.Len() > 0 {
@@ -327,11 +331,13 @@ func isOperator(r rune) bool {
 	return strings.ContainsRune("+-*/=<>!&|^~%", r)
 }
 
-// renderLine applies inline styling to a prose line.
-func renderLine(line string) string {
+// renderLine applies inline styling and word-wraps prose to width columns.
+func renderLine(line string, width int) string {
 	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true))
 	line = applyDelim(line, "`", styleInlineCode)
-	return styleAssistantText.Render(line)
+	// WordWrap breaks at word boundaries; the style then renders with the
+	// correct visual width so the viewport never clips.
+	return styleAssistantText.Width(width).Render(line)
 }
 
 func applyDelim(line, delim string, style lipgloss.Style) string {

@@ -1,0 +1,40 @@
+{
+  "_source": [
+    "decoded/0533.js (URLs and CLIENT_ID)",
+    "decoded/0532.js:119-121 (scope literals VS=user:inference, LJH=user:profile, SA4=org:create_api_key)",
+    "decoded/0533.js:5 (qv_ = [LJH, VS, user:sessions:claude_code, user:mcp_servers, user:file_upload])",
+    "decoded/0533.js:4-6 (N_q=[SA4,LJH]; ZV6=unique([...N_q,...qv_]))"
+  ],
+  "base_api_url": "https://api.anthropic.com",
+  "console_authorize_url": "https://platform.claude.com/oauth/authorize",
+  "claude_ai_authorize_url": "https://claude.com/cai/oauth/authorize",
+  "claude_ai_origin": "https://claude.ai",
+  "token_url": "https://platform.claude.com/v1/oauth/token",
+  "api_key_url": "https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
+  "roles_url": "https://api.anthropic.com/api/oauth/claude_cli/roles",
+  "console_success_url": "https://platform.claude.com/buy_credits?returnUrl=/oauth/code/success%3Fapp%3Dclaude-code",
+  "claude_ai_success_url": "https://platform.claude.com/oauth/code/success?app=claude-code",
+  "manual_redirect_url": "https://platform.claude.com/oauth/code/callback",
+  "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  "mcp_proxy_url": "https://mcp-proxy.anthropic.com",
+  "mcp_proxy_path": "/v1/mcp/{server_id}",
+  "scopes": {
+    "inference_only": ["user:inference"],
+    "console": ["org:create_api_key", "user:profile"],
+    "claude_ai": [
+      "user:profile",
+      "user:inference",
+      "user:sessions:claude_code",
+      "user:mcp_servers",
+      "user:file_upload"
+    ],
+    "all": [
+      "org:create_api_key",
+      "user:profile",
+      "user:inference",
+      "user:sessions:claude_code",
+      "user:mcp_servers",
+      "user:file_upload"
+    ]
+  }
+}

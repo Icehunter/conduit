@@ -1,0 +1,21 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - { pkg: ./internal/sse, fn: FuzzParse }
+          - { pkg: ./internal/auth, fn: FuzzCallbackURL }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: go test -run=^$ -fuzz=^${{ matrix.target.fn }}$ -fuzztime=10m ${{ matrix.target.pkg }}

@@ -1,0 +1,50 @@
+{
+  "_source": "decoded/1220.js:32-64 (function GI_); URL empirically verified against real claude 2.1.126 v2 (user-captured 2026-05-01).",
+  "_notes": [
+    "Order of appended params is exactly: code, client_id, response_type, redirect_uri, scope, code_challenge, code_challenge_method, state, [orgUUID], [login_hint], [login_method].",
+    "Scope value is space-separated (URL-encoded as +). When inferenceOnly=true, scope is just 'user:inference'.",
+    "Manual flow uses MANUAL_REDIRECT_URL; automatic uses http://localhost:<port>/callback.",
+    "Authorize URL is claude.ai/oauth/authorize (terminal). The decoded source uses claude.com/cai/oauth/authorize as a 307-redirect attribution wrapper, but as of 2026-05 that wrapper rejects the same query string with 'Invalid request format'. Empirical capture confirms claude.ai is what real Claude Code 2.1.126 ends up at."
+  ],
+  "cases": [
+    {
+      "name": "claude_ai_automatic",
+      "input": {
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "fa84ed4a-2b2c-44e8-9b1f-93f04f7efa55",
+        "port": 53412,
+        "is_manual": false,
+        "login_with_claude_ai": true,
+        "inference_only": false
+      },
+      "expected_url": "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A53412%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=fa84ed4a-2b2c-44e8-9b1f-93f04f7efa55"
+    },
+    {
+      "name": "console_manual",
+      "input": {
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "state": "abc123",
+        "port": 0,
+        "is_manual": true,
+        "login_with_claude_ai": false,
+        "inference_only": false
+      },
+      "expected_url": "https://platform.claude.com/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=abc123"
+    },
+    {
+      "name": "inference_only_with_org_and_hint",
+      "input": {
+        "code_challenge": "challenge_xyz",
+        "state": "state_xyz",
+        "port": 8080,
+        "is_manual": false,
+        "login_with_claude_ai": true,
+        "inference_only": true,
+        "org_uuid": "11111111-2222-3333-4444-555555555555",
+        "login_hint": "user@example.com",
+        "login_method": "google"
+      },
+      "expected_url": "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback&scope=user%3Ainference&code_challenge=challenge_xyz&code_challenge_method=S256&state=state_xyz&orgUUID=11111111-2222-3333-4444-555555555555&login_hint=user%40example.com&login_method=google"
+    }
+  ]
+}

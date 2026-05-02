@@ -1,0 +1,10 @@
+bin/
+dist/
+coverage.out
+coverage.html
+*.test
+*.prof
+.DS_Store
+
+# stray binaries from `go build` without -o
+/claude

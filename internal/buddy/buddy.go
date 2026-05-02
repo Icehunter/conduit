@@ -331,6 +331,14 @@ func RenderFace(b Bones) string {
 // --- Display ---
 
 // Summary returns a multi-line text summary of the companion for /buddy.
+var rarityBadge = map[string]string{
+	"common":    "⬜ Common",
+	"uncommon":  "🟩 Uncommon",
+	"rare":      "🟦 Rare",
+	"epic":      "🟪 Epic",
+	"legendary": "🟨 Legendary",
+}
+
 func Summary(b Bones, name string) string {
 	var sb strings.Builder
 	sprite := RenderSprite(b, 0)
@@ -338,13 +346,18 @@ func Summary(b Bones, name string) string {
 	sb.WriteByte('\n')
 	shinyMark := ""
 	if b.Shiny {
-		shinyMark = " ✨"
+		shinyMark = " ✨ SHINY"
 	}
-	sb.WriteString(fmt.Sprintf("\n%s the %s%s [%s]\n", name, b.Species, shinyMark, b.Rarity))
+	badge := rarityBadge[b.Rarity]
+	if badge == "" {
+		badge = b.Rarity
+	}
+	sb.WriteString(fmt.Sprintf("\n%s the %s  %s%s\n", name, b.Species, badge, shinyMark))
 	sb.WriteString("\nStats:\n")
 	for _, stat := range statNames {
 		val := b.Stats[stat]
-		bar := strings.Repeat("█", val/10) + strings.Repeat("░", 10-val/10)
+		filled := val / 10
+		bar := strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
 		sb.WriteString(fmt.Sprintf("  %-12s %s %3d\n", stat, bar, val))
 	}
 	return strings.TrimRight(sb.String(), "\n")

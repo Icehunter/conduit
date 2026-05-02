@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -26,15 +27,21 @@ func RegisterBuddyCommand(r *Registry, getUserID func() string) {
 				if getUserID != nil {
 					userID = getUserID()
 				}
+				// Capture forced rarity at hatch time so it persists.
+				forcedRarity := ""
+				if env := os.Getenv("CLAUDE_BUDDY_FORCE_RARITY"); env != "" {
+					forcedRarity = env
+				}
 				sc := &buddy.StoredCompanion{
-					Name:      name,
-					UserID:    userID,
-					HatchedAt: time.Now().Format(time.RFC3339),
+					Name:         name,
+					UserID:       userID,
+					HatchedAt:    time.Now().Format(time.RFC3339),
+					ForcedRarity: forcedRarity,
 				}
 				if err := buddy.Save(sc); err != nil {
 					return Result{Type: "error", Text: fmt.Sprintf("buddy: save: %v", err)}
 				}
-				bones := buddy.GenerateBones(userID)
+				bones := buddy.GenerateBones(userID, forcedRarity)
 				return Result{Type: "text", Text: fmt.Sprintf("Your companion has been named!\n\n%s", buddy.Summary(bones, name))}
 			}
 
@@ -51,7 +58,7 @@ func RegisterBuddyCommand(r *Registry, getUserID func() string) {
 			if userID == "" && getUserID != nil {
 				userID = getUserID()
 			}
-			bones := buddy.GenerateBones(userID)
+			bones := buddy.GenerateBones(userID, sc.ForcedRarity)
 			return Result{Type: "text", Text: buddy.Summary(bones, sc.Name)}
 		},
 	})

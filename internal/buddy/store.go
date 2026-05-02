@@ -8,9 +8,10 @@ import (
 
 // StoredCompanion is the persisted companion soul (bones are regenerated).
 type StoredCompanion struct {
-	Name      string `json:"name"`
-	UserID    string `json:"userId"`
-	HatchedAt string `json:"hatchedAt,omitempty"`
+	Name         string `json:"name"`
+	UserID       string `json:"userId"`
+	HatchedAt    string `json:"hatchedAt,omitempty"`
+	ForcedRarity string `json:"forcedRarity,omitempty"` // persisted rarity override
 }
 
 func storePath() string {

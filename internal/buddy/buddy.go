@@ -90,18 +90,21 @@ const buddySalt = "friend-2026-401"
 
 // GenerateBones generates deterministic companion bones for the given userID.
 // Mirrors companion.ts generateBones().
-// Set CLAUDE_BUDDY_FORCE_RARITY=legendary (or rare/epic/etc.) to override
-// the weighted rarity roll while keeping all other attributes deterministic.
-func GenerateBones(userID string) Bones {
+//
+// forcedRarity overrides the weighted rarity roll (use "" for normal roll).
+// The env var CLAUDE_BUDDY_FORCE_RARITY takes precedence over forcedRarity.
+func GenerateBones(userID string, forcedRarity ...string) Bones {
 	seed := fnv1a(userID + buddySalt)
 	rng := mulberry32(seed)
 
-	// Rarity roll — weighted by default, overridable via env.
+	// Rarity roll — env overrides stored value overrides weighted roll.
 	rarity := rollRarity(rng)
-	if forced := os.Getenv("CLAUDE_BUDDY_FORCE_RARITY"); forced != "" {
-		if _, ok := rarityFloor[forced]; ok {
-			rarity = forced
-		}
+	override := os.Getenv("CLAUDE_BUDDY_FORCE_RARITY")
+	if override == "" && len(forcedRarity) > 0 {
+		override = forcedRarity[0]
+	}
+	if _, ok := rarityFloor[override]; ok {
+		rarity = override
 	}
 
 	// Species, eye, hat (uniform picks).

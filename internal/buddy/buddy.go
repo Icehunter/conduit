@@ -10,6 +10,7 @@ package buddy
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -89,12 +90,19 @@ const buddySalt = "friend-2026-401"
 
 // GenerateBones generates deterministic companion bones for the given userID.
 // Mirrors companion.ts generateBones().
+// Set CLAUDE_BUDDY_FORCE_RARITY=legendary (or rare/epic/etc.) to override
+// the weighted rarity roll while keeping all other attributes deterministic.
 func GenerateBones(userID string) Bones {
 	seed := fnv1a(userID + buddySalt)
 	rng := mulberry32(seed)
 
-	// Rarity roll (weighted).
+	// Rarity roll — weighted by default, overridable via env.
 	rarity := rollRarity(rng)
+	if forced := os.Getenv("CLAUDE_BUDDY_FORCE_RARITY"); forced != "" {
+		if _, ok := rarityFloor[forced]; ok {
+			rarity = forced
+		}
+	}
 
 	// Species, eye, hat (uniform picks).
 	species := AllSpecies[int(rng()*float64(len(AllSpecies)))%len(AllSpecies)]

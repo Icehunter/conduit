@@ -121,3 +121,39 @@ func TestAllSpecies_Count(t *testing.T) {
 		t.Errorf("expected 18 species; got %d", len(AllSpecies))
 	}
 }
+
+func TestForceRarity_Legendary(t *testing.T) {
+	t.Setenv("CLAUDE_BUDDY_FORCE_RARITY", "legendary")
+	b := GenerateBones("any-user")
+	if b.Rarity != "legendary" {
+		t.Errorf("expected legendary; got %q", b.Rarity)
+	}
+	// Species/eye/hat should still vary by user ID.
+	b2 := GenerateBones("different-user")
+	if b.Species == b2.Species && b.Eye == b2.Eye && b.Hat == b2.Hat {
+		t.Error("different users should still get different appearance despite forced rarity")
+	}
+}
+
+func TestForceRarity_InvalidFallsBack(t *testing.T) {
+	t.Setenv("CLAUDE_BUDDY_FORCE_RARITY", "mythic")
+	// Invalid rarity should be ignored, normal weighted roll applies.
+	b := GenerateBones("user-x")
+	validRarities := map[string]bool{"common": true, "uncommon": true, "rare": true, "epic": true, "legendary": true}
+	if !validRarities[b.Rarity] {
+		t.Errorf("invalid forced rarity should fall back to valid roll; got %q", b.Rarity)
+	}
+}
+
+func TestForceRarity_StatsUseCorrectFloor(t *testing.T) {
+	t.Setenv("CLAUDE_BUDDY_FORCE_RARITY", "legendary")
+	b := GenerateBones("user-stats-test")
+	floor := rarityFloor["legendary"] // 50
+	for stat, val := range b.Stats {
+		// Peak stat can go up to floor+79=129 (capped at 100), dump stat can go to floor-10=40.
+		// All stats should be above the legendary dump floor minimum.
+		if val < floor-10 {
+			t.Errorf("stat %s=%d below legendary dump floor %d", stat, val, floor-10)
+		}
+	}
+}

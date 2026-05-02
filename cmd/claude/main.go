@@ -1,16 +1,15 @@
 // Package main is the claude-go entrypoint.
 //
-// M2 surface:
+// M3 surface:
 //
-//	claude                      Interactive REPL (streaming, with tools).
+//	claude                      Full-screen Bubble Tea TUI.
 //	claude login                Run OAuth flow, persist tokens.
 //	claude logout               Clear persisted tokens.
-//	claude --print "prompt"     One-shot non-streaming Messages call.
+//	claude --print "prompt"     One-shot streaming response.
 //	claude version              Print binary version.
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,6 +33,7 @@ import (
 	"github.com/icehunter/claude-go/internal/tools/filewritetool"
 	"github.com/icehunter/claude-go/internal/tools/globtool"
 	"github.com/icehunter/claude-go/internal/tools/greptool"
+	"github.com/icehunter/claude-go/internal/tui"
 )
 
 // Version is the wire version we identify as. We match the exact value the
@@ -146,9 +146,9 @@ func buildMetadata() map[string]any {
 	return agent.BuildMetadata(deviceID, accountUUID, sessionID)
 }
 
-// runREPL runs the interactive REPL. Reads lines from stdin, sends them to
-// the agent loop, and prints streaming responses.
+// runREPL launches the full-screen Bubble Tea TUI.
 func runREPL() error {
+	// Auth check before entering alt-screen so errors print clearly.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -172,74 +172,7 @@ func runREPL() error {
 		MaxTurns:  50,
 	})
 
-	// Conversation history persisted across turns within the session.
-	var history []api.Message
-
-	fmt.Fprintf(os.Stderr, "claude-go v%s  (model: %s)\n", Version, modelName)
-	fmt.Fprintln(os.Stderr, "Type your message and press Enter. Ctrl-C or /exit to quit.")
-	fmt.Fprintln(os.Stderr)
-
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		// Print prompt.
-		fmt.Fprint(os.Stderr, "> ")
-
-		if !scanner.Scan() {
-			// EOF (Ctrl-D) — clean exit.
-			fmt.Fprintln(os.Stderr)
-			break
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if line == "/exit" || line == "/quit" {
-			break
-		}
-
-		// Add user message to history.
-		history = append(history, api.Message{
-			Role:    "user",
-			Content: []api.ContentBlock{{Type: "text", Text: line}},
-		})
-
-		// Run one agent turn (may make multiple API calls for tool use).
-		// Loop.Run returns the full accumulated history so we don't need to
-		// reconstruct it from events.
-		newHistory, runErr := lp.Run(ctx, history, func(ev agent.LoopEvent) {
-			switch ev.Type {
-			case agent.EventText:
-				fmt.Print(ev.Text)
-			case agent.EventToolUse:
-				fmt.Fprintf(os.Stderr, "\n[tool: %s]\n", ev.ToolName)
-			case agent.EventToolResult:
-				if ev.IsError {
-					fmt.Fprintf(os.Stderr, "[tool error: %s]\n", ev.ResultText)
-				}
-			}
-		})
-		fmt.Println()
-
-		// Always adopt whatever history the loop built, even on error, so the
-		// next turn starts from the correct state.
-		history = newHistory
-
-		if runErr != nil {
-			if errors.Is(runErr, context.Canceled) {
-				fmt.Fprintln(os.Stderr, "[interrupted]")
-				ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-				_ = cancel
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "error: %v\n", runErr)
-			continue
-		}
-	}
-
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("stdin: %w", err)
-	}
-	return nil
+	return tui.Run(Version, modelName, lp)
 }
 
 // stdoutDisplay shows OAuth URLs on stderr (so stdout stays clean for piping).

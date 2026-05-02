@@ -615,7 +615,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		if m.cfg.Gate != nil {
 			m.cfg.Gate.SetMode(m.permissionMode)
 		}
-		return m, nil, true
+		switch m.permissionMode {
+		case permissions.ModeAcceptEdits:
+			m.flashMsg = "⏵⏵ accept edits on (shift+tab to cycle)"
+		case permissions.ModePlan:
+			m.flashMsg = "⏸ plan mode on (shift+tab to cycle)"
+		default:
+			m.flashMsg = "default mode (shift+tab to cycle)"
+		}
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "tab", "esc":
 		if len(m.cmdMatches) > 0 {

@@ -204,6 +204,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
+	case "tab":
+		if !m.running && m.cfg.Commands != nil {
+			text := m.input.Value()
+			if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
+				completed := m.tabComplete(text)
+				if completed != text {
+					m.input.SetValue(completed)
+					// Move cursor to end.
+					m.input.CursorEnd()
+				}
+			}
+			return m, nil
+		}
+
 	case "ctrl+c":
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
@@ -293,6 +307,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// tabComplete returns the best completion for a partial slash command.
+// If exactly one command matches the prefix, it returns "/<name> " (with trailing
+// space so the user can immediately type args). If multiple match, it completes
+// to the longest common prefix. If none match, returns input unchanged.
+func (m Model) tabComplete(input string) string {
+	prefix := strings.ToLower(strings.TrimPrefix(input, "/"))
+	cmds := m.cfg.Commands.All()
+
+	var matches []string
+	for _, c := range cmds {
+		if strings.HasPrefix(c.Name, prefix) {
+			matches = append(matches, c.Name)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return input
+	case 1:
+		return "/" + matches[0] + " "
+	default:
+		// Longest common prefix of all matches.
+		lcp := matches[0]
+		for _, m := range matches[1:] {
+			for len(lcp) > 0 && !strings.HasPrefix(m, lcp) {
+				lcp = lcp[:len(lcp)-1]
+			}
+		}
+		return "/" + lcp
+	}
 }
 
 // applyCommandResult handles a slash command result in the TUI.

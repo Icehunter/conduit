@@ -164,7 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		if errors.Is(msg.err, context.Canceled) {
+		if isCancelError(msg.err) {
 			// Trim the dangling user message from history so the next turn
 			// starts from a clean state. The user message was appended before
 			// the loop ran; without a paired assistant reply it would confuse
@@ -274,6 +274,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// isCancelError reports whether err represents a user-initiated cancellation.
+// Covers context.Canceled, context.DeadlineExceeded, and the network-level
+// "use of closed network connection" that appears when the HTTP response body
+// is torn down mid-read (which doesn't wrap context.Canceled directly).
+func isCancelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context canceled") ||
+		strings.Contains(msg, "use of closed network connection") ||
+		strings.Contains(msg, "request canceled")
 }
 
 func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {

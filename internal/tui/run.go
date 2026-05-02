@@ -94,6 +94,10 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPromptCommands(reg)
 	commands.RegisterMCPCommand(reg, runOpts.MCPManager)
 	commands.RegisterRTKCommands(reg)
+	commands.RegisterBuddyCommand(reg, func() string {
+		// Use email as stable user ID for companion generation.
+		return runOpts.Profile.Email
+	})
 
 	// Load plugins and register their slash commands + browser.
 	cwd, _ := os.Getwd()

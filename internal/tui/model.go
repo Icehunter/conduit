@@ -20,6 +20,7 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/session"
@@ -120,6 +121,7 @@ type Config struct {
 	Commands   *commands.Registry
 	APIClient  *api.Client
 	MCPManager *mcp.Manager
+	Gate       *permissions.Gate
 
 	// AuthErr is non-nil when the TUI started without valid credentials.
 	AuthErr error
@@ -207,6 +209,10 @@ type Model struct {
 	// pluginPanel is the full plugin browser overlay.
 	// Non-nil when active.
 	pluginPanel *pluginPanelState
+
+	// permissionMode tracks the active permission mode for Shift+Tab cycling.
+	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
+	permissionMode permissions.Mode
 }
 
 // New builds the initial Model.
@@ -594,6 +600,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 			m.input.CursorEnd()
 			return m, nil, true
 		}
+
+	case "shift+tab":
+		// Cycle permission mode: default → acceptEdits → plan → default.
+		// Mirrors getNextPermissionMode.ts from real Claude Code.
+		switch m.permissionMode {
+		case "", permissions.ModeDefault:
+			m.permissionMode = permissions.ModeAcceptEdits
+		case permissions.ModeAcceptEdits:
+			m.permissionMode = permissions.ModePlan
+		default:
+			m.permissionMode = permissions.ModeDefault
+		}
+		if m.cfg.Gate != nil {
+			m.cfg.Gate.SetMode(m.permissionMode)
+		}
+		return m, nil, true
 
 	case "tab", "esc":
 		if len(m.cmdMatches) > 0 {
@@ -2175,8 +2197,15 @@ func (m Model) View() string {
 	if m.costUSD > 0 {
 		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
 	}
+	// Permission mode indicator (mirrors real Claude Code status bar).
+	switch m.permissionMode {
+	case permissions.ModeAcceptEdits:
+		midParts = append(midParts, styleStatus.Render("⏵⏵ accept edits on"))
+	case permissions.ModePlan:
+		midParts = append(midParts, styleStatus.Render("⏸ plan mode on"))
+	}
 	mid := strings.Join(midParts, barSep)
-	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit") + edgePad
+	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit  shift+tab mode") + edgePad
 
 	leftW := lipgloss.Width(appName)
 	midW := lipgloss.Width(mid)

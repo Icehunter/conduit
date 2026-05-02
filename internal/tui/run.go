@@ -136,6 +136,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		Commands:       reg,
 		APIClient:      apiClient,
 		MCPManager:     runOpts.MCPManager,
+		Gate:           opts.gate,
 		AuthErr:        runOpts.AuthErr,
 		Profile:        runOpts.Profile,
 		Session:        runOpts.Session,

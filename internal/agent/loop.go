@@ -79,6 +79,11 @@ type LoopConfig struct {
 
 	// SessionID is used when invoking hooks (passed as session_id in hook input).
 	SessionID string
+
+	// AskPermission is called when a tool needs interactive approval.
+	// It blocks until the user responds. Returns (allow, alwaysAllow).
+	// nil means DecisionAsk → allow through silently.
+	AskPermission func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)
 }
 
 // Loop drives the agentic query cycle.
@@ -96,6 +101,12 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 // SetModel updates the model used for new requests (from /model slash command).
 func (l *Loop) SetModel(name string) {
 	l.cfg.Model = name
+}
+
+// SetAskPermission installs the interactive permission callback.
+// Called from the TUI after the Bubble Tea program is created.
+func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)) {
+	l.cfg.AskPermission = fn
 }
 
 // Run executes the agentic loop starting with the given messages. handler is
@@ -353,15 +364,19 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				})
 				continue
 			case permissions.DecisionAsk:
-				// M5.1: non-interactive path — allow but note it in the event.
-				// Interactive prompting lands in M5.2.
-				handler(LoopEvent{
-					Type:      EventToolUse,
-					ToolID:    block.ID,
-					ToolName:  block.Name,
-					ToolInput: rawInput,
-					// Note: IsError=false, ResultText="" signals "allowed but asked"
-				})
+				if l.cfg.AskPermission != nil {
+					allow, alwaysAllow := l.cfg.AskPermission(ctx, block.Name, permInput)
+					if !allow {
+						resultText = fmt.Sprintf("%s denied by user", block.Name)
+						isError = true
+						handler(LoopEvent{Type: EventToolResult, ToolID: block.ID, ToolName: block.Name, ResultText: resultText, IsError: true})
+						results = append(results, api.ContentBlock{Type: "tool_result", ToolUseID: block.ID, IsError: true, ResultContent: resultText})
+						continue
+					}
+					if alwaysAllow {
+						l.cfg.Gate.AllowForSession(permissions.SuggestRule(block.Name, permInput))
+					}
+				}
 				// fall through to execution
 			}
 			// DecisionAllow: proceed normally.

@@ -62,6 +62,18 @@ type (
 		summary    string
 		err        error
 	}
+	// permissionAskMsg is sent by the agent goroutine when a tool needs
+	// interactive permission. The goroutine blocks on reply until the user
+	// chooses Allow once / Always allow / Deny.
+	permissionAskMsg struct {
+		toolName  string
+		toolInput string
+		reply     chan<- permissionReply
+	}
+	permissionReply struct {
+		allow       bool
+		alwaysAllow bool // add to session allow list
+	}
 	clearFlash struct{}
 )
 
@@ -107,6 +119,9 @@ type Model struct {
 
 	// modelName is the currently active model (can be changed via /model).
 	modelName string
+
+	// Permission prompt state — non-nil when a tool is waiting for approval.
+	permPrompt    *permissionPromptState
 
 	ready bool // true once we've received the first WindowSizeMsg
 }
@@ -195,6 +210,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, nil
 
+	case permissionAskMsg:
+		m.permPrompt = &permissionPromptState{
+			toolName:  msg.toolName,
+			toolInput: msg.toolInput,
+			reply:     msg.reply,
+			selected:  0,
+		}
+		m.refreshViewport()
+		return m, nil
+
 	case compactDoneMsg:
 		m.running = false
 		m.cancelTurn = nil
@@ -235,6 +260,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// Permission prompt intercepts all keys when active.
+	if m.permPrompt != nil {
+		return m.handlePermissionKey(msg)
+	}
+
 	switch msg.String() {
 	case "up":
 		if len(m.cmdMatches) > 0 {
@@ -516,6 +546,113 @@ func (m Model) tabComplete(input string) string {
 	}
 }
 
+// permissionPromptState holds the active permission prompt data.
+type permissionPromptState struct {
+	toolName  string
+	toolInput string
+	reply     chan<- permissionReply
+	selected  int // 0=Allow once, 1=Always allow, 2=Deny
+}
+
+var permissionOptions = []string{"Allow once", "Always allow", "Deny"}
+
+// handlePermissionKey routes keys to the permission modal.
+func (m Model) handlePermissionKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	p := m.permPrompt
+	switch msg.String() {
+	case "up", "left", "shift+tab":
+		if p.selected > 0 {
+			p.selected--
+		}
+	case "down", "right", "tab":
+		if p.selected < len(permissionOptions)-1 {
+			p.selected++
+		}
+	case "enter", " ":
+		reply := permissionReply{
+			allow:       p.selected != 2,
+			alwaysAllow: p.selected == 1,
+		}
+		m.permPrompt = nil
+		m.refreshViewport()
+		prog := *m.cfg.Program
+		return m, func() tea.Msg {
+			p.reply <- reply
+			_ = prog
+			return nil
+		}
+	case "ctrl+c", "escape":
+		// Treat escape as Deny.
+		reply := permissionReply{allow: false}
+		m.permPrompt = nil
+		m.refreshViewport()
+		return m, func() tea.Msg {
+			p.reply <- reply
+			return nil
+		}
+	case "1":
+		p.selected = 0
+		reply := permissionReply{allow: true, alwaysAllow: false}
+		m.permPrompt = nil
+		m.refreshViewport()
+		return m, func() tea.Msg { p.reply <- reply; return nil }
+	case "2":
+		p.selected = 1
+		reply := permissionReply{allow: true, alwaysAllow: true}
+		m.permPrompt = nil
+		m.refreshViewport()
+		return m, func() tea.Msg { p.reply <- reply; return nil }
+	case "3":
+		reply := permissionReply{allow: false}
+		m.permPrompt = nil
+		m.refreshViewport()
+		return m, func() tea.Msg { p.reply <- reply; return nil }
+	}
+	m.permPrompt = p
+	return m, nil
+}
+
+// renderPermissionPrompt renders the permission modal overlay.
+func (m Model) renderPermissionPrompt() string {
+	p := m.permPrompt
+	if p == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Permission required") + "\n\n")
+
+	// Tool + input.
+	label := p.toolName
+	if p.toolInput != "" {
+		short := p.toolInput
+		maxLen := m.width - 20
+		if maxLen > 10 && len(short) > maxLen {
+			short = short[:maxLen] + "…"
+		}
+		label += "(" + short + ")"
+	}
+	sb.WriteString(stylePickerItem.Render(label) + "\n\n")
+
+	for i, opt := range permissionOptions {
+		prefix := "  "
+		var rendered string
+		if i == p.selected {
+			rendered = stylePickerItemSelected.Render("▶ " + opt)
+		} else {
+			rendered = stylePickerItem.Render("  " + opt)
+		}
+		sb.WriteString(prefix + rendered + "\n")
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1/2/3 quick pick"))
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
+
 // applyCommandResult handles a slash command result in the TUI.
 func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 	switch res.Type {
@@ -742,10 +879,12 @@ func (m Model) View() string {
 	rPad := space - lPad
 	statusBar := appName + strings.Repeat(" ", lPad) + mid + strings.Repeat(" ", rPad) + right
 
-	// Command picker — rendered just above the input box when active.
-	var pickerBox string
-	if len(m.cmdMatches) > 0 {
-		pickerBox = m.renderCommandPicker()
+	// Permission prompt takes over the chrome area when active.
+	var overlayBox string
+	if m.permPrompt != nil {
+		overlayBox = m.renderPermissionPrompt()
+	} else if len(m.cmdMatches) > 0 {
+		overlayBox = m.renderCommandPicker()
 	}
 
 	// JoinVertical with explicit newlines between non-empty parts.
@@ -755,8 +894,8 @@ func (m Model) View() string {
 	} else {
 		parts = append(parts, "")
 	}
-	if pickerBox != "" {
-		parts = append(parts, pickerBox)
+	if overlayBox != "" {
+		parts = append(parts, overlayBox)
 	}
 	parts = append(parts, inputBox, statusBar)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)

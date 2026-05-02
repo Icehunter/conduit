@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -72,6 +73,26 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		m,
 		tea.WithAltScreen(),
 	)
+
+	// Wire interactive permission prompts — the callback runs in the agent
+	// goroutine, sends permissionAskMsg to Bubble Tea, then blocks on the
+	// reply channel until the user responds in the TUI.
+	if opts.gate != nil {
+		loop.SetAskPermission(func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool) {
+			reply := make(chan permissionReply, 1)
+			prog.Send(permissionAskMsg{
+				toolName:  toolName,
+				toolInput: toolInput,
+				reply:     reply,
+			})
+			select {
+			case r := <-reply:
+				return r.allow, r.alwaysAllow
+			case <-ctx.Done():
+				return false, false
+			}
+		})
+	}
 
 	// Re-enter alt-screen after SIGWINCH (iTerm2 resize) so the terminal
 	// doesn't leave ghost frames in the main buffer's scrollback.

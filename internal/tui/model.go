@@ -342,8 +342,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.history = msg.history
 			m.tallyTokens()
-			// Persist new messages to the session transcript.
+			// Persist new messages + cost snapshot to the session transcript.
 			m.persistNewMessages(msg.history)
+			if m.cfg.Session != nil && m.totalInputTokens > 0 {
+				_ = m.cfg.Session.AppendCost(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
+			}
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()

@@ -26,6 +26,8 @@ type SessionState struct {
 	// Rewind removes the last n conversation turns from in-memory history.
 	// Returns the number of turns actually removed.
 	Rewind      func(n int) int
+	// SearchTranscript searches all session transcripts for cwd and returns results.
+	SearchTranscript func(term string) string
 	// GetStatus returns a one-line status string (model, mode, session ID, cost, context %).
 	GetStatus   func() string
 	// GetTasks returns a formatted list of active TaskTool tasks.
@@ -358,13 +360,62 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				sessions = sessions[:20]
 			}
 			// Encode sessions as tab-separated lines for the TUI to parse.
-			// Format: "resume\t<filePath>\t<age>\t<preview>"
+			// Format: "<filePath>\t<age>\t<title>"
 			var lines []string
 			for _, s := range sessions {
 				age := time.Since(s.Modified).Round(time.Minute).String()
-				lines = append(lines, s.FilePath+"\t"+age+"\t"+s.ID[:min(8, len(s.ID))])
+				title := session.ExtractTitle(s.FilePath)
+				if title == "" {
+					title = s.ID[:min(8, len(s.ID))]
+				}
+				lines = append(lines, s.FilePath+"\t"+age+"\t"+title)
 			}
 			return Result{Type: "resume-pick", Text: strings.Join(lines, "\n")}
+		},
+	})
+
+	// /search <term> — scan JSONL transcripts for matching turns
+	r.Register(Command{
+		Name:        "search",
+		Description: "Search conversation history for a term. Usage: /search <term>",
+		Handler: func(args string) Result {
+			term := strings.TrimSpace(args)
+			if term == "" {
+				return Result{Type: "error", Text: "Usage: /search <term>"}
+			}
+			if state.SearchTranscript != nil {
+				return Result{Type: "text", Text: state.SearchTranscript(term)}
+			}
+			// Fallback: search current session files.
+			cwd := "."
+			if state.GetCwd != nil {
+				cwd = state.GetCwd()
+			}
+			sessions, err := session.List(cwd)
+			if err != nil || len(sessions) == 0 {
+				return Result{Type: "text", Text: "No sessions found for this directory."}
+			}
+			var sb strings.Builder
+			found := 0
+			for _, s := range sessions {
+				results, err := session.Search(s.FilePath, term)
+				if err != nil || len(results) == 0 {
+					continue
+				}
+				title := session.ExtractTitle(s.FilePath)
+				if title == "" {
+					title = s.ID[:min(8, len(s.ID))]
+				}
+				sb.WriteString(fmt.Sprintf("─── %s ───\n", title))
+				for _, r := range results {
+					sb.WriteString(fmt.Sprintf("[%s] %s\n\n", r.Role, r.Text))
+					found++
+				}
+			}
+			if found == 0 {
+				return Result{Type: "text", Text: fmt.Sprintf("No matches found for %q.", term)}
+			}
+			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
 	})
 

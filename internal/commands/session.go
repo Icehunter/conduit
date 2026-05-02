@@ -28,6 +28,8 @@ type SessionState struct {
 	Rewind      func(n int) int
 	// SearchTranscript searches all session transcripts for cwd and returns results.
 	SearchTranscript func(term string) string
+	// GetTokens returns current (inputTokens, outputTokens, costUSD) from LiveState.
+	GetTokens func() (int, int, float64)
 	// GetStatus returns a one-line status string (model, mode, session ID, cost, context %).
 	GetStatus   func() string
 	// GetTasks returns a formatted list of active TaskTool tasks.
@@ -300,24 +302,48 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 	// /context
 	r.Register(Command{
 		Name:        "context",
-		Description: "Show current context window usage",
+		Description: "Show current context window usage breakdown",
 		Handler: func(string) Result {
-			if state.GetHistory == nil {
-				return Result{Type: "text", Text: "Context: 0 messages"}
+			const maxCtx = 200000
+			var inputTokens, outputTokens int
+			var costUSD float64
+			if state.GetTokens != nil {
+				inputTokens, outputTokens, costUSD = state.GetTokens()
+			} else if state.GetHistory != nil {
+				// Fallback: estimate from history chars.
+				msgs := state.GetHistory()
+				total := 0
+				for _, m := range msgs {
+					total += len(m)
+				}
+				inputTokens = total / 4
 			}
-			msgs := state.GetHistory()
-			total := 0
-			for _, m := range msgs {
-				total += len(m)
+
+			pct := 0
+			if inputTokens > 0 {
+				pct = inputTokens * 100 / maxCtx
+				if pct > 100 {
+					pct = 100
+				}
 			}
-			// Rough token estimate: ~4 chars per token.
-			tokens := total / 4
-			pct := tokens * 100 / 200000
-			if pct > 100 {
-				pct = 100
-			}
+
 			bar := makeBar(pct, 40)
-			return Result{Type: "text", Text: fmt.Sprintf("Context usage: ~%d tokens (%d%%)\n%s", tokens, pct, bar)}
+			var sb strings.Builder
+			sb.WriteString("Context window usage\n\n")
+			sb.WriteString(fmt.Sprintf("  Input tokens:  %d / %d (%d%%)\n", inputTokens, maxCtx, pct))
+			sb.WriteString(fmt.Sprintf("  %s\n\n", bar))
+			if outputTokens > 0 {
+				sb.WriteString(fmt.Sprintf("  Output tokens: %d\n", outputTokens))
+			}
+			if costUSD > 0 {
+				sb.WriteString(fmt.Sprintf("  Estimated cost: $%.4f\n", costUSD))
+			}
+			remaining := maxCtx - inputTokens
+			if remaining < 0 {
+				remaining = 0
+			}
+			sb.WriteString(fmt.Sprintf("  Remaining: ~%d tokens", remaining))
+			return Result{Type: "text", Text: sb.String()}
 		},
 	})
 

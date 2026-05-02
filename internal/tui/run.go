@@ -201,6 +201,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			}
 			return modelPtr.LastThinking()
 		},
+		GetTokens: func() (int, int, float64) {
+			tokens, cost := live.Tokens()
+			// Output tokens not tracked separately in LiveState yet — return 0.
+			return tokens, 0, cost
+		},
 		GetColor: func() bool { return true },
 		SetColor: func(bool) {},
 		CopyLast: func() string {

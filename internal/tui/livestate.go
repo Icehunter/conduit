@@ -105,3 +105,4 @@ func (s *LiveState) EffortLevel() string {
 	defer s.mu.RUnlock()
 	return s.effortLevel
 }
+

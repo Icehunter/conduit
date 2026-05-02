@@ -26,11 +26,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/icehunter/claude-go/internal/api"
-	"github.com/icehunter/claude-go/internal/hooks"
-	"github.com/icehunter/claude-go/internal/permissions"
-	"github.com/icehunter/claude-go/internal/settings"
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/hooks"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // EventType identifies what kind of loop event the caller receives.
@@ -103,10 +103,49 @@ func (l *Loop) SetModel(name string) {
 	l.cfg.Model = name
 }
 
+// SetClient swaps the API client (e.g. after a fresh login reloads credentials).
+func (l *Loop) SetClient(client *api.Client) {
+	l.client = client
+}
+
 // SetAskPermission installs the interactive permission callback.
 // Called from the TUI after the Bubble Tea program is created.
 func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)) {
 	l.cfg.AskPermission = fn
+}
+
+// RunSubAgent runs a nested agent loop with the given prompt as the sole user
+// message. Used by AgentTool and SkillTool to spawn forked sub-agents.
+// The sub-agent inherits the same tools, model, and system prompt but starts
+// with a fresh single-turn history. Returns the concatenated text from the
+// final assistant message.
+func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: []api.ContentBlock{{Type: "text", Text: prompt}},
+		},
+	}
+	history, err := l.Run(ctx, msgs, func(LoopEvent) {})
+	if err != nil {
+		return "", err
+	}
+	// Extract the last assistant text from history.
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "assistant" {
+			var sb strings.Builder
+			for _, block := range history[i].Content {
+				if block.Type == "text" && block.Text != "" {
+					if sb.Len() > 0 {
+						sb.WriteByte('\n')
+					}
+					sb.WriteString(block.Text)
+				}
+			}
+			return sb.String(), nil
+		}
+	}
+	return "", nil
 }
 
 // Run executes the agentic loop starting with the given messages. handler is

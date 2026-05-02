@@ -5,14 +5,15 @@
 // and OAuth scopes). A bare `{model, messages, max_tokens}` body is rate-
 // limited as a non-CLI caller even with all the right headers. We replicate
 // the captured shape from real Claude Code 2.1.126 (mitmproxy 2026-05-01,
-// see /tmp/claude-go-capture/real_body.json).
+// see /tmp/conduit-capture/real_body.json).
 package agent
 
 import (
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/conduit/internal/api"
 )
 
 // BillingHeader is the `cc_version=…; cc_entrypoint=…; cch=…` line the real
@@ -67,15 +68,49 @@ In code: default to writing no comments. Never write multi-paragraph docstrings.
 
 Match responses to the task: a simple question gets a direct answer, not headers and sections.`
 
+// SkillsReminder is the system-reminder block injected when skills are available.
+// Mirrors the real CC's dynamic system block listing available slash-command skills.
+// Format: "# Available skills\n\n- name: description\n- name2: description2"
+// The model uses this listing to decide when to proactively call SkillTool.
+func SkillsReminder(skills []SkillEntry) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("# Available skills\n\n")
+	sb.WriteString("When the user types /<skill-name> or asks you to do something a skill covers, ")
+	sb.WriteString("invoke it using the SkillTool BEFORE generating any other response.\n\n")
+	for _, s := range skills {
+		desc := s.Description
+		if len([]rune(desc)) > 200 {
+			desc = string([]rune(desc)[:199]) + "…"
+		}
+		if desc != "" {
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", s.Name, desc))
+		} else {
+			sb.WriteString(fmt.Sprintf("- %s\n", s.Name))
+		}
+	}
+	return sb.String()
+}
+
+// SkillEntry is one item in the skills listing.
+type SkillEntry struct {
+	Name        string
+	Description string
+}
+
 // BuildSystemBlocks returns the 4-block system field that mimics the real
 // CLI's request shape. Caller can override BillingHeader via the
-// CLAUDE_GO_BILLING_HEADER env var.
-func BuildSystemBlocks() []api.SystemBlock {
+// CLAUDE_GO_BILLING_HEADER env var. If skills is non-empty, a fifth block
+// listing available skills is appended (not cache-controlled — it changes
+// per session as plugins are installed/removed).
+func BuildSystemBlocks(skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
 		billing = v
 	}
-	return []api.SystemBlock{
+	blocks := []api.SystemBlock{
 		{Type: "text", Text: billing},
 		{Type: "text", Text: MinimalIdentitySystem},
 		{
@@ -96,6 +131,10 @@ func BuildSystemBlocks() []api.SystemBlock {
 			},
 		},
 	}
+	if reminder := SkillsReminder(skills); reminder != "" {
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: reminder})
+	}
+	return blocks
 }
 
 // BuildMetadata mirrors the metadata block the real CLI sends, with

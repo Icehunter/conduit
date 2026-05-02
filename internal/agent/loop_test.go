@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/icehunter/claude-go/internal/api"
-	"github.com/icehunter/claude-go/internal/permissions"
-	"github.com/icehunter/claude-go/internal/settings"
-	"github.com/icehunter/claude-go/internal/tool"
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // fakeTool implements tool.Tool and records calls.

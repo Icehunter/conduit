@@ -163,11 +163,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streaming = ""
 		}
 		if msg.cancelled || isCancelError(msg.err) {
-			// Context was cancelled (Ctrl+C). Roll back dangling user message
-			// if Ctrl+C hasn't done it yet. Never show an error bubble.
-			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
-				m.history = m.history[:len(m.history)-1]
-			}
+			// Context was cancelled — Ctrl+C already committed partial history.
+			// Nothing to do here; never show an error bubble.
 		} else if msg.err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
@@ -208,10 +205,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.cancelled = true
 			m.running = false
 			m.cancelTurn = nil
-			m.streaming = ""
-			// Roll back the dangling user message we appended before the loop ran.
-			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
-				m.history = m.history[:len(m.history)-1]
+			// Commit whatever partial response was streamed so the next turn
+			// has context. Keep the user message in history too.
+			if m.streaming != "" {
+				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+				m.history = append(m.history, api.Message{
+					Role:    "assistant",
+					Content: []api.ContentBlock{{Type: "text", Text: m.streaming}},
+				})
+				m.streaming = ""
 			}
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Interrupted."})
 			m.refreshViewport()

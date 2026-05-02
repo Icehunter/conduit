@@ -45,12 +45,186 @@ func renderMessage(msg Message, width int) string {
 		return pad + styleErrorText.Render("✗ "+msg.Content)
 
 	case RoleSystem:
+		if msg.WelcomeCard {
+			return renderWelcomeCard(msg.Content, width)
+		}
 		// Indent continuation lines to align with text after "· ".
 		const sysPrefix = "· "
 		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
 		return pad + styleSystemText.Render(sysPrefix+content)
 	}
 	return msg.Content
+}
+
+// renderWelcomeCard renders the two-panel startup banner.
+// content is tab-separated: version, modelName, cwd, displayName, email, orgName, subscriptionType.
+func renderWelcomeCard(content string, width int) string {
+	parts := strings.Split(content, "\t")
+	get := func(i int) string {
+		if i < len(parts) {
+			return parts[i]
+		}
+		return ""
+	}
+	version := get(0)
+	modelName := get(1)
+	cwd := get(2)
+	displayName := get(3)
+	email := get(4)
+	orgName := get(5)
+	subscriptionType := get(6)
+
+	outerW := width - outerPad*2
+	if outerW < 50 {
+		outerW = 50
+	}
+	// innerW = content inside the borders, excluding the 1-space inner pad each side.
+	innerW := outerW - 4 // 1 border + 1 pad on each side
+
+	// Left column: ~38% of inner width, floored at 45 chars and capped at innerW/2.
+	divW := 3 // " │ "
+	leftW := innerW * 38 / 100
+	if leftW < 45 {
+		leftW = 45
+	}
+	if leftW > innerW/2 {
+		leftW = innerW / 2
+	}
+	rightW := innerW - leftW - divW - 1 // -1 for the leading space before leftW
+	if rightW < 10 {
+		rightW = 10
+	}
+
+	titleStyle := lipgloss.NewStyle().Foreground(colorFg).Bold(true)
+	metaStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	accentStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
+
+	// Build greeting — use display name if available.
+	greeting := "Welcome back!"
+	if displayName != "" {
+		greeting = "Welcome back, " + displayName + "!"
+	}
+
+	// Left column: greeting, blank, subscription line, email, org, blank, model, cwd.
+	// Only show lines with content; always show model+cwd.
+	var leftLines []string
+	leftLines = append(leftLines, padToWidth(titleStyle.Render(truncate(greeting, leftW)), leftW))
+	leftLines = append(leftLines, padToWidth("", leftW))
+	if subscriptionType != "" {
+		sub := subscriptionType
+		if orgName != "" {
+			sub += " · " + orgName
+		}
+		leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(sub, leftW)), leftW))
+	}
+	if email != "" {
+		leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(email, leftW)), leftW))
+	}
+	leftLines = append(leftLines, padToWidth("", leftW))
+	leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(modelName, leftW)), leftW))
+	leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(cwd, leftW)), leftW))
+
+	divider := dimStyle.Render(" │ ")
+
+	// Row content width = innerW. Wrapper is "│ " + row + " │" = outerW.
+	rowW := innerW
+	rightW = rowW - leftW - divW
+	if rightW < 10 {
+		rightW = 10
+	}
+
+	tr := func(s string) string { return truncate(s, rightW) }
+	rightLines := []string{
+		accentStyle.Render("Tips for getting started"),
+		metaStyle.Render(tr("Run /init to create a CLAUDE.md for this project")),
+		metaStyle.Render(tr("Use /help to see all available commands")),
+		metaStyle.Render(tr("Press ↑/↓ to navigate input history")),
+		metaStyle.Render(tr("Ctrl+Y copies the last code block")),
+		metaStyle.Render(""),
+		accentStyle.Render("What's new"),
+		metaStyle.Render(tr("/release-notes for full release notes")),
+	}
+
+	// Normalise row count.
+	rows := len(rightLines)
+	if len(leftLines) > rows {
+		rows = len(leftLines)
+	}
+	for len(leftLines) < rows {
+		leftLines = append(leftLines, strings.Repeat(" ", leftW))
+	}
+	for len(rightLines) < rows {
+		rightLines = append(rightLines, "")
+	}
+
+	var bodyRows []string
+	for i := 0; i < rows; i++ {
+		left := padToWidth(leftLines[i], leftW)
+		right := padToWidth(rightLines[i], rightW)
+		row := left + divider + right
+		// Pad to rowW.
+		rw := lipgloss.Width(row)
+		if rw < rowW {
+			row += strings.Repeat(" ", rowW-rw)
+		}
+		bodyRows = append(bodyRows, row)
+	}
+
+	// ── Manual border with title in top line ─────────────────────────────────
+	borderStyle := lipgloss.NewStyle().Foreground(colorAccent)
+	titleText := " conduit v" + version + " "
+	titleRendered := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(titleText)
+	titleW := len(titleText) // plain width (no ANSI) for dash counting
+
+	// Top: ╭─ title ───────────────╮
+	afterTitle := outerW - 2 - 1 - titleW // corners(2) + leading dash(1) + title
+	if afterTitle < 0 {
+		afterTitle = 0
+	}
+	topBorder := borderStyle.Render("╭─") + titleRendered +
+		borderStyle.Render(strings.Repeat("─", afterTitle)+"╮")
+
+	// Content rows flanked by │ and one space of inner padding.
+	var fullRows []string
+	fullRows = append(fullRows, topBorder)
+	// Blank padding row at top.
+	blankInner := strings.Repeat(" ", innerW)
+	fullRows = append(fullRows, borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│"))
+	for _, r := range bodyRows {
+		lw := lipgloss.Width(r)
+		if lw < rowW {
+			r += strings.Repeat(" ", rowW-lw)
+		}
+		fullRows = append(fullRows, borderStyle.Render("│")+" "+r+" "+borderStyle.Render("│"))
+	}
+	// Blank padding row at bottom.
+	fullRows = append(fullRows, borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│"))
+	fullRows = append(fullRows, borderStyle.Render("╰"+strings.Repeat("─", outerW-2)+"╯"))
+
+	pad := strings.Repeat(" ", outerPad)
+	return indentLines(strings.Join(fullRows, "\n"), pad)
+}
+
+// padToWidth right-pads a (possibly ANSI-coloured) string to the given visible width.
+func padToWidth(s string, w int) string {
+	sw := lipgloss.Width(s)
+	if sw < w {
+		return s + strings.Repeat(" ", w-sw)
+	}
+	return s
+}
+
+// truncate shortens a plain string to at most w runes, appending "…" if cut.
+func truncate(s string, w int) string {
+	runes := []rune(s)
+	if len(runes) <= w {
+		return s
+	}
+	if w <= 1 {
+		return "…"
+	}
+	return string(runes[:w-1]) + "…"
 }
 
 func indentLines(s, pad string) string {

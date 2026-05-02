@@ -72,6 +72,11 @@ var (
 	styleStatusAccent = lipgloss.NewStyle().
 				Foreground(colorAccent).Bold(true)
 
+	// Permission mode badges — each mode has its own color.
+	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color("#C084FC")).Bold(true) // acceptEdits
+	styleModeCyan   = lipgloss.NewStyle().Foreground(lipgloss.Color("#22D3EE")).Bold(true) // plan
+	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#FDE047")).Bold(true) // auto/bypassPermissions
+
 	styleSpinner = lipgloss.NewStyle().
 			Foreground(colorAccent)
 

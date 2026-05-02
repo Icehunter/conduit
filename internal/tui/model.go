@@ -602,13 +602,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		}
 
 	case "shift+tab":
-		// Cycle permission mode: default → acceptEdits → plan → default.
+		// Cycle: default → acceptEdits → plan → bypassPermissions → default.
 		// Mirrors getNextPermissionMode.ts from real Claude Code.
 		switch m.permissionMode {
 		case "", permissions.ModeDefault:
 			m.permissionMode = permissions.ModeAcceptEdits
 		case permissions.ModeAcceptEdits:
 			m.permissionMode = permissions.ModePlan
+		case permissions.ModePlan:
+			m.permissionMode = permissions.ModeBypassPermissions
 		default:
 			m.permissionMode = permissions.ModeDefault
 		}
@@ -620,6 +622,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 			m.flashMsg = "⏵⏵ accept edits on (shift+tab to cycle)"
 		case permissions.ModePlan:
 			m.flashMsg = "⏸ plan mode on (shift+tab to cycle)"
+		case permissions.ModeBypassPermissions:
+			m.flashMsg = "⏵⏵ auto mode on (shift+tab to cycle)"
 		default:
 			m.flashMsg = "default mode (shift+tab to cycle)"
 		}
@@ -2187,47 +2191,52 @@ func (m Model) View() string {
 	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
 	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
 
-	// Status bar — left/right edges have outerPad spaces to align with content.
+	// Status bar — fixed left-anchor layout so nothing shifts when mode changes.
+	//
+	// left:  edgePad  conduit  [mode badge]  |  model  [| ctx]  [| cost]
+	// right: hints  edgePad
+	// pad:   all remaining space between left and right
 	edgePad := strings.Repeat(" ", outerPad)
-
-	// Left: app name + permission mode badge (prominent, always visible).
-	var modeLabel string
-	switch m.permissionMode {
-	case permissions.ModeAcceptEdits:
-		modeLabel = " ⏵⏵ accept edits"
-	case permissions.ModePlan:
-		modeLabel = " ⏸ plan mode"
-	}
-	appName := edgePad + styleStatusAccent.Render("conduit"+modeLabel)
-
-	modelSeg := styleStatusModel.Render(shortModelName(m.modelName))
 	barSep := styleStatus.Render(" | ")
 
-	var midParts []string
-	midParts = append(midParts, modelSeg)
+	appSeg := styleStatusAccent.Render("conduit")
+
+	var modeBadge string
+	switch m.permissionMode {
+	case permissions.ModeAcceptEdits:
+		modeBadge = styleModePurple.Render("⏵⏵ accept edits")
+	case permissions.ModePlan:
+		modeBadge = styleModeCyan.Render("⏸ plan mode")
+	case permissions.ModeBypassPermissions:
+		modeBadge = styleModeYellow.Render("⏵⏵ auto")
+	}
+
+	modelSeg := styleStatusModel.Render(shortModelName(m.modelName))
+
+	var leftParts []string
+	leftParts = append(leftParts, edgePad+appSeg)
+	if modeBadge != "" {
+		leftParts = append(leftParts, modeBadge)
+	}
+	leftParts = append(leftParts, modelSeg)
 	if m.totalInputTokens > 0 {
 		pct := m.totalInputTokens * 100 / 200000
 		if pct > 100 {
 			pct = 100
 		}
-		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("%d%% ctx", pct)))
+		leftParts = append(leftParts, styleStatus.Render(fmt.Sprintf("%d%% ctx", pct)))
 	}
 	if m.costUSD > 0 {
-		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
+		leftParts = append(leftParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
 	}
-	mid := strings.Join(midParts, barSep)
+	left := strings.Join(leftParts, barSep)
 	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit  shift+tab mode") + edgePad
 
-	leftW := lipgloss.Width(appName)
-	midW := lipgloss.Width(mid)
-	rightW := lipgloss.Width(right)
-	space := m.width - leftW - midW - rightW
-	if space < 1 {
-		space = 1
+	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if pad < 1 {
+		pad = 1
 	}
-	lPad := space / 2
-	rPad := space - lPad
-	statusBar := appName + strings.Repeat(" ", lPad) + mid + strings.Repeat(" ", rPad) + right
+	statusBar := left + strings.Repeat(" ", pad) + right
 
 	// Panel is a full-screen takeover — replace vp+spinner+input with it.
 	// Only status bar remains at the bottom.

@@ -1,20 +1,15 @@
 // Package tui implements the Bubble Tea TUI for claude-go.
-//
-// Rendering: inline mode, no alt-screen. Completed messages are printed via
-// tea.Println into the normal scrollback. Only the input box + status live-
-// render at the bottom. On exit a summary line is printed — same pattern as
-// Claude Code (Ink).
 package tui
 
 import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,7 +17,18 @@ import (
 	"github.com/icehunter/claude-go/internal/api"
 )
 
-// Role identifies message sender.
+// chromeHeight returns the number of terminal rows consumed by everything
+// except the viewport. Called dynamically so it's always accurate.
+//
+//   spinner row:   1
+//   input border:  1 (top) + 1 (bottom) = 2
+//   input text:    1
+//   status bar:    1
+//   ─────────────────
+//   total:         5
+func chromeHeight() int { return 5 }
+
+// Role identifies who sent a message.
 type Role int
 
 const (
@@ -33,7 +39,7 @@ const (
 	RoleSystem
 )
 
-// Message is one display entry.
+// Message is one entry in the displayed conversation.
 type Message struct {
 	Role     Role
 	Content  string
@@ -44,14 +50,13 @@ type (
 	agentMsg     struct{ event agent.LoopEvent }
 	agentDoneMsg struct {
 		history []api.Message
-		msgs    []Message // completed messages to flush to scrollback
 		err     error
 	}
 	cancelMsg  struct{ cancel context.CancelFunc }
 	clearFlash struct{}
 )
 
-// Config is passed in from main.
+// Config is passed from main to the TUI.
 type Config struct {
 	Version   string
 	ModelName string
@@ -61,28 +66,32 @@ type Config struct {
 
 // Model is the Bubble Tea model.
 type Model struct {
-	cfg     Config
-	history []api.Message
+	cfg      Config
+	messages []Message
+	history  []api.Message
 
 	input   textarea.Model
+	vp      viewport.Model
 	spinner spinner.Model
 
-	width int
+	width  int
+	height int
 
 	running    bool
 	cancelTurn context.CancelFunc
-	streaming  string      // live partial assistant text
-	liveMsgs   []Message   // in-progress turn messages (for tool labels)
-	liveMu     sync.Mutex  // guards liveMsgs/streaming during agent goroutine
+	streaming  string
 
-	totalInputTokens int
-	costUSD          float64
-	turns            int
+	totalInputTokens  int
+	totalOutputTokens int
+	costUSD           float64
 
+	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
 	flashMsg string
+
+	ready bool // true once we've received the first WindowSizeMsg
 }
 
-// New builds the initial model.
+// New builds the initial Model.
 func New(cfg Config) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Message claude-go  (Enter ↵ send · Shift+Enter newline)"
@@ -91,6 +100,7 @@ func New(cfg Config) Model {
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
+	// Remove default enter binding from the textarea — we handle it ourselves.
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -99,18 +109,31 @@ func New(cfg Config) Model {
 	return Model{cfg: cfg, input: ta, spinner: sp}
 }
 
+// Init starts the blink + spinner tick.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, m.spinner.Tick)
 }
 
+// Update is the Elm update function.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.input.SetWidth(m.width - 4)
-		return m, nil
+		m.height = msg.Height
+		m = m.applyLayout()
+		// Erase the entire screen and home the cursor on every resize.
+		// tea.ClearScreen only clears the visible area; the explicit sequence
+		// also resets the scroll region, preventing ghost chrome lines from
+		// appearing in the scrollback after an iTerm2 resize.
+		return m, tea.Batch(append(cmds,
+			tea.ClearScreen,
+			func() tea.Msg {
+				// Force a full repaint by sending a no-op that triggers re-render.
+				return nil
+			},
+		)...)
 
 	case tea.KeyMsg:
 		m2, cmd := m.handleKey(msg)
@@ -124,29 +147,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentMsg:
-		m = m.applyEvent(msg.event)
+		m = m.applyAgentEvent(msg.event)
 		return m, nil
 
 	case agentDoneMsg:
 		m.running = false
 		m.cancelTurn = nil
-		m.streaming = ""
-		m.liveMsgs = nil
-
-		var printCmds []tea.Cmd
-		for _, pm := range msg.msgs {
-			printCmds = append(printCmds, tea.Println(renderMessage(pm, m.width)))
+		if m.streaming != "" {
+			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+			m.streaming = ""
 		}
 		if msg.err != nil && msg.err != context.Canceled {
-			printCmds = append(printCmds, tea.Println(styleErrorText.Render("✗ "+msg.err.Error())))
+			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 		} else if msg.err == nil {
 			m.history = msg.history
 			m.tallyTokens()
-			m.turns++
 		}
-
+		m.refreshViewport()
+		m.vp.GotoBottom()
 		m.input.Focus()
-		return m, tea.Batch(append(cmds, printCmds...)...)
+		return m, nil
 
 	case spinner.TickMsg:
 		var spCmd tea.Cmd
@@ -158,9 +178,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	var taCmd tea.Cmd
+	// Always propagate remaining messages to sub-components.
+	var taCmd, vpCmd tea.Cmd
 	m.input, taCmd = m.input.Update(msg)
-	cmds = append(cmds, taCmd)
+	m.vp, vpCmd = m.vp.Update(msg)
+	cmds = append(cmds, taCmd, vpCmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -169,9 +191,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "ctrl+c":
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
-			return m, tea.Println(styleSystemText.Render("· Interrupted."))
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Interrupted."})
+			m.refreshViewport()
+			return m, nil
 		}
-		return m, tea.Sequence(tea.Println(m.exitSummary()), tea.Quit)
+		return m, tea.Quit
+
+	case "ctrl+y":
+		// Copy the raw code from the most recent assistant code block to
+		// the system clipboard via OSC 52 (works in iTerm2, kitty, WezTerm).
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleAssistant {
+				blocks := extractCodeBlocks(m.messages[i].Content)
+				if len(blocks) > 0 {
+					copyToClipboard(blocks[len(blocks)-1].code)
+					m.flashMsg = "✓ Copied to clipboard"
+					return m, tea.Tick(2000000000, func(_ time.Time) tea.Msg { return clearFlash{} })
+				}
+			}
+		}
+		m.flashMsg = "No code block found"
+		return m, tea.Tick(1500000000, func(_ time.Time) tea.Msg { return clearFlash{} })
 
 	case "enter":
 		if m.running {
@@ -183,178 +223,171 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		switch text {
 		case "/exit", "/quit":
-			return m, tea.Sequence(tea.Println(m.exitSummary()), tea.Quit)
+			return m, tea.Quit
 		case "/clear":
+			m.messages = nil
 			m.history = nil
-			m.turns = 0
-			m.totalInputTokens = 0
-			m.costUSD = 0
 			m.input.Reset()
-			return m, tea.Println(styleSystemText.Render("· Conversation cleared."))
+			m.refreshViewport()
+			return m, nil
 		}
 
 		m.input.Reset()
-		m.running = true
-		m.streaming = ""
-		m.liveMsgs = nil
-
-		userMsg := Message{Role: RoleUser, Content: text}
+		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 		m.history = append(m.history, api.Message{
 			Role:    "user",
 			Content: []api.ContentBlock{{Type: "text", Text: text}},
 		})
+		m.running = true
+		m.streaming = ""
+		m.refreshViewport()
+		m.vp.GotoBottom()
 
 		prog := *m.cfg.Program
 		histCopy := make([]api.Message, len(m.history))
 		copy(histCopy, m.history)
 
-		// Print user message immediately to scrollback, then start agent.
-		return m, tea.Sequence(
-			tea.Println(renderMessage(userMsg, m.width)),
-			func() tea.Msg {
-				ctx, cancel := context.WithCancel(context.Background())
-				prog.Send(cancelMsg{cancel: cancel})
-
-				// Track messages built during this turn.
-				var mu sync.Mutex
-				var turnMsgs []Message
-				var streaming string
-
-				newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
-					prog.Send(agentMsg{event: ev})
-					// Mirror event into local state for final flush.
-					mu.Lock()
-					defer mu.Unlock()
-					switch ev.Type {
-					case agent.EventText:
-						streaming += ev.Text
-					case agent.EventToolUse:
-						if streaming != "" {
-							turnMsgs = append(turnMsgs, Message{Role: RoleAssistant, Content: streaming})
-							streaming = ""
-						}
-						turnMsgs = append(turnMsgs, Message{Role: RoleTool, ToolName: ev.ToolName, Content: "done"})
-					case agent.EventToolResult:
-						// Update last tool message with result.
-						for i := len(turnMsgs) - 1; i >= 0; i-- {
-							if turnMsgs[i].Role == RoleTool {
-								content := ev.ResultText
-								if len(content) > 120 {
-									content = content[:120] + "…"
-								}
-								turnMsgs[i].Content = content
-								if ev.IsError {
-									turnMsgs[i].Role = RoleError
-								}
-								break
-							}
-						}
-					}
-				})
-
-				mu.Lock()
-				if streaming != "" {
-					turnMsgs = append(turnMsgs, Message{Role: RoleAssistant, Content: streaming})
-				}
-				finalMsgs := turnMsgs
-				mu.Unlock()
-
-				return agentDoneMsg{history: newHist, msgs: finalMsgs, err: err}
-			},
-		)
-
-	case "ctrl+y":
-		for i := len(m.history) - 1; i >= 0; i-- {
-			if m.history[i].Role != "assistant" {
-				continue
-			}
-			for _, b := range m.history[i].Content {
-				blocks := extractCodeBlocks(b.Text)
-				if len(blocks) > 0 {
-					copyToClipboard(blocks[len(blocks)-1].code)
-					m.flashMsg = "✓ Copied"
-					return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
-				}
-			}
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithCancel(context.Background())
+			prog.Send(cancelMsg{cancel: cancel})
+			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
+				prog.Send(agentMsg{event: ev})
+			})
+			return agentDoneMsg{history: newHist, err: err}
 		}
-		m.flashMsg = "No code found"
-		return m, tea.Tick(time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
 	}
-
 	return m, nil
 }
 
-func (m Model) applyEvent(ev agent.LoopEvent) Model {
+func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	switch ev.Type {
 	case agent.EventText:
 		m.streaming += ev.Text
+		m.refreshViewport()
+		m.vp.GotoBottom()
+
 	case agent.EventToolUse:
 		if m.streaming != "" {
-			m.liveMsgs = append(m.liveMsgs, Message{Role: RoleAssistant, Content: m.streaming})
+			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		m.liveMsgs = append(m.liveMsgs, Message{Role: RoleTool, ToolName: ev.ToolName, Content: "running…"})
+		m.messages = append(m.messages, Message{
+			Role: RoleTool, ToolName: ev.ToolName, Content: "running…",
+		})
+		m.refreshViewport()
+
 	case agent.EventToolResult:
-		for i := len(m.liveMsgs) - 1; i >= 0; i-- {
-			if m.liveMsgs[i].Role == RoleTool {
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleTool && m.messages[i].Content == "running…" {
 				content := ev.ResultText
-				if len(content) > 120 {
-					content = content[:120] + "…"
+				if len(content) > 200 {
+					content = content[:200] + "…"
 				}
-				m.liveMsgs[i].Content = content
+				m.messages[i].Content = content
 				if ev.IsError {
-					m.liveMsgs[i].Role = RoleError
+					m.messages[i].Role = RoleError
 				}
 				break
 			}
 		}
+		m.refreshViewport()
 	}
 	return m
 }
 
-// View renders only the live bottom chrome: spinner preview + input + status.
-func (m Model) View() string {
-	w := m.width
-	if w == 0 {
-		w = 80
+// applyLayout recalculates component dimensions.
+func (m Model) applyLayout() Model {
+	if m.width == 0 || m.height == 0 {
+		return m
 	}
-	var lines []string
+	vpHeight := m.height - chromeHeight()
+	if vpHeight < 1 {
+		vpHeight = 1
+	}
+	// Input inner width: full width minus left+right border (2) minus left+right padding (2).
+	inputW := m.width - 4
+	if inputW < 10 {
+		inputW = 10
+	}
 
+	if !m.ready {
+		m.vp = viewport.New(m.width, vpHeight)
+		m.vp.Style = lipgloss.NewStyle() // no extra styling on the viewport itself
+		m.ready = true
+	} else {
+		m.vp.Width = m.width
+		m.vp.Height = vpHeight
+	}
+	m.input.SetWidth(inputW)
+	m.refreshViewport()
+	return m
+}
+
+// refreshViewport rebuilds the viewport content string.
+func (m *Model) refreshViewport() {
+	if !m.ready {
+		return
+	}
+	w := m.vp.Width
+	if w <= 0 {
+		return
+	}
+	var sb strings.Builder
+	for i, msg := range m.messages {
+		if i > 0 {
+			sb.WriteString(separator(w))
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(renderMessage(msg, w))
+		sb.WriteByte('\n')
+	}
+	if m.streaming != "" {
+		if len(m.messages) > 0 {
+			sb.WriteString(separator(w))
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: m.streaming}, w))
+		sb.WriteByte('\n')
+	}
+	m.vp.SetContent(sb.String())
+}
+
+// View renders the full TUI frame.
+func (m Model) View() string {
+	if !m.ready {
+		return "Loading…\n"
+	}
+
+	// Viewport.
+	vp := m.vp.View()
+
+	// Spinner row — always 1 line to prevent layout shift.
+	var spinRow string
 	switch {
 	case m.flashMsg != "":
-		lines = append(lines, styleStatusAccent.Render(m.flashMsg))
+		spinRow = styleStatusAccent.Render(m.flashMsg)
 	case m.running:
-		// Live streaming preview: last few lines of the current response.
-		if m.streaming != "" {
-			streamLines := strings.Split(strings.TrimRight(m.streaming, "\n"), "\n")
-			if len(streamLines) > 2 {
-				streamLines = streamLines[len(streamLines)-2:]
-			}
-			for _, sl := range streamLines {
-				lines = append(lines, styleAssistantText.Width(w).Render(sl))
-			}
-		}
-		lines = append(lines, m.spinner.View()+" "+styleStatus.Render("Thinking…"))
+		spinRow = m.spinner.View() + " " + styleStatus.Render("Thinking…")
 	default:
-		lines = append(lines, "")
+		spinRow = ""
 	}
 
+	// Input box.
 	bStyle := styleInputBorder
 	if !m.running {
 		bStyle = styleInputBorderActive
 	}
-	lines = append(lines, bStyle.Width(w-2).Render(m.input.View()))
-	lines = append(lines, m.statusBar(w))
-	return strings.Join(lines, "\n")
-}
+	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
+	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
 
-func (m Model) statusBar(w int) string {
-	edge := strings.Repeat(" ", outerPad)
-	left := edge + styleStatusAccent.Render("claude-go")
-	sep := styleStatus.Render(" | ")
+	// Status bar — left/right edges have outerPad spaces to align with content.
+	edgePad := strings.Repeat(" ", outerPad)
+	appName := edgePad + styleStatusAccent.Render("claude-go")
+	modelSeg := styleStatusModel.Render(shortModelName(m.cfg.ModelName))
+	barSep := styleStatus.Render(" | ")
 
 	var midParts []string
-	midParts = append(midParts, styleStatusModel.Render(shortModelName(m.cfg.ModelName)))
+	midParts = append(midParts, modelSeg)
 	if m.totalInputTokens > 0 {
 		pct := m.totalInputTokens * 100 / 200000
 		if pct > 100 {
@@ -365,29 +398,33 @@ func (m Model) statusBar(w int) string {
 	if m.costUSD > 0 {
 		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
 	}
-	mid := strings.Join(midParts, sep)
-	right := styleStatus.Render("^Y copy  ^C exit  /clear") + edge
+	mid := strings.Join(midParts, barSep)
+	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit") + edgePad
 
-	space := w - lipgloss.Width(left) - lipgloss.Width(mid) - lipgloss.Width(right)
+	leftW := lipgloss.Width(appName)
+	midW := lipgloss.Width(mid)
+	rightW := lipgloss.Width(right)
+	space := m.width - leftW - midW - rightW
 	if space < 1 {
 		space = 1
 	}
-	lp := space / 2
-	return left + strings.Repeat(" ", lp) + mid + strings.Repeat(" ", space-lp) + right
-}
+	lPad := space / 2
+	rPad := space - lPad
+	statusBar := appName + strings.Repeat(" ", lPad) + mid + strings.Repeat(" ", rPad) + right
 
-func (m Model) exitSummary() string {
-	cost := ""
-	if m.costUSD > 0 {
-		cost = fmt.Sprintf(" · $%.2f", m.costUSD)
+	// JoinVertical with explicit newlines between non-empty parts.
+	parts := []string{vp}
+	if spinRow != "" {
+		parts = append(parts, spinRow)
+	} else {
+		// blank line holds the space so input doesn't jump up
+		parts = append(parts, "")
 	}
-	return styleStatus.Render(fmt.Sprintf(
-		"─── Session ended  %d %s · %s%s ───",
-		m.turns, plural(m.turns, "turn"),
-		shortModelName(m.cfg.ModelName), cost,
-	))
+	parts = append(parts, inputBox, statusBar)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
+// tallyTokens estimates token usage from conversation history.
 func (m *Model) tallyTokens() {
 	total := 0
 	for _, msg := range m.history {
@@ -396,16 +433,23 @@ func (m *Model) tallyTokens() {
 		}
 	}
 	m.totalInputTokens = total
+	// Opus 4.7: ~$15/$75 per M in/out, blended ~$45/M estimate.
 	m.costUSD = float64(total) * 45.0 / 1_000_000
 }
 
+// shortModelName converts "claude-opus-4-7" → "Opus 4.7".
 func shortModelName(name string) string {
+	// Strip leading "claude-"
 	name = strings.TrimPrefix(name, "claude-")
-	i := strings.Index(name, "-")
-	if i < 0 {
+	// Split on first "-" to get family, then the rest is the version.
+	// "opus-4-7" → family="opus", ver="4-7"
+	idx := strings.Index(name, "-")
+	if idx < 0 {
 		return capitalize(name)
 	}
-	return capitalize(name[:i]) + " " + strings.ReplaceAll(name[i+1:], "-", ".")
+	family := capitalize(name[:idx])
+	ver := strings.ReplaceAll(name[idx+1:], "-", ".")
+	return family + " " + ver
 }
 
 func capitalize(s string) string {
@@ -413,11 +457,4 @@ func capitalize(s string) string {
 		return ""
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return word
-	}
-	return word + "s"
 }

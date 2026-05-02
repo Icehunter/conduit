@@ -34,8 +34,11 @@ import (
 	"github.com/icehunter/claude-go/internal/tools/filewritetool"
 	"github.com/icehunter/claude-go/internal/tools/globtool"
 	"github.com/icehunter/claude-go/internal/tools/greptool"
+	"github.com/icehunter/claude-go/internal/tools/notebookedittool"
+	"github.com/icehunter/claude-go/internal/tools/sleeptool"
 	"github.com/icehunter/claude-go/internal/tools/todowritetool"
 	"github.com/icehunter/claude-go/internal/tools/webfetchtool"
+	"github.com/icehunter/claude-go/internal/tools/websearchtool"
 	"github.com/icehunter/claude-go/internal/tui"
 )
 
@@ -128,7 +131,7 @@ func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 }
 
 // buildRegistry builds the tool registry.
-func buildRegistry() *tool.Registry {
+func buildRegistry(client *api.Client) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
 	reg.Register(fileedittool.New())
@@ -136,8 +139,11 @@ func buildRegistry() *tool.Registry {
 	reg.Register(filewritetool.New())
 	reg.Register(globtool.New())
 	reg.Register(greptool.New())
+	reg.Register(notebookedittool.New())
+	reg.Register(sleeptool.New())
 	reg.Register(todowritetool.New())
 	reg.Register(webfetchtool.New())
+	reg.Register(websearchtool.New(client))
 	return reg
 }
 
@@ -168,7 +174,7 @@ func runREPL() error {
 	}
 
 	c := newAPIClient(bearer)
-	reg := buildRegistry()
+	reg := buildRegistry(c)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
@@ -267,7 +273,7 @@ func runPrint(args []string) error {
 	}
 
 	c := newAPIClient(bearer)
-	reg := buildRegistry()
+	reg := buildRegistry(c)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{

@@ -1,5 +1,7 @@
 package api
 
+import "encoding/json"
+
 // Wire types for /v1/messages.
 //
 // Reference: https://docs.anthropic.com/en/api/messages, decoded chunks
@@ -31,10 +33,43 @@ type CacheControl struct {
 }
 
 // ToolDef is a tool declaration in the request `tools` array.
+// For standard tools: Name, Description, InputSchema are set; Type is empty (defaults to "custom").
+// For native server tools (e.g. web_search_20250305): Type is set; other fields may be empty.
 type ToolDef struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"input_schema"`
+	// Type is the tool type. Empty means standard custom tool. Examples of
+	// native types: "web_search_20250305".
+	Type        string         `json:"type,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"input_schema,omitempty"`
+
+	// Extra holds additional native-tool fields (e.g. max_uses, allowed_domains).
+	// Keys from Extra are merged into the JSON output via custom MarshalJSON.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON serialises ToolDef, merging Extra fields into the top-level object.
+func (td ToolDef) MarshalJSON() ([]byte, error) {
+	// Build a map with all non-empty fields.
+	m := make(map[string]any, 6+len(td.Extra))
+	if td.Type != "" {
+		m["type"] = td.Type
+	}
+	if td.Name != "" {
+		m["name"] = td.Name
+	}
+	if td.Description != "" {
+		m["description"] = td.Description
+	}
+	if td.InputSchema != nil {
+		m["input_schema"] = td.InputSchema
+	}
+	for k, v := range td.Extra {
+		m[k] = v
+	}
+
+	type plain map[string]any
+	return json.Marshal(plain(m))
 }
 
 // Message is one turn in the conversation.

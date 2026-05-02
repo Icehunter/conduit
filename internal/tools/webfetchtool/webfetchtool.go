@@ -163,136 +163,160 @@ func isHTML(contentType string) bool {
 	return strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml")
 }
 
-// htmlToMarkdown converts HTML to readable Markdown text.
-// Uses a simple recursive descent over golang.org/x/net/html nodes.
-// Full turndown parity (tables, code blocks) lands in M5.
+// htmlToMarkdown strips HTML tags and returns readable plain text.
+// Block-level tags inject newlines; script/style content is dropped.
 func htmlToMarkdown(htmlStr string) string {
-	// Use a simple but effective approach: strip all tags, normalize whitespace.
-	// golang.org/x/net/html is available but requires import; use strings for M4.
-	out := stripHTML(htmlStr)
-	// Collapse whitespace runs.
-	lines := strings.Split(out, "\n")
+	text := stripHTML(htmlStr)
+	// Collapse runs of blank lines to at most one.
 	var kept []string
-	for _, l := range lines {
-		l = strings.TrimSpace(l)
-		if l != "" {
-			kept = append(kept, l)
+	blank := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, " \t")
+		if line == "" {
+			if !blank {
+				kept = append(kept, "")
+				blank = true
+			}
+		} else {
+			kept = append(kept, line)
+			blank = false
 		}
 	}
-	return strings.Join(kept, "\n")
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
-// stripHTML removes HTML tags and decodes common entities.
+// stripHTML is a clean byte-scanner that correctly handles nested tags,
+// script/style blocks, and HTML entities.
 func stripHTML(s string) string {
-	var sb strings.Builder
-	inTag := false
-	inScript := false
-	inStyle := false
+	var out strings.Builder
+	out.Grow(len(s) / 2)
+
 	i := 0
-	runes := []rune(s)
-	n := len(runes)
+	n := len(s)
+
+	skipUntil := func(end string) {
+		idx := strings.Index(s[i:], end)
+		if idx < 0 {
+			i = n
+		} else {
+			i += idx + len(end)
+		}
+	}
 
 	for i < n {
-		ch := runes[i]
+		// Start of a tag.
+		if s[i] == '<' {
+			i++ // consume '<'
+			if i >= n {
+				break
+			}
 
-		if ch == '<' {
-			// Peek at tag name.
-			j := i + 1
-			for j < n && runes[j] == ' ' {
+			// Closing tag: </tag>
+			isClose := s[i] == '/'
+			if isClose {
+				i++
+			}
+
+			// Read tag name.
+			j := i
+			for j < n && s[j] != '>' && s[j] != ' ' && s[j] != '\t' && s[j] != '\n' && s[j] != '/' {
 				j++
 			}
-			tagName := ""
-			for j < n && runes[j] != '>' && runes[j] != ' ' && runes[j] != '/' {
-				tagName += string(runes[j])
-				j++
-			}
-			tagName = strings.ToLower(strings.TrimPrefix(tagName, "/"))
+			tagName := strings.ToLower(s[i:j])
+			i = j
 
+			// Skip to end of tag.
+			for i < n && s[i] != '>' {
+				i++
+			}
+			if i < n {
+				i++ // consume '>'
+			}
+
+			// Drop content of script and style entirely.
+			if !isClose {
+				switch tagName {
+				case "script":
+					skipUntil("</script>")
+					continue
+				case "style":
+					skipUntil("</style>")
+					continue
+				}
+			}
+
+			// Block-level tags emit a newline.
 			switch tagName {
-			case "script":
-				inScript = true
-			case "style":
-				inStyle = true
-			case "/script":
-				inScript = false
-			case "/style":
-				inStyle = false
+			case "p", "div", "section", "article", "header", "footer", "main",
+				"h1", "h2", "h3", "h4", "h5", "h6",
+				"li", "dt", "dd", "tr", "blockquote", "pre":
+				out.WriteByte('\n')
+			case "br":
+				out.WriteByte('\n')
 			}
-
-			if tagName == "br" || tagName == "p" || tagName == "div" ||
-				tagName == "h1" || tagName == "h2" || tagName == "h3" ||
-				tagName == "h4" || tagName == "h5" || tagName == "h6" ||
-				tagName == "li" || tagName == "tr" {
-				sb.WriteByte('\n')
-			}
-
-			inTag = true
-			i++
 			continue
 		}
 
-		if ch == '>' && inTag {
-			inTag = false
-			i++
-			continue
-		}
-
-		if inTag {
-			i++
-			continue
-		}
-		if inScript || inStyle {
-			i++
-			continue
-		}
-
-		// HTML entities.
-		if ch == '&' {
-			entity, adv := parseEntity(runes[i:])
-			sb.WriteString(entity)
+		// HTML entity.
+		if s[i] == '&' {
+			decoded, adv := decodeEntity(s[i:])
+			out.WriteString(decoded)
 			i += adv
 			continue
 		}
 
-		sb.WriteRune(ch)
+		out.WriteByte(s[i])
 		i++
 	}
-	return sb.String()
+	return out.String()
 }
 
-// parseEntity decodes a simple HTML entity like &amp; &lt; &gt; &nbsp; &#NNN;
-func parseEntity(runes []rune) (string, int) {
-	if len(runes) < 2 || runes[0] != '&' {
+// decodeEntity decodes &name; and &#NNN; entities.
+func decodeEntity(s string) (string, int) {
+	if len(s) < 2 || s[0] != '&' {
 		return "&", 1
 	}
-	// Find semicolon.
-	end := 1
-	for end < len(runes) && end < 16 && runes[end] != ';' {
-		end++
-	}
-	if end >= len(runes) || runes[end] != ';' {
+	end := strings.IndexByte(s[1:], ';')
+	if end < 0 || end > 15 {
 		return "&", 1
 	}
-	entity := string(runes[1:end])
-	switch entity {
+	end += 2 // include '&' and ';'
+	name := s[1 : end-1]
+
+	// Numeric entities &#NNN; or &#xHH;
+	if len(name) > 1 && name[0] == '#' {
+		return "&" + name + ";", end // pass through for now
+	}
+
+	switch name {
 	case "amp":
-		return "&", end + 1
+		return "&", end
 	case "lt":
-		return "<", end + 1
+		return "<", end
 	case "gt":
-		return ">", end + 1
+		return ">", end
 	case "nbsp":
-		return " ", end + 1
+		return " ", end
 	case "quot":
-		return `"`, end + 1
+		return `"`, end
 	case "apos":
-		return "'", end + 1
+		return "'", end
 	case "mdash":
-		return "—", end + 1
+		return "—", end
 	case "ndash":
-		return "–", end + 1
+		return "–", end
 	case "hellip":
-		return "…", end + 1
+		return "…", end
+	case "laquo":
+		return "«", end
+	case "raquo":
+		return "»", end
+	case "copy":
+		return "©", end
+	case "reg":
+		return "®", end
+	case "trade":
+		return "™", end
 	}
-	return "&" + entity + ";", end + 1
+	return "&" + name + ";", end
 }

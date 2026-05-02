@@ -1,13 +1,8 @@
 // Package tui implements the Bubble Tea TUI for claude-go.
-//
-// M3 scope: scrollable message history, multi-line input, spinner during
-// model response, status line, Ctrl+C to interrupt (not exit), /exit /clear.
-// Vim mode, keybinding config, and advanced scroll land in M5.
 package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -20,25 +15,39 @@ import (
 	"github.com/icehunter/claude-go/internal/api"
 )
 
+// Layout constants — all in terminal rows/cols.
+const (
+	// inputRows is how many text rows the textarea shows.
+	// 1 = single-line feel; Shift+Enter expands it naturally.
+	inputRows = 1
+	// inputBorderRows: top + bottom border = 2, inner padding = 0
+	inputBorderRows = 2
+	// statusRows: one line at the very bottom
+	statusRows = 1
+	// spinnerRows: one line above the input
+	spinnerRows = 1
+	// totalChrome = everything that isn't the message viewport
+	totalChrome = inputRows + inputBorderRows + statusRows + spinnerRows
+)
+
 // Role identifies who sent a message.
 type Role int
 
 const (
-	RoleUser      Role = iota
-	RoleAssistant Role = iota
-	RoleTool      Role = iota
-	RoleError     Role = iota
-	RoleSystem    Role = iota
+	RoleUser Role = iota
+	RoleAssistant
+	RoleTool
+	RoleError
+	RoleSystem
 )
 
 // Message is one entry in the displayed conversation.
 type Message struct {
 	Role     Role
 	Content  string
-	ToolName string // only for RoleTool
+	ToolName string
 }
 
-// Internal Bubble Tea messages.
 type (
 	agentMsg     struct{ event agent.LoopEvent }
 	agentDoneMsg struct {
@@ -48,19 +57,19 @@ type (
 	cancelMsg struct{ cancel context.CancelFunc }
 )
 
-// Config holds the TUI configuration passed in from main.
+// Config is passed from main to the TUI.
 type Config struct {
 	Version   string
 	ModelName string
 	Loop      *agent.Loop
-	Program   **tea.Program // pointer set by Run so the agent goroutine can Send
+	Program   **tea.Program
 }
 
 // Model is the Bubble Tea model.
 type Model struct {
 	cfg      Config
-	messages []Message     // display history
-	history  []api.Message // API conversation history
+	messages []Message
+	history  []api.Message
 
 	input   textarea.Model
 	vp      viewport.Model
@@ -76,38 +85,34 @@ type Model struct {
 	vpReady bool
 }
 
-// New creates a new TUI Model.
+// New builds the initial Model.
 func New(cfg Config) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message… (Enter to send, Shift+Enter for newline)"
+	ta.Placeholder = "Message claude-go  (Enter ↵ send · Shift+Enter newline)"
 	ta.Focus()
-	ta.SetWidth(80)
-	ta.SetHeight(3)
+	ta.SetHeight(inputRows)
 	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	// Remove the default newline binding; remap to shift+enter.
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styleSpinner
 
-	return Model{
-		cfg:     cfg,
-		input:   ta,
-		spinner: sp,
-	}
+	return Model{cfg: cfg, input: ta, spinner: sp}
 }
 
-// Init starts the spinner and textarea blink.
+// Init starts the blink + spinner tick.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(textarea.Blink, m.spinner.Tick)
 }
 
-// Update handles all messages.
+// Update is the Elm update function.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -125,8 +130,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancelTurn = msg.cancel
 
 	case agentMsg:
-		m = m.handleAgentEvent(msg.event)
-		// Don't pass agent messages to textarea/viewport — they're internal.
+		m = m.applyAgentEvent(msg.event)
 		return m, nil
 
 	case agentDoneMsg:
@@ -152,18 +156,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, spCmd)
 	}
 
-	// Propagate to sub-components.
 	var taCmd, vpCmd tea.Cmd
 	m.input, taCmd = m.input.Update(msg)
 	m.vp, vpCmd = m.vp.Update(msg)
 	cmds = append(cmds, taCmd, vpCmd)
-
 	return m, tea.Batch(cmds...)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-
 	case "ctrl+c":
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
@@ -181,7 +182,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-
 		switch text {
 		case "/exit", "/quit":
 			return m, tea.Quit
@@ -193,7 +193,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Submit user message, start agent turn.
 		m.input.Reset()
 		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 		m.history = append(m.history, api.Message{
@@ -206,23 +205,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.vp.GotoBottom()
 
 		prog := *m.cfg.Program
-		historyCopy := make([]api.Message, len(m.history))
-		copy(historyCopy, m.history)
+		histCopy := make([]api.Message, len(m.history))
+		copy(histCopy, m.history)
 
 		return m, func() tea.Msg {
 			ctx, cancel := context.WithCancel(context.Background())
 			prog.Send(cancelMsg{cancel: cancel})
-			newHistory, err := m.cfg.Loop.Run(ctx, historyCopy, func(ev agent.LoopEvent) {
+			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 				prog.Send(agentMsg{event: ev})
 			})
-			return agentDoneMsg{history: newHistory, err: err}
+			return agentDoneMsg{history: newHist, err: err}
 		}
 	}
-
 	return m, nil
 }
 
-func (m Model) handleAgentEvent(ev agent.LoopEvent) Model {
+func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	switch ev.Type {
 	case agent.EventText:
 		m.streaming += ev.Text
@@ -235,9 +233,7 @@ func (m Model) handleAgentEvent(ev agent.LoopEvent) Model {
 			m.streaming = ""
 		}
 		m.messages = append(m.messages, Message{
-			Role:     RoleTool,
-			ToolName: ev.ToolName,
-			Content:  "running…",
+			Role: RoleTool, ToolName: ev.ToolName, Content: "running…",
 		})
 		m.refreshViewport()
 
@@ -245,8 +241,8 @@ func (m Model) handleAgentEvent(ev agent.LoopEvent) Model {
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			if m.messages[i].Role == RoleTool && m.messages[i].Content == "running…" {
 				content := ev.ResultText
-				if len(content) > 300 {
-					content = content[:300] + "…"
+				if len(content) > 200 {
+					content = content[:200] + "…"
 				}
 				m.messages[i].Content = content
 				if ev.IsError {
@@ -260,81 +256,97 @@ func (m Model) handleAgentEvent(ev agent.LoopEvent) Model {
 	return m
 }
 
-// applyLayout recalculates sizes after a window resize.
+// applyLayout recalculates component sizes on window resize.
 func (m Model) applyLayout() Model {
-	inputHeight := 5 // textarea rows + border
-	statusHeight := 1
-	vpHeight := m.height - inputHeight - statusHeight - 1
+	vpHeight := m.height - totalChrome
 	if vpHeight < 3 {
 		vpHeight = 3
+	}
+	// Inner width for textarea: full width minus border(2) minus padding(2)
+	innerW := m.width - 4
+	if innerW < 10 {
+		innerW = 10
 	}
 
 	if !m.vpReady {
 		m.vp = viewport.New(m.width, vpHeight)
-		m.vp.SetContent("")
 		m.vpReady = true
 	} else {
 		m.vp.Width = m.width
 		m.vp.Height = vpHeight
 	}
 
-	m.input.SetWidth(m.width - 6) // account for box border + padding
+	m.input.SetWidth(innerW)
 	m.refreshViewport()
 	return m
 }
 
-// refreshViewport re-renders all messages into the viewport content.
+// refreshViewport rebuilds the viewport content string.
 func (m *Model) refreshViewport() {
 	if !m.vpReady {
 		return
 	}
 	w := m.vp.Width
-	if w < 10 {
+	if w < 20 {
 		w = 80
 	}
 	var sb strings.Builder
-	for _, msg := range m.messages {
+	for i, msg := range m.messages {
+		if i > 0 {
+			sb.WriteString(separator(w))
+			sb.WriteByte('\n')
+		}
 		sb.WriteString(renderMessage(msg, w))
-		sb.WriteString("\n\n")
+		sb.WriteByte('\n')
 	}
 	if m.streaming != "" {
+		if len(m.messages) > 0 {
+			sb.WriteString(separator(w))
+			sb.WriteByte('\n')
+		}
 		sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: m.streaming}, w))
-		sb.WriteString("\n")
+		sb.WriteByte('\n')
 	}
 	m.vp.SetContent(sb.String())
 }
 
-// View renders the complete TUI.
+// View renders the full TUI frame.
 func (m Model) View() string {
 	if !m.vpReady {
-		return "Initializing…\n"
+		return "Loading…\n"
 	}
 
-	// Message viewport.
-	vpView := m.vp.View()
+	// ── viewport ────────────────────────────────────────────────────────
+	vp := m.vp.View()
 
-	// Spinner / blank line.
-	var spinLine string
+	// ── spinner row (always present to keep layout stable) ──────────────
+	var spinRow string
 	if m.running {
-		spinLine = m.spinner.View() + " " + styleStatusLine.Render("Claude is thinking…")
+		spinRow = m.spinner.View() + " " + styleStatus.Render("Thinking…")
+	} else {
+		// blank placeholder keeps layout from jumping
+		spinRow = " "
 	}
 
-	// Input box.
-	boxStyle := styleInputBox
+	// ── input box ────────────────────────────────────────────────────────
+	bStyle := styleInputBorder
 	if !m.running {
-		boxStyle = styleInputBoxActive
+		bStyle = styleInputBorderActive
 	}
-	inputView := boxStyle.Width(m.width - 4).Render(m.input.View())
+	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
 
-	// Status line.
-	status := fmt.Sprintf("claude-go %s  model: %s  Ctrl+C: interrupt/exit  /clear /exit",
-		m.cfg.Version, m.cfg.ModelName)
-	statusLine := styleStatusLine.Width(m.width).Render(status)
+	// ── status bar ───────────────────────────────────────────────────────
+	left := styleStatus.Render("claude-go " + m.cfg.Version)
+	mid := styleStatusModel.Render(m.cfg.ModelName)
+	right := styleStatus.Render("^C interrupt · /clear · /exit")
+	// right-align: pad left side to push right to edge
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(mid) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	statusBar := left +
+		strings.Repeat(" ", gap/2) + mid +
+		strings.Repeat(" ", gap-gap/2) + right
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		vpView,
-		spinLine,
-		inputView,
-		statusLine,
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, vp, spinRow, inputBox, statusBar)
 }

@@ -2,59 +2,85 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Palette — matches Claude Code's dark-terminal aesthetic.
 var (
-	colorAccent    = lipgloss.Color("#DA7756") // coral/salmon (Claude brand)
-	colorMuted     = lipgloss.Color("#6C7280") // gray for hints/status
-	colorError     = lipgloss.Color("#F87171") // red for errors
-	colorToolLabel = lipgloss.Color("#60A5FA") // blue for tool names
-	colorCode      = lipgloss.Color("#A3E635") // green for inline code
+	colorAccent  = lipgloss.Color("#DA7756") // coral — Claude brand
+	colorMuted   = lipgloss.Color("#555F6E") // darker gray for secondary text
+	colorDim     = lipgloss.Color("#3D4554") // very dim for separators
+	colorError   = lipgloss.Color("#F87171") // red
+	colorTool    = lipgloss.Color("#60A5FA") // blue
+	colorCode    = lipgloss.Color("#A3E635") // green
+	colorFg      = lipgloss.Color("#D4D8E0") // primary text
+	colorCodeBg  = lipgloss.Color("#1A1E2A") // code block background
 )
 
 var (
-	styleUser = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#E2E8F0"))
-
-	styleAssistant = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E2E8F0"))
-
-	styleToolLabel = lipgloss.NewStyle().
-			Foreground(colorToolLabel).
-			Bold(true)
-
-	styleError = lipgloss.NewStyle().
-			Foreground(colorError)
-
-	stylePromptCursor = lipgloss.NewStyle().
-				Foreground(colorAccent).
-				Bold(true)
-
-	styleStatusLine = lipgloss.NewStyle().
-			Foreground(colorMuted)
-
-	styleUserPrefix = lipgloss.NewStyle().
+	// Message prefixes — compact, single-line
+	styleYouPrefix = lipgloss.NewStyle().
 			Foreground(colorAccent).
 			Bold(true)
 
-	styleAssistantPrefix = lipgloss.NewStyle().
+	styleClaudePrefix = lipgloss.NewStyle().
 				Foreground(colorMuted)
 
+	// Body text
+	styleUserText = lipgloss.NewStyle().
+			Foreground(colorFg)
+
+	styleAssistantText = lipgloss.NewStyle().
+				Foreground(colorFg)
+
+	styleToolBadge = lipgloss.NewStyle().
+			Foreground(colorTool).
+			Bold(true)
+
+	styleToolContent = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Italic(true)
+
+	styleErrorText = lipgloss.NewStyle().
+			Foreground(colorError)
+
+	styleSystemText = lipgloss.NewStyle().
+			Foreground(colorDim).
+			Italic(true)
+
+	// Code
 	styleCodeBlock = lipgloss.NewStyle().
 			Foreground(colorCode).
-			Background(lipgloss.Color("#1E2433")).
-			Padding(0, 1)
+			Background(colorCodeBg).
+			PaddingLeft(2).
+			PaddingRight(2).
+			PaddingTop(0).
+			PaddingBottom(0)
 
+	styleInlineCode = lipgloss.NewStyle().
+				Foreground(colorCode)
+
+	// Input box — no padding inside, border does the framing
+	styleInputBorder = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(colorDim).
+				PaddingLeft(1).
+				PaddingRight(1)
+
+	styleInputBorderActive = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(colorAccent).
+				PaddingLeft(1).
+				PaddingRight(1)
+
+	// Status bar
+	styleStatus = lipgloss.NewStyle().
+			Foreground(colorDim)
+
+	styleStatusModel = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	// Spinner
 	styleSpinner = lipgloss.NewStyle().
 			Foreground(colorAccent)
 
-	styleInputBox = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(colorMuted).
-			Padding(0, 1)
-
-	styleInputBoxActive = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(colorAccent).
-				Padding(0, 1)
+	// Separator line between messages
+	styleSep = lipgloss.NewStyle().
+			Foreground(colorDim)
 )

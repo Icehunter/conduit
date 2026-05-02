@@ -6,121 +6,114 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderMessage renders a single message entry for display.
+const (
+	prefixYou    = "▶ You"
+	prefixClaude = "◀ Claude"
+)
+
+// renderMessage renders one message for display in the viewport.
+// width is the usable column count (viewport width).
 func renderMessage(msg Message, width int) string {
-	if width < 10 {
+	if width < 20 {
 		width = 80
 	}
 	switch msg.Role {
 	case RoleUser:
-		prefix := styleUserPrefix.Render("▶ You")
-		body := styleUser.Width(width - 2).Render(msg.Content)
-		return prefix + "\n" + body
+		prefix := styleYouPrefix.Render(prefixYou)
+		body := styleUserText.Render(msg.Content)
+		return prefix + "  " + body
+
 	case RoleAssistant:
-		prefix := styleAssistantPrefix.Render("◀ Claude")
-		body := styleAssistant.Width(width - 2).Render(renderMarkdown(msg.Content, width-2))
+		prefix := styleClaudePrefix.Render(prefixClaude)
+		body := renderMarkdown(msg.Content, width)
 		return prefix + "\n" + body
+
 	case RoleTool:
-		label := styleToolLabel.Render("[" + msg.ToolName + "]")
-		content := msg.Content
-		if len(content) > 500 {
-			content = content[:500] + "\n… (truncated)"
-		}
-		return label + " " + styleAssistantPrefix.Render(content)
+		badge := styleToolBadge.Render("⚙ " + msg.ToolName)
+		content := styleToolContent.Render(msg.Content)
+		return "  " + badge + "  " + content
+
 	case RoleError:
-		return styleError.Render("✗ " + msg.Content)
+		return styleErrorText.Render("✗ " + msg.Content)
+
 	case RoleSystem:
-		return styleStatusLine.Render("• " + msg.Content)
+		return styleSystemText.Render("· " + msg.Content)
 	}
 	return msg.Content
 }
 
-// renderMarkdown does very lightweight markdown rendering for terminal output.
-// Full syntax highlighting (M3+): code fences, bold, italic.
+// renderMarkdown does lightweight markdown for terminal output.
 func renderMarkdown(text string, width int) string {
-	if width < 10 {
-		width = 80
-	}
 	lines := strings.Split(text, "\n")
 	var out strings.Builder
 	inCode := false
-	var codeBlock strings.Builder
-	codeLang := ""
+	var codeBuf strings.Builder
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "```") {
 			if inCode {
-				// Close code block
-				rendered := styleCodeBlock.Width(width).Render(codeBlock.String())
+				// Render accumulated code block
+				code := strings.TrimRight(codeBuf.String(), "\n")
+				rendered := styleCodeBlock.Width(width).Render(code)
 				out.WriteString(rendered)
 				out.WriteByte('\n')
-				codeBlock.Reset()
-				codeLang = ""
+				codeBuf.Reset()
 				inCode = false
 			} else {
-				// Open code block
-				codeLang = strings.TrimPrefix(line, "```")
-				_ = codeLang
 				inCode = true
 			}
 			continue
 		}
 		if inCode {
-			codeBlock.WriteString(line)
-			codeBlock.WriteByte('\n')
+			codeBuf.WriteString(line)
+			codeBuf.WriteByte('\n')
 			continue
 		}
-
-		// Bold: **text**
-		line = renderBold(line)
-		// Inline code: `text`
-		line = renderInlineCode(line)
-
-		out.WriteString(line)
+		out.WriteString(renderLine(line))
 		out.WriteByte('\n')
 	}
-
 	// Flush unclosed code block
-	if inCode && codeBlock.Len() > 0 {
-		rendered := styleCodeBlock.Width(width).Render(codeBlock.String())
-		out.WriteString(rendered)
+	if inCode && codeBuf.Len() > 0 {
+		code := strings.TrimRight(codeBuf.String(), "\n")
+		out.WriteString(styleCodeBlock.Width(width).Render(code))
 		out.WriteByte('\n')
 	}
-
 	return strings.TrimRight(out.String(), "\n")
 }
 
-// renderBold processes **text** markers.
-func renderBold(line string) string {
-	boldStyle := lipgloss.NewStyle().Bold(true)
-	return processDelimited(line, "**", boldStyle)
+// renderLine applies inline styling (bold, inline code) to a single line.
+func renderLine(line string) string {
+	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true))
+	line = applyDelim(line, "`", styleInlineCode)
+	return styleAssistantText.Render(line)
 }
 
-// renderInlineCode processes `text` markers.
-func renderInlineCode(line string) string {
-	codeStyle := lipgloss.NewStyle().Foreground(colorCode)
-	return processDelimited(line, "`", codeStyle)
-}
-
-// processDelimited finds delimiter-wrapped spans and applies style.
-func processDelimited(line, delim string, style lipgloss.Style) string {
+// applyDelim finds delimiter-wrapped spans and applies style.
+func applyDelim(line, delim string, style lipgloss.Style) string {
 	var out strings.Builder
 	for {
-		start := strings.Index(line, delim)
-		if start < 0 {
+		i := strings.Index(line, delim)
+		if i < 0 {
 			out.WriteString(line)
 			break
 		}
-		end := strings.Index(line[start+len(delim):], delim)
-		if end < 0 {
+		j := strings.Index(line[i+len(delim):], delim)
+		if j < 0 {
 			out.WriteString(line)
 			break
 		}
-		end += start + len(delim)
-		out.WriteString(line[:start])
-		inner := line[start+len(delim) : end]
-		out.WriteString(style.Render(inner))
-		line = line[end+len(delim):]
+		j += i + len(delim)
+		out.WriteString(line[:i])
+		out.WriteString(style.Render(line[i+len(delim) : j]))
+		line = line[j+len(delim):]
 	}
 	return out.String()
+}
+
+// separator returns a dim horizontal rule.
+func separator(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	return styleSep.Render(strings.Repeat("─", width))
 }

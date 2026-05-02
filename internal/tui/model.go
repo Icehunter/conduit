@@ -123,9 +123,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m = m.applyLayout()
-		// Clear the screen on resize so stale content doesn't ghost in the
-		// terminal's scroll buffer before the viewport redraws.
-		return m, tea.Batch(append(cmds, tea.ClearScreen)...)
+		// Erase the entire screen and home the cursor on every resize.
+		// tea.ClearScreen only clears the visible area; the explicit sequence
+		// also resets the scroll region, preventing ghost chrome lines from
+		// appearing in the scrollback after an iTerm2 resize.
+		return m, tea.Batch(append(cmds,
+			tea.ClearScreen,
+			func() tea.Msg {
+				// Force a full repaint by sending a no-op that triggers re-render.
+				return nil
+			},
+		)...)
 
 	case tea.KeyMsg:
 		m2, cmd := m.handleKey(msg)

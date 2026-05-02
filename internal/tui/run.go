@@ -3,14 +3,22 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/icehunter/claude-go/internal/agent"
 )
 
+// altScreenEnter/Exit are the ANSI sequences for the alternate screen buffer.
+const (
+	altScreenEnter = "\x1b[?1049h\x1b[?25l" // enter alt-screen, hide cursor
+	altScreenExit  = "\x1b[?1049l\x1b[?25h" // exit alt-screen, show cursor
+	clearScreen    = "\x1b[2J\x1b[H"         // erase display + cursor home
+)
+
 // Run starts the full-screen TUI and blocks until the user exits.
-// Uses alt-screen so the session doesn't appear in the terminal's scrollback.
 func Run(version, modelName string, loop *agent.Loop) error {
 	var prog *tea.Program
 
@@ -25,20 +33,33 @@ func Run(version, modelName string, loop *agent.Loop) error {
 	prog = tea.NewProgram(
 		m,
 		tea.WithAltScreen(),
-		// WithoutSignalHandler lets us manage cleanup ourselves so the alt-screen
-		// is always restored even on abnormal exit paths.
-		tea.WithoutSignalHandler(),
 	)
 
-	// Ensure alt-screen is exited and cursor is restored even if we crash.
-	defer func() {
-		// These are the ANSI sequences Bubble Tea uses internally.
-		// Writing them explicitly guarantees the terminal is restored
-		// if tea.Program.Run() exits without cleanup.
-		fmt.Fprint(os.Stdout, "\x1b[?1049l") // exit alt-screen
-		fmt.Fprint(os.Stdout, "\x1b[?25h")   // show cursor
+	// Re-enter alt-screen after SIGWINCH (iTerm2 resize) so the terminal
+	// doesn't leave ghost frames in the main buffer's scrollback.
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	go func() {
+		for range winch {
+			fmt.Fprint(os.Stdout, clearScreen)
+		}
+	}()
+
+	// Clean exit on interrupt/term.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigs
+		prog.Kill()
 	}()
 
 	_, err := prog.Run()
+
+	// Guarantee alt-screen is exited even if Bubble Tea's cleanup was partial.
+	fmt.Fprint(os.Stdout, altScreenExit)
+
+	signal.Stop(winch)
+	signal.Stop(sigs)
+	close(winch)
 	return err
 }

@@ -10,47 +10,42 @@ const (
 	prefixYou    = "▶ You"
 	prefixClaude = "◀ Claude"
 
-	// outerPad is the number of spaces added to each side of viewport content.
+	// outerPad is spaces on each side of all viewport content.
 	outerPad = 2
 )
 
-// renderMessage renders one message for display in the viewport.
-// width is the full viewport width; inner content uses width-2*outerPad.
+// renderMessage renders one message for display.
+// width is the full viewport width.
 func renderMessage(msg Message, width int) string {
 	if width < 20 {
 		width = 80
 	}
 	inner := width - outerPad*2
+	if inner < 10 {
+		inner = 10
+	}
 	pad := strings.Repeat(" ", outerPad)
 
 	switch msg.Role {
 	case RoleUser:
-		prefix := styleYouPrefix.Render(prefixYou)
-		body := styleUserText.Render(msg.Content)
-		return pad + prefix + "  " + body
+		return pad + styleYouPrefix.Render(prefixYou) + "  " + styleUserText.Render(msg.Content)
 
 	case RoleAssistant:
-		prefix := styleClaudePrefix.Render(prefixClaude)
 		body := renderMarkdown(msg.Content, inner)
-		// Indent body lines by outerPad
-		indented := indentLines(body, pad)
-		return pad + prefix + "\n" + indented
+		return pad + styleClaudePrefix.Render(prefixClaude) + "\n" + indentLines(body, pad)
 
 	case RoleTool:
-		badge := styleToolBadge.Render("⚙ " + msg.ToolName)
-		content := styleToolContent.Render(msg.Content)
-		return pad + "  " + badge + "  " + content
+		return pad + "  " + styleToolBadge.Render("⚙ "+msg.ToolName) + "  " + styleToolContent.Render(msg.Content)
 
 	case RoleError:
-		return pad + styleErrorText.Render("✗ " + msg.Content)
+		return pad + styleErrorText.Render("✗ "+msg.Content)
 
 	case RoleSystem:
-		return pad + styleSystemText.Render("· " + msg.Content)
+		return pad + styleSystemText.Render("· "+msg.Content)
 	}
 	return msg.Content
 }
 
-// indentLines prepends pad to every line of s.
 func indentLines(s, pad string) string {
 	if pad == "" {
 		return s
@@ -65,6 +60,7 @@ func indentLines(s, pad string) string {
 }
 
 // renderMarkdown does lightweight markdown rendering with syntax highlighting.
+// width is already the inner usable width (after outer padding is removed).
 func renderMarkdown(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	var out strings.Builder
@@ -103,65 +99,42 @@ func renderMarkdown(text string, width int) string {
 	return strings.TrimRight(out.String(), "\n")
 }
 
-// renderCodeBlock renders a fenced code block with rounded border and
-// language-aware syntax highlighting.
-// width is the available content width (already excluding outer padding).
-// The border adds 2 cols (left+right), so the inner highlight width is width-2-2(padding).
+// renderCodeBlock renders a fenced code block.
+// width is the usable inner width (outer padding already excluded).
+// We show the language as a dim label on the line above the border.
 func renderCodeBlock(code, lang string, width int) string {
 	highlighted := highlightCode(code, lang)
 
-	// styleCodeBorder has PaddingLeft(1)+PaddingRight(1) and a 1-col border each side.
-	// Total horizontal chrome = 4. Inner content gets width-4 cols.
+	// The border style has left+right border (2) + left+right padding (2) = 4 cols total.
+	// Content width must be exactly width-4 so the box fits within width.
 	innerW := width - 4
-	if innerW < 10 {
-		innerW = 10
+	if innerW < 4 {
+		innerW = 4
 	}
 
-	// Render the block at the correct inner width so lipgloss doesn't wrap.
-	block := styleCodeBorder.
-		Width(innerW).
-		Render(highlighted)
+	block := styleCodeBorder.Width(innerW).Render(highlighted)
 
-	// Splice language label into the top border after the corner glyph.
-	// "╭──────" → "╭─ go ──────"
+	// Language label as a plain-text line above the box — no ANSI splicing into borders.
 	if lang != "" {
-		lines := strings.SplitN(block, "\n", 2)
-		if len(lines) == 2 {
-			top := []rune(lines[0])
-			// top[0] is "╭", top[1] is "─". Insert " lang " after top[1].
-			if len(top) > 2 {
-				label := []rune(" " + lang + " ")
-				// Keep corner + one dash, then label, then remaining dashes.
-				rest := top[2:]
-				if len(label) < len(rest) {
-					rest = rest[len(label):]
-				} else {
-					rest = nil
-				}
-				newTop := string(top[:2]) + string(label) + string(rest)
-				block = newTop + "\n" + lines[1]
-			}
-		}
+		label := styleCodeLang.Render(" " + lang + " ")
+		return label + "\n" + block
 	}
 	return block
 }
 
-// highlightCode applies terminal color to code based on language.
-// This is a hand-rolled highlighter covering the most common token classes —
-// full Tree-sitter or Chroma integration lands in M5.
+// highlightCode colorizes code by language.
 func highlightCode(code, lang string) string {
 	lines := strings.Split(code, "\n")
-	highlighted := make([]string, len(lines))
+	out := make([]string, len(lines))
 	for i, line := range lines {
-		highlighted[i] = highlightLine(line, lang)
+		out[i] = highlightLine(line, lang)
 	}
-	return strings.Join(highlighted, "\n")
+	return strings.Join(out, "\n")
 }
 
-// Token colors for syntax highlighting.
+// Token color styles.
 var (
 	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")) // purple
-	cBuiltin  = lipgloss.NewStyle().Foreground(lipgloss.Color("#82AAFF")) // blue
 	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")) // green
 	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
 	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C")) // orange
@@ -170,7 +143,6 @@ var (
 	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
 )
 
-// keywords by language.
 var langKeywords = map[string][]string{
 	"go": {
 		"package", "import", "func", "var", "const", "type", "struct",
@@ -183,56 +155,60 @@ var langKeywords = map[string][]string{
 		"for", "while", "in", "not", "and", "or", "is", "lambda", "with",
 		"as", "pass", "break", "continue", "try", "except", "finally",
 		"raise", "yield", "global", "nonlocal", "True", "False", "None",
-		"print", "range", "len", "type", "str", "int", "float", "list",
-		"dict", "set", "tuple",
+		"print", "range", "len", "type", "str", "int", "float",
 	},
 	"javascript": {
 		"const", "let", "var", "function", "return", "if", "else", "for",
-		"while", "do", "switch", "case", "break", "continue", "class",
-		"import", "export", "default", "from", "new", "this", "typeof",
-		"instanceof", "void", "delete", "in", "of", "async", "await",
-		"try", "catch", "finally", "throw", "null", "undefined", "true", "false",
+		"while", "switch", "case", "break", "class", "import", "export",
+		"default", "from", "new", "this", "async", "await", "try", "catch",
+		"throw", "null", "undefined", "true", "false", "typeof", "instanceof",
 	},
 	"typescript": {
 		"const", "let", "var", "function", "return", "if", "else", "for",
 		"while", "class", "import", "export", "interface", "type", "enum",
-		"extends", "implements", "new", "this", "async", "await", "null",
+		"extends", "implements", "new", "async", "await", "null",
 		"undefined", "true", "false", "string", "number", "boolean", "any",
 		"void", "never", "readonly", "public", "private", "protected",
 	},
 	"rust": {
 		"fn", "let", "mut", "const", "struct", "enum", "impl", "trait",
-		"pub", "use", "mod", "crate", "super", "self", "return", "if",
-		"else", "for", "while", "loop", "match", "in", "ref", "move",
-		"async", "await", "dyn", "box", "where", "type", "unsafe",
-		"true", "false", "None", "Some", "Ok", "Err",
+		"pub", "use", "mod", "return", "if", "else", "for", "while", "loop",
+		"match", "in", "async", "await", "dyn", "where", "type", "unsafe",
+		"true", "false", "None", "Some", "Ok", "Err", "self", "Self",
 	},
-	"bash": {
-		"if", "then", "else", "elif", "fi", "for", "do", "done", "while",
-		"case", "esac", "function", "return", "export", "local", "echo",
-		"source", "shift", "exit", "true", "false",
+	"kotlin": {
+		"fun", "val", "var", "class", "object", "interface", "data", "sealed",
+		"abstract", "open", "override", "return", "if", "else", "for", "while",
+		"when", "is", "as", "in", "import", "package", "null", "true", "false",
+		"this", "super", "companion", "by", "init", "constructor", "lateinit",
+		"suspend", "coroutine", "launch", "async", "await", "try", "catch",
+		"throw", "finally", "enum", "annotation",
 	},
-	"sh": {
-		"if", "then", "else", "elif", "fi", "for", "do", "done", "while",
-		"case", "esac", "function", "return", "export", "local", "echo",
-		"source", "shift", "exit", "true", "false",
+	"java": {
+		"class", "interface", "extends", "implements", "public", "private",
+		"protected", "static", "final", "void", "return", "if", "else", "for",
+		"while", "new", "import", "package", "null", "true", "false", "this",
+		"super", "try", "catch", "throw", "throws", "finally", "abstract",
+		"synchronized", "instanceof",
 	},
+	"bash": {"if", "then", "else", "elif", "fi", "for", "do", "done", "while",
+		"case", "esac", "function", "return", "export", "local", "echo", "exit",
+	},
+	"sh":   {"if", "then", "else", "elif", "fi", "for", "do", "done", "while", "case", "esac", "echo"},
+	"yaml": {},
+	"json": {},
+	"toml": {},
+	"sql":  {"SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "TABLE", "JOIN", "ON", "AND", "OR", "NOT", "IN", "AS", "BY", "GROUP", "ORDER", "LIMIT", "OFFSET"},
 }
 
-// commentPrefixes by language.
 var langComments = map[string][]string{
-	"go":         {"//", "/*"},
-	"python":     {"#"},
-	"javascript": {"//", "/*"},
-	"typescript": {"//", "/*"},
-	"rust":       {"//", "/*"},
-	"bash":       {"#"},
-	"sh":         {"#"},
+	"go": {"//", "/*"}, "python": {"#"}, "javascript": {"//", "/*"},
+	"typescript": {"//", "/*"}, "rust": {"//", "/*"}, "kotlin": {"//", "/*"},
+	"java": {"//", "/*"}, "bash": {"#"}, "sh": {"#"},
 }
 
-// highlightLine colorizes a single line of code.
 func highlightLine(line, lang string) string {
-	// Whole-line comments
+	// Whole-line comment check.
 	if prefixes, ok := langComments[lang]; ok {
 		trimmed := strings.TrimLeft(line, " \t")
 		for _, p := range prefixes {
@@ -242,32 +218,29 @@ func highlightLine(line, lang string) string {
 		}
 	}
 
-	// For languages we know, tokenize by word boundaries and colorize keywords.
-	if _, ok := langKeywords[lang]; ok {
-		return tokenizeLine(line, lang)
+	// YAML/JSON/TOML and unknown — render plain but still colored.
+	if _, ok := langKeywords[lang]; !ok || (lang != "" && len(langKeywords[lang]) == 0) {
+		return cPlain.Render(line)
 	}
 
-	// Unknown language — render plain.
-	return cPlain.Render(line)
+	return tokenizeLine(line, lang)
 }
 
-// tokenizeLine splits a line into tokens and applies colors.
 func tokenizeLine(line, lang string) string {
-	keywords := langKeywords[lang]
-	kwSet := make(map[string]bool, len(keywords))
-	for _, k := range keywords {
+	kwSet := make(map[string]bool)
+	for _, k := range langKeywords[lang] {
 		kwSet[k] = true
 	}
 
 	var out strings.Builder
-	i := 0
 	runes := []rune(line)
 	n := len(runes)
+	i := 0
 
 	for i < n {
 		ch := runes[i]
 
-		// String literals: " or '
+		// String: " or '
 		if ch == '"' || ch == '\'' {
 			quote := ch
 			j := i + 1
@@ -285,7 +258,7 @@ func tokenizeLine(line, lang string) string {
 			continue
 		}
 
-		// Backtick strings (JS/TS/Go)
+		// Backtick string
 		if ch == '`' {
 			j := i + 1
 			for j < n && runes[j] != '`' {
@@ -299,10 +272,11 @@ func tokenizeLine(line, lang string) string {
 			continue
 		}
 
-		// Numbers
+		// Number
 		if ch >= '0' && ch <= '9' {
 			j := i
-			for j < n && (runes[j] >= '0' && runes[j] <= '9' || runes[j] == '.' || runes[j] == 'x' || runes[j] == 'X') {
+			for j < n && (runes[j] >= '0' && runes[j] <= '9' || runes[j] == '.' ||
+				runes[j] == 'x' || runes[j] == 'X' || runes[j] == '_') {
 				j++
 			}
 			out.WriteString(cNumber.Render(string(runes[i:j])))
@@ -310,25 +284,26 @@ func tokenizeLine(line, lang string) string {
 			continue
 		}
 
-		// Identifiers and keywords
+		// Word (identifier or keyword)
 		if isIdent(ch) {
 			j := i
 			for j < n && isIdent(runes[j]) {
 				j++
 			}
 			word := string(runes[i:j])
-			if kwSet[word] {
+			switch {
+			case kwSet[word]:
 				out.WriteString(cKeyword.Render(word))
-			} else if isType(word) {
+			case isTypeName(word):
 				out.WriteString(cType.Render(word))
-			} else {
+			default:
 				out.WriteString(cPlain.Render(word))
 			}
 			i = j
 			continue
 		}
 
-		// Operators and punctuation
+		// Operator
 		if isOperator(ch) {
 			out.WriteString(cOperator.Render(string(ch)))
 		} else {
@@ -343,12 +318,14 @@ func isIdent(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
 
-func isType(word string) bool {
-	if len(word) == 0 {
+// isTypeName: PascalCase words are likely type names.
+func isTypeName(word string) bool {
+	if len(word) < 2 {
 		return false
 	}
 	r := rune(word[0])
-	return r >= 'A' && r <= 'Z'
+	r2 := rune(word[1])
+	return r >= 'A' && r <= 'Z' && ((r2 >= 'a' && r2 <= 'z') || (r2 >= 'A' && r2 <= 'Z'))
 }
 
 func isOperator(r rune) bool {
@@ -362,7 +339,6 @@ func renderLine(line string) string {
 	return styleAssistantText.Render(line)
 }
 
-// applyDelim finds delimiter-wrapped spans and applies style.
 func applyDelim(line, delim string, style lipgloss.Style) string {
 	var out strings.Builder
 	for {
@@ -384,7 +360,7 @@ func applyDelim(line, delim string, style lipgloss.Style) string {
 	return out.String()
 }
 
-// separator returns a dim horizontal rule across the full width.
+// separator returns a full-width dim rule.
 func separator(width int) string {
 	if width < 1 {
 		width = 1

@@ -343,10 +343,11 @@ func (m Model) View() string {
 	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
 	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
 
-	// Status bar.
-	appName := styleStatusAccent.Render("claude-go")
+	// Status bar — left/right edges have outerPad spaces to align with content.
+	edgePad := strings.Repeat(" ", outerPad)
+	appName := edgePad + styleStatusAccent.Render("claude-go")
 	modelSeg := styleStatusModel.Render(shortModelName(m.cfg.ModelName))
-	sep := styleStatus.Render(" | ")
+	barSep := styleStatus.Render(" | ")
 
 	var midParts []string
 	midParts = append(midParts, modelSeg)
@@ -360,16 +361,15 @@ func (m Model) View() string {
 	if m.costUSD > 0 {
 		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
 	}
-	mid := strings.Join(midParts, sep)
-	right := styleStatus.Render("^C interrupt  /clear  /exit")
+	mid := strings.Join(midParts, barSep)
+	right := styleStatus.Render("^C interrupt  /clear  /exit") + edgePad
 
 	leftW := lipgloss.Width(appName)
 	midW := lipgloss.Width(mid)
 	rightW := lipgloss.Width(right)
-	totalUsed := leftW + midW + rightW
-	space := m.width - totalUsed
-	if space < 2 {
-		space = 2
+	space := m.width - leftW - midW - rightW
+	if space < 1 {
+		space = 1
 	}
 	lPad := space / 2
 	rPad := space - lPad

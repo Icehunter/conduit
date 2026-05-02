@@ -162,16 +162,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
 		}
-		if msg.cancelled {
-			// Context was cancelled — Ctrl+C already cleaned up or will shortly.
-			// Roll back dangling user message if Ctrl+C hasn't done it yet.
+		if msg.cancelled || isCancelError(msg.err) {
+			// Context was cancelled (Ctrl+C). Roll back dangling user message
+			// if Ctrl+C hasn't done it yet. Never show an error bubble.
 			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
 				m.history = m.history[:len(m.history)-1]
 			}
 		} else if msg.err != nil {
-			if !isCancelError(msg.err) {
-				m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
-			}
+			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
 				m.history = m.history[:len(m.history)-1]
 			}

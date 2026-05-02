@@ -93,6 +93,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterMiscCommands(reg)
 	commands.RegisterPromptCommands(reg)
 	commands.RegisterMCPCommand(reg, runOpts.MCPManager)
+	commands.RegisterRTKCommands(reg)
 
 	// Load plugins and register their slash commands + browser.
 	cwd, _ := os.Getwd()

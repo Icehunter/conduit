@@ -1,12 +1,30 @@
-// Package track records RTK filter statistics.
+// Package track records RTK filter statistics in a SQLite database.
 //
-// This is a no-op stub — SQLite (modernc.org/sqlite) is not a declared
-// dependency of this module. The struct and function signatures match the
-// full implementation so callers compile without change if SQLite is added
-// later.
+// Schema mirrors RTK's Rust implementation at rtk/src/core/tracking.rs.
+// Database lives at ~/.local/share/rtk/history.db.
 package track
 
-import "time"
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+const schema = `
+CREATE TABLE IF NOT EXISTS rtk_history (
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	command        TEXT    NOT NULL,
+	original_bytes INTEGER NOT NULL,
+	filtered_bytes INTEGER NOT NULL,
+	saved_bytes    INTEGER NOT NULL,
+	saved_pct      REAL    NOT NULL,
+	recorded_at    INTEGER NOT NULL
+);
+`
 
 // Row is one recorded RTK filter application.
 type Row struct {
@@ -18,17 +36,67 @@ type Row struct {
 	RecordedAt    time.Time
 }
 
-// DB is a no-op tracker (SQLite not available).
-type DB struct{}
+// DB holds an open connection to the history database.
+type DB struct {
+	conn *sql.DB
+}
 
-// Open returns a no-op DB.
-func Open() (*DB, error) { return &DB{}, nil }
+// Open opens (creating if necessary) the default history database at
+// ~/.local/share/rtk/history.db.
+func Open() (*DB, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("track: home dir: %w", err)
+	}
+	dir := filepath.Join(home, ".local", "share", "rtk")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("track: mkdir %s: %w", dir, err)
+	}
+	return OpenPath(filepath.Join(dir, "history.db"))
+}
 
-// Record is a no-op.
-func (d *DB) Record(Row) error { return nil }
+// OpenPath opens the database at path (use ":memory:" for tests).
+func OpenPath(path string) (*DB, error) {
+	conn, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("track: open %s: %w", path, err)
+	}
+	conn.SetMaxOpenConns(1) // SQLite is single-writer
+	if _, err := conn.Exec(schema); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("track: schema: %w", err)
+	}
+	return &DB{conn: conn}, nil
+}
 
-// Gain returns zeroed statistics.
-func (d *DB) Gain() (totalOrig, totalFiltered, rows int, err error) { return 0, 0, 0, nil }
+// Record persists one filter application to the database.
+func (d *DB) Record(r Row) error {
+	ts := r.RecordedAt.UnixMilli()
+	if ts == 0 {
+		ts = time.Now().UnixMilli()
+	}
+	_, err := d.conn.Exec(
+		`INSERT INTO rtk_history (command, original_bytes, filtered_bytes, saved_bytes, saved_pct, recorded_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		r.Command, r.OriginalBytes, r.FilteredBytes, r.SavedBytes, r.SavedPct, ts,
+	)
+	if err != nil {
+		return fmt.Errorf("track: record: %w", err)
+	}
+	return nil
+}
 
-// Close is a no-op.
-func (d *DB) Close() error { return nil }
+// Gain returns aggregate savings statistics across all recorded filter applications.
+func (d *DB) Gain() (totalOrig, totalFiltered, rows int, err error) {
+	row := d.conn.QueryRow(
+		`SELECT COALESCE(SUM(original_bytes),0), COALESCE(SUM(filtered_bytes),0), COUNT(*) FROM rtk_history`,
+	)
+	if err = row.Scan(&totalOrig, &totalFiltered, &rows); err != nil {
+		return 0, 0, 0, fmt.Errorf("track: gain: %w", err)
+	}
+	return totalOrig, totalFiltered, rows, nil
+}
+
+// Close closes the database connection.
+func (d *DB) Close() error {
+	return d.conn.Close()
+}

@@ -18,11 +18,29 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icehunter/conduit/internal/rtk"
+	"github.com/icehunter/conduit/internal/rtk/track"
 	"github.com/icehunter/conduit/internal/tool"
 )
+
+// trackDB is the lazily-opened RTK history database (nil if unavailable).
+var (
+	trackOnce sync.Once
+	trackDB   *track.DB
+)
+
+func getTrackDB() *track.DB {
+	trackOnce.Do(func() {
+		db, err := track.Open()
+		if err == nil {
+			trackDB = db
+		}
+	})
+	return trackDB
+}
 
 // DefaultTimeout matches the leaked TS reference (BashTool.tsx ~882 line
 // `timeout: timeoutMs`) when no timeout argument is supplied: 2 minutes.
@@ -151,5 +169,17 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 
 	output := strings.TrimRight(sb.String(), "\n")
 	filtered := rtk.Filter(in.Command, output)
+	if filtered.SavedBytes > 0 {
+		if db := getTrackDB(); db != nil {
+			_ = db.Record(track.Row{
+				Command:       in.Command,
+				OriginalBytes: len(filtered.Original),
+				FilteredBytes: len(filtered.Filtered),
+				SavedBytes:    filtered.SavedBytes,
+				SavedPct:      filtered.SavingsPct,
+				RecordedAt:    time.Now(),
+			})
+		}
+	}
 	return tool.TextResult(filtered.Filtered), nil
 }

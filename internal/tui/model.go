@@ -16,6 +16,7 @@ import (
 
 	"github.com/icehunter/claude-go/internal/agent"
 	"github.com/icehunter/claude-go/internal/api"
+	"github.com/icehunter/claude-go/internal/commands"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
@@ -64,6 +65,7 @@ type Config struct {
 	ModelName string
 	Loop      *agent.Loop
 	Program   **tea.Program
+	Commands  *commands.Registry
 }
 
 // Model is the Bubble Tea model.
@@ -92,6 +94,9 @@ type Model struct {
 	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
 	flashMsg string
 
+	// modelName is the currently active model (can be changed via /model).
+	modelName string
+
 	ready bool // true once we've received the first WindowSizeMsg
 }
 
@@ -110,7 +115,7 @@ func New(cfg Config) Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = styleSpinner
 
-	return Model{cfg: cfg, input: ta, spinner: sp}
+	return Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName}
 }
 
 // Init starts the blink + spinner tick.
@@ -246,13 +251,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		switch text {
-		case "/exit", "/quit":
-			return m, tea.Quit
-		case "/clear":
-			m.messages = nil
-			m.history = nil
+
+		// Dispatch slash commands before sending to the agent.
+		if strings.HasPrefix(text, "/") {
 			m.input.Reset()
+			if m.cfg.Commands != nil {
+				if res, ok := m.cfg.Commands.Dispatch(text); ok {
+					return m.applyCommandResult(res)
+				}
+			}
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Unknown command: %s (try /help)", text)})
 			m.refreshViewport()
 			return m, nil
 		}
@@ -285,6 +293,41 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// applyCommandResult handles a slash command result in the TUI.
+func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
+	switch res.Type {
+	case "clear":
+		m.messages = nil
+		m.history = nil
+		m.refreshViewport()
+		return m, nil
+	case "exit":
+		return m, tea.Quit
+	case "model":
+		m.modelName = res.Model
+		m.cfg.Loop.SetModel(res.Model)
+		if res.Text != "" {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
+		}
+		m.refreshViewport()
+		return m, nil
+	case "compact":
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Compact not yet implemented."})
+		m.refreshViewport()
+		return m, nil
+	case "error":
+		m.messages = append(m.messages, Message{Role: RoleError, Content: res.Text})
+		m.refreshViewport()
+		return m, nil
+	default: // "text"
+		if res.Text != "" {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
+			m.refreshViewport()
+		}
+		return m, nil
+	}
 }
 
 // isCancelError reports whether err represents a user-initiated cancellation.
@@ -428,7 +471,7 @@ func (m Model) View() string {
 	// Status bar — left/right edges have outerPad spaces to align with content.
 	edgePad := strings.Repeat(" ", outerPad)
 	appName := edgePad + styleStatusAccent.Render("claude-go")
-	modelSeg := styleStatusModel.Render(shortModelName(m.cfg.ModelName))
+	modelSeg := styleStatusModel.Render(shortModelName(m.modelName))
 	barSep := styleStatus.Render(" | ")
 
 	var midParts []string

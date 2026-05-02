@@ -9,6 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/icehunter/claude-go/internal/agent"
+	"github.com/icehunter/claude-go/internal/commands"
+	internalmodel "github.com/icehunter/claude-go/internal/model"
 )
 
 // altScreenEnter/Exit are the ANSI sequences for the alternate screen buffer.
@@ -22,11 +24,20 @@ const (
 func Run(version, modelName string, loop *agent.Loop) error {
 	var prog *tea.Program
 
+	reg := commands.New()
+	commands.RegisterBuiltins(reg)
+	commands.RegisterModelCommand(reg,
+		func() string { return internalmodel.Resolve() },
+		func(name string) { loop.SetModel(name) },
+	)
+	commands.RegisterCompactCommand(reg)
+
 	cfg := Config{
 		Version:   version,
 		ModelName: modelName,
 		Loop:      loop,
 		Program:   &prog,
+		Commands:  reg,
 	}
 
 	m := New(cfg)

@@ -1,0 +1,77 @@
+// Package commands implements the slash-command registry for claude-go.
+//
+// Mirrors src/commands/ from the TS source. Each command is a function that
+// receives the argument string and returns a Result. The TUI dispatches slash
+// commands before sending to the agent loop.
+package commands
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Result is what a command returns to the TUI.
+type Result struct {
+	// Type is "text", "clear", "model", "compact", "error".
+	Type string
+	// Text is the message to display (for Type=="text" or "error").
+	Text string
+	// Model is the new model name (for Type=="model").
+	Model string
+}
+
+// Handler is a slash command implementation.
+type Handler func(args string) Result
+
+// Command describes one slash command.
+type Command struct {
+	Name        string
+	Description string
+	Handler     Handler
+}
+
+// Registry holds all registered slash commands.
+type Registry struct {
+	cmds map[string]Command
+}
+
+// New returns an empty Registry.
+func New() *Registry {
+	return &Registry{cmds: make(map[string]Command)}
+}
+
+// Register adds a command. Overwrites any existing command with the same name.
+func (r *Registry) Register(cmd Command) {
+	r.cmds[cmd.Name] = cmd
+}
+
+// Dispatch runs the command for input (which may or may not start with "/").
+// Returns (result, true) if the command was found, (zero, false) otherwise.
+func (r *Registry) Dispatch(input string) (Result, bool) {
+	input = strings.TrimSpace(input)
+	if !strings.HasPrefix(input, "/") {
+		return Result{}, false
+	}
+	parts := strings.SplitN(input[1:], " ", 2)
+	name := strings.ToLower(parts[0])
+	args := ""
+	if len(parts) > 1 {
+		args = parts[1]
+	}
+	cmd, ok := r.cmds[name]
+	if !ok {
+		return Result{Type: "error", Text: fmt.Sprintf("Unknown command: /%s (type /help for list)", name)}, true
+	}
+	return cmd.Handler(args), true
+}
+
+// All returns all commands sorted by name.
+func (r *Registry) All() []Command {
+	out := make([]Command, 0, len(r.cmds))
+	for _, c := range r.cmds {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}

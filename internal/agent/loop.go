@@ -76,6 +76,11 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 	return &Loop{client: client, reg: reg, cfg: cfg}
 }
 
+// SetModel updates the model used for new requests (from /model slash command).
+func (l *Loop) SetModel(name string) {
+	l.cfg.Model = name
+}
+
 // Run executes the agentic loop starting with the given messages. handler is
 // called synchronously for each event; it must not block.
 //

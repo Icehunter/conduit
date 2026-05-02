@@ -2181,7 +2181,17 @@ func (m Model) View() string {
 
 	// Status bar — left/right edges have outerPad spaces to align with content.
 	edgePad := strings.Repeat(" ", outerPad)
-	appName := edgePad + styleStatusAccent.Render("conduit")
+
+	// Left: app name + permission mode badge (prominent, always visible).
+	var modeLabel string
+	switch m.permissionMode {
+	case permissions.ModeAcceptEdits:
+		modeLabel = " ⏵⏵ accept edits"
+	case permissions.ModePlan:
+		modeLabel = " ⏸ plan mode"
+	}
+	appName := edgePad + styleStatusAccent.Render("conduit"+modeLabel)
+
 	modelSeg := styleStatusModel.Render(shortModelName(m.modelName))
 	barSep := styleStatus.Render(" | ")
 
@@ -2196,13 +2206,6 @@ func (m Model) View() string {
 	}
 	if m.costUSD > 0 {
 		midParts = append(midParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
-	}
-	// Permission mode indicator (mirrors real Claude Code status bar).
-	switch m.permissionMode {
-	case permissions.ModeAcceptEdits:
-		midParts = append(midParts, styleStatus.Render("⏵⏵ accept edits on"))
-	case permissions.ModePlan:
-		midParts = append(midParts, styleStatus.Render("⏸ plan mode on"))
 	}
 	mid := strings.Join(midParts, barSep)
 	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit  shift+tab mode") + edgePad

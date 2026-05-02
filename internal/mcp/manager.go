@@ -271,6 +271,28 @@ func (m *Manager) CallTool(ctx context.Context, qualifiedName string, input []by
 	return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("mcp: tool %q not found", qualifiedName)}}}, nil
 }
 
+// ListResources fetches resources from the named server.
+func (m *Manager) ListResources(ctx context.Context, serverName string) ([]ResourceDef, error) {
+	m.mu.RLock()
+	srv, ok := m.servers[serverName]
+	m.mu.RUnlock()
+	if !ok || srv.client == nil {
+		return nil, fmt.Errorf("mcp: server %q not found", serverName)
+	}
+	return srv.client.ListResources(ctx)
+}
+
+// ReadResource reads a resource from the named server.
+func (m *Manager) ReadResource(ctx context.Context, serverName, uri string) ([]ResourceContent, error) {
+	m.mu.RLock()
+	srv, ok := m.servers[serverName]
+	m.mu.RUnlock()
+	if !ok || srv.client == nil {
+		return nil, fmt.Errorf("mcp: server %q not found", serverName)
+	}
+	return srv.client.ReadResource(ctx, uri)
+}
+
 // Close shuts down all server connections.
 func (m *Manager) Close() {
 	m.mu.Lock()

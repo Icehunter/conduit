@@ -135,6 +135,17 @@ func (l *Loop) SetModel(name string) {
 	l.cfg.Model = name
 }
 
+// SetThinkingBudget updates the thinking budget for subsequent requests.
+// Set to 0 to disable thinking. Used by /effort command.
+func (l *Loop) SetThinkingBudget(budget int) {
+	l.cfg.ThinkingBudget = budget
+}
+
+// GetThinkingBudget returns the current thinking budget.
+func (l *Loop) GetThinkingBudget() int {
+	return l.cfg.ThinkingBudget
+}
+
 // SetSystem replaces the system blocks for subsequent requests.
 func (l *Loop) SetSystem(blocks []api.SystemBlock) {
 	l.cfg.System = blocks

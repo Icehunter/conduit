@@ -17,6 +17,8 @@ type LiveState struct {
 	costUSD        float64
 	sessionID      string
 	rateLimitWarn  string
+	fastMode       bool
+	effortLevel    string // "low" | "normal" | "high" | "max" | ""
 }
 
 func (s *LiveState) SetModelName(name string) {
@@ -78,4 +80,28 @@ func (s *LiveState) RateLimitWarning() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.rateLimitWarn
+}
+
+func (s *LiveState) SetFastMode(on bool) {
+	s.mu.Lock()
+	s.fastMode = on
+	s.mu.Unlock()
+}
+
+func (s *LiveState) FastMode() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fastMode
+}
+
+func (s *LiveState) SetEffortLevel(level string) {
+	s.mu.Lock()
+	s.effortLevel = level
+	s.mu.Unlock()
+}
+
+func (s *LiveState) EffortLevel() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.effortLevel
 }

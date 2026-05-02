@@ -22,6 +22,10 @@ type Client interface {
 	ListTools(ctx context.Context) ([]ToolDef, error)
 	// CallTool invokes a tool and returns its result.
 	CallTool(ctx context.Context, name string, input json.RawMessage) (CallResult, error)
+	// ListResources fetches the server's resource list (MCP resources/list).
+	ListResources(ctx context.Context) ([]ResourceDef, error)
+	// ReadResource reads the contents of one resource (MCP resources/read).
+	ReadResource(ctx context.Context, uri string) ([]ResourceContent, error)
 	// Close shuts down the transport.
 	Close() error
 }
@@ -202,6 +206,34 @@ func (c *stdioClient) CallTool(ctx context.Context, name string, input json.RawM
 	return result, nil
 }
 
+func (c *stdioClient) ListResources(ctx context.Context) ([]ResourceDef, error) {
+	raw, err := c.call(ctx, "resources/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Resources []ResourceDef `json:"resources"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp resources/list decode: %w", err)
+	}
+	return result.Resources, nil
+}
+
+func (c *stdioClient) ReadResource(ctx context.Context, uri string) ([]ResourceContent, error) {
+	raw, err := c.call(ctx, "resources/read", map[string]any{"uri": uri})
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Contents []ResourceContent `json:"contents"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp resources/read decode: %w", err)
+	}
+	return result.Contents, nil
+}
+
 func (c *stdioClient) Close() error {
 	_ = c.stdin.Close()
 	return c.cmd.Wait()
@@ -351,6 +383,34 @@ func (c *httpClient) CallTool(ctx context.Context, name string, input json.RawMe
 		return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("mcp tools/call decode: %v", err)}}}, nil
 	}
 	return result, nil
+}
+
+func (c *httpClient) ListResources(ctx context.Context) ([]ResourceDef, error) {
+	raw, err := c.call(ctx, "resources/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Resources []ResourceDef `json:"resources"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp resources/list decode: %w", err)
+	}
+	return result.Resources, nil
+}
+
+func (c *httpClient) ReadResource(ctx context.Context, uri string) ([]ResourceContent, error) {
+	raw, err := c.call(ctx, "resources/read", map[string]any{"uri": uri})
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Contents []ResourceContent `json:"contents"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp resources/read decode: %w", err)
+	}
+	return result.Contents, nil
 }
 
 func (c *httpClient) Close() error { return nil }

@@ -51,6 +51,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/configtool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
+	"github.com/icehunter/conduit/internal/tools/mcpresourcetool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
 	"github.com/icehunter/conduit/internal/tools/webfetchtool"
@@ -195,6 +196,8 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, rOpts *registryO
 	reg.Register(webfetchtool.New())
 	reg.Register(websearchtool.New(client))
 	reg.Register(&configtool.ConfigTool{})
+	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
+	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
 	// Interactive tools — callbacks are wired by the TUI after prog.Start().
 	if rOpts != nil {
 		reg.Register(rOpts.enterPlan)

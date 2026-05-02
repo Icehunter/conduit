@@ -162,9 +162,18 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 					pct = 100
 				}
 			}
+			modelDisplay := live.ModelName()
+			if live.FastMode() {
+				modelDisplay += " ⚡"
+			}
+			effort := live.EffortLevel()
+			if effort == "" {
+				effort = "normal"
+			}
 			var sb strings.Builder
-			sb.WriteString("Model:   " + live.ModelName() + "\n")
+			sb.WriteString("Model:   " + modelDisplay + "\n")
 			sb.WriteString("Mode:    " + mode + "\n")
+			sb.WriteString("Effort:  " + effort + "\n")
 			sb.WriteString(fmt.Sprintf("Context: %d%% (%d tokens)\n", pct, tokens))
 			if cost > 0 {
 				sb.WriteString(fmt.Sprintf("Cost:    $%.4f\n", cost))
@@ -199,6 +208,34 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				return "Nothing to copy."
 			}
 			return modelPtr.CopyLastResponse()
+		},
+		// /fast — toggle between Default and Fast model.
+		GetFast: func() bool { return live.FastMode() },
+		SetFast: func(on bool) {
+			live.SetFastMode(on)
+			newModel := internalmodel.Default
+			if on {
+				newModel = internalmodel.Fast
+			}
+			loop.SetModel(newModel)
+			live.SetModelName(newModel)
+			// Notify the TUI to update the model name and fast badge.
+			if prog != nil {
+				prog.Send(setModelNameMsg{name: newModel, fast: on})
+			}
+		},
+		// /effort — set thinking budget.
+		GetEffort: func() string {
+			level := live.EffortLevel()
+			if level == "" {
+				return "normal"
+			}
+			return level
+		},
+		SetEffort: func(level string) {
+			live.SetEffortLevel(level)
+			budget := internalmodel.ThinkingBudgets[level]
+			loop.SetThinkingBudget(budget)
 		},
 	}
 	commands.RegisterSessionCommands(reg, state)

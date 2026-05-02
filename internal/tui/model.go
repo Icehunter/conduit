@@ -115,6 +115,12 @@ type (
 	// setPermissionModeMsg is sent by EnterPlanMode/ExitPlanMode tool
 	// callbacks to change the active permission mode from outside the TUI event loop.
 	setPermissionModeMsg struct{ mode permissions.Mode }
+
+	// setModelNameMsg is sent by /fast and /model to update the displayed model name.
+	setModelNameMsg struct {
+		name string
+		fast bool // true when sent by /fast toggle
+	}
 )
 
 // Config is passed from main to the TUI.
@@ -180,6 +186,9 @@ type Model struct {
 	// rateLimitWarning is non-empty when a recent turn's rate-limit headers
 	// indicate quota is running low (<20% remaining). Shown in the status bar.
 	rateLimitWarning string
+
+	// fastMode is true when /fast is active (showing ⚡ badge).
+	fastMode bool
 
 	// modelName is the currently active model (can be changed via /model).
 	modelName string
@@ -504,6 +513,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg.Gate != nil {
 			m.cfg.Gate.SetMode(msg.mode)
 		}
+		m.syncLive()
+		return m, nil
+
+	case setModelNameMsg:
+		m.modelName = msg.name
+		m.fastMode = msg.fast
 		m.syncLive()
 		return m, nil
 
@@ -2350,6 +2365,9 @@ func (m Model) View() string {
 		leftParts = append(leftParts, modeBadge)
 	}
 	leftParts = append(leftParts, modelSeg)
+	if m.fastMode {
+		leftParts = append(leftParts, styleStatus.Render("⚡ fast"))
+	}
 	if m.totalInputTokens > 0 {
 		pct := m.totalInputTokens * 100 / 200000
 		if pct > 100 {

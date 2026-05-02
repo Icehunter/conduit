@@ -31,9 +31,22 @@ func ClearOverride() {
 // Claude Code 2.1.126 ships with.
 const Default = "claude-opus-4-7"
 
+// Fast is the faster/cheaper model used when /fast is active.
+// Mirrors getSmallFastModel() — Sonnet for fast responses.
+const Fast = "claude-sonnet-4-6"
+
 // MaxTokens is the default max_tokens value for /v1/messages.
 // Real CC uses 16000 for the main loop; we match that.
 const MaxTokens = 16000
+
+// thinkingBudgets maps effort levels to token budgets.
+// Mirrors the thinking budget constants from the real CLI.
+var ThinkingBudgets = map[string]int{
+	"low":    1000,
+	"normal": 0,     // disabled
+	"high":   8000,
+	"max":    16000,
+}
 
 // Resolve returns the model name to use, respecting environment overrides
 // and the runtime /model override (highest priority after env).

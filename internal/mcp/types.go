@@ -46,6 +46,22 @@ type ToolDef struct {
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
+// ResourceDef is one resource entry from resources/list.
+type ResourceDef struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+// ResourceContent is one content item from resources/read.
+type ResourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+	Blob     string `json:"blob,omitempty"` // base64
+}
+
 // CallResult is the shape returned by tools/call.
 type CallResult struct {
 	Content []ContentBlock `json:"content"`

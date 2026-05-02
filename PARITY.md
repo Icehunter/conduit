@@ -12,6 +12,26 @@
 > - ⬛ Descoped — intentionally excluded
 > - 🔲 N/A — not applicable to Go binary (React/Ink UI idioms, etc.)
 
+## Milestone completions (2026-05)
+
+| Milestone | Status | Key deliverables |
+|-----------|--------|-----------------|
+| M-A CLAUDE.md loading | ✅ | Directory walk, @include, TypeUser/Project/Local, system block injection |
+| M-B Agent/API gaps | ✅ | Exponential backoff (429), HTTP proxy, auto-compact, thinking budget, rate-limit display |
+| M-C Missing tools | ✅ | EnterPlanMode, ExitPlanMode, AskUserQuestion, Config, StructuredOutput |
+| M-D Missing slash commands | ✅ | /status, /tasks, /agents, /thinkback, /color, /copy, /search, LiveState fix |
+| M-E Hook completion | ✅ | HTTP hooks, prompt hooks, agent hooks, async hooks, desktop notifications |
+| M-F Session completion | ✅ | Cost persistence, session titles in /resume, /search, file access tracking |
+| M-G Config completion | ✅ | env injection, XDG/Windows paths, claudeDir(), settings.ApplyEnv() |
+| M-H MCP completion | ✅ | ListResources, ReadResource on stdio+HTTP clients; ListMcpResources/ReadMcpResource tools |
+| M-I TUI polish | ✅ | Full GFM: headings, italic, strikethrough, task lists, tables, blockquotes, H-rules |
+| M-J Worktree support | ✅ | EnterWorktree, ExitWorktree, git worktree add/remove, sanitizeSlug |
+| M-K Rate limit display | ✅ | anthropic-ratelimit-* headers, warning <20%, EventRateLimit, status bar |
+| M-L Token counting + fast mode | ✅ | /fast (⚡ badge), /effort (thinking budget), model.ThinkingBudgets map |
+| M-N Memory completion | ✅ | ScanMemories, RelevantMemories, /memory list/show/scan, age tracking |
+
+**Test count:** 412 passing, race clean (2026-05-02)
+
 ---
 
 ## 1. Auth & OAuth

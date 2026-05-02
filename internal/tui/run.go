@@ -138,6 +138,35 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		// Rewind passes through n — the actual history mutation happens in
 		// applyCommandResult when it receives the "rewind" result type.
 		Rewind: func(n int) int { return n },
+		GetStatus: func() string {
+			if modelPtr == nil {
+				return "Status unavailable."
+			}
+			return modelPtr.StatusSummary()
+		},
+		GetTasks: func() string {
+			if modelPtr == nil {
+				return "No active tasks."
+			}
+			return modelPtr.TasksSummary()
+		},
+		GetAgents: func() string {
+			return "No active sub-agents."
+		},
+		GetLastThinking: func() string {
+			if modelPtr == nil {
+				return ""
+			}
+			return modelPtr.LastThinking()
+		},
+		GetColor: func() bool { return true },
+		SetColor: func(bool) {},
+		CopyLast: func() string {
+			if modelPtr == nil {
+				return "Nothing to copy."
+			}
+			return modelPtr.CopyLastResponse()
+		},
 	}
 	commands.RegisterSessionCommands(reg, state)
 

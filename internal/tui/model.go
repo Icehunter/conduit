@@ -2134,6 +2134,77 @@ func (m *Model) CostSummary() string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
+// StatusSummary returns a one-liner for /status.
+func (m *Model) StatusSummary() string {
+	mode := "default"
+	switch m.permissionMode {
+	case permissions.ModeAcceptEdits:
+		mode = "accept-edits"
+	case permissions.ModePlan:
+		mode = "plan"
+	case permissions.ModeBypassPermissions:
+		mode = "auto"
+	}
+	pct := 0
+	if m.totalInputTokens > 0 {
+		pct = m.totalInputTokens * 100 / 200000
+		if pct > 100 {
+			pct = 100
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString("Model:   " + m.modelName + "\n")
+	sb.WriteString("Mode:    " + mode + "\n")
+	sb.WriteString(fmt.Sprintf("Context: %d%% (%d tokens)\n", pct, m.totalInputTokens))
+	if m.costUSD > 0 {
+		sb.WriteString(fmt.Sprintf("Cost:    $%.4f\n", m.costUSD))
+	}
+	if m.cfg.Session != nil {
+		sb.WriteString("Session: " + m.cfg.Session.ID + "\n")
+	}
+	if m.rateLimitWarning != "" {
+		sb.WriteString("Limits:  " + m.rateLimitWarning + "\n")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// TasksSummary returns the list of active tasks for /tasks.
+// Tasks are tracked by the TaskTool — for now we surface the tool messages.
+func (m *Model) TasksSummary() string {
+	var tasks []string
+	for _, msg := range m.messages {
+		if msg.Role == RoleTool && strings.HasPrefix(msg.ToolName, "Task") {
+			tasks = append(tasks, fmt.Sprintf("  [%s] %s", msg.ToolName, msg.Content))
+		}
+	}
+	if len(tasks) == 0 {
+		return "No active tasks."
+	}
+	return "Active tasks:\n" + strings.Join(tasks, "\n")
+}
+
+// LastThinking returns the last thinking block text from the assistant.
+func (m *Model) LastThinking() string {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == RoleAssistant && strings.Contains(m.messages[i].Content, "<thinking>") {
+			return m.messages[i].Content
+		}
+	}
+	return ""
+}
+
+// CopyLastResponse copies the last assistant text to clipboard.
+// Returns "" on success, error message otherwise.
+func (m *Model) CopyLastResponse() string {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == RoleAssistant {
+			copyToClipboard(m.messages[i].Content)
+			return ""
+		}
+	}
+	return "No assistant response to copy."
+}
+
 // isCancelError reports whether err represents a user-initiated cancellation.
 // Covers context.Canceled, context.DeadlineExceeded, and the network-level
 // "use of closed network connection" that appears when the HTTP response body

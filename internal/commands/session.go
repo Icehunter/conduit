@@ -26,6 +26,21 @@ type SessionState struct {
 	// Rewind removes the last n conversation turns from in-memory history.
 	// Returns the number of turns actually removed.
 	Rewind      func(n int) int
+	// GetStatus returns a one-line status string (model, mode, session ID, cost, context %).
+	GetStatus   func() string
+	// GetTasks returns a formatted list of active TaskTool tasks.
+	GetTasks    func() string
+	// GetAgents returns a formatted list of active sub-agents.
+	GetAgents   func() string
+	// GetLastThinking returns the last assistant thinking blocks as text.
+	GetLastThinking func() string
+	// GetColor returns the current ANSI color toggle state.
+	GetColor    func() bool
+	// SetColor sets the ANSI color toggle.
+	SetColor    func(bool)
+	// CopyLastResponse copies the last assistant response to clipboard.
+	// Returns "" on success, error message otherwise.
+	CopyLast    func() string
 }
 
 // RegisterSessionCommands registers all session-dependent slash commands.
@@ -397,6 +412,90 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		Description: "Change the terminal theme",
 		Handler: func(args string) Result {
 			return Result{Type: "text", Text: "Theme switching not yet implemented.\nThe TUI uses a dark coral theme by default."}
+		},
+	})
+
+	// /status — one-liner: model, mode, session ID, cost, context %
+	r.Register(Command{
+		Name:        "status",
+		Description: "Show current model, mode, session, cost, and context usage",
+		Handler: func(string) Result {
+			if state.GetStatus != nil {
+				return Result{Type: "text", Text: state.GetStatus()}
+			}
+			return Result{Type: "text", Text: "Status not available."}
+		},
+	})
+
+	// /tasks — list active TaskTool tasks
+	r.Register(Command{
+		Name:        "tasks",
+		Description: "List active tasks created by the TaskCreate tool",
+		Handler: func(string) Result {
+			if state.GetTasks != nil {
+				return Result{Type: "text", Text: state.GetTasks()}
+			}
+			return Result{Type: "text", Text: "No active tasks."}
+		},
+	})
+
+	// /agents — list active sub-agents
+	r.Register(Command{
+		Name:        "agents",
+		Description: "List active sub-agents in the current session",
+		Handler: func(string) Result {
+			if state.GetAgents != nil {
+				return Result{Type: "text", Text: state.GetAgents()}
+			}
+			return Result{Type: "text", Text: "No active sub-agents."}
+		},
+	})
+
+	// /thinkback — show last assistant thinking blocks
+	r.Register(Command{
+		Name:        "thinkback",
+		Description: "Show the last assistant thinking blocks (if any)",
+		Handler: func(string) Result {
+			if state.GetLastThinking != nil {
+				text := state.GetLastThinking()
+				if text == "" {
+					return Result{Type: "text", Text: "No thinking blocks in the last response."}
+				}
+				return Result{Type: "text", Text: text}
+			}
+			return Result{Type: "text", Text: "Thinking blocks not available."}
+		},
+	})
+
+	// /color — toggle ANSI color output on/off
+	r.Register(Command{
+		Name:        "color",
+		Description: "Toggle ANSI color output on/off",
+		Handler: func(string) Result {
+			if state.GetColor == nil || state.SetColor == nil {
+				return Result{Type: "text", Text: "Color toggle not available."}
+			}
+			next := !state.GetColor()
+			state.SetColor(next)
+			if next {
+				return Result{Type: "text", Text: "ANSI color output enabled."}
+			}
+			return Result{Type: "text", Text: "ANSI color output disabled."}
+		},
+	})
+
+	// /copy — copy last assistant response to clipboard
+	r.Register(Command{
+		Name:        "copy",
+		Description: "Copy the last assistant response to clipboard",
+		Handler: func(string) Result {
+			if state.CopyLast == nil {
+				return Result{Type: "text", Text: "Copy not available in this session."}
+			}
+			if msg := state.CopyLast(); msg != "" {
+				return Result{Type: "error", Text: msg}
+			}
+			return Result{Type: "flash", Text: "✓ Copied to clipboard"}
 		},
 	})
 }

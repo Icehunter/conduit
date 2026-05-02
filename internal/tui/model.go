@@ -20,6 +20,7 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
@@ -213,6 +214,11 @@ type Model struct {
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
 	permissionMode permissions.Mode
+
+	// outputStyleName / outputStylePrompt hold the active output style.
+	// When set, the prompt is prepended to the system blocks on each turn.
+	outputStyleName   string
+	outputStylePrompt string
 }
 
 // New builds the initial Model.
@@ -2018,6 +2024,31 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.resumePrompt = &resumePromptState{sessions: sessions, selected: 0}
+		m.refreshViewport()
+		return m, nil
+
+	case "output-style":
+		// res.Model = style name, res.Text = style prompt (empty to clear).
+		m.outputStyleName = res.Model
+		m.outputStylePrompt = res.Text
+		// Rebuild system blocks with the new style prompt prepended.
+		if m.cfg.Loop != nil {
+			cwd, _ := os.Getwd()
+			mem := memdir.BuildPrompt(cwd)
+			baseBlocks := agent.BuildSystemBlocks(mem)
+			if res.Text != "" {
+				styleBlock := api.SystemBlock{Type: "text", Text: "# Output style: " + res.Model + "\n\n" + res.Text}
+				newBlocks := append([]api.SystemBlock{styleBlock}, baseBlocks...)
+				m.cfg.Loop.SetSystem(newBlocks)
+			} else {
+				m.cfg.Loop.SetSystem(baseBlocks)
+			}
+		}
+		msg := "Output style cleared."
+		if res.Model != "" {
+			msg = fmt.Sprintf("Output style set to: %s", res.Model)
+		}
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: msg})
 		m.refreshViewport()
 		return m, nil
 

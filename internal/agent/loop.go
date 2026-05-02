@@ -108,6 +108,11 @@ func (l *Loop) SetModel(name string) {
 	l.cfg.Model = name
 }
 
+// SetSystem replaces the system blocks for subsequent requests.
+func (l *Loop) SetSystem(blocks []api.SystemBlock) {
+	l.cfg.System = blocks
+}
+
 // SetClient swaps the API client (e.g. after a fresh login reloads credentials).
 func (l *Loop) SetClient(client *api.Client) {
 	l.client = client

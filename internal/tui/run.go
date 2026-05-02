@@ -97,6 +97,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 
 	// Load plugins and register their slash commands + browser.
 	cwd, _ := os.Getwd()
+	commands.RegisterOutputStyleCommand(reg, cwd)
 	var loadedPlugins []*plugins.Plugin
 	if ps, err := plugins.LoadAll(cwd); err == nil {
 		loadedPlugins = ps

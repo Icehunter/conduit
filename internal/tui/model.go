@@ -820,6 +820,30 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m2, cmd, true
 	}
 
+	// Viewport scrollback. Plain Up/Down/PgUp/PgDn are owned by the chat
+	// input (history navigation, multi-line cursor, textarea paging).
+	// Users still need a way to scroll the chat transcript without
+	// reaching for the mouse — so reserve Shift+Up/Shift+Down for
+	// line-by-line scroll and Shift+PgUp/Shift+PgDn for page scroll.
+	// Modern terminals running the Kitty keyboard protocol report
+	// these as distinct keys; legacy terminals collapse Shift+arrow
+	// onto plain arrow, which falls through to the existing handlers
+	// below — so this is purely additive on capable terminals.
+	switch msg.String() {
+	case "shift+up":
+		m.vp.ScrollUp(1)
+		return m, nil, true
+	case "shift+down":
+		m.vp.ScrollDown(1)
+		return m, nil, true
+	case "shift+pgup", "pgup":
+		m.vp.PageUp()
+		return m, nil, true
+	case "shift+pgdown", "pgdown":
+		m.vp.PageDown()
+		return m, nil, true
+	}
+
 	switch msg.String() {
 	case "up":
 		if len(m.cmdMatches) > 0 {
@@ -2927,12 +2951,14 @@ func (m Model) View() tea.View {
 		v.SetContent(content)
 		v.AltScreen = true
 		v.KeyboardEnhancements.ReportAlternateKeys = true
-		// Cell-motion mouse mode forwards wheel scroll to the program so the
-		// viewport can scroll back through chat history. Without it, mouse
-		// wheel events stay in the terminal app and only move the alt-screen
-		// itself (which doesn't have scrollback). Cell motion (vs. all motion)
-		// is the cheapest mouse mode that still delivers wheel events.
-		v.MouseMode = tea.MouseModeCellMotion
+		// MouseMode intentionally left unset (MouseModeNone). Enabling
+		// cell-motion captures every click — terminals can no longer
+		// drag-select text in the alt-screen. Most modern terminals
+		// (iTerm2, Ghostty, WezTerm, Kitty) translate scroll-wheel into
+		// cursor up/down sequences in alt-screen mode, which the
+		// viewport already binds. Explicit Shift+Up/Down/PgUp/PgDn
+		// handlers below cover keyboard scrollback. The combination
+		// preserves native text selection.
 		return v
 	}
 	if !m.ready {

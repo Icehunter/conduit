@@ -48,8 +48,8 @@
 | Token persistence (keychain) | `utils/auth.ts` | `1220.js` | `internal/secure/`, `internal/auth/persist.go` | ✅ | Uses file-based + go-keyring |
 | OAuth callback HTTP listener | `services/oauth/auth-code-listener.ts` | `0533.js` | `internal/auth/listener.go` | ✅ | |
 | Browser launch for login | `utils/auth.ts` | `0533.js` | `internal/auth/browser.go` | ✅ | |
-| Auth file descriptor tokens | `utils/authFileDescriptor.ts` | — | ❌ | ❌ | FD-based token passing |
-| Portable auth | `utils/authPortable.ts` | — | ❌ | ❌ | |
+| Auth file descriptor tokens | `utils/authFileDescriptor.ts` | — | ❌ | ⬛ | CCR container only (FD pipe across tmux boundaries) |
+| Portable auth | `utils/authPortable.ts` | — | ❌ | ⬛ | macOS Keychain removal utility; not needed |
 | Profile fetch (name, email) | `utils/auth.ts` | `1220.js` | `internal/profile/profile.go` | ✅ | |
 | Multi-account support | `utils/auth.ts` | — | ❌ | ❌ | Single account only |
 | Token revocation | `utils/auth.ts` | — | `internal/auth/persist.go` Delete | 🟡 | Local clear via cross-platform secure store; Anthropic OAuth has no public RFC 7009 endpoint so server-side revoke goes through console |
@@ -220,8 +220,8 @@
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
 | Doctor screen | `screens/Doctor.tsx` | — | `/doctor` command (text) | 🟡 | Text output; no full TUI panel |
 | Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
-| Log selector | `components/LogSelector.tsx` | — | ❌ | ❌ | |
-| Global search dialog | `components/GlobalSearchDialog.tsx` | — | ❌ | ❌ | |
+| Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | 🟡 | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge; missing: tag tabs, session preview panel |
+| Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command | 🟡 | Text search in JSONL transcripts; no inline ripgrep code-search panel |
 | Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑↓/jk Enter; current marked ● |
 | Theme picker | `components/ThemePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /theme with no args opens picker; lists built-ins + user themes |
 | Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |

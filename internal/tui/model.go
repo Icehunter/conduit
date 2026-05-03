@@ -1850,22 +1850,42 @@ type resumeSession struct {
 // resumePromptState holds the /resume session picker state.
 type resumePromptState struct {
 	sessions []resumeSession
+	filtered []int // indices into sessions matching filter
+	filter   string
 	selected int
+}
+
+// resumeFilter applies the current filter string and resets selection.
+func (p *resumePromptState) applyFilter() {
+	q := strings.ToLower(p.filter)
+	p.filtered = p.filtered[:0]
+	for i, s := range p.sessions {
+		if q == "" || strings.Contains(strings.ToLower(s.preview), q) ||
+			strings.Contains(strings.ToLower(s.age), q) {
+			p.filtered = append(p.filtered, i)
+		}
+	}
+	if p.selected >= len(p.filtered) {
+		p.selected = 0
+	}
 }
 
 func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.resumePrompt
 	switch msg.String() {
-	case "up":
+	case "up", "k":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down":
-		if p.selected < len(p.sessions)-1 {
+	case "down", "j":
+		if p.selected < len(p.filtered)-1 {
 			p.selected++
 		}
 	case "enter", "space":
-		picked := p.sessions[p.selected]
+		if len(p.filtered) == 0 {
+			break
+		}
+		picked := p.sessions[p.filtered[p.selected]]
 		m.resumePrompt = nil
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Loading session…"})
 		m.refreshViewport()
@@ -1875,10 +1895,28 @@ func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return resumeLoadMsg{msgs: msgs, err: err}
 		}
 	case "esc", "ctrl+c":
+		if p.filter != "" {
+			// Esc clears filter first, then second Esc cancels.
+			p.filter = ""
+			p.applyFilter()
+			m.resumePrompt = p
+			return m, nil
+		}
 		m.resumePrompt = nil
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Resume cancelled."})
 		m.refreshViewport()
 		return m, nil
+	case "backspace":
+		if len(p.filter) > 0 {
+			p.filter = p.filter[:len([]rune(p.filter))-1]
+			p.applyFilter()
+		}
+	default:
+		// Any printable character updates the search filter.
+		if r := []rune(msg.String()); len(r) == 1 && r[0] >= 0x20 {
+			p.filter += string(r)
+			p.applyFilter()
+		}
 	}
 	m.resumePrompt = p
 	return m, nil
@@ -1890,19 +1928,45 @@ func (m Model) renderResumePicker() string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render("Resume a previous conversation") + "\n\n")
+	// Search line.
+	if p.filter != "" {
+		sb.WriteString(styleStatusAccent.Render("▶ "+p.filter) + "  " +
+			stylePickerDesc.Render(fmt.Sprintf("(%d/%d)", len(p.filtered), len(p.sessions))) + "\n\n")
+	} else {
+		sb.WriteString(styleStatusAccent.Render("Resume a previous conversation") +
+			"  " + stylePickerDesc.Render("type to search") + "\n\n")
+	}
 
-	for i, s := range p.sessions {
-		var line string
+	const maxVisible = 12
+	start := p.selected - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(p.filtered) {
+		end = len(p.filtered)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	if len(p.filtered) == 0 {
+		sb.WriteString(stylePickerDesc.Render("  (no matches)") + "\n")
+	}
+	for vi := start; vi < end; vi++ {
+		i := p.filtered[vi]
+		s := p.sessions[i]
 		label := s.age + "  " + s.preview
-		if i == p.selected {
+		var line string
+		if vi == p.selected {
 			line = stylePickerItemSelected.Render("▶ "+label)
 		} else {
 			line = stylePickerItem.Render("  " + label)
 		}
 		sb.WriteString(line + "\n")
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter load · Escape cancel"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter load · Esc clear search · Ctrl+C cancel"))
 
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
@@ -3213,7 +3277,13 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		}
-		m.resumePrompt = &resumePromptState{sessions: sessions, selected: 0}
+		p := &resumePromptState{sessions: sessions, selected: 0}
+		// Initialize filtered list with all sessions (no filter yet).
+		p.filtered = make([]int, len(sessions))
+		for i := range sessions {
+			p.filtered[i] = i
+		}
+		m.resumePrompt = p
 		m.refreshViewport()
 		return m, nil
 

@@ -14,9 +14,13 @@ import "fmt"
 
 // ANSI escape constants used by status output. Embedded directly in
 // command result text — the TUI viewport detects and passes them through.
+//
+// ansiValue is bold + colorMuted (#636D7E truecolor) — same grey as the
+// rest of the TUI's secondary text, just bold so values stand out next
+// to their bold labels without being eye-searingly bright.
 const (
 	ansiBold   = "\033[1m"
-	ansiBright = "\033[97m" // bright white — used for values
+	ansiValue  = "\033[1;38;2;99;109;126m" // bold + #636D7E (colorMuted)
 	ansiGreen  = "\033[32m"
 	ansiRed    = "\033[31m"
 	ansiYellow = "\033[33m"
@@ -31,12 +35,12 @@ func statusTitle(s string) string {
 }
 
 // statusRow formats one "Label  value  (hint)" row with a bold label of fixed
-// width labelW (so multiple rows line up), brighter-white value, and dim hint.
+// width labelW (so multiple rows line up), bold-grey value, and dim hint.
 func statusRow(label, value, hint string, labelW int) string {
 	if hint != "" {
 		hint = "  " + ansiDim + "(" + hint + ")" + ansiReset
 	}
-	return fmt.Sprintf("  %s%-*s%s %s%s%s%s\n", ansiBold, labelW, label, ansiReset, ansiBright, value, ansiReset, hint)
+	return fmt.Sprintf("  %s%-*s%s %s%s%s%s\n", ansiBold, labelW, label, ansiReset, ansiValue, value, ansiReset, hint)
 }
 
 // statusCheck returns a green ✓ or red ✗ marker.

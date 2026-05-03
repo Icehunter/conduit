@@ -87,18 +87,21 @@ var Dark = Palette{
 }
 
 var Light = Palette{
-	Name:            "light",
-	Primary:         "#1F2328",
-	Secondary:       "#4D5560",
-	Tertiary:        "#9198A1",
-	Accent:          "#D77757",
-	Success:         "#1A7F37",
-	Danger:          "#CF222E",
-	Warning:         "#9A6700",
-	Info:            "#0969DA",
-	Background:      "#FBFBFA", // app surface — off-white
-	ModalBg:         "#F1F3F5", // panels — slightly grayer
-	CodeBg:          "#EAEDF0", // code blocks — more grayer for contrast
+	Name:      "light",
+	Primary:   "#1F2328",
+	Secondary: "#4D5560",
+	Tertiary:  "#9198A1",
+	Accent:    "#D77757",
+	Success:   "#1A7F37",
+	Danger:    "#CF222E",
+	Warning:   "#9A6700",
+	Info:      "#0969DA",
+	// Background empty — bubbles widgets fight us when painting bg on a
+	// dark terminal. User keeps their terminal bg; light themes only swap
+	// fg colors. Use a light-bg terminal for true light mode.
+	Background:      "",
+	ModalBg:         "",
+	CodeBg:          "#EAEDF0",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
 	ModeAcceptEdits: "#8250DF",
@@ -136,8 +139,8 @@ var LightDaltonized = Palette{
 	Danger:          "#9A6700",
 	Warning:         "#7C2D12",
 	Info:            "#6F42C1",
-	Background:      "#FBFBFA",
-	ModalBg:         "#F1F3F5",
+	Background:      "", // see Light — terminal bg shows through
+	ModalBg:         "",
 	CodeBg:          "#EAEDF0",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
@@ -174,22 +177,22 @@ var DarkAnsi = Palette{
 
 var LightAnsi = Palette{
 	Name:            "light-ansi",
-	Primary:         "0",  // black
-	Secondary:       "8",  // brightBlack (gray)
-	Tertiary:        "7",  // white (lighter gray)
-	Accent:          "1",  // red
-	Success:         "2",  // green
-	Danger:          "1",  // red
-	Warning:         "3",  // yellow
-	Info:            "4",  // blue
-	Background:      "15", // whiteBright
-	ModalBg:         "7",  // white (slightly grayer)
+	Primary:         "0", // black
+	Secondary:       "8", // brightBlack (gray)
+	Tertiary:        "7", // white (lighter gray)
+	Accent:          "1", // red
+	Success:         "2", // green
+	Danger:          "1", // red
+	Warning:         "3", // yellow
+	Info:            "4", // blue
+	Background:      "",  // see Light — terminal bg shows through
+	ModalBg:         "",
 	CodeBg:          "15", // whiteBright
 	Border:          "7",  // white
-	BorderActive:    "1",  // red
-	ModeAcceptEdits: "5",  // magenta
-	ModePlan:        "6",  // cyan
-	ModeAuto:        "3",  // yellow
+	BorderActive:    "1", // red
+	ModeAcceptEdits: "5", // magenta
+	ModePlan:        "6", // cyan
+	ModeAuto:        "3", // yellow
 }
 
 var (

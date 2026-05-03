@@ -322,15 +322,14 @@ func applyOverrides(base Palette, o map[string]string) Palette {
 	}
 }
 
-// AvailableThemes returns the list of names recommended for /theme picker.
+// AvailableThemes returns the list of names selectable in the /theme picker.
 //
-// Light themes (light, light-daltonized, light-ansi) are NOT listed here:
-// their text colors are dark and are unreadable on a dark terminal, and
-// we can't reliably paint a light surface over the terminal bg without
-// fighting bubbles widget rendering. They remain resolvable by Set() for
-// settings.json round-trip parity with Claude Code.
+// All Claude Code built-in palettes are listed (including light variants)
+// so a user who shares settings.json between conduit and Claude Code can
+// pick light themes here without conduit silently rewriting their config to
+// a different palette. Light text on dark terminals is the user's call.
 //
-// Order: user-defined themes first, then built-in dark variants.
+// Order: user-defined themes first, then built-in dark, then built-in light.
 func AvailableThemes() []string {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -338,7 +337,10 @@ func AvailableThemes() []string {
 	for name := range userThemes {
 		out = append(out, name)
 	}
-	out = append(out, "dark", "dark-daltonized", "dark-ansi")
+	out = append(out,
+		"dark", "dark-daltonized", "dark-ansi",
+		"light", "light-daltonized", "light-ansi",
+	)
 	return out
 }
 

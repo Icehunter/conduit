@@ -48,15 +48,14 @@ func TestSetSwapsPalette(t *testing.T) {
 	}
 }
 
-// TestAvailableThemes lists the dark canonical theme names.
+// TestAvailableThemes lists all six Claude Code palette names.
 //
-// Light variants (light, light-daltonized, light-ansi) are intentionally
-// excluded from the picker because their colors are unreadable on a dark
-// terminal. They remain resolvable via Set for settings.json round-trip
-// parity with Claude Code.
+// Light variants stay in the picker so users who share settings.json
+// between conduit and Claude Code don't have conduit silently rewrite
+// their CC theme preference.
 func TestAvailableThemes(t *testing.T) {
 	got := AvailableThemes()
-	want := []string{"dark", "dark-daltonized", "dark-ansi"}
+	want := []string{"dark", "dark-daltonized", "dark-ansi", "light", "light-daltonized", "light-ansi"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d themes, got %d (%v)", len(want), len(got), got)
 	}
@@ -65,14 +64,26 @@ func TestAvailableThemes(t *testing.T) {
 			t.Fatalf("at index %d: got %s, want %s", i, got[i], name)
 		}
 	}
+}
 
-	// Light names must still resolve via Set for settings.json compatibility.
-	for _, name := range []string{"light", "light-daltonized", "light-ansi"} {
-		if !Set(name) {
-			t.Fatalf("Set(%q) should still work for back-compat", name)
+// TestAvailableThemes_IncludesUserThemes verifies user-defined palettes
+// from settings.json appear in the picker (ahead of built-ins).
+func TestAvailableThemes_IncludesUserThemes(t *testing.T) {
+	defer SetUserThemes(nil) // reset
+	SetUserThemes(map[string]Palette{
+		"my-custom": {Name: "my-custom", Primary: "#ABCDEF"},
+	})
+	got := AvailableThemes()
+	found := false
+	for _, name := range got {
+		if name == "my-custom" {
+			found = true
+			break
 		}
 	}
-	Set("dark") // restore
+	if !found {
+		t.Fatalf("user theme 'my-custom' missing from picker: %v", got)
+	}
 }
 
 // TestOnChangeFires verifies listeners are invoked exactly once per Set.

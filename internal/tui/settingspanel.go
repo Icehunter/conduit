@@ -32,6 +32,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/theme"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -280,23 +281,28 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			value: getStr("autoUpdatesChannel", "latest"),
 			options: []string{"latest", "beta", "disabled"},
 		},
-		{
-			id:    "theme",
-			label: "Theme",
-			kind:  "enum",
-			value: func() string {
-				v := getStr("theme", "dark")
-				if v == "" {
-					return "dark"
-				}
-				return v
-			}(),
-			// Only dark variants — light themes have dark text and aren't
-			// usable on dark terminals (which conduit assumes). Light
-			// values still resolve via theme.Set for settings.json parity.
-			options:    []string{"dark", "dark-daltonized", "dark-ansi"},
-			optionVals: []string{"dark", "dark-daltonized", "dark-ansi"},
-		},
+		func() settingItem {
+			// theme.AvailableThemes() includes any user-defined themes loaded
+			// from settings.json's "themes" map (registered at startup via
+			// theme.SetUserThemes), followed by all six built-in CC palettes.
+			// We list everything so users who share settings.json with Claude
+			// Code don't have conduit silently rewrite their CC theme pref.
+			names := theme.AvailableThemes()
+			return settingItem{
+				id:    "theme",
+				label: "Theme",
+				kind:  "enum",
+				value: func() string {
+					v := getStr("theme", "dark")
+					if v == "" {
+						return "dark"
+					}
+					return v
+				}(),
+				options:    names,
+				optionVals: names,
+			}
+		}(),
 		{
 			id:    "notifChannel",
 			label: "Local notifications",

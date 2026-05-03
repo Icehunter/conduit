@@ -263,6 +263,9 @@ type Model struct {
 func New(cfg Config) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Message conduit  (Enter ↵ send · Shift+Enter newline)"
+	// Override the bubbles textarea default prompt (┃, U+2503 HEAVY VERTICAL)
+	// with a chevron — feels less like a separator, more like an input cue.
+	ta.Prompt = "❯ "
 	ta.Focus()
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false

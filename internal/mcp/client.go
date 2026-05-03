@@ -310,25 +310,71 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		// Drain so the connection can be reused.
+	// Auth-required: 401 is the canonical signal but several MCPs return
+	// 403 for missing/invalid bearer (especially when the server is
+	// behind a proxy or CDN that intercepts the auth check). Treat both
+	// as ErrUnauthorized so the caller can drive OAuth.
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, ErrUnauthorized
 	}
 
+	// SSE detection: some MCPs ship `data: {...}` framing under content
+	// types like "text/event-stream; charset=utf-8" or "application/
+	// vnd.mcp+sse" — match by substring rather than HasPrefix("text/
+	// event-stream") so non-canonical content types still flow through
+	// the SSE reader.
 	ct := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(ct, "text/event-stream") {
+	if strings.Contains(ct, "event-stream") {
 		return c.readSSEResponse(resp.Body)
 	}
 
+	// Non-2xx with a non-JSON body: surface the status + a body excerpt
+	// so the user can see what the server actually said. Without this,
+	// every "the server returned HTML" case ends up as the cryptic
+	// "invalid character '<' looking for beginning of value".
+	if resp.StatusCode/100 != 2 {
+		excerpt := readBodyExcerpt(resp.Body, 200)
+		return nil, fmt.Errorf("mcp http: server returned %d %s%s",
+			resp.StatusCode, http.StatusText(resp.StatusCode), excerpt)
+	}
+
+	// Buffer up to 64KB so on decode failure we can include a body
+	// excerpt — JSON decoder errors that just say "invalid character 'b'"
+	// are unhelpful when the response is HTML or plain text.
+	buf, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	var rpcResp jsonrpcResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		return nil, fmt.Errorf("mcp http decode: %w", err)
+	if err := json.Unmarshal(buf, &rpcResp); err != nil {
+		return nil, fmt.Errorf("mcp http decode: %w%s", err, formatBodyExcerpt(buf, 200))
 	}
 	if rpcResp.Error != nil {
 		return nil, rpcResp.Error
 	}
 	return rpcResp.Result, nil
+}
+
+// readBodyExcerpt drains up to max bytes from r and returns a "; body: …"
+// suffix suitable for appending to an error message, or "" if the body is
+// empty or unreadable. Trims whitespace and collapses internal newlines.
+func readBodyExcerpt(r io.Reader, max int) string {
+	buf, _ := io.ReadAll(io.LimitReader(r, int64(max)+1))
+	return formatBodyExcerpt(buf, max)
+}
+
+// formatBodyExcerpt formats a buffered body for inclusion in an error
+// message. Returns "" when the body is empty.
+func formatBodyExcerpt(buf []byte, max int) string {
+	s := strings.TrimSpace(string(buf))
+	if s == "" {
+		return ""
+	}
+	// Collapse newlines so the error stays one line in panel output.
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	return "; body: " + s
 }
 
 // readSSEResponse reads a single JSON-RPC response from an SSE stream.

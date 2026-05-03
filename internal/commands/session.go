@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/session"
 )
@@ -68,6 +69,9 @@ type SessionState struct {
 	GetSessionInfo func() (id, path string, messages int, startedAt time.Time)
 	// GetSessionActivity returns last-activity time for idle reporting in /session.
 	GetSessionActivity func() time.Time
+	// GetKeybindings returns the flat binding list from the active resolver so
+	// /keybindings can show actual (including user-customized) bindings.
+	GetKeybindings func() []keybindings.Binding
 }
 
 // RegisterSessionCommands registers all session-dependent slash commands.
@@ -747,19 +751,50 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 	// /keybindings
 	r.Register(Command{
 		Name:        "keybindings",
-		Description: "Show current keybindings",
+		Description: "Show current keybindings (including user customizations)",
 		Handler: func(string) Result {
-			text := strings.TrimSpace("Keybindings:\n" +
-				"  Enter          Send message\n" +
-				"  Shift+Enter    New line in input\n" +
-				"  Ctrl+C         Interrupt current response\n" +
-				"  Ctrl+Y         Copy last code block\n" +
-				"  Ctrl+C (idle)  Exit\n" +
-				"  ↑↓             Navigate command picker\n" +
-				"  Tab            Complete slash command / navigate picker\n" +
-				"  1/2/3          Quick-select permission options\n" +
-				"  Escape         Close picker / dismiss permission prompt")
-			return Result{Type: "text", Text: text}
+			var sb strings.Builder
+			sb.WriteString("Keybindings\n\n")
+
+			// Always show the fixed bindings that aren't in the resolver.
+			sb.WriteString("  Fixed (not remappable):\n")
+			sb.WriteString("    Shift+Enter      Insert newline\n")
+			sb.WriteString("    Shift+↑/↓        Scroll chat history\n")
+			sb.WriteString("    PgUp/PgDn         Page scroll\n")
+			sb.WriteString("    Ctrl+V            Paste image from clipboard\n")
+			sb.WriteString("    Ctrl+Y            Copy last code block\n")
+			sb.WriteString("    1/2/3             Quick-select permission options\n\n")
+
+			// Dynamic bindings from the resolver.
+			if state.GetKeybindings != nil {
+				bindings := state.GetKeybindings()
+				// Group by context.
+				byCtx := map[string][]keybindings.Binding{}
+				order := []string{}
+				seen := map[string]bool{}
+				for _, b := range bindings {
+					if !seen[b.Context] {
+						seen[b.Context] = true
+						order = append(order, b.Context)
+					}
+					byCtx[b.Context] = append(byCtx[b.Context], b)
+				}
+				for _, ctx := range order {
+					bs := byCtx[ctx]
+					sb.WriteString("  " + ctx + ":\n")
+					for _, b := range bs {
+						key := b.Keystroke.String()
+						if b.Unbind {
+							sb.WriteString(fmt.Sprintf("    %-20s  (unbound)\n", key))
+						} else {
+							sb.WriteString(fmt.Sprintf("    %-20s  %s\n", key, b.Action))
+						}
+					}
+					sb.WriteByte('\n')
+				}
+				sb.WriteString("  Edit ~/.claude/keybindings.json to customize.")
+			}
+			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
 	})
 

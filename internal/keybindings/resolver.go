@@ -15,6 +15,13 @@ func NewResolver(bindings []Binding) *Resolver {
 	return &Resolver{bindings: bindings}
 }
 
+// Bindings returns the full binding list, suitable for display in /keybindings.
+func (r *Resolver) Bindings() []Binding {
+	out := make([]Binding, len(r.bindings))
+	copy(out, r.bindings)
+	return out
+}
+
 // Result is the outcome of resolving a key press.
 type Result struct {
 	// Action is set when a non-unbind binding matched. Empty otherwise.

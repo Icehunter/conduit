@@ -3492,6 +3492,15 @@ func applyTextareaTheme(ta *textarea.Model) {
 	ta.SetStyles(styles)
 }
 
+// AllBindings returns the flat binding list from the active resolver, suitable
+// for /keybindings display. Falls back to Defaults() when the resolver is nil.
+func (m Model) AllBindings() []keybindings.Binding {
+	if m.kb == nil {
+		return keybindings.Defaults()
+	}
+	return m.kb.Bindings()
+}
+
 // activeContexts returns the keybinding context stack for the current UI
 // state. "Global" is always present; one specific context is prepended
 // based on which overlay or input mode is active.

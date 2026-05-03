@@ -15,6 +15,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -367,6 +368,13 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			}
 			startedAt = sessionStart
 			return
+		},
+		// GetKeybindings — returns the live binding list for /keybindings display.
+		GetKeybindings: func() []keybindings.Binding {
+			if modelPtr == nil {
+				return keybindings.Defaults()
+			}
+			return modelPtr.AllBindings()
 		},
 		// GetSessionActivity — last activity timestamp from JSONL for idle reporting.
 		GetSessionActivity: func() time.Time {

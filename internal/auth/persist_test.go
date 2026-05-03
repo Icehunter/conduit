@@ -13,6 +13,28 @@ import (
 	"github.com/icehunter/conduit/internal/secure"
 )
 
+func TestDelete_RemovesTokens(t *testing.T) {
+	s := secure.NewMemoryStorage()
+	in := PersistedTokens{AccessToken: "AT", RefreshToken: "RT"}
+	if err := Save(s, in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := Delete(s); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := Load(s); !errors.Is(err, secure.ErrNotFound) {
+		t.Errorf("after Delete, Load should return ErrNotFound; got %v", err)
+	}
+}
+
+func TestDelete_IdempotentWhenAbsent(t *testing.T) {
+	s := secure.NewMemoryStorage()
+	// No Save first — Delete-when-already-empty should be a no-op success.
+	if err := Delete(s); err != nil {
+		t.Errorf("Delete on empty store should succeed; got %v", err)
+	}
+}
+
 func TestSaveLoad_RoundTrip(t *testing.T) {
 	s := secure.NewMemoryStorage()
 	in := PersistedTokens{

@@ -13,6 +13,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -20,6 +21,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/outputstyles"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
@@ -585,9 +587,25 @@ func itoa(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// logoutCredentials deletes the stored credentials from the keychain.
+// logoutCredentials clears the OAuth token bundle from secure storage.
+// Cross-platform: uses the same secure store the auth flow writes to,
+// so it works on macOS (Keychain), Linux (libsecret/file fallback),
+// and Windows (WinCred/file fallback).
 func logoutCredentials() error {
-	home, _ := os.UserHomeDir()
-	credPath := home + "/Library/Application Support/claude-code/credentials.json"
-	return os.Remove(credPath)
+	store, err := defaultSecureStorage()
+	if err != nil {
+		return err
+	}
+	return auth.Delete(store)
+}
+
+// defaultSecureStorage returns the file-backed store at the canonical
+// path. Mirrors the construction in cmd/conduit/main.go's loadAuth so
+// /logout writes to the same place login reads from.
+func defaultSecureStorage() (secure.Storage, error) {
+	path, err := secure.DefaultFilePath()
+	if err != nil {
+		return nil, err
+	}
+	return secure.NewFileStorage(path), nil
 }

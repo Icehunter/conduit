@@ -104,3 +104,21 @@ func EnsureFresh(ctx context.Context, s secure.Storage, c *TokenClient, now time
 
 // ErrNotLoggedIn is returned by EnsureFresh when no token bundle exists.
 var ErrNotLoggedIn = errors.New("auth: not logged in")
+
+// Delete removes the token bundle from secure storage. Returns nil if no
+// bundle is present (treats logout-when-already-logged-out as success).
+// Used by /logout to clear all credentials cross-platform — replaces the
+// previous macOS-only os.Remove(credentials.json) hack.
+//
+// Token revocation is intentionally not invoked here: Anthropic's OAuth
+// flow doesn't expose a public RFC 7009 revocation endpoint. Users who
+// need server-side revocation should rotate keys via the Console.
+func Delete(s secure.Storage) error {
+	if err := s.Delete(Service, PersistKey); err != nil {
+		if errors.Is(err, secure.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("auth: delete tokens: %w", err)
+	}
+	return nil
+}

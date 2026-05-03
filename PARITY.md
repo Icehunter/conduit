@@ -48,7 +48,7 @@
 | Portable auth | `utils/authPortable.ts` | — | ❌ | ❌ | |
 | Profile fetch (name, email) | `utils/auth.ts` | `1220.js` | `internal/profile/profile.go` | ✅ | |
 | Multi-account support | `utils/auth.ts` | — | ❌ | ❌ | Single account only |
-| Token revocation | `utils/auth.ts` | — | ❌ | ❌ | |
+| Token revocation | `utils/auth.ts` | — | `internal/auth/persist.go` Delete | 🟡 | Local clear via cross-platform secure store; Anthropic OAuth has no public RFC 7009 endpoint so server-side revoke goes through console |
 | JWT utils (bridge auth) | `bridge/jwtUtils.ts` | — | ❌ | ⬛ | Bridge-only |
 | Trusted device auth | `bridge/trustedDevice.ts` | — | ❌ | ⬛ | Bridge-only |
 | Work secret | `bridge/workSecret.ts` | — | ❌ | ⬛ | Bridge-only |
@@ -597,7 +597,7 @@
 
 | Area | ✅ Complete | 🟡 Partial | ❌ Missing | ⬛ Descoped | Total |
 |------|------------|-----------|-----------|------------|-------|
-| Auth & OAuth | 9 | 0 | 6 | 3 | 18 |
+| Auth & OAuth | 9 | 1 | 5 | 3 | 18 |
 | API Client & SSE | 10 | 0 | 2 | 0 | 12 |
 | Agent Loop | 12 | 1 | 0 | 1 | 14 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **221** | **12** | **108** | **45** | **386** |
+| **TOTAL** | **221** | **13** | **107** | **45** | **386** |
 
-**Overall parity: 233/341 scoped features (68% complete, 3% partial)**
+**Overall parity: 234/341 scoped features (68% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---

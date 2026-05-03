@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/outputstyles"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // RegisterOutputStyleCommand adds /output-style to list and activate output styles.
@@ -35,7 +36,13 @@ func RegisterOutputStyleCommand(r *Registry, cwd string) {
 						labels[i] = fmt.Sprintf("%-20s %s", s.Name, s.Description)
 					}
 				}
-				return pickerResult("output-style", "Pick an output style", "", values, labels)
+				// Highlight the persisted active style so the picker
+				// reflects what's actually in effect right now.
+				current := ""
+				if merged, err := settings.Load(cwd); err == nil {
+					current = merged.OutputStyle
+				}
+				return pickerResult("output-style", "Pick an output style", current, values, labels)
 			}
 
 			// Find the requested style.

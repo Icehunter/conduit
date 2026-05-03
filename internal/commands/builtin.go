@@ -54,7 +54,13 @@ func RegisterModelCommand(r *Registry, getModel func() string, setModel func(str
 			name := resolveModelName(args)
 			setModel(name)
 			internalmodel.SetOverride(name)
-			return Result{Type: "model", Model: name, Text: fmt.Sprintf("Switched to %s", name)}
+			// Persist so the choice survives restart. Best-effort — surface
+			// the failure in the message rather than swallowing it.
+			suffix := ""
+			if err := settings.SaveRawKey("model", name); err != nil {
+				suffix = fmt.Sprintf(" (failed to persist: %v)", err)
+			}
+			return Result{Type: "model", Model: name, Text: fmt.Sprintf("Switched to %s%s", name, suffix)}
 		},
 	})
 }

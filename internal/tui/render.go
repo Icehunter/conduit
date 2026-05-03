@@ -55,10 +55,13 @@ func renderMessage(msg Message, width int) string {
 			body := renderMarkdown(msg.Content, inner)
 			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
 		}
-		// Indent continuation lines to align with text after "· ".
+		// Render the "· " prefix dim/italic; let the content render naturally
+		// so embedded ANSI (bold labels, green ✓, dim hints from statusRow)
+		// shows through. Plain content reads as default-foreground text on
+		// dark backgrounds — readable without forcing italic+muted on top.
 		const sysPrefix = "· "
 		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
-		return pad + styleSystemText.Render(sysPrefix+content)
+		return pad + styleSystemText.Render(sysPrefix) + content
 	}
 	return msg.Content
 }

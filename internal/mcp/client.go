@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 	"sync"
 	"sync/atomic"
 )
+
+// ErrUnauthorized is returned by HTTP/SSE client calls when the server
+// responds with HTTP 401. Callers — typically Manager — branch on this
+// to mark the server as StatusNeedsAuth and surface McpAuthTool.
+var ErrUnauthorized = errors.New("mcp: unauthorized (401)")
 
 // Client is the interface both stdio and HTTP/SSE clients implement.
 type Client interface {
@@ -303,6 +309,12 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 		return nil, fmt.Errorf("mcp http: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		// Drain so the connection can be reused.
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, ErrUnauthorized
+	}
 
 	ct := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "text/event-stream") {

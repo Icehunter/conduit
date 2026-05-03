@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/settings"
@@ -21,6 +22,25 @@ func RegisterMCPCommand(r *Registry, manager *mcp.Manager) {
 			}
 
 			servers := manager.Servers()
+
+			// /mcp auth <name> — manually trigger OAuth flow for a needs-auth server.
+			lower := strings.TrimSpace(strings.ToLower(args))
+			if strings.HasPrefix(lower, "auth ") || lower == "auth" {
+				name := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(args, "auth"), " "))
+				if name == "" {
+					var pending []string
+					for _, s := range servers {
+						if s.Status == mcp.StatusNeedsAuth {
+							pending = append(pending, s.Name)
+						}
+					}
+					if len(pending) == 0 {
+						return Result{Type: "text", Text: "No MCP servers are awaiting authentication."}
+					}
+					return Result{Type: "text", Text: "Servers awaiting auth:\n  " + strings.Join(pending, "\n  ") + "\n\nUsage: /mcp auth <name>"}
+				}
+				return runMcpAuth(manager, name, servers)
+			}
 
 			// /mcp tools — plain text list of all tools across all servers.
 			if strings.TrimSpace(strings.ToLower(args)) == "tools" {
@@ -89,6 +109,45 @@ func RegisterMCPCommand(r *Registry, manager *mcp.Manager) {
 			return Result{Type: "mcp-dialog", Text: strings.Join(lines, "\n")}
 		},
 	})
+}
+
+// runMcpAuth runs the OAuth flow for one MCP HTTP/SSE server. The user's
+// browser is opened to the authorization URL; on completion tokens are
+// persisted and the server is reconnected.
+func runMcpAuth(manager *mcp.Manager, name string, servers []*mcp.ConnectedServer) Result {
+	var target *mcp.ConnectedServer
+	for _, s := range servers {
+		if s.Name == name {
+			target = s
+			break
+		}
+	}
+	if target == nil {
+		return Result{Type: "error", Text: fmt.Sprintf("MCP server %q not found.", name)}
+	}
+	if target.Config.URL == "" {
+		return Result{Type: "error", Text: fmt.Sprintf("MCP server %q is not HTTP/SSE — OAuth only applies to remote transports.", name)}
+	}
+	store := manager.SecureStore()
+	if store == nil {
+		return Result{Type: "error", Text: "MCP OAuth: no secure storage configured (this is a wiring bug — please file an issue)."}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	tokens, err := mcp.PerformOAuthFlow(ctx, name, target.Config.URL, nil, nil)
+	if err != nil {
+		return Result{Type: "error", Text: fmt.Sprintf("MCP OAuth flow failed: %v", err)}
+	}
+	if err := mcp.SaveServerToken(store, name, tokens); err != nil {
+		return Result{Type: "error", Text: fmt.Sprintf("MCP OAuth: save tokens: %v", err)}
+	}
+	if err := manager.Reconnect(context.Background(), name, ""); err != nil {
+		return Result{Type: "text", Text: fmt.Sprintf(
+			"OAuth complete and tokens saved. Reconnect failed (%v) — try /mcp again to retry.", err)}
+	}
+	return Result{Type: "flash", Text: fmt.Sprintf("Authenticated %s ✓", name)}
 }
 
 // RegisterMCPApproveCommand registers /mcp-approve, the back-end for the

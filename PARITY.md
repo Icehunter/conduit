@@ -137,7 +137,7 @@
 | GrepTool | `tools/GrepTool/` | — | `internal/tools/greptool/` | ✅ | rg backend |
 | ListMcpResources | `tools/ListMcpResourcesTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Lists from all connected servers |
 | LSPTool | `tools/LSPTool/` | — | ❌ | ❌ | Language server |
-| McpAuthTool | `tools/McpAuthTool/` | — | ❌ | ❌ | MCP OAuth |
+| McpAuthTool | `tools/McpAuthTool/` | — | `internal/tools/mcpauthtool/` + `internal/commands/mcp.go` | ✅ | Per-server pseudo-tool registered for needs-auth servers (mcp__<name>__authenticate) + manual /mcp auth <name> |
 | MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
 | NotebookEditTool | `tools/NotebookEditTool/` | — | `internal/tools/notebookedittool/` | ✅ | |
 | PowerShellTool | `tools/PowerShellTool/` | — | ❌ | ⬛ | Windows-only |
@@ -316,7 +316,7 @@
 | Plugin MCP server registration | `services/mcp/` | — | `internal/mcp/manager.go` `SyncPluginServers` | ✅ | |
 | Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
 | MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | `internal/mcp/manager.go`, `internal/tui/model.go`, `internal/commands/mcp.go` | ✅ | Project-scope (.mcp.json) servers gated on user approval; startup picker offers Yes/Yes-All/No; persisted to settings.json (enabledMcpjsonServers / disabledMcpjsonServers / enableAllProjectMcpServers) |
-| OAuth for MCP servers | `services/mcp/` | — | ❌ | ❌ | McpAuthTool not implemented |
+| OAuth for MCP servers | `services/mcp/` | — | `internal/mcp/oauth.go` + `oauth_persist.go` | ✅ | RFC 8414 metadata discovery (+OIDC fallback), RFC 7591 dynamic client registration, PKCE S256, localhost callback, token exchange + refresh, per-server bundle in secure storage |
 | MCP resource listing | `tools/ListMcpResourcesTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/list JSON-RPC |
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
 | MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | `internal/mcp/client_ws.go` | ✅ | nhooyr.io/websocket; type="ws"\|"websocket" in server config |
@@ -601,11 +601,11 @@
 | API Client & SSE | 10 | 0 | 2 | 0 | 12 |
 | Agent Loop | 12 | 1 | 0 | 1 | 14 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
-| Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
+| Tools (individual, 40) | 33 | 0 | 2 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
 | TUI & Rendering | 19 | 3 | 9 | 0 | 31 |
 | Slash Commands | 41 | 1 | 4 | 14 | 60 |
-| MCP Host | 10 | 0 | 3 | 0 | 13 |
+| MCP Host | 11 | 0 | 2 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
 | Memory System | 10 | 0 | 3 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **221** | **13** | **107** | **45** | **386** |
+| **TOTAL** | **223** | **13** | **105** | **45** | **386** |
 
-**Overall parity: 234/341 scoped features (68% complete, 4% partial)**
+**Overall parity: 236/341 scoped features (69% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---
@@ -671,4 +671,4 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go), API preconnect now honors HTTP(S)_PROXY skips and ANTHROPIC_BASE_URL, time-based micro-compaction (clears older tool_results after 60min idle, keeps last 5), first-run onboarding overlay (auth status + key commands; persisted via onboardingComplete).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go), API preconnect now honors HTTP(S)_PROXY skips and ANTHROPIC_BASE_URL, time-based micro-compaction (clears older tool_results after 60min idle, keeps last 5), first-run onboarding overlay (auth status + key commands; persisted via onboardingComplete), MCP OAuth (RFC 8414 discovery + RFC 7591 DCR + PKCE + token refresh; McpAuthTool pseudo-tool + /mcp auth manual command; 401 on connect → StatusNeedsAuth).

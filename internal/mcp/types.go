@@ -111,6 +111,10 @@ const (
 	// .mcp.json) that the user hasn't explicitly approved or denied.
 	// Mirrors CC's MCPServerApprovalDialog gate.
 	StatusNeedsApproval ServerStatus = "needs-approval"
+	// StatusNeedsAuth is set on an HTTP/SSE server that returned 401 on
+	// connect — the user must complete an OAuth flow (McpAuthTool or
+	// /mcp auth <name>) before the server's tools become available.
+	StatusNeedsAuth ServerStatus = "needs-auth"
 )
 
 // ConnectedServer holds a live connection to one MCP server.

@@ -2,10 +2,14 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/icehunter/conduit/internal/secure"
 )
 
 // Manager connects to all configured MCP servers and keeps them alive.
@@ -14,11 +18,34 @@ import (
 type Manager struct {
 	mu      sync.RWMutex
 	servers map[string]*ConnectedServer // keyed by server name
+
+	// secureStore is the secure store backing per-server OAuth tokens.
+	// When non-nil, connectWithCwd injects Authorization: Bearer <token>
+	// on HTTP/SSE/WS connects and branches on ErrUnauthorized to set
+	// StatusNeedsAuth instead of StatusFailed. nil disables OAuth path.
+	secureStore secure.Storage
 }
 
 // NewManager returns an empty Manager.
 func NewManager() *Manager {
 	return &Manager{servers: make(map[string]*ConnectedServer)}
+}
+
+// SetSecureStore wires a secure.Storage so the manager can load persisted
+// OAuth bearer tokens for HTTP/SSE/WS servers. Callers that don't need
+// MCP OAuth can leave this unset.
+func (m *Manager) SetSecureStore(s secure.Storage) {
+	m.mu.Lock()
+	m.secureStore = s
+	m.mu.Unlock()
+}
+
+// SecureStore returns the configured secure store (nil if unset). Used
+// by McpAuthTool to persist newly-obtained tokens.
+func (m *Manager) SecureStore() secure.Storage {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.secureStore
 }
 
 // ConnectAll loads configs for cwd and connects to every server in parallel.
@@ -76,6 +103,11 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 	var client Client
 	var err error
 
+	// Look up a persisted OAuth bearer for HTTP/SSE/WS servers so the
+	// initial connect carries an Authorization header. Stdio servers
+	// never use this path.
+	bearer := m.loadBearer(name)
+
 	t := strings.ToLower(cfg.Type)
 	switch t {
 	case "", "stdio":
@@ -94,11 +126,17 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 		for k, v := range cfg.Headers {
 			hdrs[k] = expandEnv(v)
 		}
+		if bearer != "" {
+			hdrs["Authorization"] = "Bearer " + bearer
+		}
 		client = NewHTTPClient(expandEnv(cfg.URL), hdrs)
 	case "ws", "websocket":
 		hdrs := make(map[string]string, len(cfg.Headers))
 		for k, v := range cfg.Headers {
 			hdrs[k] = expandEnv(v)
+		}
+		if bearer != "" {
+			hdrs["Authorization"] = "Bearer " + bearer
 		}
 		client = NewWebSocketClient(expandEnv(cfg.URL), hdrs)
 	default:
@@ -117,6 +155,13 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 
 	instructions, err := client.Initialize(ctx)
 	if err != nil {
+		if errors.Is(err, ErrUnauthorized) && (t == "http" || t == "sse" || t == "ws" || t == "websocket") {
+			srv.Status = StatusNeedsAuth
+			srv.Error = "OAuth required — run /mcp auth " + name
+			_ = client.Close()
+			m.store(name, srv)
+			return
+		}
 		srv.Status = StatusFailed
 		srv.Error = fmt.Sprintf("initialize: %v", err)
 		_ = client.Close()
@@ -127,6 +172,13 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 
 	tools, err := client.ListTools(ctx)
 	if err != nil {
+		if errors.Is(err, ErrUnauthorized) && (t == "http" || t == "sse" || t == "ws" || t == "websocket") {
+			srv.Status = StatusNeedsAuth
+			srv.Error = "OAuth required — run /mcp auth " + name
+			_ = client.Close()
+			m.store(name, srv)
+			return
+		}
 		srv.Status = StatusFailed
 		srv.Error = fmt.Sprintf("tools/list: %v", err)
 		_ = client.Close()
@@ -232,6 +284,56 @@ func (m *Manager) Reconnect(ctx context.Context, name, cwd string) error {
 	}
 	m.connectWithCwd(ctx, name, cfg, cwd)
 	return nil
+}
+
+// loadBearer returns the persisted OAuth access token for serverName, or
+// "" if no token is stored / no secure store is wired. Refreshes the
+// token in place when it's within a 60s safety window of expiry. Errors
+// are swallowed — the worst case is a 401 which the connect path handles.
+func (m *Manager) loadBearer(serverName string) string {
+	m.mu.RLock()
+	ss := m.secureStore
+	m.mu.RUnlock()
+	if ss == nil {
+		return ""
+	}
+	tokens, err := LoadServerToken(ss, serverName)
+	if err != nil {
+		return ""
+	}
+	if tokens.RefreshToken != "" && tokens.TokenEndpoint != "" && tokens.Client.ClientID != "" {
+		// 60s safety window — refresh before the server starts rejecting.
+		if !tokens.ExpiresAt.IsZero() && tokens.ExpiresAt.Before(time.Now().Add(60*time.Second)) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			fresh, ferr := RefreshToken(ctx, tokens.TokenEndpoint, tokens.RefreshToken, tokens.Client.ClientID)
+			if ferr == nil && fresh.AccessToken != "" {
+				fresh.Client = tokens.Client
+				if fresh.RefreshToken == "" {
+					fresh.RefreshToken = tokens.RefreshToken
+				}
+				_ = SaveServerToken(ss, serverName, fresh)
+				return fresh.AccessToken
+			}
+		}
+	}
+	return tokens.AccessToken
+}
+
+// PendingNeedsAuth returns the names of HTTP/SSE/WS MCP servers that
+// returned 401 on connect — the caller (TUI) surfaces these via the
+// /mcp panel and the McpAuthTool pseudo-tool.
+func (m *Manager) PendingNeedsAuth() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	for name, srv := range m.servers {
+		if srv.Status == StatusNeedsAuth {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // PendingApprovals returns the names of project-scope MCP servers that

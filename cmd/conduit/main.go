@@ -43,6 +43,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
+	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
 	"github.com/icehunter/conduit/internal/tools/configtool"
 	"github.com/icehunter/conduit/internal/tools/fileedittool"
 	"github.com/icehunter/conduit/internal/tools/filereadtool"
@@ -230,6 +231,16 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, rOpts *registryO
 	// Register MCP server tools (if any servers are configured).
 	if mcpManager != nil {
 		mcptool.RegisterAll(reg, mcpManager)
+		// For each HTTP/SSE server in the StatusNeedsAuth state, register
+		// the per-server pseudo-tool so the model can trigger OAuth
+		// itself (mirrors src/tools/McpAuthTool/createMcpAuthTool).
+		urls := make(map[string]string)
+		for _, srv := range mcpManager.Servers() {
+			if srv.Status == mcp.StatusNeedsAuth && srv.Config.URL != "" {
+				urls[srv.Name] = srv.Config.URL
+			}
+		}
+		mcpauthtool.RegisterPending(reg, mcpManager, urls)
 	}
 	return reg
 }
@@ -379,6 +390,11 @@ func runREPL(continueMode bool) error {
 
 	// Connect MCP servers in the background; non-fatal if config missing or servers fail.
 	mcpManager := mcp.NewManager()
+	// Wire the same secure storage the Anthropic auth uses so per-server
+	// MCP OAuth tokens persist alongside (under a different service key).
+	if storePath, err := secure.DefaultFilePath(); err == nil {
+		mcpManager.SetSecureStore(secure.NewFileStorage(storePath))
+	}
 	_ = mcpManager.ConnectAll(ctx, cwd)
 
 	// Load plugins (non-fatal — missing plugins don't block startup).

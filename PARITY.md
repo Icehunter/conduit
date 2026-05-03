@@ -29,8 +29,10 @@
 | M-K Rate limit display | ✅ | anthropic-ratelimit-* headers, warning <20%, EventRateLimit, status bar |
 | M-L Token counting + fast mode | ✅ | /fast (⚡ badge), /effort (thinking budget), model.ThinkingBudgets map |
 | M-N Memory completion | ✅ | ScanMemories, RelevantMemories, /memory list/show/scan, age tracking |
+| M-P Bubbletea v2 upgrade | ✅ | charm.land/v2 across bubbletea/bubbles/lipgloss; native Shift+Enter via Kitty keyboard protocol; declarative tea.View; structured key.Code + key.Mod |
+| M-Q Custom keybindings | 🟡 | `internal/keybindings/` MVP — parser, resolver, JSON loader, defaults. Per-context TUI hookup pending. |
 
-**Test count:** 414 passing, race clean (2026-05-02)
+**Test count:** 507 passing, race clean (2026-05-02)
 
 ---
 
@@ -225,7 +227,7 @@
 | Onboarding flow | `components/Onboarding.tsx` | — | `internal/tui/model.go` (onboardingState) | ✅ | First-run welcome overlay shows once: auth status, key commands, Enter to dismiss; persisted via settings.onboardingComplete |
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
-| Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only. Now feasible after bubbletea v2 upgrade unlocked structured key.Code + key.Mod. |
+| Custom keybindings | `keybindings/` (14 files) | — | `internal/keybindings/` | 🟡 | Parser + Resolver + JSON loader for `~/.claude/keybindings.json`; null-unbinds; user-wins-over-default. Single-keystroke only (chord support deferred). TUI per-context hookup pending. |
 | Image/PDF paste | `utils/imagePaste.ts`, `pdf.ts` | — | ❌ | ❌ | M13 |
 | Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
 | Ink rendering engine | `ink/` (96 files, 13306 LOC) | — | Bubble Tea | 🔲 | Different framework |

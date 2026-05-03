@@ -705,6 +705,8 @@ func (m Model) renderSettingsPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
+		BorderBackground(colorBg).
+		Background(colorModalBg).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
 		Width(w - 2).
 		Height(panelH - 2)

@@ -41,9 +41,10 @@ type Palette struct {
 	Warning string // yellow
 	Info    string // blue
 
-	// Surfaces — only Border is currently painted; CodeBg/Background are
-	// kept on the struct for future "themed code blocks" support but unused.
-	CodeBg       string
+	// Surfaces
+	Background   string // app surface — painted across entire TUI region
+	ModalBg      string // panels/modals — slightly distinct from Background
+	CodeBg       string // fenced code blocks — slightly distinct from Background
 	Border       string
 	BorderActive string
 
@@ -71,7 +72,9 @@ var Dark = Palette{
 	Danger:          "#F87171",
 	Warning:         "#FDE047",
 	Info:            "#60A5FA",
-	CodeBg:          "#0D1117",
+	Background:      "#16181D", // app surface
+	ModalBg:         "#1E2128", // panels — slightly lighter
+	CodeBg:          "#0D1117", // code blocks — slightly darker
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
 	ModeAcceptEdits: "#C084FC",
@@ -89,7 +92,9 @@ var Light = Palette{
 	Danger:          "#CF222E",
 	Warning:         "#9A6700",
 	Info:            "#0969DA",
-	CodeBg:          "#F1F3F5",
+	Background:      "#FBFBFA", // app surface — off-white
+	ModalBg:         "#F1F3F5", // panels — slightly grayer
+	CodeBg:          "#EAEDF0", // code blocks — more grayer for contrast
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
 	ModeAcceptEdits: "#8250DF",
@@ -103,10 +108,12 @@ var DarkDaltonized = Palette{
 	Secondary:       "#8B92A0",
 	Tertiary:        "#4A5160",
 	Accent:          "#DA7756",
-	Success:         "#3B82F6", // blue instead of green for deuteranopia
-	Danger:          "#F59E0B", // amber instead of red
+	Success:         "#3B82F6",
+	Danger:          "#F59E0B",
 	Warning:         "#FDE047",
 	Info:            "#A78BFA",
+	Background:      "#16181D",
+	ModalBg:         "#1E2128",
 	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
@@ -125,7 +132,9 @@ var LightDaltonized = Palette{
 	Danger:          "#9A6700",
 	Warning:         "#7C2D12",
 	Info:            "#6F42C1",
-	CodeBg:          "#F1F3F5",
+	Background:      "#FBFBFA",
+	ModalBg:         "#F1F3F5",
+	CodeBg:          "#EAEDF0",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
 	ModeAcceptEdits: "#8250DF",
@@ -149,6 +158,8 @@ var DarkAnsi = Palette{
 	Danger:          "9",  // redBright
 	Warning:         "11", // yellowBright
 	Info:            "12", // blueBright
+	Background:      "0",  // black
+	ModalBg:         "8",  // brightBlack (slightly lighter)
 	CodeBg:          "0",  // black
 	Border:          "8",  // brightBlack
 	BorderActive:    "9",  // redBright
@@ -167,6 +178,8 @@ var LightAnsi = Palette{
 	Danger:          "1",  // red
 	Warning:         "3",  // yellow
 	Info:            "4",  // blue
+	Background:      "15", // whiteBright
+	ModalBg:         "7",  // white (slightly grayer)
 	CodeBg:          "15", // whiteBright
 	Border:          "7",  // white
 	BorderActive:    "1",  // red
@@ -294,6 +307,8 @@ func applyOverrides(base Palette, o map[string]string) Palette {
 		Danger:          get("danger", base.Danger),
 		Warning:         get("warning", base.Warning),
 		Info:            get("info", base.Info),
+		Background:      get("background", base.Background),
+		ModalBg:         get("modalbg", base.ModalBg),
 		CodeBg:          get("codebg", base.CodeBg),
 		Border:          get("border", base.Border),
 		BorderActive:    get("borderactive", base.BorderActive),

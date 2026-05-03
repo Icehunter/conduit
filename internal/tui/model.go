@@ -259,6 +259,22 @@ func New(cfg Config) Model {
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
 	// Remove default enter binding from the textarea — we handle it ourselves.
 
+	// Theme the textarea so its bg matches the app surface (otherwise
+	// terminal default bg shows through inside the input border).
+	taBg := lipgloss.NewStyle().Background(colorBg)
+	taFg := lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
+	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
+	ta.FocusedStyle.Base = taBg
+	ta.FocusedStyle.Text = taFg
+	ta.FocusedStyle.Placeholder = taPlaceholder
+	ta.FocusedStyle.Prompt = taFg
+	ta.FocusedStyle.CursorLine = taBg
+	ta.BlurredStyle.Base = taBg
+	ta.BlurredStyle.Text = taFg
+	ta.BlurredStyle.Placeholder = taPlaceholder
+	ta.BlurredStyle.Prompt = taFg
+	ta.BlurredStyle.CursorLine = taBg
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styleSpinner
@@ -1467,6 +1483,8 @@ func (m Model) renderPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
+		BorderBackground(colorBg).
+		Background(colorModalBg).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
 		Width(w - 2). // -2 for border
 		Height(panelH - 2) // -2 for border
@@ -2542,19 +2560,19 @@ func (m Model) View() string {
 	// Only status bar remains at the bottom.
 	if m.panel != nil {
 		panel := m.renderPanel()
-		return lipgloss.JoinVertical(lipgloss.Left, panel, statusBar)
+		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, statusBar))
 	}
 
 	// Plugin panel is also a full-screen takeover.
 	if m.pluginPanel != nil {
 		pluginPanel := m.renderPluginPanel()
-		return lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar)
+		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar))
 	}
 
 	// Settings panel is a full-screen takeover.
 	if m.settingsPanel != nil {
 		sp := m.renderSettingsPanel()
-		return lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)
+		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar))
 	}
 
 	// Overlays: login > resume > permission > command picker (appended below vp).
@@ -2580,7 +2598,41 @@ func (m Model) View() string {
 		parts = append(parts, overlayBox)
 	}
 	parts = append(parts, inputBox, statusBar)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// paintApp wraps the joined View output so the theme background fills every
+// cell of the visible region.
+//
+// Approach: lipgloss.Place positions the content top-left within an
+// (m.width × m.height) box and fills empty whitespace with bg-painted
+// spaces. The outer .Background ensures any inner styles that DON'T set
+// their own bg (third-party widgets like textarea) inherit the surface bg.
+func paintApp(w, h int, content string) string {
+	if w <= 0 || h <= 0 {
+		return content
+	}
+	// Pad each content line to full width so right-side padding gets bg too.
+	padded := padLinesToWidth(content, w)
+	return styleAppSurface.
+		Width(w).
+		Height(h).
+		Render(padded)
+}
+
+// padLinesToWidth ensures every line of s is exactly w cells wide, padding
+// short lines on the right with bg-painted spaces. Required so the cells to
+// the right of widgets like textarea (which renders short lines) get our bg
+// instead of showing terminal default.
+func padLinesToWidth(s string, w int) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		visW := lipgloss.Width(line)
+		if visW < w {
+			lines[i] = line + strings.Repeat(" ", w-visW)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // tallyTokens estimates token usage from conversation history.

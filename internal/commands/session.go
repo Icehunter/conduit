@@ -210,28 +210,13 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		Name:        "doctor",
 		Description: "Check auth, tools, and settings",
 		Handler: func(string) Result {
-			bold := "\033[1m"
-			green := "\033[32m"
-			red := "\033[31m"
-			dim := "\033[2m"
-			reset := "\033[0m"
-
-			check := func(ok bool) string {
-				if ok {
-					return green + "✓" + reset
-				}
-				return red + "✗" + reset
-			}
-			row := func(lbl, val, hint string) string {
-				return fmt.Sprintf("  %s%-14s%s %s%s\n", bold, lbl, reset, val, hint)
-			}
-
+			const labelW = 14
 			var sb strings.Builder
-			sb.WriteString(bold + "Conduit diagnostics" + reset + "\n\n")
+			sb.WriteString(statusTitle("Conduit diagnostics"))
 
 			exe, _ := os.Executable()
-			sb.WriteString(row("Binary:", exe, ""))
-			sb.WriteString(row("Platform:", runtime.GOOS+"/"+runtime.GOARCH, ""))
+			sb.WriteString(statusRow("Binary:", exe, "", labelW))
+			sb.WriteString(statusRow("Platform:", runtime.GOOS+"/"+runtime.GOARCH, "", labelW))
 			sb.WriteByte('\n')
 
 			authOK := false
@@ -240,26 +225,26 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			}
 			authHint := ""
 			if !authOK {
-				authHint = dim + "  (run /login)" + reset
+				authHint = "(run /login)"
 			}
-			sb.WriteString(row("Auth:", check(authOK), authHint))
+			sb.WriteString(statusRow("Auth:", statusCheck(authOK), authHint, labelW))
 
 			_, gitErr := exec.LookPath("git")
-			sb.WriteString(row("git:", check(gitErr == nil), ""))
+			sb.WriteString(statusRow("git:", statusCheck(gitErr == nil), "", labelW))
 
 			_, rgErr := exec.LookPath("rg")
 			rgHint := ""
 			if rgErr != nil {
-				rgHint = dim + "  (GrepTool uses grep fallback)" + reset
+				rgHint = "(GrepTool uses grep fallback)"
 			}
-			sb.WriteString(row("ripgrep:", check(rgErr == nil), rgHint))
+			sb.WriteString(statusRow("ripgrep:", statusCheck(rgErr == nil), rgHint, labelW))
 
 			home, _ := os.UserHomeDir()
 			_, settingsErr := os.Stat(home + "/.claude/settings.json")
-			sb.WriteString(row("settings:", check(settingsErr == nil), ""))
+			sb.WriteString(statusRow("settings:", statusCheck(settingsErr == nil), "", labelW))
 
 			_, claudeErr := os.Stat(home + "/.claude.json")
-			sb.WriteString(row("claude.json:", check(claudeErr == nil), ""))
+			sb.WriteString(statusRow("claude.json:", statusCheck(claudeErr == nil), "", labelW))
 
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
@@ -650,21 +635,23 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				return Result{Type: "text", Text: "No session info available."}
 			}
 			id, path, msgs, startedAt := state.GetSessionInfo()
+			const labelW = 12
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Session ID:   %s\n", id))
+			sb.WriteString(statusTitle("Session"))
+			sb.WriteString(statusRow("ID:", statusValue(id), "", labelW))
 			if path != "" {
-				sb.WriteString(fmt.Sprintf("File:         %s\n", path))
+				sb.WriteString(statusRow("File:", statusValue(path), "", labelW))
 			}
-			sb.WriteString(fmt.Sprintf("Messages:     %d\n", msgs))
+			sb.WriteString(statusRow("Messages:", statusValue(fmt.Sprintf("%d", msgs)), "", labelW))
 			if !startedAt.IsZero() {
 				dur := time.Since(startedAt)
 				h := int(dur.Hours())
 				m := int(dur.Minutes()) % 60
+				durStr := fmt.Sprintf("%dm", m)
 				if h > 0 {
-					sb.WriteString(fmt.Sprintf("Duration:     %dh %dm\n", h, m))
-				} else {
-					sb.WriteString(fmt.Sprintf("Duration:     %dm\n", m))
+					durStr = fmt.Sprintf("%dh %dm", h, m)
 				}
+				sb.WriteString(statusRow("Duration:", statusValue(durStr), "", labelW))
 			}
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},

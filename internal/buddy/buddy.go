@@ -88,6 +88,32 @@ type Bones struct {
 // buddySalt matches the TS salt constant.
 const buddySalt = "friend-2026-401"
 
+// IntroPrompt returns the system-prompt block injected when a companion
+// is active. Mirrors src/buddy/prompt.ts companionIntroText: tells the
+// model that a small named buddy sits beside the input box, and what to
+// do when the user addresses the buddy by name. Empty string when no
+// companion is configured.
+//
+// Read at startup by cmd/conduit/main.go to fold into the system blocks
+// alongside CLAUDE.md and MCP instructions.
+func IntroPrompt() string {
+	sc, err := Load()
+	if err != nil || sc == nil || sc.Name == "" {
+		return ""
+	}
+	bones := GenerateBones(sc.UserID, sc.ForcedRarity)
+	species := bones.Species
+	if species == "" {
+		species = "creature"
+	}
+	return fmt.Sprintf(`# Companion
+
+A small %[2]s named %[1]s sits beside the user's input box and occasionally comments in a speech bubble. You're not %[1]s — it's a separate watcher.
+
+When the user addresses %[1]s directly (by name), its bubble will answer. Your job in that moment is to stay out of the way: respond in ONE line or less, or just answer any part of the message meant for you. Don't explain that you're not %[1]s — they know. Don't narrate what %[1]s might say — the bubble handles that.`,
+		sc.Name, species)
+}
+
 // GenerateBones generates deterministic companion bones for the given userID.
 // Mirrors companion.ts generateBones().
 //

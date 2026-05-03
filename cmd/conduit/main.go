@@ -27,6 +27,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -465,6 +466,12 @@ func runREPL(continueMode bool) error {
 	var mcpInstructionsPrompt string
 	for srvName, instr := range mcpManager.ServerInstructions() {
 		mcpInstructionsPrompt += "## " + srvName + "\n" + instr + "\n\n"
+	}
+	// Buddy companion intro: when a companion is configured, tell the
+	// model about it so the model defers to the buddy when the user
+	// addresses it by name. Mirrors src/buddy/prompt.ts.
+	if intro := buddy.IntroPrompt(); intro != "" {
+		mcpInstructionsPrompt += intro + "\n"
 	}
 
 	// extractInflight single-flights post-Stop memory extraction so a fast

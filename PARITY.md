@@ -517,7 +517,7 @@
 | Companion soul persistence | `buddy/companion.ts` | — | `internal/buddy/store.go` | ✅ | |
 | /buddy command | `buddy/useBuddyNotification.tsx` | — | `internal/commands/buddy.go` | ✅ | |
 | Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | ❌ | ❌ | No live animation |
-| Companion intro injection | `buddy/prompt.ts` | — | ❌ | ❌ | |
+| Companion intro injection | `buddy/prompt.ts` | — | `internal/buddy/buddy.go` (IntroPrompt) | ✅ | When a companion is configured, system prompt gains a "# Companion" block telling the model to defer to the buddy by name |
 | Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ❌ | |
 | Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ❌ | Requires cgo |
 | Voice STT (WebSocket) | `services/voiceStreamSTT.ts` (544 LOC) | — | ❌ | ❌ | Requires cgo |
@@ -615,14 +615,14 @@
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
 | Coordinator / Swarms | 1 | 1 | 7 | 0 | 9 |
 | Attachments (M13) | 0 | 0 | 11 | 0 | 11 |
-| Buddy / Voice / KAIROS | 5 | 1 | 5 | 2 | 13 |
+| Buddy / Voice / KAIROS | 6 | 1 | 4 | 2 | 13 |
 | Output Styles & Undercover | 6 | 0 | 3 | 0 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **225** | **13** | **103** | **45** | **386** |
+| **TOTAL** | **226** | **13** | **102** | **45** | **386** |
 
-**Overall parity: 238/341 scoped features (70% complete, 4% partial)**
+**Overall parity: 239/341 scoped features (70% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---

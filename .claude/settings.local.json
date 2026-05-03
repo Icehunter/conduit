@@ -3,7 +3,9 @@
     "allow": [
       "Write(//Volumes/Engineering/Icehunter/claude-go/**)",
       "Write(//Users/icehunter/.claude/projects/-Volumes-Engineering-Icehunter-claude-go/b6cec114-2684-40c4-95a3-cae2fc69bd82/session-memory/**)",
-      "Write(//Users/icehunter/.claude/projects/-Volumes-Engineering-Icehunter-claude-go/memory/**)"
+      "Write(//Users/icehunter/.claude/projects/-Volumes-Engineering-Icehunter-claude-go/memory/**)",
+      "TaskCreate",
+      "TaskUpdate"
     ]
   }
 }

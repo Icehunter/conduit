@@ -225,7 +225,7 @@
 | Onboarding flow | `components/Onboarding.tsx` | — | `internal/tui/model.go` (onboardingState) | ✅ | First-run welcome overlay shows once: auth status, key commands, Enter to dismiss; persisted via settings.onboardingComplete |
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
-| Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only |
+| Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only. Now feasible after bubbletea v2 upgrade unlocked structured key.Code + key.Mod. |
 | Image/PDF paste | `utils/imagePaste.ts`, `pdf.ts` | — | ❌ | ❌ | M13 |
 | Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
 | Ink rendering engine | `ink/` (96 files, 13306 LOC) | — | Bubble Tea | 🔲 | Different framework |

@@ -300,7 +300,7 @@ type Model struct {
 // New builds the initial Model.
 func New(cfg Config) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Message conduit  (Enter ↵ send · Alt+Enter or Ctrl+J newline)"
+	ta.Placeholder = "Message conduit  (Enter ↵ send · Shift+Enter newline)"
 	// Per-line chevron prompt, but only on the first line. Bubbles textarea
 	// renders Prompt on every visible row (replacing the default ┃, U+2503
 	// HEAVY VERTICAL), and a row of repeating "❯" looks like a confused list,
@@ -316,12 +316,14 @@ func New(cfg Config) Model {
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
-	// Newline keys: Shift+Enter works on terminals that report it via CSI-u
-	// (Kitty, Ghostty, WezTerm, Warp; iTerm2 only when "Report modifiers in
-	// CSI u mode" is enabled AND bubbletea v2 is in use). Bubbletea v1
-	// doesn't decode CSI-u, so we add the universal-fallback bindings:
-	//   alt+enter — most terminals send ESC+CR for Option/Alt+Enter
-	//   ctrl+j   — the literal newline byte (LF), works everywhere
+	// Newline keys: Shift+Enter is the canonical binding now that bubbletea
+	// v2's key disambiguation decodes it correctly on every modern terminal
+	// (Kitty/Ghostty/WezTerm/Warp/iTerm2/Alacritty/Foot/Rio/Contour). Keep
+	// the legacy alternatives bound so users on terminals without
+	// progressive enhancement (e.g. Apple Terminal, raw xterm, tmux without
+	// passthrough) can still insert newlines:
+	//   alt+enter — ESC+CR sequence emitted by Option/Alt+Enter
+	//   ctrl+j   — the literal newline byte (LF), universal
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter", "alt+enter", "ctrl+j")
 	// Remove default enter binding from the textarea — we handle it ourselves.
 
@@ -2895,11 +2897,19 @@ func (m *Model) refreshViewport() {
 // View renders the full TUI frame. v2 returns tea.View — internally we
 // still build a string and wrap it via mkView so all the existing
 // rendering/paint logic stays unchanged.
+//
+// Basic keyboard disambiguation (shift+enter, ctrl+i, etc) is enabled by
+// default in bubbletea v2 — no opt-in required for those keys. The
+// KeyboardEnhancements field below opts into more advanced features:
+// ReportAlternateKeys lets terminals report alternate key values (helps
+// international keyboards), and we leave ReportEventTypes off because we
+// don't need key release events.
 func (m Model) View() tea.View {
 	mkView := func(content string) tea.View {
 		var v tea.View
 		v.SetContent(content)
 		v.AltScreen = true
+		v.KeyboardEnhancements.ReportAlternateKeys = true
 		return v
 	}
 	if !m.ready {

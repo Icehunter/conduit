@@ -17,8 +17,8 @@ func TestTerminalSetupAdvice_NativeCSIu(t *testing.T) {
 		if !strings.Contains(got, name) {
 			t.Errorf("%s: missing terminal display name; got %q", term, got)
 		}
-		if !strings.Contains(got, "Alt+Enter") || !strings.Contains(got, "Ctrl+J") {
-			t.Errorf("%s: should suggest the Alt+Enter / Ctrl+J fallbacks; got %q", term, got)
+		if !strings.Contains(got, "Shift+Enter") || !strings.Contains(got, "No setup needed") {
+			t.Errorf("%s: should report Shift+Enter works + no setup needed; got %q", term, got)
 		}
 	}
 }

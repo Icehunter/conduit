@@ -2495,28 +2495,35 @@ func (m Model) View() string {
 		bStyle = styleInputBorderActive
 	}
 	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
-	// Force-pad the textarea view to its inner width with bg-painted spaces
-	// before wrapping in the border, because bubbles textarea's
-	// placeholderView (line 1 case) doesn't trail-fill — the cells after
-	// the placeholder text expose terminal default bg as a dark stripe
-	// in light themes.
+	// Force-paint the textarea view in light themes. The textarea's
+	// placeholderView and internal viewport emit ANSI sequences with
+	// internal \033[0m resets that clear bg back to terminal default,
+	// leaving a dark stripe across the input row. Solution:
+	//   1. Replace internal \033[0m with soft reset (\033[22;23;39m) +
+	//      bg reapply, so bg persists across reset boundaries.
+	//   2. Pad each line to inner width with bg-painted spaces so cells
+	//      right of the placeholder text are filled.
+	//   3. Wrap in a fg+bg style so the line starts with bg set.
 	innerView := m.input.View()
 	if theme.Active().Background != "" {
-		// inputW = m.width - border(2) - padding(2) = m.width - 4
 		innerW := m.width - 4
 		if innerW < 1 {
 			innerW = 1
 		}
-		paintFill := lipgloss.NewStyle().Background(colorBg).Foreground(colorFg)
-		var padded []string
+		bgEsc := theme.AnsiBG(theme.Active().Background)
+		fgEsc := theme.AnsiFG(theme.Active().Primary)
+		const fullReset = "\x1b[0m"
+		const softReset = "\x1b[22;23;39m"
+		var fixed []string
 		for _, line := range strings.Split(innerView, "\n") {
+			line = strings.ReplaceAll(line, fullReset, softReset+bgEsc+fgEsc)
 			w := lipgloss.Width(line)
 			if w < innerW {
 				line += strings.Repeat(" ", innerW-w)
 			}
-			padded = append(padded, paintFill.Render(line))
+			fixed = append(fixed, bgEsc+fgEsc+line+fullReset)
 		}
-		innerView = strings.Join(padded, "\n")
+		innerView = strings.Join(fixed, "\n")
 	}
 	inputBox := bStyle.Width(m.width - 2).Render(innerView)
 

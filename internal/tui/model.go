@@ -589,11 +589,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfg.Session != nil && m.totalInputTokens > 0 {
 				_ = m.cfg.Session.AppendCost(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
 			}
-			// Companion speech bubble: if the final assistant text is a single
-			// short line (≤ 100 chars) and the user addressed the companion by
-			// name, show it in the corner bubble instead of (in addition to)
-			// the conversation history.
-			cmds = append(cmds, m.maybeFireCompanionBubble())
+			// Companion speech bubble: if the response is a companion quip,
+			// show it only in the bubble — remove it from the chat history
+			// so it doesn't duplicate. Claude's responses stay in chat.
+			var bubbleCmd tea.Cmd
+			m, bubbleCmd = m.maybeFireCompanionBubble()
+			if bubbleCmd != nil {
+				cmds = append(cmds, bubbleCmd)
+			}
 		}
 		// Final assistant message just committed — refreshViewport's
 		// sticky-bottom honors a scrolled-up user. They explicitly
@@ -1386,19 +1389,19 @@ func (m Model) expandPastePlaceholders(s string) string {
 }
 
 // maybeFireCompanionBubble checks if the last assistant message should be
-// displayed as a companion speech bubble. Fires when all of:
-//   - A companion is configured (buddy store has a name)
+// displayed as a companion speech bubble. When detected it:
+//   - Removes the message from m.messages (chat history) so it only shows
+//     in the bubble, not duplicated in the conversation
+//   - Returns a cmd that fires companionBubbleMsg to show the bubble
+//
+// Fires when:
+//   - A companion is configured
 //   - The last user message mentioned the companion by name
-//   - The last assistant message is brief (≤ 4 lines, ≤ 200 chars total)
-//
-// Multi-line companion quips (e.g. "*action*\n\nReply") are allowed —
-// CC shows them in the bubble too.
-//
-// Mirrors the fireCompanionObserver logic from src/screens/REPL.tsx.
-func (m Model) maybeFireCompanionBubble() tea.Cmd {
+//   - The last assistant message is brief (≤ 4 non-blank lines, ≤ 200 chars)
+func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 	sc, err := buddy.Load()
 	if err != nil || sc == nil || sc.Name == "" {
-		return nil
+		return m, nil
 	}
 	// Find last user message and check if it mentions the companion name.
 	companionName := strings.ToLower(sc.Name)
@@ -1406,15 +1409,15 @@ func (m Model) maybeFireCompanionBubble() tea.Cmd {
 		msg := m.messages[i]
 		if msg.Role == RoleUser {
 			if !strings.Contains(strings.ToLower(msg.Content), companionName) {
-				return nil // user didn't address the companion
+				return m, nil // user didn't address the companion
 			}
 			break
 		}
 		if msg.Role == RoleAssistant {
-			break // assistant responded but no user turn above — skip
+			break
 		}
 	}
-	// Find last assistant message.
+	// Find last assistant message and check if it's a companion quip.
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		msg := m.messages[i]
 		if msg.Role != RoleAssistant {
@@ -1422,24 +1425,23 @@ func (m Model) maybeFireCompanionBubble() tea.Cmd {
 		}
 		text := strings.TrimSpace(msg.Content)
 		if text == "" {
-			return nil
+			return m, nil
 		}
-		lines := strings.Split(text, "\n")
-		// Blank-line normalized count (paragraphs).
 		var nonBlank int
-		for _, l := range lines {
+		for _, l := range strings.Split(text, "\n") {
 			if strings.TrimSpace(l) != "" {
 				nonBlank++
 			}
 		}
 		if nonBlank > 4 || len(text) > 200 {
-			return nil // too long — regular response, not a quip
+			return m, nil // too long — regular Claude response, not a quip
 		}
-		return func() tea.Msg {
-			return companionBubbleMsg{text: text}
-		}
+		// It's a companion quip — remove from chat history so it only
+		// appears in the bubble.
+		m.messages = append(m.messages[:i], m.messages[i+1:]...)
+		return m, func() tea.Msg { return companionBubbleMsg{text: text} }
 	}
-	return nil
+	return m, nil
 }
 
 // companionBubbleMsg is sent when the companion should speak.

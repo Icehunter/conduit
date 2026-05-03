@@ -54,6 +54,19 @@ const (
 	inputMaxRatio = 0.30
 )
 
+// isNewlineInsertKey reports whether the key would cause the textarea to
+// insert a newline. Mirrors the binding set on
+// textarea.KeyMap.InsertNewline (shift+enter, alt+enter, ctrl+j) — kept
+// in sync manually because bubbles textarea doesn't expose the bound
+// key list as a string set.
+func isNewlineInsertKey(k tea.KeyMsg) bool {
+	switch k.String() {
+	case "shift+enter", "alt+enter", "ctrl+j":
+		return true
+	}
+	return false
+}
+
 func chromeHeight(inputRows, termHeight int) int {
 	cap := int(float64(termHeight) * inputMaxRatio)
 	if cap < inputMinRows {
@@ -721,6 +734,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		prevLines := m.input.LineCount()
+		// Pre-grow before a newline insert. Without this, bubbles textarea
+		// receives the insert at the old Height=N, repositionView scrolls
+		// the viewport down by 1 to keep the cursor visible, and the
+		// textarea's internal YOffset becomes 1. A later SetHeight(N+1)
+		// only grows the *capacity* — it doesn't reset YOffset, so the
+		// first row stays scrolled offscreen. Pre-growing means the insert
+		// happens with capacity already in place: cursor on row N is still
+		// within [YOffset=0, YOffset+Height-1=N], no scroll fires.
+		if k, ok := msg.(tea.KeyMsg); ok && isNewlineInsertKey(k) {
+			nextLines := m.input.LineCount() + 1
+			cap := chromeHeight(nextLines, m.height) - chromeFixed
+			if nextLines <= cap {
+				m.input.SetHeight(nextLines)
+			}
+		}
 		m.input, taCmd = m.input.Update(msg)
 		// If the input grew or shrunk a line (Alt+Enter, backspace into a
 		// newline boundary, paste of multi-line content), reflow the

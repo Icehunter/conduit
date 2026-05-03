@@ -27,10 +27,15 @@ var (
 )
 
 // Stable references to theme constants — these don't change with palette swap.
+//
+// We use the SOFT reset (preserves bg) because system messages embed these
+// escapes inside a region that the TUI render layer paints with the theme
+// background. A full reset would clear the bg back to terminal default,
+// causing visible "black holes" mid-message.
 const (
 	ansiBold  = theme.AnsiBold
 	ansiDim   = theme.AnsiDim
-	ansiReset = theme.AnsiReset
+	ansiReset = theme.AnsiResetSoft
 )
 
 func rebuildStyles() {

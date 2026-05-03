@@ -28,6 +28,7 @@ import (
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/theme"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
@@ -2165,8 +2166,6 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			key := id
 			switch id {
 			case "defaultPermissionMode":
-				// value is display name — convert to stored val via settings key.
-				// permModeVal is in settingspanel.go — call settings directly.
 				if s, ok := value.(string); ok {
 					_ = settings.SaveRawKey("permissions", map[string]interface{}{"defaultMode": permModeStoredVal(s)})
 					return
@@ -2178,6 +2177,13 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			case "outputStyle":
 				if s, ok := value.(string); ok {
 					_ = settings.SaveOutputStyle(outputStyleStoredVal(s))
+					return
+				}
+			case "theme":
+				// Apply the theme live so the panel re-renders with new colors.
+				if s, ok := value.(string); ok {
+					theme.Set(s)
+					_ = settings.SaveRawKey("theme", s)
 					return
 				}
 			}

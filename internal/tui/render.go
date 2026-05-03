@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/icehunter/conduit/internal/theme"
 )
 
 const (
@@ -55,13 +57,15 @@ func renderMessage(msg Message, width int) string {
 			body := renderMarkdown(msg.Content, inner)
 			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
 		}
-		// Render the "· " prefix dim/italic; let the content render naturally
-		// so embedded ANSI (bold labels, green ✓, dim hints from statusRow)
-		// shows through. Plain content reads as default-foreground text on
-		// dark backgrounds — readable without forcing italic+muted on top.
+		// Wrap the body in an explicit bg paint so embedded ANSI from
+		// commands/style.go (which uses AnsiResetSoft and preserves bg)
+		// stays painted against the theme background. Without this, the
+		// lipgloss prefix render emits \033[0m which clears bg back to
+		// terminal default — visible as black holes mid-message.
 		const sysPrefix = "· "
 		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
-		return pad + styleSystemText.Render(sysPrefix) + content
+		bg := theme.AnsiBG(theme.Active().Background)
+		return pad + styleSystemText.Render(sysPrefix) + bg + content + theme.AnsiReset
 	}
 	return msg.Content
 }

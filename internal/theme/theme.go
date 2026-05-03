@@ -340,19 +340,49 @@ func OnChange(cb func()) {
 	mu.Unlock()
 }
 
-// AnsiFG returns an ANSI escape that sets the foreground to a #RRGGBB hex.
-// Used by command output that embeds raw escape sequences (because the TUI
-// render layer can't apply lipgloss styles to command result text).
-func AnsiFG(hex string) string {
-	r, g, b := parseHex(hex)
+// AnsiFG returns an ANSI escape that sets the foreground.
+// Hex must be #RRGGBB (truecolor) OR a string-encoded 0..15 ANSI code.
+func AnsiFG(value string) string {
+	if isAnsiCode(value) {
+		return fmt.Sprintf("\033[38;5;%sm", value)
+	}
+	r, g, b := parseHex(value)
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
 }
 
+// AnsiBG returns an ANSI escape that sets the background.
+// Hex must be #RRGGBB (truecolor) OR a string-encoded 0..15 ANSI code.
+func AnsiBG(value string) string {
+	if isAnsiCode(value) {
+		return fmt.Sprintf("\033[48;5;%sm", value)
+	}
+	r, g, b := parseHex(value)
+	return fmt.Sprintf("\033[48;2;%d;%d;%dm", r, g, b)
+}
+
+func isAnsiCode(s string) bool {
+	if s == "" || len(s) > 2 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // ANSI escape sequences shared across themes.
+//
+// AnsiReset clears EVERYTHING (fg, bg, bold, italic, etc) — only safe when
+// the parent context will reapply backgrounds. For embedded escapes inside
+// styled regions, prefer AnsiResetSoft which leaves bg intact so the
+// surrounding paint shows through.
 const (
-	AnsiBold  = "\033[1m"
-	AnsiDim   = "\033[2m"
-	AnsiReset = "\033[0m"
+	AnsiBold      = "\033[1m"
+	AnsiDim       = "\033[2m"
+	AnsiReset     = "\033[0m"
+	AnsiResetSoft = "\033[22;23;39m" // reset bold + italic + fg only; bg untouched
 )
 
 func parseHex(hex string) (r, g, b uint8) {

@@ -284,9 +284,16 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			id:    "theme",
 			label: "Theme",
 			kind:  "enum",
-			value: func() string { v := getStr("theme", "Dark"); if v == "" { return "Dark" }; return v }(),
-			options: []string{"Dark", "Light", "Dark (accessible)", "Light (accessible)"},
-			optionVals: []string{"dark", "light", "dark-daltonism", "light-daltonism"},
+			value: func() string {
+				v := getStr("theme", "dark")
+				if v == "" {
+					return "dark"
+				}
+				return v
+			}(),
+			// Match canonical theme names (matches Claude Code's THEME_NAMES).
+			options:    []string{"dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"},
+			optionVals: []string{"dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"},
 		},
 		{
 			id:    "notifChannel",

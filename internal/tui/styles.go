@@ -25,15 +25,9 @@ var (
 	colorError  lipgloss.Color
 	colorTool   lipgloss.Color
 	colorFg     lipgloss.Color
-	colorBg     lipgloss.Color // app surface background
 	colorCodeBg lipgloss.Color
 	colorBorder lipgloss.Color
 )
-
-// styleAppSurface paints the entire TUI region with the theme background.
-// View() wraps its output in this style so the terminal default bg is
-// covered everywhere conduit renders.
-var styleAppSurface lipgloss.Style
 
 var (
 	styleYouPrefix         lipgloss.Style
@@ -75,56 +69,52 @@ func RebuildStyles() {
 	colorError = lipgloss.Color(p.Danger)
 	colorTool = lipgloss.Color(p.Info)
 	colorFg = lipgloss.Color(p.Primary)
-	colorBg = lipgloss.Color(p.Background)
 	colorCodeBg = lipgloss.Color(p.CodeBg)
 	colorBorder = lipgloss.Color(p.Border)
 
-	styleAppSurface = lipgloss.NewStyle().Background(colorBg).Foreground(colorFg)
-
-	// Foreground styles inherit app bg so they don't punch holes through it.
-	styleYouPrefix = lipgloss.NewStyle().Foreground(colorAccent).Background(colorBg).Bold(true)
-	styleClaudePrefix = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
-	styleUserText = lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
-	styleAssistantText = lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
-	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Background(colorBg).Bold(true)
-	styleToolContent = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg).Italic(true)
-	styleErrorText = lipgloss.NewStyle().Foreground(colorError).Background(colorBg)
-	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg).Italic(true)
-	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF")).Background(colorCodeBg)
-	styleCodeBorder = lipgloss.NewStyle().PaddingLeft(2).Background(colorCodeBg)
-	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted).Background(colorCodeBg)
+	// No backgrounds — terminal bg shows through, becoming the de-facto
+	// theme background. Foreground colors are chosen to work on the user's
+	// own terminal bg (dark in our case; light themes are just light fgs).
+	styleYouPrefix = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	styleClaudePrefix = lipgloss.NewStyle().Foreground(colorMuted)
+	styleUserText = lipgloss.NewStyle().Foreground(colorFg)
+	styleAssistantText = lipgloss.NewStyle().Foreground(colorFg)
+	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Bold(true)
+	styleToolContent = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	styleErrorText = lipgloss.NewStyle().Foreground(colorError)
+	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF"))
+	styleCodeBorder = lipgloss.NewStyle().PaddingLeft(2)
+	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted)
 
 	styleInputBorder = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorDim).
-		Background(colorBg).
 		PaddingLeft(1).PaddingRight(1)
 	styleInputBorderActive = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		Background(colorBg).
 		PaddingLeft(1).PaddingRight(1)
 
-	styleStatus = lipgloss.NewStyle().Foreground(colorDim).Background(colorBg)
-	styleStatusModel = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
-	styleStatusAccent = lipgloss.NewStyle().Foreground(colorAccent).Background(colorBg).Bold(true)
+	styleStatus = lipgloss.NewStyle().Foreground(colorDim)
+	styleStatusModel = lipgloss.NewStyle().Foreground(colorMuted)
+	styleStatusAccent = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 
-	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Background(colorBg).Bold(true)
-	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Background(colorBg).Bold(true)
-	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Background(colorBg).Bold(true)
+	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Bold(true)
+	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Bold(true)
+	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Bold(true)
 
-	styleSpinner = lipgloss.NewStyle().Foreground(colorAccent).Background(colorBg)
-	styleSep = lipgloss.NewStyle().Foreground(colorDim).Background(colorBg)
+	styleSpinner = lipgloss.NewStyle().Foreground(colorAccent)
+	styleSep = lipgloss.NewStyle().Foreground(colorDim)
 
 	stylePickerBorder = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		Background(colorBg).
 		PaddingLeft(1).PaddingRight(1)
-	stylePickerItem = lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
-	stylePickerItemSelected = lipgloss.NewStyle().Foreground(colorAccent).Background(colorBg).Bold(true)
-	stylePickerDesc = lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
-	stylePickerHighlight = lipgloss.NewStyle().Foreground(colorAccent).Background(colorBg).Bold(true).Underline(true)
+	stylePickerItem = lipgloss.NewStyle().Foreground(colorFg)
+	stylePickerItemSelected = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	stylePickerDesc = lipgloss.NewStyle().Foreground(colorMuted)
+	stylePickerHighlight = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Underline(true)
 }
 
 func init() {

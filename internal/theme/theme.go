@@ -41,9 +41,9 @@ type Palette struct {
 	Warning string // yellow
 	Info    string // blue
 
-	// Surfaces
-	Background   string // app surface — painted across the whole TUI
-	CodeBg       string // fenced code-block background (slightly distinct from app bg)
+	// Surfaces — only Border is currently painted; CodeBg/Background are
+	// kept on the struct for future "themed code blocks" support but unused.
+	CodeBg       string
 	Border       string
 	BorderActive string
 
@@ -55,17 +55,21 @@ type Palette struct {
 
 // Built-in palettes.
 
+// All themes assume a dark terminal background — we don't paint backgrounds,
+// the user's terminal bg shows through. Light variants are for users on
+// light-background terminals; their foreground colors are dark and would
+// be unreadable on dark terminals.
+
 var Dark = Palette{
 	Name:            "dark",
 	Primary:         "#CDD6E0",
-	Secondary:       "#8B92A0", // brighter than before so labels are readable on app bg
+	Secondary:       "#8B92A0",
 	Tertiary:        "#4A5160",
 	Accent:          "#DA7756",
 	Success:         "#4ADE80",
 	Danger:          "#F87171",
 	Warning:         "#FDE047",
 	Info:            "#60A5FA",
-	Background:      "#16181D", // very dark blue-black — distinct "app surface"
 	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
@@ -84,7 +88,6 @@ var Light = Palette{
 	Danger:          "#CF222E",
 	Warning:         "#9A6700",
 	Info:            "#0969DA",
-	Background:      "#FBFBFA", // off-white app surface
 	CodeBg:          "#F1F3F5",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
@@ -99,11 +102,10 @@ var DarkAccessible = Palette{
 	Secondary:       "#8B92A0",
 	Tertiary:        "#4A5160",
 	Accent:          "#DA7756",
-	Success:         "#3B82F6", // blue instead of green for deuteranopia
-	Danger:          "#F59E0B", // amber instead of red
+	Success:         "#3B82F6",
+	Danger:          "#F59E0B",
 	Warning:         "#FDE047",
 	Info:            "#A78BFA",
-	Background:      "#16181D",
 	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
@@ -118,11 +120,10 @@ var LightAccessible = Palette{
 	Secondary:       "#4D5560",
 	Tertiary:        "#9198A1",
 	Accent:          "#D77757",
-	Success:         "#0969DA", // blue instead of green
-	Danger:          "#9A6700", // amber instead of red
+	Success:         "#0969DA",
+	Danger:          "#9A6700",
 	Warning:         "#7C2D12",
 	Info:            "#6F42C1",
-	Background:      "#FBFBFA",
 	CodeBg:          "#F1F3F5",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",

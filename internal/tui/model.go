@@ -576,17 +576,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancelTurn = nil
 		ct := m.companionTurn
 		m.companionTurn = false
+		streamedText := m.streaming
 		if m.streaming != "" {
-			// Suppress companion-turn responses from chat history — they go
-			// straight to the bubble via maybeFireCompanionBubble below.
 			if !ct {
+				// Normal turn: commit to chat history.
 				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			}
 			m.streaming = ""
 		}
 		if msg.cancelled || isCancelError(msg.err) {
 			// Context was cancelled — Ctrl+C already committed partial history.
-			// Nothing to do here; never show an error bubble.
 		} else if msg.err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 			if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
@@ -595,18 +594,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.history = msg.history
 			m.tallyTokens()
-			// Persist new messages + cost snapshot to the session transcript.
 			m.persistNewMessages(msg.history)
 			if m.cfg.Session != nil && m.totalInputTokens > 0 {
 				_ = m.cfg.Session.AppendCost(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
 			}
-			// Companion speech bubble: if the response is a companion quip,
-			// show it only in the bubble — remove it from the chat history
-			// so it doesn't duplicate. Claude's responses stay in chat.
-			var bubbleCmd tea.Cmd
-			m, bubbleCmd = m.maybeFireCompanionBubble()
-			if bubbleCmd != nil {
-				cmds = append(cmds, bubbleCmd)
+			if ct && streamedText != "" {
+				// Companion turn: fire bubble directly from the streamed text
+				// without going through maybeFireCompanionBubble (which looks
+				// in m.messages, but we intentionally skipped appending there).
+				text := strings.TrimSpace(streamedText)
+				if text != "" {
+					cmds = append(cmds, func() tea.Msg { return companionBubbleMsg{text: text} })
+				}
+			} else {
+				// Normal turn: check if last message is a companion quip anyway
+				// (e.g. user mentioned name mid-message without companionTurn firing).
+				var bubbleCmd tea.Cmd
+				m, bubbleCmd = m.maybeFireCompanionBubble()
+				if bubbleCmd != nil {
+					cmds = append(cmds, bubbleCmd)
+				}
 			}
 		}
 		// Final assistant message just committed — refreshViewport's

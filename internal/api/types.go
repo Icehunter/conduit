@@ -89,13 +89,16 @@ type Message struct {
 }
 
 // ContentBlock is one block of content in a message.
-// Union of text | tool_use | tool_result. Fields are set according to Type.
+// Union of text | image | tool_use | tool_result. Fields are set according to Type.
 type ContentBlock struct {
 	// Common
-	Type string `json:"type"` // "text" | "tool_use" | "tool_result"
+	Type string `json:"type"` // "text" | "image" | "tool_use" | "tool_result"
 
 	// type=text
 	Text string `json:"text,omitempty"`
+
+	// type=image (user-sent images — clipboard paste, file attach)
+	Source *ImageSource `json:"source,omitempty"`
 
 	// type=tool_use (assistant → us)
 	ID    string         `json:"id,omitempty"`    // tool use ID, e.g. "toolu_01..."
@@ -107,6 +110,14 @@ type ContentBlock struct {
 	IsError   bool   `json:"is_error,omitempty"`
 	// Content for tool_result: string or []ContentBlock. We send string for simplicity.
 	ResultContent string `json:"content,omitempty"`
+}
+
+// ImageSource is the source payload for a type=image content block.
+// Mirrors the Anthropic API image source shape.
+type ImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+	Data      string `json:"data"`       // base64-encoded bytes
 }
 
 // MessageResponse is the JSON response shape from a non-streaming Messages call.

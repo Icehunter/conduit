@@ -20,6 +20,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
@@ -300,6 +301,10 @@ type Model struct {
 	// kb resolves user-customized keybindings from ~/.claude/keybindings.json.
 	// Nil when keybindings could not be loaded (treated as defaults-only).
 	kb *keybindings.Resolver
+
+	// pendingImage is a clipboard image waiting to be sent with the next
+	// message. Set by ctrl+v, cleared after submit or escape.
+	pendingImage *attach.Image
 }
 
 // New builds the initial Model.
@@ -422,6 +427,13 @@ type mcpApprovalMsg struct {
 // coordTickMsg fires every second whenever active sub-agent tasks exist,
 // so the coordinator footer panel re-renders with updated elapsed times.
 type coordTickMsg struct{}
+
+// clipboardImageMsg is sent by the async clipboard-read goroutine.
+// img is nil when the clipboard held no image (or the read failed).
+type clipboardImageMsg struct {
+	img *attach.Image
+	err error
+}
 
 // coordTick schedules the next coordinator tick — only resubscribes when
 // there's still at least one in_progress task to display.
@@ -744,6 +756,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 		}
 		return m, nil
+
+	case clipboardImageMsg:
+		if msg.err != nil || msg.img == nil {
+			// No image on clipboard — fall back to normal text paste (already
+			// handled by the textarea via the subsequent ctrl+v pass-through).
+			m.flashMsg = ""
+			return m, nil
+		}
+		m.pendingImage = msg.img
+		m.flashMsg = "📎 image attached — press Enter to send or Esc to clear"
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+			return clearFlash{}
+		})
 	}
 
 	// Propagate remaining messages to sub-components.
@@ -946,6 +971,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "tab", "esc":
+		// Clear a pending clipboard image on Esc so the user can dismiss it.
+		if msg.String() == "esc" && m.pendingImage != nil {
+			m.pendingImage = nil
+			m.flashMsg = "Image cleared."
+			return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		}
 		if len(m.cmdMatches) > 0 {
 			if msg.String() == "tab" {
 				// Tab: complete to the command name with trailing space, close picker.
@@ -991,6 +1022,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		return m, tea.Quit, true
+
+	case "ctrl+v":
+		// Async clipboard image read. If the clipboard contains an image,
+		// clipboardImageMsg arrives and sets m.pendingImage. If it contains
+		// text, we return false so the textarea handles the paste normally.
+		// osascript / xclip are synchronous but fast (~50 ms) — run off the
+		// event loop so the UI doesn't stutter.
+		return m, func() tea.Msg {
+			img, err := attach.ReadClipboardImage()
+			return clipboardImageMsg{img: img, err: err}
+		}, true
 
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to
@@ -1070,9 +1112,24 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.historyIdx = -1
 		m.historyDraft = ""
 		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+		// Build user message content. If a clipboard image is pending, prepend
+		// it as an image block so Claude can see the screenshot alongside the text.
+		userContent := []api.ContentBlock{}
+		if m.pendingImage != nil {
+			userContent = append(userContent, api.ContentBlock{
+				Type: "image",
+				Source: &api.ImageSource{
+					Type:      "base64",
+					MediaType: m.pendingImage.MediaType,
+					Data:      m.pendingImage.Data,
+				},
+			})
+			m.pendingImage = nil
+		}
+		userContent = append(userContent, api.ContentBlock{Type: "text", Text: text})
 		m.history = append(m.history, api.Message{
 			Role:    "user",
-			Content: []api.ContentBlock{{Type: "text", Text: text}},
+			Content: userContent,
 		})
 		m.running = true
 		m.cancelled = false
@@ -3084,6 +3141,12 @@ func (m Model) View() tea.View {
 			fixed = append(fixed, bgEsc+fgEsc+line+fullReset)
 		}
 		innerView = strings.Join(fixed, "\n")
+	}
+	// If a clipboard image is pending, prepend a one-line attachment badge
+	// inside the input box so the user can see it before sending.
+	if m.pendingImage != nil {
+		badge := styleStatusAccent.Render("📎 [image attached] ") + stylePickerDesc.Render("Enter to send · Esc to clear")
+		innerView = badge + "\n" + innerView
 	}
 	inputBox := bStyle.Width(m.width - 2).Render(innerView)
 

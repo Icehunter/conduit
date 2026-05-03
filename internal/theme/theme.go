@@ -85,7 +85,7 @@ var Dark = Palette{
 var Light = Palette{
 	Name:            "light",
 	Primary:         "#555555",
-	Secondary:       "#2C2C2C",
+	Secondary:       "#8C8C8C",
 	Tertiary:        "#AFAFAF",
 	Accent:          "#D77757",
 	Success:         "#2C7A39",
@@ -127,7 +127,7 @@ var DarkDaltonized = Palette{
 var LightDaltonized = Palette{
 	Name:            "light-daltonized",
 	Primary:         "#555555",
-	Secondary:       "#2C2C2C",
+	Secondary:       "#8C8C8C",
 	Tertiary:        "#AFAFAF",
 	Accent:          "#FF9933",
 	Success:         "#006699",

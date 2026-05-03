@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/outputstyles"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
@@ -66,6 +67,9 @@ type RunOptions struct {
 	EnterPlan *planmodetool.EnterPlanMode
 	ExitPlan  *planmodetool.ExitPlanMode
 	AskUser   *askusertool.AskUserQuestion
+
+	// InitialOutputStyle is the style name to activate at startup (from settings).
+	InitialOutputStyle string
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -242,6 +246,50 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			budget := internalmodel.ThinkingBudgets[level]
 			loop.SetThinkingBudget(budget)
 		},
+		// /rename — persist a title to the session JSONL.
+		RenameSession: func(title string) error {
+			if runOpts.Session == nil {
+				return fmt.Errorf("no active session")
+			}
+			return runOpts.Session.SetTitle(title)
+		},
+		// /files — deduplicated read/write lists from the session JSONL.
+		GetSessionFiles: func() (reads, writes []string) {
+			if runOpts.Session == nil {
+				return nil, nil
+			}
+			entries, err := session.LoadFileAccess(runOpts.Session.FilePath)
+			if err != nil {
+				return nil, nil
+			}
+			seenR, seenW := map[string]bool{}, map[string]bool{}
+			for _, e := range entries {
+				switch e.Op {
+				case "read":
+					if !seenR[e.Path] {
+						seenR[e.Path] = true
+						reads = append(reads, e.Path)
+					}
+				case "write":
+					if !seenW[e.Path] {
+						seenW[e.Path] = true
+						writes = append(writes, e.Path)
+					}
+				}
+			}
+			return reads, writes
+		},
+		// /usage — rate limit warning from LiveState.
+		GetRateLimitWarning: func() string {
+			return live.RateLimitWarning()
+		},
+		// /doctor — verify the stored bearer token is non-empty.
+		CheckAuth: func() error {
+			if runOpts.AuthErr != nil {
+				return runOpts.AuthErr
+			}
+			return nil
+		},
 	}
 	commands.RegisterSessionCommands(reg, state)
 
@@ -271,6 +319,19 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	}
 
 	m := New(cfg)
+	// Apply saved output style at startup.
+	if runOpts.InitialOutputStyle != "" {
+		styles, err := outputstyles.LoadAll(cwd)
+		if err == nil {
+			for i := range styles {
+				if styles[i].Name == runOpts.InitialOutputStyle {
+					m.outputStyleName = styles[i].Name
+					m.outputStylePrompt = styles[i].Prompt
+					break
+				}
+			}
+		}
+	}
 	modelPtr = &m
 	prog = tea.NewProgram(
 		m,

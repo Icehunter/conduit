@@ -48,6 +48,13 @@ func renderMessage(msg Message, width int) string {
 		if msg.WelcomeCard {
 			return renderWelcomeCard(msg.Content, width)
 		}
+		// If the content contains markdown (fenced block, heading), render it
+		// as markdown so code blocks, diff highlighting, etc. work.
+		trimmed := strings.TrimSpace(msg.Content)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "#") {
+			body := renderMarkdown(msg.Content, inner)
+			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
+		}
 		// Indent continuation lines to align with text after "· ".
 		const sysPrefix = "· "
 		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
@@ -490,7 +497,36 @@ var langComments = map[string][]string{
 	"java": {"//", "/*"}, "bash": {"#"}, "sh": {"#"},
 }
 
+var (
+	cDiffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Bold(false) // actually green
+	cDiffDel    = lipgloss.NewStyle().Foreground(lipgloss.Color("#F07178"))
+	cDiffHunk   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
+	cDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("#7986CB"))
+)
+
+func init() {
+	// Override with proper green — lipgloss colors set in var block above need
+	// to reference each other, so we fix the add color here.
+	cDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D"))
+}
+
 func highlightLine(line, lang string) string {
+	// Diff language: color by line prefix.
+	if lang == "diff" || lang == "patch" {
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			return cDiffHeader.Render(line)
+		case strings.HasPrefix(line, "+"):
+			return cDiffAdd.Render(line)
+		case strings.HasPrefix(line, "-"):
+			return cDiffDel.Render(line)
+		case strings.HasPrefix(line, "@@"):
+			return cDiffHunk.Render(line)
+		default:
+			return cPlain.Render(line)
+		}
+	}
+
 	// Whole-line comment check.
 	if prefixes, ok := langComments[lang]; ok {
 		trimmed := strings.TrimLeft(line, " \t")

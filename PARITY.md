@@ -30,7 +30,7 @@
 | M-L Token counting + fast mode | ✅ | /fast (⚡ badge), /effort (thinking budget), model.ThinkingBudgets map |
 | M-N Memory completion | ✅ | ScanMemories, RelevantMemories, /memory list/show/scan, age tracking |
 
-**Test count:** 412 passing, race clean (2026-05-02)
+**Test count:** 414 passing, race clean (2026-05-02)
 
 ---
 
@@ -67,16 +67,16 @@
 | Required headers (User-Agent, x-app, beta) | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | Exact headers matched |
 | Cache-control on system blocks | `services/api/` | `2831.js` | `internal/api/client.go` | ✅ | ephemeral + scope=global |
 | 401 refresh + retry | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | |
-| 429 retry-after handling | `utils/api.ts` | `4500.js` | `internal/api/client.go` | 🟡 | Basic retry, no backoff curve |
+| 429 retry-after handling | `utils/api.ts` | `4500.js` | `internal/api/retry.go` | ✅ | Exp backoff: base 1s, 2×, max 32s, jitter, 5 retries |
 | Request timeout (600s) | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | X-Stainless-Timeout: 600 |
 | Stainless headers | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | |
-| HTTP proxy support | `utils/proxy.ts` | — | ❌ | ❌ | HTTPS_PROXY not honored |
+| HTTP proxy support | `utils/proxy.ts` | — | `internal/api/retry.go` | ✅ | HTTPS_PROXY/HTTP_PROXY via NewClientWithProxy |
 | VCR request recording/playback | `services/vcr.ts` | — | ❌ | ⬛ | Debug/testing only |
 | API pre-connect optimization | `utils/apiPreconnect.ts` | — | ❌ | ❌ | Cold start optimization |
-| Rate limit quota tracking (5h/7d) | `services/claudeAiLimits.ts` | — | ❌ | ❌ | No quota warnings |
-| Rate limit messages | `services/rateLimitMessages.ts` | — | ❌ | ❌ | |
-| Token estimation | `services/tokenEstimation.ts` | — | ❌ | ❌ | |
-| Cost tracking | `cost-tracker.ts` (323 LOC) | — | `internal/tui/model.go` (partial) | 🟡 | Tracks cost display, no persistence |
+| Rate limit quota tracking | `services/claudeAiLimits.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | Parse anthropic-ratelimit-* headers, <20% warning in status bar |
+| Rate limit messages | `services/rateLimitMessages.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | WarningMessage() in status bar |
+| Token estimation | `services/tokenEstimation.ts` | — | `internal/tui/model.go` | 🟡 | Char/4 estimate; /context shows breakdown |
+| Cost tracking | `cost-tracker.ts` (323 LOC) | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
 
 ---
 
@@ -91,11 +91,11 @@
 | Billing header injection | — | `2831.js` | `internal/agent/systemprompt.go` | ✅ | |
 | Sub-agent spawning | `tools/AgentTool/` | — | `internal/agent/loop.go` `RunSubAgent` | ✅ | |
 | Max turns limit | `query.ts` | — | `internal/agent/loop.go` | ✅ | |
-| Context compaction (auto) | `services/compact/autoCompact.ts` | — | ❌ | ❌ | Manual /compact only |
+| Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Micro-compaction | `services/compact/microCompact.ts` | — | ❌ | ❌ | |
 | Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ❌ | |
-| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go` (partial) | 🟡 | Shows ctx%, no hard limits |
-| Extended thinking / effort modes | `utils/effort.ts` | — | ❌ | ❌ | No effort parameter sent |
+| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go`, `internal/tui/livestate.go` | 🟡 | Shows ctx%, no hard limits |
+| Extended thinking / effort modes | `utils/effort.ts` | — | `internal/model/model.go`, `internal/agent/loop.go` | ✅ | ThinkingBudgets map; /effort low\|medium\|high\|max; CLAUDE_THINKING_BUDGET env |
 | Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
 | Stop hooks (clean shutdown) | `query/stopHooks.ts` | — | `internal/hooks/hooks.go` `RunStop` | ✅ | |
 | Query profiler | `utils/queryProfiler.ts` | — | ❌ | ⬛ | Debug only |
@@ -115,40 +115,40 @@
 | ReadOnly + ConcurrencySafe flags | `Tool.ts` | — | `internal/tool/tool.go` | ✅ | |
 | Tool schema (JSON Schema) | `Tool.ts` | — | `internal/tool/*.go` | ✅ | |
 | Tool search / deferred loading | `tools/ToolSearchTool/` | — | `internal/tools/toolsearchtool/` | ✅ | |
-| Synthetic output tool | `tools/SyntheticOutputTool/` | — | ❌ | ❌ | |
+| Synthetic output tool | `tools/SyntheticOutputTool/` | — | `internal/tools/syntheticoutputtool/` | ✅ | |
 
 ### 4b. Individual Tools
 
 | Tool | TS Source | Decoded Chunk | Go (conduit) | Status | Notes |
 |------|-----------|--------------|--------------|--------|-------|
 | AgentTool (Task) | `tools/AgentTool/` | — | `internal/tools/agenttool/` | ✅ | Wire name "Task" |
-| AskUserQuestion | `tools/AskUserQuestionTool/` | — | ❌ | ❌ | No interactive prompt tool |
+| AskUserQuestion | `tools/AskUserQuestionTool/` | — | `internal/tools/askusertool/` | ✅ | Blocks on TUI permissionAskMsg |
 | BashTool | `tools/BashTool/` (18 files) | — | `internal/tools/bashtool/` | ✅ | RTK filtering wired |
-| BriefTool | `tools/BriefTool/` | — | ❌ | ❌ | |
-| ConfigTool | `tools/ConfigTool/` | — | ❌ | ❌ | |
-| EnterPlanMode | `tools/EnterPlanModeTool/` | — | ❌ | ❌ | |
-| EnterWorktree | `tools/EnterWorktreeTool/` | — | ❌ | ❌ | |
-| ExitPlanMode | `tools/ExitPlanModeTool/` | — | ❌ | ❌ | |
-| ExitWorktree | `tools/ExitWorktreeTool/` | — | ❌ | ❌ | |
+| BriefTool | `tools/BriefTool/` | — | ❌ | ⬛ | KAIROS-gated (GrowthBook build flag) |
+| ConfigTool | `tools/ConfigTool/` | — | `internal/tools/configtool/` | ✅ | get/set model, modes, allow/deny, env |
+| EnterPlanMode | `tools/EnterPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskEnter callback, sets plan mode |
+| EnterWorktree | `tools/EnterWorktreeTool/` | — | `internal/tools/worktreeTool/` | ✅ | git worktree add, switches cwd |
+| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskApprove callback, resets mode |
+| ExitWorktree | `tools/ExitWorktreeTool/` | — | `internal/tools/worktreeTool/` | ✅ | keep/remove action, branch cleanup |
 | FileEditTool | `tools/FileEditTool/` | — | `internal/tools/fileedittool/` | ✅ | |
 | FileReadTool | `tools/FileReadTool/` | — | `internal/tools/filereadtool/` | ✅ | |
 | FileWriteTool | `tools/FileWriteTool/` | — | `internal/tools/filewritetool/` | ✅ | |
 | GlobTool | `tools/GlobTool/` | — | `internal/tools/globtool/` | ✅ | |
 | GrepTool | `tools/GrepTool/` | — | `internal/tools/greptool/` | ✅ | rg backend |
-| ListMcpResources | `tools/ListMcpResourcesTool/` | — | ❌ | ❌ | MCP resource listing |
+| ListMcpResources | `tools/ListMcpResourcesTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Lists from all connected servers |
 | LSPTool | `tools/LSPTool/` | — | ❌ | ❌ | Language server |
 | McpAuthTool | `tools/McpAuthTool/` | — | ❌ | ❌ | MCP OAuth |
 | MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
 | NotebookEditTool | `tools/NotebookEditTool/` | — | `internal/tools/notebookedittool/` | ✅ | |
 | PowerShellTool | `tools/PowerShellTool/` | — | ❌ | ⬛ | Windows-only |
-| ReadMcpResource | `tools/ReadMcpResourceTool/` | — | ❌ | ❌ | MCP resource read |
-| RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ❌ | Remote execution |
+| ReadMcpResource | `tools/ReadMcpResourceTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Reads one resource by URI |
+| RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ⬛ | Remote-only (M10) |
 | REPLTool | `tools/REPLTool/` | — | `internal/tools/repltool/` | ✅ | |
-| ScheduleCronTool | `tools/ScheduleCronTool/` | — | ❌ | ❌ | Cron scheduling |
-| SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ❌ | Team messaging |
+| ScheduleCronTool | `tools/ScheduleCronTool/` | — | ❌ | ⬛ | KAIROS-gated (isKairosCronEnabled) |
+| SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ⬛ | Team messaging (descoped) |
 | SkillTool | `tools/SkillTool/` | — | `internal/tools/skilltool/` | ✅ | |
 | SleepTool | `tools/SleepTool/` | — | `internal/tools/sleeptool/` | ✅ | |
-| SyntheticOutputTool | `tools/SyntheticOutputTool/` | — | ❌ | ❌ | |
+| SyntheticOutputTool | `tools/SyntheticOutputTool/` | — | `internal/tools/syntheticoutputtool/` | ✅ | In-band coordinator signaling |
 | TaskCreateTool | `tools/TaskCreateTool/` | — | `internal/tools/tasktool/` | ✅ | |
 | TaskGetTool | `tools/TaskGetTool/` | — | `internal/tools/tasktool/` | ✅ | |
 | TaskListTool | `tools/TaskListTool/` | — | `internal/tools/tasktool/` | ✅ | |
@@ -179,11 +179,11 @@
 | Stop hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
 | Hook approve directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | Bypasses AskPermission |
 | Hook block directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
-| HTTP hooks | `utils/hooks/execHttpHook.ts` | — | ❌ | ❌ | Only command hooks |
-| Prompt hooks | `utils/hooks/execPromptHook.ts` | — | ❌ | ❌ | |
-| Agent hooks | `utils/hooks/execAgentHook.ts` | — | ❌ | ❌ | |
-| Async hook registry | `utils/hooks/AsyncHookRegistry.ts` | — | ❌ | ❌ | Background hooks |
-| Notification hooks | `hooks/notifs/` (16 files) | — | ❌ | ❌ | UI feedback hooks |
+| HTTP hooks | `utils/hooks/execHttpHook.ts` | — | `internal/hooks/http.go` | ✅ | POST JSON, parse decision |
+| Prompt hooks | `utils/hooks/execPromptHook.ts` | — | `internal/hooks/llm.go` | ✅ | Sub-agent prompt, inject result |
+| Agent hooks | `utils/hooks/execAgentHook.ts` | — | `internal/hooks/llm.go` | ✅ | Spawns full agent loop |
+| Async hook registry | `utils/hooks/AsyncHookRegistry.ts` | — | `internal/hooks/hooks.go` | ✅ | Non-blocking goroutine for async=true |
+| Notification hooks | `hooks/notifs/` (16 files) | — | `internal/hooks/notify.go` | ✅ | macOS osascript / Linux notify-send |
 | Bridge permission callbacks | `bridge/bridgePermissionCallbacks.ts` | — | ❌ | ⬛ | Bridge-only |
 | Interactive permission prompt (TUI) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 
@@ -195,7 +195,7 @@
 |---------|-----------|-----------------|--------------|--------|-------|
 | Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go` | ✅ | Bubble Tea vs React/Ink |
 | Message display (streaming) | `components/Messages.tsx` | — | `internal/tui/render.go` | ✅ | |
-| Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | 🟡 | Basic, no full GFM tables |
+| Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | ✅ | Full GFM: tables, headings, task lists, strikethrough, blockquotes, italic |
 | Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | 🟡 | Chroma-based |
 | Spinner / thinking indicator | `components/Spinner.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Status bar | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
@@ -209,13 +209,13 @@
 | Plugin panel (full) | `commands/plugin/` | — | `internal/tui/pluginpanel.go` | ✅ | conduit-only |
 | Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | 🟡 | Basic, no fancy UI |
 | Cost display | `components/Stats.tsx` | — | `internal/tui/model.go` | 🟡 | Status bar only |
-| Context visualization | `components/ContextVisualization.tsx` | — | ❌ | ❌ | |
+| Context visualization | `components/ContextVisualization.tsx` | — | `/context` command | ✅ | Bar chart of tokens: system/history/tools/remaining |
 | Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | 🟡 | No true virtualization |
 | Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
-| Doctor screen | `screens/Doctor.tsx` | — | ❌ | ❌ | |
-| Stats screen | `components/Stats.tsx` | — | ❌ | ❌ | |
+| Doctor screen | `screens/Doctor.tsx` | — | `/doctor` command (text) | 🟡 | Text output; no full TUI panel |
+| Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
 | Log selector | `components/LogSelector.tsx` | — | ❌ | ❌ | |
 | Global search dialog | `components/GlobalSearchDialog.tsx` | — | ❌ | ❌ | |
 | Model picker dialog | `components/ModelPicker.tsx` | — | `/model` command only | 🟡 | No visual picker |
@@ -259,47 +259,48 @@
 | /rtk gain | — | `internal/commands/rtk.go` | ✅ | conduit-only |
 | /buddy | — | `internal/commands/buddy.go` | ✅ | conduit-only |
 | /keybindings | `commands/keybindings/` | `internal/commands/session.go` | 🟡 | Shows hardcoded list |
-| /plan | `commands/plan/` | `internal/commands/misc.go` | 🟡 | Sets mode only, no EnterPlanMode tool |
-| /memory | `commands/memory/` | ❌ | ❌ | Show/edit memory files |
-| /config | `commands/config/` | ❌ | ❌ | |
-| /context | `commands/context/` | ❌ | ❌ | |
-| /diff | `commands/diff/` | ❌ | ❌ | |
-| /doctor | `commands/doctor/` | ❌ | ❌ | |
-| /effort | `commands/effort/` | ❌ | ❌ | |
-| /fast | `commands/fast/` | ❌ | ❌ | |
+| /plan | `commands/plan/` | `internal/commands/misc.go` | ✅ | Sets plan mode; EnterPlanMode tool wired |
+| /memory | `commands/memory/` | `internal/commands/session.go` | ✅ | list\|show\|scan subcommands; memdir.ScanMemories |
+| /config | `commands/config/` | `internal/commands/session.go` | ✅ | list / get <key> / set <key> <value>; raw-map write |
+| /context | `commands/context/` | `internal/commands/session.go` | ✅ | Bar chart + token breakdown + remaining |
+| /diff | `commands/diff/` | `internal/commands/session.go` | ✅ | git diff of files edited this session |
+| /doctor | `commands/doctor/` | `internal/commands/session.go` | ✅ | auth, MCP, settings health check |
+| /effort | `commands/effort/` | `internal/commands/session.go` | ✅ | low\|medium\|high\|max thinking budget |
+| /fast | `commands/fast/` | `internal/commands/session.go` | ✅ | Toggles model; ⚡ in status bar |
 | /feedback | `commands/feedback/` | ❌ | ⬛ | Anthropic-internal |
-| /files | `commands/files/` | ❌ | ❌ | |
+| /files | `commands/files/` | `internal/commands/session.go` | ✅ | Files read/written this session |
 | /ide | `commands/ide/` | ❌ | ⬛ | Bridge-only |
-| /review | `commands/review/` | ❌ | ❌ | |
-| /session | `commands/session/` | ❌ | ❌ | |
-| /stats | `commands/stats/` | ❌ | ❌ | |
-| /status | `commands/status/` | ❌ | ❌ | |
-| /tag | `commands/tag/` | ❌ | ❌ | |
-| /tasks | `commands/tasks/` | ❌ | ❌ | |
-| /theme | `commands/theme/` | ❌ | ❌ | |
-| /usage | `commands/usage/` | ❌ | ❌ | |
+| /review | `commands/review/` | `internal/commands/session.go` | ✅ | /compact + summary |
+| /session | `commands/session/` | `internal/commands/session.go` | ✅ | ID, path, message count, duration |
+| /stats | `commands/stats/` | `internal/commands/session.go` + settings panel | ✅ | Opens Stats panel (Overview + Models tabs) |
+| /status | `commands/status/` | `internal/commands/session.go` | ✅ | Model, mode, session ID, cost, context% |
+| /tag | `commands/tag/` | ❌ | ❌ | Session tagging |
+| /tasks | `commands/tasks/` | `internal/commands/session.go` | ✅ | Lists active TaskTool tasks |
+| /theme | `commands/theme/` | `internal/commands/misc.go` | ✅ | Set dark/light/accessible theme |
+| /usage | `commands/usage/` | `internal/commands/session.go` | ✅ | Token/cost breakdown by turn |
 | /vim | `commands/vim/` | ❌ | ❌ | Vim mode not implemented |
-| /voice | `commands/voice/` | ❌ | ❌ | |
-| /rename | `commands/rename/` | ❌ | ❌ | |
-| /sandbox-toggle | `commands/sandbox-toggle/` | ❌ | ⬛ | |
+| /voice | `commands/voice/` | ❌ | ⬛ | Requires cgo audio |
+| /rename | `commands/rename/` | `internal/commands/session.go` | ✅ | Renames current session |
+| /sandbox-toggle | `commands/sandbox-toggle/` | ❌ | ⬛ | Anthropic-internal |
 | /install-github-app | `commands/install-github-app/` | ❌ | ⬛ | Anthropic-internal |
 | /install-slack-app | `commands/install-slack-app/` | ❌ | ⬛ | Anthropic-internal |
 | /bridge | `commands/bridge/` | ❌ | ⬛ | Bridge-only |
 | /remote-env | `commands/remote-env/` | ❌ | ⬛ | Remote-only |
 | /remote-setup | `commands/remote-setup/` | ❌ | ⬛ | Remote-only |
-| /agents | `commands/agents/` | ❌ | ❌ | |
-| /stickers | `commands/stickers/` | ❌ | ⬛ | |
-| /thinkback | `commands/thinkback/` | ❌ | ❌ | Extended thinking review |
-| /thinkback-play | `commands/thinkback-play/` | ❌ | ❌ | |
+| /agents | `commands/agents/` | `internal/commands/session.go` | ✅ | Lists active sub-agents |
+| /stickers | `commands/stickers/` | ❌ | ⬛ | Cosmetic |
+| /thinkback | `commands/thinkback/` | `internal/commands/session.go` | ✅ | Shows last thinking blocks |
+| /thinkback-play | `commands/thinkback-play/` | ❌ | ❌ | Replay thinking animation |
 | /upgrade | `commands/upgrade/` | ❌ | ⬛ | Auto-update |
-| /color | `commands/color/` | ❌ | ❌ | |
-| /copy | `commands/copy/` | ❌ | ❌ | |
-| /passes | `commands/passes/` | ❌ | ❌ | |
-| /rate-limit-options | `commands/rate-limit-options/` | ❌ | ❌ | |
+| /color | `commands/color/` | `internal/commands/session.go` | ✅ | Toggle ANSI color output |
+| /copy | `commands/copy/` | `internal/commands/session.go` | ✅ | Copies last response to clipboard |
+| /search | — | `internal/commands/session.go` | ✅ | conduit-only; scans JSONL transcripts |
+| /pr-comments | `commands/pr_comments/` | `internal/commands/session.go` | ✅ | conduit-only; PR review workflow |
+| /passes | `commands/passes/` | ❌ | ❌ | Multi-pass analysis |
+| /rate-limit-options | `commands/rate-limit-options/` | ❌ | ❌ | Rate limit config |
 | /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
-| /extra-usage | `commands/extra-usage/` | ❌ | ❌ | |
-| /pr_comments | `commands/pr_comments/` | ❌ | ❌ | |
-| /terminalSetup | `commands/terminalSetup/` | ❌ | ❌ | |
+| /extra-usage | `commands/extra-usage/` | ❌ | ❌ | Extended usage breakdown |
+| /terminalSetup | `commands/terminalSetup/` | ❌ | ❌ | Shell integration setup |
 
 ---
 
@@ -316,8 +317,8 @@
 | Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
 | MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | ❌ | ❌ | No per-server approval prompt |
 | OAuth for MCP servers | `services/mcp/` | — | ❌ | ❌ | McpAuthTool not implemented |
-| MCP resource listing | `tools/ListMcpResourcesTool/` | — | ❌ | ❌ | |
-| MCP resource reading | `tools/ReadMcpResourceTool/` | — | ❌ | ❌ | |
+| MCP resource listing | `tools/ListMcpResourcesTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/list JSON-RPC |
+| MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
 | MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | ❌ | ❌ | |
 | MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | ❌ | ❌ | |
 | LSP integration | `services/lsp/` (7 files) | — | ❌ | ❌ | |
@@ -360,9 +361,9 @@
 | Auto-dream gate (24h + 5 sessions) | `services/autoDream/` | `3899.js` | `internal/memdir/dream.go` | ✅ | |
 | Auto-dream consolidation prompt | `services/autoDream/consolidationPrompt.ts` | — | `internal/memdir/dream.go` | ✅ | 4-phase prompt |
 | Dream lock file | `services/autoDream/` | — | `internal/memdir/dream.go` | ✅ | |
-| Memory scanning utilities | `memdir/memoryScan.ts` | — | ❌ | ❌ | |
-| Memory age tracking | `memdir/memoryAge.ts` | — | ❌ | ❌ | |
-| Relevant memory search | `memdir/findRelevantMemories.ts` | — | ❌ | ❌ | Embedding-based search |
+| Memory scanning utilities | `memdir/memoryScan.ts` | — | `internal/memdir/scan.go` | ✅ | ScanMemories, FormatMemoryList, formatAge |
+| Memory age tracking | `memdir/memoryAge.ts` | — | `internal/memdir/scan.go` | ✅ | ModTime tracking, human-readable age |
+| Relevant memory search | `memdir/findRelevantMemories.ts` | — | `internal/memdir/scan.go` | ✅ | Keyword matching (no embeddings) |
 | Memory extraction from conversations | `services/extractMemories/` | — | ❌ | ❌ | |
 | Session memory management | `services/SessionMemory/` | `3901.js` | ❌ | ❌ | |
 | Team memory paths | `memdir/teamMemPaths.ts` | — | ❌ | ⬛ | Team feature |
@@ -387,7 +388,7 @@
 | ANSI stripping | RTK Rust source | — | `internal/rtk/ansi.go` | ✅ | |
 | SQLite tracking (history.db) | RTK Rust source | — | `internal/rtk/track/track.go` | ✅ | modernc.org/sqlite |
 | /rtk gain command | RTK Rust binary | — | `internal/commands/rtk.go` | ✅ | |
-| rtk discover (transcript scan) | RTK Rust binary | — | ❌ | ❌ | Stub only |
+| rtk discover (transcript scan) | RTK Rust binary | — | `internal/commands/rtk.go` | ✅ | Scans JSONL sessions for unclassified Bash commands; ranks by frequency |
 | BashTool integration | — | — | `internal/tools/bashtool/` | ✅ | Filter on every exec |
 | Env var stripping in classify | RTK Rust source | — | `internal/rtk/registry.go` | ✅ | |
 
@@ -401,17 +402,17 @@
 | Session path sanitization | `utils/sessionStoragePortable.ts` | — | `internal/session/session.go` | ✅ | djb2 hash fallback |
 | Session list (newest first) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | ✅ | |
 | Session resume (--continue) | `utils/sessionRestore.ts` | — | `cmd/claude/main.go` | ✅ | |
-| Session title | `utils/sessionTitle.ts` | — | `internal/session/session.go` | 🟡 | SetTitle() exists, not displayed |
+| Session title | `utils/sessionTitle.ts` | — | `internal/session/session.go`, `internal/tui/model.go` | ✅ | Shown in status bar; /rename persists; auto-title from first message |
 | Session summary (compact) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | 🟡 | SetSummary() exists |
 | Message compaction | `services/compact/compact.ts` | — | `internal/compact/compact.go` | ✅ | |
-| Auto-compaction | `services/compact/autoCompact.ts` | — | ❌ | ❌ | Manual only |
+| Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Conversation recovery | `utils/conversationRecovery.ts` | — | ❌ | ❌ | |
-| File access history | `utils/fileHistory.ts` | — | ❌ | ❌ | |
+| File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
 | Session activity tracking | `utils/sessionActivity.ts` | — | ❌ | ❌ | |
-| Session environment setup | `utils/sessionEnvironment.ts` | — | ❌ | ❌ | |
+| Session environment setup | `utils/sessionEnvironment.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv + cleanup restore |
 | Session URL handling | `utils/sessionUrl.ts` | — | ❌ | ❌ | |
-| Cost tracking persistence | `cost-tracker.ts` | — | ❌ | ❌ | In-memory only |
-| Transcript search | `utils/transcriptSearch.ts` | — | ❌ | ❌ | |
+| Cost tracking persistence | `cost-tracker.ts` | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
+| Transcript search | `utils/transcriptSearch.ts` | — | `internal/session/extras.go` | ✅ | Case-insensitive JSONL search |
 
 ---
 
@@ -424,17 +425,17 @@
 | Hook settings parsing | `schemas/hooks.ts` | — | `internal/settings/settings.go` | ✅ | |
 | Plugin enable/disable | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | |
 | Settings file preservation on update | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | Raw JSON map |
-| CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | — | ❌ | ❌ | Per-project instructions |
-| Output style setting | `utils/config.ts` | — | ❌ | ❌ | Not persisted |
-| Environment variable management | `utils/env.ts`, `envDynamic.ts` | — | ❌ | ❌ | |
+| CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | — | `internal/claudemd/claudemd.go` | ✅ | Dir walk, @include, .claudeignore, per-session cache |
+| Output style setting | `utils/config.ts` | — | `internal/settings/settings.go`, `internal/tui/run.go` | ✅ | Persisted to settings.json; loaded on startup |
+| Environment variable management | `utils/env.ts`, `envDynamic.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv; session.Env injected into BashTool subprocess |
 | Managed env constants | `utils/managedEnvConstants.ts` | — | ❌ | ❌ | |
 | Remote managed settings | `services/remoteManagedSettings/` | — | ❌ | ⬛ | Anthropic-internal |
 | Settings sync service | `services/settingsSync/` | — | ❌ | ⬛ | Anthropic-internal |
 | Platform-specific settings | `utils/platformSettings.ts` | — | ❌ | ❌ | |
 | GrowthBook feature flags | `utils/featureFlags.ts` | — | ❌ | ⬛ | Anthropic-internal |
 | Migrations | `migrations/` (11 files) | — | ❌ | ❌ | Schema migration system |
-| XDG base directory | `utils/xdg.ts` | — | ❌ | ❌ | |
-| Windows paths | `utils/windowsPaths.ts` | — | ❌ | ❌ | |
+| XDG base directory | `utils/xdg.ts` | — | `internal/settings/env.go` `claudeDir()` | ✅ | XDG_CONFIG_HOME/claude on Linux |
+| Windows paths | `utils/windowsPaths.ts` | — | `internal/settings/env.go` `claudeDir()` | ✅ | %APPDATA%/claude on Windows |
 
 ---
 
@@ -566,7 +567,7 @@
 | File read cache | `utils/fileReadCache.ts` | ❌ | ❌ | |
 | Shell command wrapper | `utils/ShellCommand.ts` | ❌ | ❌ | |
 | Shell config | `utils/shellConfig.ts` | ❌ | ❌ | |
-| HTTP proxy | `utils/proxy.ts` | ❌ | ❌ | |
+| HTTP proxy | `utils/proxy.ts` | `internal/api/retry.go` `NewClientWithProxy` | ✅ | HTTPS_PROXY / HTTP_PROXY env vars |
 | Markdown utilities | `utils/markdown.ts` | ❌ | ❌ | |
 | Memoization | `utils/memoize.ts` | ❌ | ❌ | sync.Once used ad-hoc |
 | Cron scheduler | `utils/cronScheduler.ts` (565 LOC) | ❌ | ❌ | |
@@ -575,7 +576,7 @@
 | String utilities | `utils/stringUtils.ts` | ❌ | ❌ | |
 | Word utilities | `utils/words.ts` | ❌ | ❌ | |
 | Context analysis | `utils/analyzeContext.ts` | ❌ | ❌ | |
-| CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | ❌ | ❌ | |
+| CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | `internal/claudemd/claudemd.go` | ✅ | Done in M-A |
 | Auto-updater | `utils/autoUpdater.ts` | ❌ | ⬛ | |
 | Platform detection | `utils/platform.ts` | `cmd/claude/util.go` | 🟡 | OS/arch only |
 | Glob utilities | `utils/glob.ts` | `internal/tools/globtool/` | 🟡 | In tool only |
@@ -597,32 +598,32 @@
 | Area | ✅ Complete | 🟡 Partial | ❌ Missing | ⬛ Descoped | Total |
 |------|------------|-----------|-----------|------------|-------|
 | Auth & OAuth | 9 | 0 | 6 | 3 | 18 |
-| API Client & SSE | 7 | 2 | 4 | 0 | 13 |
-| Agent Loop | 8 | 2 | 4 | 0 | 14 |
-| Tools (framework) | 5 | 0 | 2 | 0 | 7 |
-| Tools (individual, 40) | 24 | 0 | 14 | 2 | 40 |
-| Permissions & Hooks | 11 | 0 | 7 | 1 | 19 |
-| TUI & Rendering | 12 | 7 | 13 | 0 | 32 |
-| Slash Commands | 22 | 3 | 24 | 11 | 60 |
-| MCP Host | 7 | 0 | 6 | 0 | 13 |
+| API Client & SSE | 9 | 1 | 2 | 0 | 12 |
+| Agent Loop | 10 | 1 | 2 | 1 | 14 |
+| Tools (framework) | 6 | 0 | 1 | 0 | 7 |
+| Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
+| Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
+| TUI & Rendering | 15 | 6 | 10 | 0 | 31 |
+| Slash Commands | 40 | 1 | 7 | 12 | 60 |
+| MCP Host | 9 | 0 | 4 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
-| Memory System | 5 | 0 | 8 | 3 | 16 |
+| Memory System | 8 | 0 | 5 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
-| Session & History | 5 | 3 | 7 | 0 | 15 |
-| Config & Settings | 5 | 0 | 10 | 3 | 18 |
+| Session & History | 10 | 1 | 3 | 0 | 14 |
+| Config & Settings | 8 | 0 | 7 | 3 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
 | Coordinator / Swarms | 0 | 1 | 8 | 0 | 9 |
 | Attachments (M13) | 0 | 0 | 11 | 0 | 11 |
-| Buddy / Voice / KAIROS | 5 | 1 | 6 | 1 | 13 |
+| Buddy / Voice / KAIROS | 5 | 1 | 5 | 2 | 13 |
 | Output Styles & Undercover | 6 | 0 | 3 | 0 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **156** | **22** | **174** | **37** | **389** |
+| **TOTAL** | **208** | **15** | **120** | **43** | **386** |
 
-**Overall parity: 178/352 scoped features (51% complete, 11% partial)**
-**Descoped: 37 features (intentionally excluded)**
+**Overall parity: 223/343 scoped features (65% complete, 4% partial)**
+**Descoped: 43 features (intentionally excluded)**
 
 ---
 
@@ -640,29 +641,42 @@
 | M8 — Plugins + Skills + memdir | Plugin ecosystem, skill tool, memory/dream | ✅ Done |
 | M9 — Multi-agent | AgentTool, RunSubAgent, parallel tools | ✅ Done |
 | M11 — Cosmetic parity | Buddy, output styles, undercover | ✅ Done |
+| M-A — CLAUDE.md loading | Dir walk, @include, .claudeignore, session cache | ✅ Done |
+| M-B — Agent/API gaps | Backoff, proxy, auto-compact, thinking budget, rate limits | ✅ Done |
+| M-C — Missing tools | EnterPlanMode, ExitPlanMode, AskUser, Config, SyntheticOutput, worktree, MCP resources | ✅ Done |
+| M-D — Missing slash commands | /status /tasks /agents /thinkback /color /copy /search /session /memory /context /effort /fast | ✅ Done |
+| M-E — Hook completion | HTTP, prompt, agent hooks; async; desktop notifications | ✅ Done |
+| M-F — Session completion | Cost persistence, file access, transcript search, title extraction | ✅ Done |
+| M-G — Config completion | Env injection, XDG/Windows claudeDir(), ApplyEnv | ✅ Done |
+| M-H — MCP completion | ListResources, ReadResource on all transports | ✅ Done |
+| M-I — TUI polish | Full GFM: tables, headings, italic, strikethrough, task lists, blockquotes | ✅ Done |
+| M-J — Worktree support | EnterWorktree, ExitWorktree, sanitizeSlug, IsInsideWorktree | ✅ Done |
+| M-K — Rate limit display | anthropic-ratelimit-* parse, <20% warning, status bar badge | ✅ Done |
+| M-L — Fast mode + effort | /fast ⚡, /effort low\|medium\|high\|max, ThinkingBudgets | ✅ Done |
+| M-N — Memory completion | ScanMemories, RelevantMemories, /memory list\|show\|scan, age tracking | ✅ Done |
 | **M10 — Bridge (IDE)** | 21 bridge features | ❌ Not started |
 | **M12 — Hardening** | Conformance tests, benchmarks | ❌ Not started |
 | **M13 — Attachments** | Image/PDF paste, drag-drop | ❌ Not started |
-| **M14 — Missing features (scoped)** | CLAUDE.md, auto-compact, vim mode, 24 missing commands, coordinator full impl | ❌ Planned |
 
 ---
 
 ## Key Missing Features (Not in Any Milestone Yet)
 
-These are implemented in Claude Code but not yet in conduit and not in M10/M13:
+These are implemented in Claude Code but not yet in conduit and not in M10/M13 (as of 2026-05-02):
 
-1. **CLAUDE.md loading** — per-project and per-directory instruction files (`utils/claudemd.ts`, 1479 LOC). High value.
-2. **Auto-compact** — automatic context compaction when approaching limits. High value.
-3. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value.
-4. **Custom keybindings** — user-defined key mappings. Low value.
-5. **HTTP proxy support** — `HTTPS_PROXY` env not honored. Medium value.
-6. **Rate limit quota tracking** — 5h/7d window warnings. Medium value.
-7. **AskUserQuestion tool** — model can prompt user for input. Medium value.
-8. **EnterPlanMode / ExitPlanMode tools** — model-initiated plan mode. Medium value.
-9. **MCP resource listing/reading tools** — ListMcpResources, ReadMcpResource. Low value.
-10. **Output style persistence** — active style not saved between sessions. Low value.
-11. **Missing slash commands (24)** — /memory, /config, /context, /diff, /doctor, /effort, /files, /review, /session, /stats, /status, /tasks, /thinkback, /usage, /agents, /vim, etc.
-12. **Conversation recovery** — mid-turn error recovery. Medium value.
-13. **API preconnect** — warm connection on startup. Low value.
-14. **Token counting** — actual token estimation before sending. Medium value.
-15. **KAIROS / Assistant mode** — GrowthBook-gated, probably not worth porting.
+1. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value; large effort.
+2. **Custom keybindings** — user-defined key mappings. Low value.
+3. **Conversation recovery** — mid-turn error recovery (`utils/conversationRecovery.ts`). Medium value.
+4. **API preconnect** — warm TCP connection to api.anthropic.com on startup. Low value.
+5. **Token counting (accurate)** — cl100k token estimation before sending. Medium value.
+6. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
+7. **Plugin signature verification** — git commit sig check on install.
+8. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
+9. **Session memory service** — inject recent session summaries on resume (`services/SessionMemory/`).
+10. **Memory extraction** — auto-extract memorable facts after session end (`services/extractMemories/`).
+11. **/tag command** — tag sessions for later retrieval.
+12. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
+
+**Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
+
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap).

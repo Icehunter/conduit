@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -46,6 +48,14 @@ type SessionState struct {
 	// CopyLastResponse copies the last assistant response to clipboard.
 	// Returns "" on success, error message otherwise.
 	CopyLast    func() string
+	// RenameSession sets the title of the current session.
+	RenameSession func(title string) error
+	// GetSessionFiles returns (reads, writes) file paths from session JSONL.
+	GetSessionFiles func() (reads, writes []string)
+	// GetRateLimitWarning returns the current rate limit warning string (empty if none).
+	GetRateLimitWarning func() string
+	// CheckAuth returns nil if the current bearer token is valid, error otherwise.
+	CheckAuth func() error
 }
 
 // RegisterSessionCommands registers all session-dependent slash commands.
@@ -157,87 +167,198 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 	// /diff
 	r.Register(Command{
 		Name:        "diff",
-		Description: "View uncommitted changes (git diff)",
+		Description: "Show git diff of files edited this session (or all changes with --all)",
 		Handler: func(args string) Result {
 			cwd := "."
 			if state.GetCwd != nil {
 				cwd = state.GetCwd()
 			}
-			cmd := exec.Command("git", "-C", cwd, "diff", "--stat")
-			out, err := cmd.Output()
+			showAll := strings.TrimSpace(args) == "--all" || state.GetSessionFiles == nil
+
+			var gitArgs []string
+			if showAll {
+				gitArgs = []string{"-C", cwd, "diff"}
+			} else {
+				_, writes := state.GetSessionFiles()
+				if len(writes) == 0 {
+					// Fall back to full diff if no session writes recorded yet.
+					gitArgs = []string{"-C", cwd, "diff"}
+				} else {
+					gitArgs = append([]string{"-C", cwd, "diff", "--"}, writes...)
+				}
+			}
+
+			out, err := exec.Command("git", gitArgs...).Output()
 			if err != nil {
-				return Result{Type: "error", Text: fmt.Sprintf("git diff failed: %v", err)}
+				// git diff exits non-zero when there are differences on some versions;
+				// treat non-empty output as success.
+				if len(out) == 0 {
+					return Result{Type: "error", Text: fmt.Sprintf("git diff: %v", err)}
+				}
 			}
 			if len(out) == 0 {
-				return Result{Type: "text", Text: "No uncommitted changes."}
+				return Result{Type: "text", Text: "No changes to session files."}
 			}
-			return Result{Type: "text", Text: strings.TrimSpace(string(out))}
+			return Result{Type: "text", Text: "```diff\n" + strings.TrimSpace(string(out)) + "\n```"}
 		},
 	})
 
 	// /doctor
 	r.Register(Command{
 		Name:        "doctor",
-		Description: "Diagnose and verify your Claude Code installation",
+		Description: "Check auth, tools, and settings",
 		Handler: func(string) Result {
+			bold := "\033[1m"
+			green := "\033[32m"
+			red := "\033[31m"
+			dim := "\033[2m"
+			reset := "\033[0m"
+
+			check := func(ok bool) string {
+				if ok {
+					return green + "✓" + reset
+				}
+				return red + "✗" + reset
+			}
+			row := func(lbl, val, hint string) string {
+				return fmt.Sprintf("  %s%-14s%s %s%s\n", bold, lbl, reset, val, hint)
+			}
+
 			var sb strings.Builder
-			sb.WriteString("Claude Code Diagnostics\n\n")
+			sb.WriteString(bold + "Conduit diagnostics" + reset + "\n\n")
 
-			// Binary
 			exe, _ := os.Executable()
-			sb.WriteString(fmt.Sprintf("Binary: %s\n", exe))
-			sb.WriteString(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH))
+			sb.WriteString(row("Binary:", exe, ""))
+			sb.WriteString(row("Platform:", runtime.GOOS+"/"+runtime.GOARCH, ""))
+			sb.WriteByte('\n')
 
-			// git
-			if _, err := exec.LookPath("git"); err == nil {
-				out, _ := exec.Command("git", "--version").Output()
-				sb.WriteString(fmt.Sprintf("git: %s", strings.TrimSpace(string(out))))
-			} else {
-				sb.WriteString("git: not found")
+			authOK := false
+			if state.CheckAuth != nil {
+				authOK = state.CheckAuth() == nil
 			}
-			sb.WriteByte('\n')
-
-			// rg
-			if _, err := exec.LookPath("rg"); err == nil {
-				sb.WriteString("ripgrep: found ✓")
-			} else {
-				sb.WriteString("ripgrep: not found (GrepTool will use grep fallback)")
+			authHint := ""
+			if !authOK {
+				authHint = dim + "  (run /login)" + reset
 			}
-			sb.WriteByte('\n')
+			sb.WriteString(row("Auth:", check(authOK), authHint))
 
-			// Credentials hint — actual check is via keyring, just note the state
-			sb.WriteString("Credentials: use /login if not authenticated")
-			sb.WriteByte('\n')
+			_, gitErr := exec.LookPath("git")
+			sb.WriteString(row("git:", check(gitErr == nil), ""))
+
+			_, rgErr := exec.LookPath("rg")
+			rgHint := ""
+			if rgErr != nil {
+				rgHint = dim + "  (GrepTool uses grep fallback)" + reset
+			}
+			sb.WriteString(row("ripgrep:", check(rgErr == nil), rgHint))
+
+			home, _ := os.UserHomeDir()
+			_, settingsErr := os.Stat(home + "/.claude/settings.json")
+			sb.WriteString(row("settings:", check(settingsErr == nil), ""))
+
+			_, claudeErr := os.Stat(home + "/.claude.json")
+			sb.WriteString(row("claude.json:", check(claudeErr == nil), ""))
 
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+		},
+	})
+
+	// /config [get <key> | set <key> <value> | list]
+	// With no args → opens full-screen Settings panel on Config tab.
+	r.Register(Command{
+		Name:        "config",
+		Description: "Open settings panel, or: /config get <key> | set <key> <value> | list",
+		Handler: func(args string) Result {
+			home, _ := os.UserHomeDir()
+			settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+			parts := strings.Fields(args)
+			sub := ""
+			if len(parts) > 0 {
+				sub = strings.ToLower(parts[0])
+			}
+
+			// No args → open full-screen settings panel on Config tab.
+			if sub == "" {
+				return Result{Type: "settings-panel", Text: "config"}
+			}
+
+			switch sub {
+			case "list":
+				data, err := os.ReadFile(settingsPath)
+				if err != nil {
+					return Result{Type: "text", Text: "No settings file found at " + settingsPath}
+				}
+				var raw map[string]interface{}
+				if err := json.Unmarshal(data, &raw); err != nil {
+					return Result{Type: "error", Text: "settings.json parse error: " + err.Error()}
+				}
+				out, _ := json.MarshalIndent(raw, "", "  ")
+				return Result{Type: "text", Text: "```json\n" + string(out) + "\n```"}
+
+			case "get":
+				if len(parts) < 2 {
+					return Result{Type: "error", Text: "Usage: /config get <key>"}
+				}
+				key := parts[1]
+				data, err := os.ReadFile(settingsPath)
+				if err != nil {
+					return Result{Type: "text", Text: key + ": (not set)"}
+				}
+				var raw map[string]interface{}
+				_ = json.Unmarshal(data, &raw)
+				val := getNestedKey(raw, key)
+				out, _ := json.MarshalIndent(val, "", "  ")
+				return Result{Type: "text", Text: key + ": " + string(out)}
+
+			case "set":
+				if len(parts) < 3 {
+					return Result{Type: "error", Text: "Usage: /config set <key> <value>"}
+				}
+				key := parts[1]
+				valueStr := strings.Join(parts[2:], " ")
+				// Try to parse as JSON, fall back to plain string.
+				var value interface{}
+				if err := json.Unmarshal([]byte(valueStr), &value); err != nil {
+					value = valueStr
+				}
+				if err := upsertSettingsKey(settingsPath, key, value); err != nil {
+					return Result{Type: "error", Text: "failed to update settings: " + err.Error()}
+				}
+				return Result{Type: "flash", Text: "✓ Set " + key}
+
+			default:
+				return Result{Type: "error", Text: "Usage: /config list | get <key> | set <key> <value>"}
+			}
 		},
 	})
 
 	// /files
 	r.Register(Command{
 		Name:        "files",
-		Description: "List all files currently referenced in the conversation",
+		Description: "List files read and written this session",
 		Handler: func(string) Result {
-			if state.GetHistory == nil {
-				return Result{Type: "text", Text: "No files in current context."}
+			if state.GetSessionFiles == nil {
+				return Result{Type: "text", Text: "File tracking not available."}
 			}
-			// Scan history messages for file tool calls.
-			seen := map[string]bool{}
-			var files []string
-			for _, msg := range state.GetHistory() {
-				// Simple heuristic: look for absolute paths.
-				words := strings.Fields(msg)
-				for _, w := range words {
-					if strings.HasPrefix(w, "/") && !seen[w] {
-						seen[w] = true
-						files = append(files, w)
-					}
+			reads, writes := state.GetSessionFiles()
+			if len(reads) == 0 && len(writes) == 0 {
+				return Result{Type: "text", Text: "No files accessed this session."}
+			}
+			var sb strings.Builder
+			if len(writes) > 0 {
+				sb.WriteString("Written:\n")
+				for _, p := range writes {
+					sb.WriteString("  " + p + "\n")
 				}
 			}
-			if len(files) == 0 {
-				return Result{Type: "text", Text: "No files referenced in current context."}
+			if len(reads) > 0 {
+				sb.WriteString("Read:\n")
+				for _, p := range reads {
+					sb.WriteString("  " + p + "\n")
+				}
 			}
-			return Result{Type: "text", Text: "Files in context:\n  " + strings.Join(files, "\n  ")}
+			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
 	})
 
@@ -254,12 +375,22 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /rename — session persistence not yet implemented
+	// /rename <title>
 	r.Register(Command{
 		Name:        "rename",
-		Description: "Rename the current conversation (coming soon)",
+		Description: "Set a title for the current conversation",
 		Handler: func(args string) Result {
-			return Result{Type: "text", Text: "Conversation naming requires session persistence, which is not yet implemented."}
+			title := strings.TrimSpace(args)
+			if title == "" {
+				return Result{Type: "error", Text: "Usage: /rename <title>"}
+			}
+			if state.RenameSession == nil {
+				return Result{Type: "text", Text: "Session rename not available."}
+			}
+			if err := state.RenameSession(title); err != nil {
+				return Result{Type: "error", Text: fmt.Sprintf("rename failed: %v", err)}
+			}
+			return Result{Type: "flash", Text: "Session renamed: " + title}
 		},
 	})
 
@@ -393,24 +524,22 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /stats
+	// /stats — opens settings panel on Stats tab
 	r.Register(Command{
 		Name:        "stats",
-		Description: "Show Claude Code usage statistics for this session",
+		Description: "Show usage stats (sessions, tokens, models) — Overview and Models subtabs",
 		Handler: func(string) Result {
-			if state.GetCost != nil {
-				return Result{Type: "text", Text: "Session stats:\n" + state.GetCost()}
-			}
-			return Result{Type: "text", Text: "Stats not available."}
+			return Result{Type: "settings-panel", Text: "stats"}
 		},
 	})
 
 	// /usage
+	// /usage — opens settings panel on Usage tab
 	r.Register(Command{
 		Name:        "usage",
-		Description: "Show plan usage limits",
+		Description: "Show token usage and rate limit status",
 		Handler: func(string) Result {
-			return Result{Type: "text", Text: "View your usage and limits at: https://claude.ai/settings/limits"}
+			return Result{Type: "settings-panel", Text: "usage"}
 		},
 	})
 
@@ -435,10 +564,10 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			// Format: "<filePath>\t<age>\t<title>"
 			var lines []string
 			for _, s := range sessions {
-				age := time.Since(s.Modified).Round(time.Minute).String()
+				age := formatSessionAge(time.Since(s.Modified))
 				title := session.ExtractTitle(s.FilePath)
 				if title == "" {
-					title = s.ID[:min(8, len(s.ID))]
+					title = "session " + s.ID[:min(8, len(s.ID))]
 				}
 				lines = append(lines, s.FilePath+"\t"+age+"\t"+title)
 			}
@@ -538,15 +667,12 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /status — one-liner: model, mode, session ID, cost, context %
+	// /status — opens full-screen settings panel on Status tab
 	r.Register(Command{
 		Name:        "status",
-		Description: "Show current model, mode, session, cost, and context usage",
+		Description: "Show full status panel (model, mode, session, MCP, diagnostics)",
 		Handler: func(string) Result {
-			if state.GetStatus != nil {
-				return Result{Type: "text", Text: state.GetStatus()}
-			}
-			return Result{Type: "text", Text: "Status not available."}
+			return Result{Type: "settings-panel", Text: "status"}
 		},
 	})
 
@@ -630,12 +756,107 @@ func min(a, b int) int {
 	return b
 }
 
+// formatSessionAge returns a concise human-readable age string.
+func formatSessionAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", m)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", h)
+	case d < 7*24*time.Hour:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "yesterday"
+		}
+		return fmt.Sprintf("%dd ago", days)
+	case d < 30*24*time.Hour:
+		weeks := int(d.Hours() / (24 * 7))
+		if weeks == 1 {
+			return "1w ago"
+		}
+		return fmt.Sprintf("%dw ago", weeks)
+	default:
+		months := int(d.Hours() / (24 * 30))
+		if months == 1 {
+			return "1mo ago"
+		}
+		return fmt.Sprintf("%dmo ago", months)
+	}
+}
+
 func makeBar(pct, width int) string {
 	filled := width * pct / 100
 	if filled > width {
 		filled = width
 	}
 	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
+}
+
+// getNestedKey retrieves a dot-path key from a map (e.g. "permissions.allow").
+func getNestedKey(m map[string]interface{}, key string) interface{} {
+	parts := strings.SplitN(key, ".", 2)
+	val, ok := m[parts[0]]
+	if !ok {
+		return nil
+	}
+	if len(parts) == 1 {
+		return val
+	}
+	sub, ok := val.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return getNestedKey(sub, parts[1])
+}
+
+// upsertSettingsKey writes key=value into the settings JSON file using raw-map
+// preservation so unknown fields survive the round-trip.
+func upsertSettingsKey(path string, key string, value interface{}) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) == 1 {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		raw[key] = encoded
+	} else {
+		// Nested key: read sub-object, update, write back.
+		var sub map[string]interface{}
+		if existing, ok := raw[parts[0]]; ok {
+			_ = json.Unmarshal(existing, &sub)
+		}
+		if sub == nil {
+			sub = make(map[string]interface{})
+		}
+		sub[parts[1]] = value
+		encoded, err := json.Marshal(sub)
+		if err != nil {
+			return err
+		}
+		raw[parts[0]] = encoded
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
 func openBrowser(url string) {

@@ -24,7 +24,9 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
@@ -230,6 +232,10 @@ type Model struct {
 	// pluginPanel is the full plugin browser overlay.
 	// Non-nil when active.
 	pluginPanel *pluginPanelState
+
+	// settingsPanel is the full-screen Settings/Config/Stats/Usage panel.
+	// Non-nil when active.
+	settingsPanel *settingsPanelState
 
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
@@ -552,13 +558,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case settingsStatsMsg:
+		if m.settingsPanel != nil {
+			m.settingsPanel.statsData = msg.stats
+			m.settingsPanel.statsLoaded = true
+			m.refreshViewport()
+		}
+		return m, nil
 	}
 
 	// Propagate remaining messages to sub-components.
 	// Skip textarea/viewport when an overlay is active — they must not
 	// consume keys (especially Escape) that belong to the overlay.
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
-		m.panel != nil || m.pluginPanel != nil || m.permPrompt != nil
+		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.permPrompt != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		m.input, taCmd = m.input.Update(msg)
@@ -596,6 +610,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	if m.pluginPanel != nil {
 		m2, cmd := m.handlePluginPanelKey(msg)
 		return m2, cmd, true
+	}
+	// Settings panel intercepts all keys when active.
+	if m.settingsPanel != nil {
+		m2, cmd, consumed := m.handleSettingsPanelKey(msg)
+		return m2, cmd, consumed
 	}
 	// Permission prompt intercepts all keys when active.
 	if m.permPrompt != nil {
@@ -2043,6 +2062,101 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			return pluginCountsMsg{counts: counts, err: err}
 		}
 
+	case "settings-panel":
+		// res.Text is the default tab name: "status", "config", "stats", "usage"
+		defaultTab := settingsTabStatus
+		switch res.Text {
+		case "config":
+			defaultTab = settingsTabConfig
+		case "stats":
+			defaultTab = settingsTabStats
+		case "usage":
+			defaultTab = settingsTabUsage
+		}
+		cwd, _ := os.Getwd()
+		sessPath := ""
+		if m.cfg.Session != nil {
+			sessPath = m.cfg.Session.FilePath
+		}
+		var getMCPInfo func() []mcpInfoRow
+		if m.cfg.MCPManager != nil {
+			getMCPInfo = func() []mcpInfoRow {
+				servers := m.cfg.MCPManager.Servers()
+				var rows []mcpInfoRow
+				for _, srv := range servers {
+					rows = append(rows, mcpInfoRow{
+						name:   srv.Name,
+						status: string(srv.Status),
+						tools:  len(srv.Tools),
+					})
+				}
+				return rows
+			}
+		}
+		live := m.cfg.Live
+		getStatus := func() statusSnapshot {
+			snap := statusSnapshot{}
+			if live != nil {
+				snap.sessionID = live.SessionID()
+				snap.model = live.ModelName()
+				snap.fastMode = live.FastMode()
+				snap.effort = live.EffortLevel()
+				snap.rateLimitWarn = live.RateLimitWarning()
+				in, cost := live.Tokens()
+				snap.inputTokens = in
+				snap.costUSD = cost
+				switch live.PermissionMode() {
+				case permissions.ModeAcceptEdits:
+					snap.permMode = "acceptEdits"
+				case permissions.ModePlan:
+					snap.permMode = "plan"
+				case permissions.ModeBypassPermissions:
+					snap.permMode = "bypassPermissions"
+				default:
+					snap.permMode = "default"
+				}
+			}
+			snap.version = m.cfg.Version
+			snap.authenticated = !m.noAuth
+			return snap
+		}
+		rlInfo := ratelimit.Info{}
+		if live != nil && live.RateLimitWarning() != "" {
+			// Rate limit data isn't directly exposed yet — Info will be empty.
+			// TODO: expose from LiveState once full header parsing lands.
+		}
+		saveConfigFn := func(id string, value interface{}) {
+			// Map config item IDs to settings keys where they differ.
+			key := id
+			switch id {
+			case "defaultPermissionMode":
+				// value is display name — convert to stored val via settings key.
+				// permModeVal is in settingspanel.go — call settings directly.
+				if s, ok := value.(string); ok {
+					_ = settings.SaveRawKey("permissions", map[string]interface{}{"defaultMode": permModeStoredVal(s)})
+					return
+				}
+			case "notifChannel":
+				key = "preferredNotifChannel"
+			case "alwaysThinkingEnabled":
+				key = "alwaysThinkingEnabled"
+			case "outputStyle":
+				if s, ok := value.(string); ok {
+					_ = settings.SaveOutputStyle(outputStyleStoredVal(s))
+					return
+				}
+			}
+			_ = settings.SaveRawKey(key, value)
+		}
+		panel, statsCmd := newSettingsPanel(
+			defaultTab, getStatus, getMCPInfo,
+			saveConfigFn,
+			m.cfg.Gate, m.cfg.MCPManager, sessPath, rlInfo, cwd,
+		)
+		m.settingsPanel = panel
+		m.refreshViewport()
+		return m, statsCmd
+
 	case "resume-pick":
 		// Parse tab-separated session lines from the command result.
 		var sessions []resumeSession
@@ -2083,6 +2197,8 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 				m.cfg.Loop.SetSystem(baseBlocks)
 			}
 		}
+		// Persist to settings so the style survives restarts.
+		_ = settings.SaveOutputStyle(res.Model)
 		msg := "Output style cleared."
 		if res.Model != "" {
 			msg = fmt.Sprintf("Output style set to: %s", res.Model)
@@ -2382,7 +2498,22 @@ func (m Model) View() string {
 		leftParts = append(leftParts, styleModeYellow.Render("⚠ "+m.rateLimitWarning))
 	}
 	left := strings.Join(leftParts, barSep)
-	right := styleStatus.Render("^Y copy code  ^C interrupt  /clear  /exit  shift+tab mode") + edgePad
+
+	// Show session title (from /rename or first message) in the right side.
+	var rightParts []string
+	if m.cfg.Session != nil {
+		title := session.ExtractTitle(m.cfg.Session.FilePath)
+		if title != "" {
+			const maxTitle = 30
+			runes := []rune(title)
+			if len(runes) > maxTitle {
+				title = string(runes[:maxTitle-1]) + "…"
+			}
+			rightParts = append(rightParts, styleStatus.Render(title))
+		}
+	}
+	rightParts = append(rightParts, styleStatus.Render("^Y copy  ^C stop  shift+tab mode"))
+	right := strings.Join(rightParts, barSep) + edgePad
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
@@ -2401,6 +2532,12 @@ func (m Model) View() string {
 	if m.pluginPanel != nil {
 		pluginPanel := m.renderPluginPanel()
 		return lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar)
+	}
+
+	// Settings panel is a full-screen takeover.
+	if m.settingsPanel != nil {
+		sp := m.renderSettingsPanel()
+		return lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)
 	}
 
 	// Overlays: login > resume > permission > command picker (appended below vp).
@@ -2460,17 +2597,34 @@ func (m *Model) syncLive() {
 }
 
 // shortModelName converts "claude-opus-4-7" → "Opus 4.7".
+// Strips date suffixes like "-20251001" so "claude-haiku-4-5-20251001" → "Haiku 4.5".
 func shortModelName(name string) string {
-	// Strip leading "claude-"
 	name = strings.TrimPrefix(name, "claude-")
-	// Split on first "-" to get family, then the rest is the version.
-	// "opus-4-7" → family="opus", ver="4-7"
 	idx := strings.Index(name, "-")
 	if idx < 0 {
 		return capitalize(name)
 	}
 	family := capitalize(name[:idx])
-	ver := strings.ReplaceAll(name[idx+1:], "-", ".")
+	rest := name[idx+1:]
+	// Strip YYYYMMDD date suffix segments (8-digit numbers).
+	parts := strings.Split(rest, "-")
+	var verParts []string
+	for _, p := range parts {
+		if len(p) == 8 {
+			allDigits := true
+			for _, c := range p {
+				if c < '0' || c > '9' {
+					allDigits = false
+					break
+				}
+			}
+			if allDigits {
+				break // drop this and everything after
+			}
+		}
+		verParts = append(verParts, p)
+	}
+	ver := strings.Join(verParts, ".")
 	return family + " " + ver
 }
 

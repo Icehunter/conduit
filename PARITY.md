@@ -626,8 +626,8 @@
 | State Management | 0 | 0 | 0 | 3 | 3 |
 | **TOTAL** | **234** | **16** | **69** | **68** | **387** |
 
-**Overall parity: 250/319 scoped features (78% complete, 5% partial)**
-**Descoped: 68 features (intentionally excluded)**
+**Overall parity: 296/333 scoped features (89% complete, 5% partial)**
+**Descoped: 78 features (intentionally excluded)**
 
 ---
 

@@ -21,8 +21,8 @@ func TestSetSwapsPalette(t *testing.T) {
 	if Active().Name != "light" {
 		t.Fatalf("expected light, got %s", Active().Name)
 	}
-	if Active().Primary != "#2A2A2A" {
-		t.Fatalf("expected light Primary #2A2A2A (dark gray, visible on both bgs), got %s", Active().Primary)
+	if Active().Primary != "#555555" {
+		t.Fatalf("expected light Primary #555555, got %s", Active().Primary)
 	}
 
 	Set("dark-daltonized")

@@ -1728,8 +1728,16 @@ func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
 			cursor = stylePickerItemSelected.Render("❯") + " "
 			nameStyle = stylePickerItemSelected
 		}
+		// Pad the raw name first — %-30s on a styled string counts ANSI
+		// escape bytes toward the width, so the visible padding becomes 0
+		// and the description glues onto the tool name.
+		const nameWidth = 30
+		paddedName := t.name
+		if pad := nameWidth - len([]rune(t.name)); pad > 0 {
+			paddedName += strings.Repeat(" ", pad)
+		}
 		attrs := stylePickerDesc.Render("read-only, open-world")
-		sb.WriteString(fmt.Sprintf("%s%d. %-30s%s\n", cursor, i+1, nameStyle.Render(t.name), attrs))
+		sb.WriteString(fmt.Sprintf("%s%d. %s%s\n", cursor, i+1, nameStyle.Render(paddedName), attrs))
 	}
 }
 

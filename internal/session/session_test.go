@@ -305,5 +305,66 @@ func TestActivity_EmptySession(t *testing.T) {
 	}
 }
 
+// --- conversation recovery ---
+
+func TestFilterUnresolvedToolUses_DropsOrphanToolUse(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "do X"}}},
+		{Role: "assistant", Content: []api.ContentBlock{
+			{Type: "text", Text: "I'll use the bash tool."},
+			{Type: "tool_use", ID: "toolu_orphan", Name: "Bash", Input: map[string]any{"cmd": "ls"}},
+		}},
+		// stream errored before tool ran — no tool_result for toolu_orphan.
+	}
+
+	got := FilterUnresolvedToolUses(msgs)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages; got %d", len(got))
+	}
+	last := got[1]
+	if len(last.Content) != 1 {
+		t.Fatalf("expected orphan tool_use dropped; got %d blocks", len(last.Content))
+	}
+	if last.Content[0].Type != "text" {
+		t.Errorf("expected only the text block to remain; got type %q", last.Content[0].Type)
+	}
+}
+
+func TestFilterUnresolvedToolUses_KeepsResolvedToolUse(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "assistant", Content: []api.ContentBlock{
+			{Type: "tool_use", ID: "toolu_ok", Name: "Bash", Input: map[string]any{"cmd": "ls"}},
+		}},
+		{Role: "user", Content: []api.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_ok", Text: "out"},
+		}},
+	}
+
+	got := FilterUnresolvedToolUses(msgs)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages; got %d", len(got))
+	}
+	if got[0].Content[0].Type != "tool_use" {
+		t.Errorf("resolved tool_use should be preserved")
+	}
+}
+
+func TestFilterUnresolvedToolUses_DropsAssistantWithOnlyOrphanToolUse(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+		{Role: "assistant", Content: []api.ContentBlock{
+			{Type: "tool_use", ID: "toolu_solo", Name: "Bash"},
+		}},
+	}
+
+	got := FilterUnresolvedToolUses(msgs)
+	if len(got) != 1 {
+		t.Fatalf("assistant w/ only orphan tool_use should be dropped entirely; got %d msgs", len(got))
+	}
+	if got[0].Role != "user" {
+		t.Errorf("expected the user msg to remain; got role %q", got[0].Role)
+	}
+}
+
 // ensure json import is used
 var _ = json.Marshal

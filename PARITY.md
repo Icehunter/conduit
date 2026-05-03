@@ -99,7 +99,7 @@
 | Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
 | Stop hooks (clean shutdown) | `query/stopHooks.ts` | — | `internal/hooks/hooks.go` `RunStop` | ✅ | |
 | Query profiler | `utils/queryProfiler.ts` | — | ❌ | ⬛ | Debug only |
-| Conversation recovery on error | `utils/conversationRecovery.ts` | — | ❌ | ❌ | No mid-turn recovery |
+| Conversation recovery on error | `utils/conversationRecovery.ts` | — | `internal/agent/loop.go` + `internal/session/session.go` | ✅ | drainStream returns partial blocks; EventPartial persists to JSONL; LoadMessages applies FilterUnresolvedToolUses on /resume |
 
 ---
 
@@ -406,7 +406,7 @@
 | Session summary (compact) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | 🟡 | SetSummary() exists |
 | Message compaction | `services/compact/compact.ts` | — | `internal/compact/compact.go` | ✅ | |
 | Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
-| Conversation recovery | `utils/conversationRecovery.ts` | — | ❌ | ❌ | |
+| Conversation recovery | `utils/conversationRecovery.ts` | — | `internal/agent/loop.go` + `internal/session/session.go` | ✅ | Partial assistant message persisted on stream error; orphan tool_use filtered on /resume |
 | File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
 | Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | 🟡 | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat is descoped (bridge-only) |
 | Session environment setup | `utils/sessionEnvironment.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv + cleanup restore |
@@ -599,7 +599,7 @@
 |------|------------|-----------|-----------|------------|-------|
 | Auth & OAuth | 9 | 0 | 6 | 3 | 18 |
 | API Client & SSE | 9 | 1 | 2 | 0 | 12 |
-| Agent Loop | 10 | 1 | 2 | 1 | 14 |
+| Agent Loop | 11 | 1 | 1 | 1 | 14 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
@@ -609,7 +609,7 @@
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
 | Memory System | 8 | 0 | 5 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
-| Session & History | 10 | 2 | 2 | 0 | 14 |
+| Session & History | 11 | 2 | 1 | 0 | 14 |
 | Config & Settings | 8 | 0 | 7 | 3 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **212** | **14** | **117** | **43** | **386** |
+| **TOTAL** | **214** | **14** | **115** | **43** | **386** |
 
-**Overall parity: 226/343 scoped features (66% complete, 4% partial)**
+**Overall parity: 228/343 scoped features (66% complete, 4% partial)**
 **Descoped: 43 features (intentionally excluded)**
 
 ---
@@ -666,16 +666,15 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 
 1. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value; large effort.
 2. **Custom keybindings** — user-defined key mappings. Low value.
-3. **Conversation recovery** — mid-turn error recovery (`utils/conversationRecovery.ts`). Medium value.
-4. **API preconnect** — warm TCP connection to api.anthropic.com on startup. Low value.
-5. **Token counting (accurate)** — cl100k token estimation before sending. Medium value.
-6. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
-7. **Plugin signature verification** — git commit sig check on install.
-8. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
-9. **Session memory service** — inject recent session summaries on resume (`services/SessionMemory/`).
-10. **Memory extraction** — auto-extract memorable facts after session end (`services/extractMemories/`).
-11. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
+3. **API preconnect** — warm TCP connection to api.anthropic.com on startup. Low value.
+4. **Token counting (accurate)** — cl100k token estimation before sending. Medium value.
+5. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
+6. **Plugin signature verification** — git commit sig check on install.
+7. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
+8. **Session memory service** — inject recent session summaries on resume (`services/SessionMemory/`).
+9. **Memory extraction** — auto-extract memorable facts after session end (`services/extractMemories/`).
+10. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style.
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume).

@@ -45,10 +45,11 @@ const maxConcurrentTools = 4
 type EventType int
 
 const (
-	EventText       EventType = iota // a text delta streamed from the model
-	EventToolUse                     // a tool_use block completed; tool is about to run
-	EventToolResult                  // tool execution finished
-	EventRateLimit                   // rate-limit headers received; RateLimitWarning may be non-empty
+	EventText        EventType = iota // a text delta streamed from the model
+	EventToolUse                      // a tool_use block completed; tool is about to run
+	EventToolResult                   // tool execution finished
+	EventRateLimit                    // rate-limit headers received; RateLimitWarning may be non-empty
+	EventPartial                      // stream errored mid-turn; PartialBlocks holds what was received
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -68,8 +69,15 @@ type LoopEvent struct {
 	IsError    bool
 
 	// EventRateLimit
-	RateLimitWarning string       // non-empty when quota is running low
+	RateLimitWarning string         // non-empty when quota is running low
 	RateLimitInfo    ratelimit.Info
+
+	// EventPartial — fired before a stream error bubbles up so callers
+	// can persist whatever assistant content was streamed before the
+	// failure. The blocks here are already filtered (empty text/truncated
+	// tool_use dropped by buildContentBlocks).
+	PartialBlocks []api.ContentBlock
+	PartialErr    error
 }
 
 // LoopConfig controls the loop's behaviour.
@@ -270,6 +278,18 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		assistantBlocks, stopReason, inputTokens, err := l.drainStream(ctx, stream, handler)
 		stream.Close()
 		if err != nil {
+			// Conversation recovery: emit any partial assistant content the
+			// caller can persist to the session JSONL before the error
+			// propagates. On /resume the loaded history will pass through
+			// FilterUnresolvedToolUses to drop any orphan tool_use blocks.
+			if len(assistantBlocks) > 0 {
+				handler(LoopEvent{
+					Type:          EventPartial,
+					PartialBlocks: assistantBlocks,
+					PartialErr:    err,
+				})
+				msgs = append(msgs, api.Message{Role: "assistant", Content: assistantBlocks})
+			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return msgs, err
 			}
@@ -326,15 +346,16 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 // drainStream reads all SSE events from the stream and returns the accumulated
 // assistant content blocks, the stop reason, and the input token count from
 // the message_start event (used by auto-compact to gauge context pressure).
+// blockMeta stores the block type and tool metadata per stream block index.
+type blockMeta struct {
+	blockType string
+	toolID    string
+	toolName  string
+}
+
 func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent)) ([]api.ContentBlock, string, int, error) {
 	// blockTexts accumulates text/input_json across deltas per block index.
 	blockTexts := map[int]*strings.Builder{}
-	// blockMeta stores the block type and tool metadata per index.
-	type blockMeta struct {
-		blockType string
-		toolID    string
-		toolName  string
-	}
 	metas := map[int]blockMeta{}
 
 	stopReason := "end_turn"
@@ -342,7 +363,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 
 	for {
 		if ctx.Err() != nil {
-			return nil, "", 0, ctx.Err()
+			return buildContentBlocks(metas, blockTexts), stopReason, inputTokens, ctx.Err()
 		}
 
 		ev, err := stream.Next()
@@ -350,7 +371,9 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			break
 		}
 		if err != nil {
-			return nil, "", 0, err
+			// Conversation recovery: build whatever blocks we accumulated
+			// before the error so the caller can persist them.
+			return buildContentBlocks(metas, blockTexts), stopReason, inputTokens, err
 		}
 
 		switch ev.Type {
@@ -429,7 +452,13 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 		}
 	}
 
-	// Build content blocks from accumulated state.
+	return buildContentBlocks(metas, blockTexts), stopReason, inputTokens, nil
+}
+
+// buildContentBlocks materializes accumulated stream state into api.ContentBlocks.
+// Used both for the success path and for partial-block recovery on stream error.
+// metas is keyed by block index; blockTexts holds the accumulated text/json.
+func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Builder) []api.ContentBlock {
 	blocks := make([]api.ContentBlock, 0, len(metas))
 	for i := 0; i < len(metas); i++ {
 		meta, ok := metas[i]
@@ -443,17 +472,23 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			if sb != nil {
 				text = sb.String()
 			}
-			blocks = append(blocks, api.ContentBlock{
-				Type: "text",
-				Text: text,
-			})
+			// Skip empty text blocks — they'd be rejected by the API on resume.
+			if text == "" {
+				continue
+			}
+			blocks = append(blocks, api.ContentBlock{Type: "text", Text: text})
 		case "tool_use":
 			inputStr := "{}"
 			if sb != nil && sb.Len() > 0 {
 				inputStr = sb.String()
 			}
 			var inputMap map[string]any
-			_ = json.Unmarshal([]byte(inputStr), &inputMap)
+			if err := json.Unmarshal([]byte(inputStr), &inputMap); err != nil {
+				// Partial JSON — drop. A truncated tool_use can't be replayed
+				// safely; conversation recovery on /resume would have to drop
+				// it anyway via FilterUnresolvedToolUses.
+				continue
+			}
 			blocks = append(blocks, api.ContentBlock{
 				Type:  "tool_use",
 				ID:    meta.toolID,
@@ -462,8 +497,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			})
 		}
 	}
-
-	return blocks, stopReason, inputTokens, nil
+	return blocks
 }
 
 // executeTools runs all tool_use blocks in the assistant message sequentially

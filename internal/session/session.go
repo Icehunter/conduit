@@ -118,6 +118,9 @@ func (s *Session) LoadMessages() ([]api.Message, error) {
 }
 
 // LoadMessages reads a JSONL transcript at path and returns its messages.
+// Output passes through FilterUnresolvedToolUses so a partial assistant
+// message persisted by conversation recovery (a tool_use with no matching
+// tool_result) doesn't poison the next API call on /resume.
 func LoadMessages(path string) ([]api.Message, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -143,7 +146,51 @@ func LoadMessages(path string) ([]api.Message, error) {
 			}
 		}
 	}
-	return msgs, nil
+	return FilterUnresolvedToolUses(msgs), nil
+}
+
+// FilterUnresolvedToolUses drops orphan tool_use blocks from assistant
+// messages — i.e. tool_use blocks whose ID has no matching tool_result in
+// any subsequent user message. Anthropic's API rejects history with such
+// orphans; they appear when the stream errors mid-turn before tools could
+// run. Mirrors src/utils/messages.ts filterUnresolvedToolUses.
+//
+// If filtering empties an assistant message entirely (every block was an
+// orphan tool_use), the message is dropped to avoid sending an empty
+// content array.
+func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
+	resolvedIDs := make(map[string]bool)
+	for _, m := range msgs {
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				resolvedIDs[b.ToolUseID] = true
+			}
+		}
+	}
+
+	out := make([]api.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role != "assistant" {
+			out = append(out, m)
+			continue
+		}
+		filtered := make([]api.ContentBlock, 0, len(m.Content))
+		for _, b := range m.Content {
+			if b.Type == "tool_use" && !resolvedIDs[b.ID] {
+				continue // orphan; drop
+			}
+			filtered = append(filtered, b)
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		m.Content = filtered
+		out = append(out, m)
+	}
+	return out
 }
 
 // List returns all session IDs for the given cwd, newest first.

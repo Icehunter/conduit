@@ -2529,6 +2529,18 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	case agent.EventRateLimit:
 		m.rateLimitWarning = ev.RateLimitWarning
 		m.syncLive()
+
+	case agent.EventPartial:
+		// Conversation recovery: persist the partial assistant message to
+		// the session JSONL so /resume can pick up from where we left off.
+		// FilterUnresolvedToolUses runs at load time to drop orphan
+		// tool_use blocks that never got a tool_result.
+		if m.cfg.Session != nil && len(ev.PartialBlocks) > 0 {
+			_ = m.cfg.Session.AppendMessage(api.Message{
+				Role:    "assistant",
+				Content: ev.PartialBlocks,
+			})
+		}
 	}
 	return m
 }

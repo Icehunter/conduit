@@ -124,6 +124,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		loadedPlugins = ps
 	}
 	commands.RegisterPluginCommands(reg, loadedPlugins)
+	commands.RegisterBundledSkillCommands(reg)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
 

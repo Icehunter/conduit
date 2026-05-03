@@ -9,6 +9,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/skills"
 )
 
 // PluginPanelInstalledEntry is one installed plugin entry for the panel.
@@ -59,6 +60,31 @@ func RegisterPluginCommands(r *Registry, ps []*plugins.Plugin) {
 				},
 			})
 		}
+	}
+}
+
+// RegisterBundledSkillCommands registers slash commands for built-in skills
+// (/simplify, /remember, etc.). These run the skill body as a user prompt,
+// same flow as plugin slash commands.
+func RegisterBundledSkillCommands(r *Registry) {
+	for _, cmd := range skills.Bundled() {
+		name := cmd.QualifiedName
+		desc := cmd.Description
+		body := cmd.Body
+		if desc == "" {
+			desc = name
+		}
+		r.Register(Command{
+			Name:        name,
+			Description: desc,
+			Handler: func(args string) Result {
+				text := body
+				if args != "" {
+					text = text + "\n\nArguments: " + args
+				}
+				return Result{Type: "prompt", Text: text}
+			},
+		})
 	}
 }
 

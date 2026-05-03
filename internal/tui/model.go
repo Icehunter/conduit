@@ -1416,7 +1416,12 @@ func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 			break
 		}
 	}
-	// Find last assistant message and check if it's a companion quip.
+	// Find last assistant message and check if it looks like a companion quip.
+	// Companion quips are recognised by:
+	//   1. Starts with a *roleplay action* marker (e.g. "*pats your hand*")
+	//   2. OR is a single very short line (≤ 60 chars) — pure emoji/one-word reactions
+	// Claude's own responses (even short ones like "Not true!") don't start
+	// with * so they stay in chat.
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		msg := m.messages[i]
 		if msg.Role != RoleAssistant {
@@ -1426,17 +1431,23 @@ func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		var nonBlank int
-		for _, l := range strings.Split(text, "\n") {
+		startsWithAction := strings.HasPrefix(text, "*")
+		lines := strings.Split(text, "\n")
+		var nonBlank []string
+		for _, l := range lines {
 			if strings.TrimSpace(l) != "" {
-				nonBlank++
+				nonBlank = append(nonBlank, l)
 			}
 		}
-		if nonBlank > 4 || len(text) > 200 {
-			return m, nil // too long — regular Claude response, not a quip
+		isSingleShort := len(nonBlank) == 1 && len([]rune(text)) <= 60
+
+		if !startsWithAction && !isSingleShort {
+			return m, nil // Claude's real response — leave in chat
 		}
-		// It's a companion quip — remove from chat history so it only
-		// appears in the bubble.
+		if len(nonBlank) > 4 || len(text) > 200 {
+			return m, nil // too long even with action marker
+		}
+		// Companion quip — remove from chat, show in bubble only.
 		m.messages = append(m.messages[:i], m.messages[i+1:]...)
 		return m, func() tea.Msg { return companionBubbleMsg{text: text} }
 	}

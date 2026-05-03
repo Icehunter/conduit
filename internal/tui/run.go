@@ -563,13 +563,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 	}()
 
-	// Clean exit on interrupt/term.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		<-sigs
-		prog.Kill()
-	}()
+	// bubbletea v2 already registers its own SIGINT/SIGTERM handler that
+	// sends InterruptMsg to the event loop. Adding a second signal.Notify
+	// for the same signals causes double-firing and can interfere with
+	// program shutdown. We rely on bubbletea's handler + the Update
+	// InterruptMsg case instead.
 
 	_, err := prog.Run()
 
@@ -577,7 +575,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	fmt.Fprint(os.Stdout, altScreenExit)
 
 	signal.Stop(winch)
-	signal.Stop(sigs)
 	close(winch)
 	return err
 }

@@ -456,6 +456,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			},
 		)...)
 
+	case tea.InterruptMsg:
+		// bubbletea v2 sends InterruptMsg when it catches SIGINT (ctrl+c
+		// in non-raw-mode or from kill). Mirror the KeyPressMsg ctrl+c
+		// handler: cancel a running turn, or quit when idle.
+		if m.running && m.cancelTurn != nil {
+			m.cancelTurn()
+			m.running = false
+			m.cancelTurn = nil
+			m.cancelled = true
+			if m.streaming != "" {
+				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+				m.streaming = ""
+			}
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Interrupted."})
+			m.refreshViewport()
+			m.input.Focus()
+			return m, nil
+		}
+		return m, tea.Quit
+
 	case tea.PasteMsg:
 		// Bracketed paste arrives as a single event in bubbletea v2.
 		// For large pastes, insert the text and flash "Pasted N lines"
@@ -3514,6 +3534,12 @@ func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Mod
 
 	switch action {
 	// App-level
+	case "app:interrupt":
+		// Same as ctrl+c: cancel turn if running, quit if idle.
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+		return m2, cmd, true
+	case "app:exit":
+		return m, tea.Quit, true
 	case "app:redraw":
 		return m, tea.ClearScreen, true
 

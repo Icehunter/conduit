@@ -36,15 +36,40 @@ import (
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
-// except the viewport. Called dynamically so it's always accurate.
+// except the viewport, given the current input row count and terminal
+// height. Dynamic so multi-line input doesn't permanently squeeze chat.
 //
 //   spinner row:   1
 //   input border:  1 (top) + 1 (bottom) = 2
-//   input text:    1
+//   input text:    inputRows (1..inputMaxRows)
 //   status bar:    1
-//   ─────────────────
-//   total:         5
-func chromeHeight() int { return 5 }
+//
+// The input is capped at inputMaxRows visible rows (~30% of the screen,
+// floor 1, ceiling 12) so the chat viewport always keeps at least 70% of
+// the terminal. Beyond the cap, the textarea scrolls internally.
+const (
+	chromeFixed   = 4 // spinner + 2 borders + status (everything except input rows)
+	inputMinRows  = 1
+	inputMaxRows  = 12
+	inputMaxRatio = 0.30
+)
+
+func chromeHeight(inputRows, termHeight int) int {
+	cap := int(float64(termHeight) * inputMaxRatio)
+	if cap < inputMinRows {
+		cap = inputMinRows
+	}
+	if cap > inputMaxRows {
+		cap = inputMaxRows
+	}
+	if inputRows < inputMinRows {
+		inputRows = inputMinRows
+	}
+	if inputRows > cap {
+		inputRows = cap
+	}
+	return chromeFixed + inputRows
+}
 
 // Role identifies who sent a message.
 type Role int
@@ -687,7 +712,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.picker != nil || m.onboarding != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
+		prevLines := m.input.LineCount()
 		m.input, taCmd = m.input.Update(msg)
+		// If the input grew or shrunk a line (Alt+Enter, backspace into a
+		// newline boundary, paste of multi-line content), reflow the
+		// viewport so chat doesn't get squeezed by a now-taller input.
+		if m.input.LineCount() != prevLines {
+			m = m.applyLayout()
+			m.refreshViewport()
+		}
 		m.vp, vpCmd = m.vp.Update(msg)
 	}
 	cmds = append(cmds, taCmd, vpCmd)
@@ -2749,10 +2782,24 @@ func (m Model) applyLayout() Model {
 	if m.width == 0 || m.height == 0 {
 		return m
 	}
-	vpHeight := m.height - chromeHeight()
+	inputRows := m.input.LineCount()
+	if inputRows < 1 {
+		inputRows = 1
+	}
+	vpHeight := m.height - chromeHeight(inputRows, m.height)
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
+	// Match the textarea's visible row count to the available chrome budget
+	// so it doesn't try to render more rows than the layout reserved.
+	visibleRows := m.height - vpHeight - chromeFixed
+	if visibleRows < inputMinRows {
+		visibleRows = inputMinRows
+	}
+	if visibleRows > inputMaxRows {
+		visibleRows = inputMaxRows
+	}
+	m.input.SetHeight(visibleRows)
 	// Input inner width: full width minus left+right border (2) minus left+right padding (2).
 	inputW := m.width - 4
 	if inputW < 10 {

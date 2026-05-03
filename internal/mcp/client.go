@@ -16,8 +16,9 @@ import (
 
 // Client is the interface both stdio and HTTP/SSE clients implement.
 type Client interface {
-	// Initialize sends the MCP initialize handshake and returns server info.
-	Initialize(ctx context.Context) error
+	// Initialize sends the MCP initialize handshake and returns the server's
+	// instructions string (empty if none) for injection into the system prompt.
+	Initialize(ctx context.Context) (string, error)
 	// ListTools fetches the server's tool list.
 	ListTools(ctx context.Context) ([]ToolDef, error)
 	// CallTool invokes a tool and returns its result.
@@ -152,7 +153,7 @@ func (c *stdioClient) call(ctx context.Context, method string, params any) (json
 	}
 }
 
-func (c *stdioClient) Initialize(ctx context.Context) error {
+func (c *stdioClient) Initialize(ctx context.Context) (string, error) {
 	params := map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
@@ -161,15 +162,21 @@ func (c *stdioClient) Initialize(ctx context.Context) error {
 			"version": "1.0",
 		},
 	}
-	if _, err := c.call(ctx, "initialize", params); err != nil {
-		return fmt.Errorf("mcp initialize: %w", err)
+	raw, err := c.call(ctx, "initialize", params)
+	if err != nil {
+		return "", fmt.Errorf("mcp initialize: %w", err)
 	}
-	// Send initialized notification (no response expected)
+	// Send initialized notification (no response expected).
 	notif := map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}
 	b, _ := json.Marshal(notif)
 	b = append(b, '\n')
 	_, _ = c.stdin.Write(b)
-	return nil
+	// Extract instructions from the initialize result if present.
+	var result struct {
+		Instructions string `json:"instructions"`
+	}
+	_ = json.Unmarshal(raw, &result)
+	return result.Instructions, nil
 }
 
 func (c *stdioClient) ListTools(ctx context.Context) ([]ToolDef, error) {
@@ -336,7 +343,7 @@ func (c *httpClient) readSSEResponse(body io.Reader) (json.RawMessage, error) {
 	return nil, fmt.Errorf("mcp sse: no response data")
 }
 
-func (c *httpClient) Initialize(ctx context.Context) error {
+func (c *httpClient) Initialize(ctx context.Context) (string, error) {
 	params := map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
@@ -345,10 +352,15 @@ func (c *httpClient) Initialize(ctx context.Context) error {
 			"version": "1.0",
 		},
 	}
-	if _, err := c.call(ctx, "initialize", params); err != nil {
-		return fmt.Errorf("mcp initialize: %w", err)
+	raw, err := c.call(ctx, "initialize", params)
+	if err != nil {
+		return "", fmt.Errorf("mcp initialize: %w", err)
 	}
-	return nil
+	var result struct {
+		Instructions string `json:"instructions"`
+	}
+	_ = json.Unmarshal(raw, &result)
+	return result.Instructions, nil
 }
 
 func (c *httpClient) ListTools(ctx context.Context) ([]ToolDef, error) {
@@ -414,3 +426,4 @@ func (c *httpClient) ReadResource(ctx context.Context, uri string) ([]ResourceCo
 }
 
 func (c *httpClient) Close() error { return nil }
+

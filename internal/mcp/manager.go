@@ -85,6 +85,12 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 			hdrs[k] = expandEnv(v)
 		}
 		client = NewHTTPClient(expandEnv(cfg.URL), hdrs)
+	case "ws", "websocket":
+		hdrs := make(map[string]string, len(cfg.Headers))
+		for k, v := range cfg.Headers {
+			hdrs[k] = expandEnv(v)
+		}
+		client = NewWebSocketClient(expandEnv(cfg.URL), hdrs)
 	default:
 		srv.Status = StatusFailed
 		srv.Error = fmt.Sprintf("unsupported transport type %q", cfg.Type)
@@ -99,13 +105,15 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 		return
 	}
 
-	if err := client.Initialize(ctx); err != nil {
+	instructions, err := client.Initialize(ctx)
+	if err != nil {
 		srv.Status = StatusFailed
 		srv.Error = fmt.Sprintf("initialize: %v", err)
 		_ = client.Close()
 		m.store(name, srv)
 		return
 	}
+	srv.Instructions = instructions
 
 	tools, err := client.ListTools(ctx)
 	if err != nil {
@@ -223,6 +231,21 @@ func (m *Manager) Servers() []*ConnectedServer {
 	out := make([]*ConnectedServer, 0, len(m.servers))
 	for _, s := range m.servers {
 		out = append(out, s)
+	}
+	return out
+}
+
+// ServerInstructions returns a map of serverName → instructions for all
+// connected servers that provided instructions in their initialize response.
+// These are injected into the system prompt as additional context.
+func (m *Manager) ServerInstructions() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]string)
+	for name, srv := range m.servers {
+		if srv.Status == StatusConnected && srv.Instructions != "" {
+			out[name] = srv.Instructions
+		}
 	}
 	return out
 }

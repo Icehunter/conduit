@@ -319,8 +319,8 @@
 | OAuth for MCP servers | `services/mcp/` | — | ❌ | ❌ | McpAuthTool not implemented |
 | MCP resource listing | `tools/ListMcpResourcesTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/list JSON-RPC |
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
-| MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | ❌ | ❌ | |
-| MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | ❌ | ❌ | |
+| MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | `internal/mcp/client_ws.go` | ✅ | nhooyr.io/websocket; type="ws"\|"websocket" in server config |
+| MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | `internal/mcp/manager.go` + `cmd/conduit/main.go` | ✅ | Server instructions from initialize response injected into system prompt |
 | LSP integration | `services/lsp/` (7 files) | — | ❌ | ❌ | |
 
 ---

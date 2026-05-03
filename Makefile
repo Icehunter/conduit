@@ -6,7 +6,7 @@ PKG := ./...
 build:
 	@mkdir -p bin
 	go build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/conduit
-	cp $(BIN) ./conduit
+	install -m 0755 $(BIN) ./conduit
 
 test:
 	go test $(PKG)

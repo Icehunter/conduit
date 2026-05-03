@@ -105,9 +105,12 @@ func RegisterMiscCommands(r *Registry) {
 func themeStatusText(headline string) string {
 	p := theme.Active()
 	swatch := func(label, hex string) string {
-		return fmt.Sprintf("  %s%-14s%s %s███%s %s",
+		// Paint the swatch as a background block so colors near the
+		// terminal bg (e.g. light theme Primary #000000 on a dark terminal)
+		// are still visible. Spaces on a colored bg show the pure color.
+		return fmt.Sprintf("  %s%-14s%s %s    %s %s",
 			ansiBold, label+":", ansiReset,
-			theme.AnsiFG(hex), ansiReset, hex)
+			theme.AnsiBG(hex), ansiReset, hex)
 	}
 	var sb strings.Builder
 	sb.WriteString(ansiBold + headline + " (" + p.Name + ")" + ansiReset + "\n\n")

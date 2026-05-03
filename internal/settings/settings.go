@@ -75,8 +75,15 @@ type Settings struct {
 	Model string `json:"model,omitempty"`
 	// OutputStyle is the active output style name, persisted across sessions.
 	OutputStyle string `json:"outputStyle,omitempty"`
-	// Theme is the active palette name (dark|light|dark-accessible|light-accessible).
+	// Theme is the active palette name (dark|light|dark-daltonized|
+	// light-daltonized|dark-ansi|light-ansi). Matches Claude Code's
+	// THEME_NAMES so settings.json values are interchangeable.
 	Theme string `json:"theme,omitempty"`
+	// ThemeOverrides applies per-field color tweaks on top of the named
+	// theme. Keys are lowercase Palette field names (e.g. "accent",
+	// "success"); values are #RRGGBB hex or ANSI 0-15 codes.
+	// conduit-only — Claude Code ignores this field.
+	ThemeOverrides map[string]string `json:"themeOverrides,omitempty"`
 }
 
 // Merged is the result of loading and merging all settings layers.
@@ -101,6 +108,8 @@ type Merged struct {
 	OutputStyle string
 	// Theme is the active palette name (last layer wins).
 	Theme string
+	// ThemeOverrides is the per-field color override map (last layer wins).
+	ThemeOverrides map[string]string
 }
 
 // Load reads and merges settings from all layers for the given cwd.
@@ -138,6 +147,14 @@ func loadPaths(paths []string) (*Merged, error) {
 		}
 		if s.Theme != "" {
 			merged.Theme = s.Theme
+		}
+		if len(s.ThemeOverrides) > 0 {
+			if merged.ThemeOverrides == nil {
+				merged.ThemeOverrides = map[string]string{}
+			}
+			for k, v := range s.ThemeOverrides {
+				merged.ThemeOverrides[k] = v
+			}
 		}
 	}
 	return merged, nil

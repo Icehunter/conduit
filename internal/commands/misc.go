@@ -75,13 +75,18 @@ func RegisterMiscCommands(r *Registry) {
 	// /theme — switch active palette and persist to settings.json
 	r.Register(Command{
 		Name:        "theme",
-		Description: "Switch theme: dark | light | dark-accessible | light-accessible",
+		Description: "Switch theme. Names: " + strings.Join(theme.AvailableThemes(), " | "),
 		Handler: func(args string) Result {
 			name := strings.TrimSpace(args)
 			if name == "" {
 				return Result{Type: "text", Text: themeStatusText("Current theme")}
 			}
-			theme.Set(name) // hot-swap; styles rebuild via OnChange listeners
+			if !theme.Set(name) {
+				return Result{Type: "text", Text: fmt.Sprintf(
+					"Unknown theme %q. Available: %s",
+					name, strings.Join(theme.AvailableThemes(), ", "),
+				)}
+			}
 			persistErr := settings.SaveRawKey("theme", theme.Active().Name)
 			head := fmt.Sprintf("Theme switched to %s", theme.Active().Name)
 			if persistErr != nil {

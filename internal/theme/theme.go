@@ -53,12 +53,13 @@ type Palette struct {
 	ModeAuto        string
 }
 
-// Built-in palettes.
-
-// All themes assume a dark terminal background — we don't paint backgrounds,
-// the user's terminal bg shows through. Light variants are for users on
-// light-background terminals; their foreground colors are dark and would
-// be unreadable on dark terminals.
+// Built-in palettes — names match Claude Code's THEME_NAMES exactly so
+// settings.json values written by either tool work in both:
+//   dark, light, dark-daltonized, light-daltonized, dark-ansi, light-ansi
+//
+// All themes assume the user's terminal background matches their preference
+// (dark themes for dark terminals, light themes for light terminals). We
+// don't paint backgrounds — fg-only.
 
 var Dark = Palette{
 	Name:            "dark",
@@ -96,14 +97,14 @@ var Light = Palette{
 	ModeAuto:        "#9A6700",
 }
 
-var DarkAccessible = Palette{
-	Name:            "dark-daltonism",
+var DarkDaltonized = Palette{
+	Name:            "dark-daltonized",
 	Primary:         "#CDD6E0",
 	Secondary:       "#8B92A0",
 	Tertiary:        "#4A5160",
 	Accent:          "#DA7756",
-	Success:         "#3B82F6",
-	Danger:          "#F59E0B",
+	Success:         "#3B82F6", // blue instead of green for deuteranopia
+	Danger:          "#F59E0B", // amber instead of red
 	Warning:         "#FDE047",
 	Info:            "#A78BFA",
 	CodeBg:          "#0D1117",
@@ -114,8 +115,8 @@ var DarkAccessible = Palette{
 	ModeAuto:        "#FDE047",
 }
 
-var LightAccessible = Palette{
-	Name:            "light-daltonism",
+var LightDaltonized = Palette{
+	Name:            "light-daltonized",
 	Primary:         "#1F2328",
 	Secondary:       "#4D5560",
 	Tertiary:        "#9198A1",
@@ -132,9 +133,54 @@ var LightAccessible = Palette{
 	ModeAuto:        "#9A6700",
 }
 
+// ANSI variants — use only the 16 standard ANSI color names for terminals
+// without truecolor support. lipgloss accepts "1".."15" as ANSI color codes:
+//   0=black 1=red 2=green 3=yellow 4=blue 5=magenta 6=cyan 7=white
+//   8..15 = bright versions
+// Mirrors src/utils/theme.ts darkAnsiTheme / lightAnsiTheme intent.
+
+var DarkAnsi = Palette{
+	Name:            "dark-ansi",
+	Primary:         "15", // whiteBright
+	Secondary:       "7",  // white
+	Tertiary:        "8",  // brightBlack (gray)
+	Accent:          "9",  // redBright (Claude's red)
+	Success:         "10", // greenBright
+	Danger:          "9",  // redBright
+	Warning:         "11", // yellowBright
+	Info:            "12", // blueBright
+	CodeBg:          "0",  // black
+	Border:          "8",  // brightBlack
+	BorderActive:    "9",  // redBright
+	ModeAcceptEdits: "13", // magentaBright
+	ModePlan:        "14", // cyanBright
+	ModeAuto:        "11", // yellowBright
+}
+
+var LightAnsi = Palette{
+	Name:            "light-ansi",
+	Primary:         "0",  // black
+	Secondary:       "8",  // brightBlack (gray)
+	Tertiary:        "7",  // white (lighter gray)
+	Accent:          "1",  // red
+	Success:         "2",  // green
+	Danger:          "1",  // red
+	Warning:         "3",  // yellow
+	Info:            "4",  // blue
+	CodeBg:          "15", // whiteBright
+	Border:          "7",  // white
+	BorderActive:    "1",  // red
+	ModeAcceptEdits: "5",  // magenta
+	ModePlan:        "6",  // cyan
+	ModeAuto:        "3",  // yellow
+}
+
 var (
 	mu      sync.RWMutex
 	current = Dark
+	// overrides applies per-field color tweaks on top of the named palette,
+	// loaded from settings.json's themeOverrides object at startup.
+	overrides map[string]string
 	// listeners are called after each Set so dependent packages can rebuild
 	// derived state (lipgloss styles, ANSI escape constants).
 	listeners []func()
@@ -147,25 +193,126 @@ func Active() Palette {
 	return current
 }
 
-// Set switches the active palette by name. Unknown names map to Dark.
-// Aliases: "dark-accessible" → "dark-daltonism", same for light.
-// Calls registered OnChange listeners after the swap.
-func Set(name string) {
+// Set switches the active palette by name. Returns true if the name was
+// recognized, false otherwise (current palette unchanged on false).
+//
+// Accepted names match Claude Code's THEME_NAMES + common aliases:
+//   dark, light
+//   dark-daltonized, light-daltonized (CC official)
+//   dark-daltonism, light-daltonism   (alias — older spelling)
+//   dark-accessible, light-accessible (alias — friendlier name)
+//   dark-ansi, light-ansi             (16-color terminals)
+//   auto                              (TODO: detect system, falls back to dark)
+//
+// Calls registered OnChange listeners after a successful swap.
+func Set(name string) bool {
 	mu.Lock()
+	var picked Palette
 	switch name {
+	case "dark":
+		picked = Dark
 	case "light":
-		current = Light
-	case "dark-daltonism", "dark-daltonized", "dark-accessible":
-		current = DarkAccessible
-	case "light-daltonism", "light-daltonized", "light-accessible":
-		current = LightAccessible
+		picked = Light
+	case "dark-daltonized", "dark-daltonism", "dark-accessible":
+		picked = DarkDaltonized
+	case "light-daltonized", "light-daltonism", "light-accessible":
+		picked = LightDaltonized
+	case "dark-ansi":
+		picked = DarkAnsi
+	case "light-ansi":
+		picked = LightAnsi
+	case "auto":
+		// TODO: detect system dark/light via env. Default to dark for now.
+		picked = Dark
 	default:
-		current = Dark
+		mu.Unlock()
+		return false
 	}
+	current = applyOverrides(picked, overrides)
 	cbs := append([]func(){}, listeners...)
 	mu.Unlock()
 	for _, cb := range cbs {
 		cb()
+	}
+	return true
+}
+
+// SetOverrides applies per-field color overrides on top of the active palette.
+// Used to honor settings.json's themeOverrides object — keys are lowercase
+// Palette field names (e.g. "accent", "success", "primary") and values are
+// #RRGGBB hex strings or ANSI 0-15 codes.
+//
+// Unknown keys are silently ignored. Pass nil to clear overrides.
+// Triggers OnChange listeners.
+func SetOverrides(o map[string]string) {
+	mu.Lock()
+	overrides = o
+	// Reapply overrides to the currently-named palette.
+	base := paletteByName(current.Name)
+	current = applyOverrides(base, overrides)
+	cbs := append([]func(){}, listeners...)
+	mu.Unlock()
+	for _, cb := range cbs {
+		cb()
+	}
+}
+
+func paletteByName(name string) Palette {
+	switch name {
+	case "light":
+		return Light
+	case "dark-daltonized":
+		return DarkDaltonized
+	case "light-daltonized":
+		return LightDaltonized
+	case "dark-ansi":
+		return DarkAnsi
+	case "light-ansi":
+		return LightAnsi
+	default:
+		return Dark
+	}
+}
+
+func applyOverrides(base Palette, o map[string]string) Palette {
+	if len(o) == 0 {
+		return base
+	}
+	get := func(key, fallback string) string {
+		if v, ok := o[key]; ok && v != "" {
+			return v
+		}
+		return fallback
+	}
+	return Palette{
+		Name:            base.Name,
+		Primary:         get("primary", base.Primary),
+		Secondary:       get("secondary", base.Secondary),
+		Tertiary:        get("tertiary", base.Tertiary),
+		Accent:          get("accent", base.Accent),
+		Success:         get("success", base.Success),
+		Danger:          get("danger", base.Danger),
+		Warning:         get("warning", base.Warning),
+		Info:            get("info", base.Info),
+		CodeBg:          get("codebg", base.CodeBg),
+		Border:          get("border", base.Border),
+		BorderActive:    get("borderactive", base.BorderActive),
+		ModeAcceptEdits: get("modeacceptedits", base.ModeAcceptEdits),
+		ModePlan:        get("modeplan", base.ModePlan),
+		ModeAuto:        get("modeauto", base.ModeAuto),
+	}
+}
+
+// AvailableThemes returns the list of theme names accepted by Set, in
+// the canonical order matching Claude Code's THEME_NAMES.
+func AvailableThemes() []string {
+	return []string{
+		"dark",
+		"light",
+		"dark-daltonized",
+		"light-daltonized",
+		"dark-ansi",
+		"light-ansi",
 	}
 }
 

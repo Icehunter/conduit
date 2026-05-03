@@ -25,12 +25,40 @@ func TestSetSwapsPalette(t *testing.T) {
 		t.Fatalf("expected light Primary #1F2328, got %s", Active().Primary)
 	}
 
-	Set("dark-accessible")
-	if !strings.Contains(Active().Name, "daltonism") {
-		t.Fatalf("expected dark-daltonism, got %s", Active().Name)
+	Set("dark-daltonized")
+	if !strings.Contains(Active().Name, "daltonized") {
+		t.Fatalf("expected dark-daltonized, got %s", Active().Name)
 	}
 	if Active().Success != "#3B82F6" {
-		t.Fatalf("expected accessible Success blue, got %s", Active().Success)
+		t.Fatalf("expected daltonized Success blue, got %s", Active().Success)
+	}
+
+	// Aliases should map correctly.
+	Set("dark-accessible")
+	if Active().Name != "dark-daltonized" {
+		t.Fatalf("dark-accessible alias should map to dark-daltonized, got %s", Active().Name)
+	}
+
+	Set("dark-ansi")
+	if Active().Name != "dark-ansi" {
+		t.Fatalf("expected dark-ansi, got %s", Active().Name)
+	}
+	if Active().Primary != "15" {
+		t.Fatalf("expected ANSI 15 (whiteBright), got %s", Active().Primary)
+	}
+}
+
+// TestAvailableThemes lists all six canonical theme names.
+func TestAvailableThemes(t *testing.T) {
+	got := AvailableThemes()
+	want := []string{"dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d themes, got %d", len(want), len(got))
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Fatalf("at index %d: got %s, want %s", i, got[i], name)
+		}
 	}
 }
 

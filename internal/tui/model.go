@@ -817,8 +817,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes a key event. The bool return indicates whether the key
 // was fully consumed (true = skip textarea/viewport propagation).
+// handleKey is the top-level key dispatcher. It runs overlay intercepts,
+// then the keybinding resolver, then falls through to handleKeyBuiltins.
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
-	// Login picker intercepts all keys when active.
 	if m.loginPrompt != nil {
 		m2, cmd := m.handleLoginKey(msg)
 		return m2, cmd, true
@@ -876,6 +877,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 	}
 
+	return m.handleKeyBuiltins(msg)
+}
+
+// handleKeyBuiltins is the built-in key handler. It never consults the
+// keybinding resolver, which means dispatchKeybindingAction can safely
+// call it for synthetic re-dispatches without triggering infinite recursion.
+func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// Viewport scrollback. Plain Up/Down/PgUp/PgDn are owned by the chat
 	// input (history navigation, multi-line cursor, textarea paging).
 	// Users still need a way to scroll the chat transcript without
@@ -3510,39 +3518,37 @@ func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Mod
 		return m, tea.ClearScreen, true
 
 	// Chat input
+	// All re-dispatch cases use handleKeyBuiltins — NOT handleKey — to
+	// break the recursion: handleKey runs the KB resolver which calls
+	// dispatchKeybindingAction again for the same action.
 	case "chat:cancel":
-		// Same behaviour as Escape in normal chat mode — cancel running turn
-		// or clear the input.
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyEsc})
 		return m2, cmd, true
 	case "chat:submit":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyEnter})
 		return m2, cmd, true
 	case "chat:cycleMode":
-		// Shift+Tab default — cycle permission mode.
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 		return m2, cmd, true
 
-	// Select-context navigation (used by pickers)
 	case "select:next":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyDown})
 		return m2, cmd, true
 	case "select:previous":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyUp})
 		return m2, cmd, true
 	case "select:accept":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyEnter})
 		return m2, cmd, true
 	case "select:cancel":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyEsc})
 		return m2, cmd, true
 
-	// Confirmation
 	case "confirm:yes":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: 'y'})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'y'})
 		return m2, cmd, true
 	case "confirm:no":
-		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: 'n'})
+		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'n'})
 		return m2, cmd, true
 	}
 

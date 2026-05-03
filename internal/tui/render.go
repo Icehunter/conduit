@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/icehunter/conduit/internal/theme"
 )
 
 const (
@@ -423,16 +425,59 @@ func highlightCode(code, lang string) string {
 	return strings.Join(out, "\n")
 }
 
-// Token color styles — foreground only, transparent background.
+// codePalette returns syntax highlight colors appropriate for the active
+// theme. Light themes get darker token colors so they remain readable on
+// light bg; dark themes use the original Material Theme palette.
+type codePaletteSet struct {
+	keyword, str, comment, number, operator, typ, plain lipgloss.Color
+}
+
 var (
-	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")).Background(colorCodeBg)
-	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(colorCodeBg)
-	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorCodeBg).Italic(true)
-	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C")).Background(colorCodeBg)
-	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorCodeBg)
-	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B")).Background(colorCodeBg)
-	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(colorCodeBg)
+	codePaletteDark = codePaletteSet{
+		keyword:  lipgloss.Color("#C792EA"), // purple
+		str:      lipgloss.Color("#C3E88D"), // pale green
+		comment:  lipgloss.Color("#546E7A"), // slate
+		number:   lipgloss.Color("#F78C6C"), // orange
+		operator: lipgloss.Color("#89DDFF"), // cyan
+		typ:      lipgloss.Color("#FFCB6B"), // amber
+		plain:    lipgloss.Color("#D4D8E0"), // off-white
+	}
+	codePaletteLight = codePaletteSet{
+		keyword:  lipgloss.Color("#7B2D88"), // dark purple
+		str:      lipgloss.Color("#1A7F37"), // dark green
+		comment:  lipgloss.Color("#6E7681"), // mid gray
+		number:   lipgloss.Color("#B65A1A"), // dark orange
+		operator: lipgloss.Color("#0550AE"), // dark blue
+		typ:      lipgloss.Color("#9A6700"), // dark amber
+		plain:    lipgloss.Color("#1F2328"), // near-black
+	}
 )
+
+// codeStyle returns a foreground-only style for one syntax category,
+// picking the palette set based on the active theme.
+func codeStyle(get func(codePaletteSet) lipgloss.Color) lipgloss.Style {
+	set := codePaletteDark
+	if isLightTheme() {
+		set = codePaletteLight
+	}
+	return lipgloss.NewStyle().Foreground(get(set))
+}
+
+// isLightTheme returns true when the active palette uses dark foregrounds
+// (i.e. is meant for light terminal backgrounds).
+func isLightTheme() bool {
+	name := theme.Active().Name
+	return strings.HasPrefix(name, "light")
+}
+
+// Token style accessors — call at render time so theme switches apply.
+func cKeywordStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.keyword }) }
+func cStringStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.str }) }
+func cCommentStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.comment }).Italic(true) }
+func cNumberStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.number }) }
+func cOperatorStyle() lipgloss.Style { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.operator }) }
+func cTypeStyle() lipgloss.Style     { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.typ }) }
+func cPlainStyle() lipgloss.Style    { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.plain }) }
 
 var langKeywords = map[string][]string{
 	"go": {
@@ -524,7 +569,7 @@ func highlightLine(line, lang string) string {
 		case strings.HasPrefix(line, "@@"):
 			return cDiffHunk.Render(line)
 		default:
-			return cPlain.Render(line)
+			return cPlainStyle().Render(line)
 		}
 	}
 
@@ -533,14 +578,14 @@ func highlightLine(line, lang string) string {
 		trimmed := strings.TrimLeft(line, " \t")
 		for _, p := range prefixes {
 			if strings.HasPrefix(trimmed, p) {
-				return cComment.Render(line)
+				return cCommentStyle().Render(line)
 			}
 		}
 	}
 
 	// YAML/JSON/TOML and unknown — render plain but still colored.
 	if _, ok := langKeywords[lang]; !ok || (lang != "" && len(langKeywords[lang]) == 0) {
-		return cPlain.Render(line)
+		return cPlainStyle().Render(line)
 	}
 
 	return tokenizeLine(line, lang)
@@ -573,7 +618,7 @@ func tokenizeLine(line, lang string) string {
 			if j < n {
 				j++
 			}
-			out.WriteString(cString.Render(string(runes[i:j])))
+			out.WriteString(cStringStyle().Render(string(runes[i:j])))
 			i = j
 			continue
 		}
@@ -587,7 +632,7 @@ func tokenizeLine(line, lang string) string {
 			if j < n {
 				j++
 			}
-			out.WriteString(cString.Render(string(runes[i:j])))
+			out.WriteString(cStringStyle().Render(string(runes[i:j])))
 			i = j
 			continue
 		}
@@ -599,7 +644,7 @@ func tokenizeLine(line, lang string) string {
 				runes[j] == 'x' || runes[j] == 'X' || runes[j] == '_') {
 				j++
 			}
-			out.WriteString(cNumber.Render(string(runes[i:j])))
+			out.WriteString(cNumberStyle().Render(string(runes[i:j])))
 			i = j
 			continue
 		}
@@ -613,11 +658,11 @@ func tokenizeLine(line, lang string) string {
 			word := string(runes[i:j])
 			switch {
 			case kwSet[word]:
-				out.WriteString(cKeyword.Render(word))
+				out.WriteString(cKeywordStyle().Render(word))
 			case isTypeName(word):
-				out.WriteString(cType.Render(word))
+				out.WriteString(cTypeStyle().Render(word))
 			default:
-				out.WriteString(cPlain.Render(word))
+				out.WriteString(cPlainStyle().Render(word))
 			}
 			i = j
 			continue
@@ -625,9 +670,9 @@ func tokenizeLine(line, lang string) string {
 
 		// Operator
 		if isOperator(ch) {
-			out.WriteString(cOperator.Render(string(ch)))
+			out.WriteString(cOperatorStyle().Render(string(ch)))
 		} else {
-			out.WriteString(cPlain.Render(string(ch)))
+			out.WriteString(cPlainStyle().Render(string(ch)))
 		}
 		i++
 	}

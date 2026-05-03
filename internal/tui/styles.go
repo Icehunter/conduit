@@ -171,15 +171,6 @@ func fgOnBg(c lipgloss.Color) lipgloss.Style {
 	return s
 }
 
-// fgOnModal is the same as fgOnBg but uses ModalBg.
-func fgOnModal(c lipgloss.Color) lipgloss.Style {
-	s := lipgloss.NewStyle().Foreground(c)
-	if theme.Active().ModalBg != "" {
-		s = s.Background(colorModalBg)
-	}
-	return s
-}
-
 // fgOnCode is the same but uses CodeBg — for tokens inside code blocks.
 // Code blocks no longer paint bg in the new approach, but kept for callers.
 func fgOnCode(c lipgloss.Color) lipgloss.Style {

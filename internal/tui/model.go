@@ -1501,7 +1501,7 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
 				lastScope = item.scope
 				src := item.source
 				sb.WriteString(fmt.Sprintf("\n  %s (%s)\n",
-					fgOnModal(colorFg).Bold(true).Render(item.scope+" MCPs"), src))
+					fgOnBg(colorFg).Bold(true).Render(item.scope+" MCPs"), src))
 			}
 			cursor := "  "
 			nameStyle := stylePickerItem
@@ -1539,7 +1539,7 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 	}
 	writeField("Tools", fmt.Sprintf("%d tool%s", item.toolCount, pluralS(item.toolCount)))
 	if item.err != "" {
-		sb.WriteString("\n" + fgOnModal(colorError).Render("Error: "+item.err) + "\n")
+		sb.WriteString("\n" + fgOnBg(colorError).Render("Error: "+item.err) + "\n")
 	}
 	sb.WriteByte('\n')
 	// Context-sensitive actions matching Claude Code's MCPStdioServerMenu:
@@ -1642,9 +1642,9 @@ func (m Model) renderPanelToolDetail(sb *strings.Builder, p *panelState, innerW 
 func renderMCPStatus(status string) string {
 	switch status {
 	case "connected":
-		return fgOnModal(lipgloss.Color("2")).Render("✔ connected")
+		return fgOnBg(lipgloss.Color("2")).Render("✔ connected")
 	case "failed":
-		return fgOnModal(lipgloss.Color("1")).Render("✗ failed")
+		return fgOnBg(lipgloss.Color("1")).Render("✗ failed")
 	default:
 		return stylePickerDesc.Render("… " + status)
 	}
@@ -2711,9 +2711,17 @@ func capitalize(s string) string {
 // Called from Model.New() and from the theme.OnChange listener registered
 // in registerThemeAwareWidgets.
 func applyTextareaTheme(ta *textarea.Model) {
-	taBg := lipgloss.NewStyle()
-	taFg := lipgloss.NewStyle().Foreground(colorFg)
-	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted)
+	hasBg := theme.Active().Background != ""
+	maybeBg := func(s lipgloss.Style) lipgloss.Style {
+		if hasBg {
+			return s.Background(colorBg)
+		}
+		return s
+	}
+	taBg := maybeBg(lipgloss.NewStyle())
+	taFg := maybeBg(lipgloss.NewStyle().Foreground(colorFg))
+	taPlaceholder := maybeBg(lipgloss.NewStyle().Foreground(colorMuted))
+
 	ta.FocusedStyle.Base = taBg
 	ta.FocusedStyle.Text = taFg
 	ta.FocusedStyle.Placeholder = taPlaceholder
@@ -2724,4 +2732,11 @@ func applyTextareaTheme(ta *textarea.Model) {
 	ta.BlurredStyle.Placeholder = taPlaceholder
 	ta.BlurredStyle.Prompt = taFg
 	ta.BlurredStyle.CursorLine = taBg
+
+	// Cursor character itself — block on bg-tinted theme, otherwise default.
+	cs := lipgloss.NewStyle().Foreground(colorFg)
+	if hasBg {
+		cs = cs.Background(colorBg)
+	}
+	ta.Cursor.Style = cs
 }

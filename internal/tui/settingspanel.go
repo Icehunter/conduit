@@ -730,7 +730,7 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 	dim := stylePickerDesc
 
 	row := func(label, value string) {
-		sb.WriteString(bold.Render(label+":") + " " + fgOnModal(colorFg).Render(value) + "\n")
+		sb.WriteString(bold.Render(label+":") + " " + fgOnBg(colorFg).Render(value) + "\n")
 	}
 
 	authStatus := dim.Render("not found")
@@ -1019,7 +1019,7 @@ func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, inn
 
 	sb.WriteByte('\n')
 	if f := buildFactoid(stats); f != "" {
-		sb.WriteString(fgOnModal(colorTool).Render("  "+f) + "\n")
+		sb.WriteString(fgOnBg(colorTool).Render("  "+f) + "\n")
 	}
 }
 
@@ -1065,7 +1065,7 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 			pct = tot * 100 / total
 		}
 		color := modelColors[idx%len(modelColors)]
-		dot := fgOnModal(color).Render("●")
+		dot := fgOnBg(color).Render("●")
 		name := lipgloss.NewStyle().Bold(true).Foreground(colorFg).Render(shortModelName(r.name))
 		line1 = dot + " " + name + " " + stylePickerDesc.Render(fmt.Sprintf("(%d%%)", pct))
 		line2 = stylePickerDesc.Render(fmt.Sprintf("    In: %s · Out: %s",
@@ -1115,7 +1115,7 @@ func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, i
 	sb.WriteString(bold.Render("Session") + "\n\n")
 
 	row := func(label, value string) {
-		sb.WriteString(fgOnModal(colorFg).Render(fmt.Sprintf("  %-22s %s", label, value)) + "\n")
+		sb.WriteString(fgOnBg(colorFg).Render(fmt.Sprintf("  %-22s %s", label, value)) + "\n")
 	}
 
 	if snap.costUSD <= 0 && snap.inputTokens <= 0 {
@@ -1696,7 +1696,7 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 		if level > 3 {
 			level = 3
 		}
-		return fgOnModal(heatColors[level]).Render(heatChars[level])
+		return fgOnBg(heatColors[level]).Render(heatChars[level])
 	}
 
 	// Build grid: grid[dayOfWeek 0=Sun][week] = count
@@ -1759,7 +1759,7 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 	// ── Legend ────────────────────────────────────────────────────────────────
 	sb.WriteString(strings.Repeat(" ", leftPad) + stylePickerDesc.Render("Less ·"))
 	for i := range heatColors {
-		sb.WriteString(fgOnModal(heatColors[i]).Render(heatChars[i]))
+		sb.WriteString(fgOnBg(heatColors[i]).Render(heatChars[i]))
 	}
 	sb.WriteString(stylePickerDesc.Render(" More") + "\n")
 }
@@ -1827,7 +1827,7 @@ func buildTokensLineChart(sb *strings.Builder, dailyModelTokens []dailyModelEntr
 		series = append(series, data)
 		color := legendColors[i%len(legendColors)]
 		_ = modelColors // modelColors used in the breakdown below
-		dot := fgOnModal(color).Render("●")
+		dot := fgOnBg(color).Render("●")
 		legendParts = append(legendParts, dot+" "+stylePickerDesc.Render(shortModelName(r.name)))
 	}
 

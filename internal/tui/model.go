@@ -1432,8 +1432,9 @@ func (m Model) maybeFireCompanionBubble() tea.Cmd {
 // companionBubbleMsg is sent when the companion should speak.
 type companionBubbleMsg struct{ text string }
 
-// renderCompanionBubble renders a speech bubble in the top-right corner of the
-// viewport. Returns "" when no bubble is active or companion not configured.
+// renderCompanionBubble renders a speech bubble with the companion face.
+// The face and bubble box are joined horizontally so they align properly.
+// Returns "" when no bubble is active or companion not configured.
 func (m Model) renderCompanionBubble() string {
 	if m.companionBubble == "" {
 		return ""
@@ -1444,37 +1445,42 @@ func (m Model) renderCompanionBubble() string {
 	}
 	bones := buddy.GenerateBones(sc.UserID)
 	face := buddy.RenderFace(bones)
-	const maxW = 30
-	// Word-wrap the text to maxW.
+
+	const maxW = 28
+	// Word-wrap the text to maxW columns.
 	var wrapped []string
 	words := strings.Fields(m.companionBubble)
-	var line string
+	var cur string
 	for _, w := range words {
-		if line == "" {
-			line = w
-		} else if len(line)+1+len(w) <= maxW {
-			line += " " + w
+		if cur == "" {
+			cur = w
+		} else if lipgloss.Width(cur)+1+lipgloss.Width(w) <= maxW {
+			cur += " " + w
 		} else {
-			wrapped = append(wrapped, line)
-			line = w
+			wrapped = append(wrapped, cur)
+			cur = w
 		}
 	}
-	if line != "" {
-		wrapped = append(wrapped, line)
+	if cur != "" {
+		wrapped = append(wrapped, cur)
 	}
-	// Build bubble box.
+
+	// Build the speech bubble text block.
 	textStyle := lipgloss.NewStyle().Foreground(colorFg).Italic(true)
 	var rows []string
 	for _, l := range wrapped {
 		rows = append(rows, textStyle.Render(l))
 	}
-	boxStyle := lipgloss.NewStyle().
+	bubbleStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(1).PaddingRight(1).
 		Width(maxW + 2)
-	box := boxStyle.Render(strings.Join(rows, "\n"))
-	return fmt.Sprintf("%s  %s", face, box)
+	bubble := bubbleStyle.Render(strings.Join(rows, "\n"))
+
+	// Join face (center-aligned vertically) + bubble side by side.
+	faceStyle := lipgloss.NewStyle().PaddingRight(1).PaddingTop(1)
+	return lipgloss.JoinHorizontal(lipgloss.Center, faceStyle.Render(face), bubble)
 }
 
 // renderCommandPicker renders the slash command picker dropdown.

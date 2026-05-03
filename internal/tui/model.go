@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -259,6 +260,11 @@ func New(cfg Config) Model {
 	ta.CharLimit = 0
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
 	// Remove default enter binding from the textarea — we handle it ourselves.
+
+	// Static cursor (no blink) — blink causes the chat bar to repaint twice
+	// a second, and on light themes the repaint cycle is visible as flashing
+	// because lipgloss bg paint regenerates each frame.
+	ta.Cursor.SetMode(cursor.CursorStatic)
 
 	applyTextareaTheme(&ta)
 

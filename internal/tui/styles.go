@@ -105,18 +105,32 @@ func RebuildStyles() {
 	styleToolContent = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	styleErrorText = lipgloss.NewStyle().Foreground(colorError)
 	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
-	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF")).Background(colorCodeBg)
-	styleCodeBorder = lipgloss.NewStyle().PaddingLeft(2).Background(colorCodeBg)
-	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted).Background(colorCodeBg)
+	// Code blocks: no bg painting on tokens or block container — terminal/
+	// theme bg shows through. PaddingLeft(2) is the visual differentiation.
+	// Painting the block bg would require painting every syntax token bg too
+	// (otherwise terminal default leaks between tokens), and the hardcoded
+	// token colors are tuned for dark bg only.
+	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF"))
+	styleCodeBorder = lipgloss.NewStyle().PaddingLeft(2)
+	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted)
 
-	styleInputBorder = lipgloss.NewStyle().
+	// Input border: paint bg when theme has Background set (light themes)
+	// so the padding cells inside the border don't expose terminal default
+	// bg. Dark themes leave bg unset (terminal bg is what we want anyway).
+	inputBorder := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorDim).
 		PaddingLeft(1).PaddingRight(1)
-	styleInputBorderActive = lipgloss.NewStyle().
+	inputBorderActive := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(1).PaddingRight(1)
+	if p.Background != "" {
+		inputBorder = inputBorder.Background(colorBg).BorderBackground(colorBg)
+		inputBorderActive = inputBorderActive.Background(colorBg).BorderBackground(colorBg)
+	}
+	styleInputBorder = inputBorder
+	styleInputBorderActive = inputBorderActive
 
 	styleStatus = lipgloss.NewStyle().Foreground(colorDim)
 	styleStatusModel = lipgloss.NewStyle().Foreground(colorMuted)
@@ -145,22 +159,31 @@ func init() {
 	theme.OnChange(RebuildStyles)
 }
 
-// fgOnBg returns a foreground-colored lipgloss style with the app bg set,
-// so embedded escapes don't punch holes through the painted theme bg.
-// Use this anywhere code currently builds an inline lipgloss.NewStyle().Foreground(c).
+// fgOnBg returns a foreground-colored style. When the active theme has a
+// Background value (light themes), it also sets bg so embedded escapes
+// don't punch holes through the painted surface. For dark themes, bg is
+// left unset and the terminal default shows through.
 func fgOnBg(c lipgloss.Color) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(c).Background(colorBg)
+	s := lipgloss.NewStyle().Foreground(c)
+	if theme.Active().Background != "" {
+		s = s.Background(colorBg)
+	}
+	return s
 }
 
-// fgOnModal is the same as fgOnBg but uses ModalBg — for content rendered
-// inside settings/plugin panel boxes.
+// fgOnModal is the same as fgOnBg but uses ModalBg.
 func fgOnModal(c lipgloss.Color) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(c).Background(colorModalBg)
+	s := lipgloss.NewStyle().Foreground(c)
+	if theme.Active().ModalBg != "" {
+		s = s.Background(colorModalBg)
+	}
+	return s
 }
 
 // fgOnCode is the same but uses CodeBg — for tokens inside code blocks.
+// Code blocks no longer paint bg in the new approach, but kept for callers.
 func fgOnCode(c lipgloss.Color) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(c).Background(colorCodeBg)
+	return lipgloss.NewStyle().Foreground(c)
 }
 
 // registerThemeAwareWidgets wires the Model's stateful widgets (textarea,

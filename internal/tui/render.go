@@ -55,13 +55,6 @@ func renderMessage(msg Message, width int) string {
 			body := renderMarkdown(msg.Content, inner)
 			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
 		}
-		// If the content already contains ANSI escapes (e.g. /doctor, /session
-		// using statusRow helpers), pass them through unmodified — wrapping in
-		// styleSystemText would force italic+muted on top of the embedded colors.
-		if strings.Contains(msg.Content, "\033[") {
-			content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
-			return pad + styleSystemText.Render("· ") + content
-		}
 		// Indent continuation lines to align with text after "· ".
 		const sysPrefix = "· "
 		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")

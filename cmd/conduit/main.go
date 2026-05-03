@@ -31,6 +31,7 @@ import (
 	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
+	"github.com/icehunter/conduit/internal/migrations"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
@@ -322,6 +323,10 @@ func runREPL(continueMode bool) error {
 		// Non-fatal — session persistence failure shouldn't block the REPL.
 		sess = nil
 	}
+
+	// Run one-shot settings migrations before loading. Idempotent: completed
+	// IDs are recorded in settings.json so they never re-run.
+	migrations.Run(settings.ClaudeDir())
 
 	// Load settings (missing/invalid files are fine — defaults apply).
 	s, _ := settings.Load(cwd)

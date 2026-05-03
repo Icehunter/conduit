@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +56,10 @@ const (
 	inputMaxRows  = 12
 	inputMaxRatio = 0.30
 )
+
+// rePasteToken matches "[Pasted text #N +M lines]" placeholder tokens
+// inserted by the bracketed-paste handler.
+var rePasteToken = regexp.MustCompile(`\[Pasted text #(\d+) \+\d+ lines\]`)
 
 // isNewlineInsertKey reports whether the key would cause the textarea to
 // insert a newline. Mirrors the binding set on
@@ -305,6 +311,15 @@ type Model struct {
 	// pendingImages holds clipboard images queued to send with the next
 	// message. Each ctrl+v appends one image. Cleared on submit or Esc.
 	pendingImages []*attach.Image
+
+	// pastedBlocks holds large text pastes that are displayed as
+	// "[Pasted text #N +X lines]" placeholders in the textarea. The
+	// placeholder string is written into the textarea; the raw content is
+	// stored here indexed by placeholder number. On submit the raw content
+	// replaces the placeholder in the sent message. Backspace in the
+	// textarea removes the entire placeholder token.
+	pastedBlocks map[int]string // placeholder# → raw text
+	pastedSeq    int            // monotonic counter for placeholder numbers
 }
 
 // New builds the initial Model.
@@ -478,18 +493,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		// Bracketed paste arrives as a single event in bubbletea v2.
-		// For large pastes, insert the text and flash "Pasted N lines"
-		// so the user knows the full content landed — mirrors CC's UX.
+		// Normalize line endings: terminals may send \r\n or bare \r.
 		hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 			m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 			m.permPrompt != nil || m.picker != nil || m.onboarding != nil
 		if !hasOverlay {
-			content := msg.Content
-			m.input.InsertString(content)
-			if strings.Contains(content, "\n") || len(content) > 300 {
-				lines := strings.Count(content, "\n") + 1
-				m.flashMsg = fmt.Sprintf("Pasted %d lines", lines)
+			content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
+			content = strings.ReplaceAll(content, "\r", "\n")
+			lineCount := strings.Count(content, "\n") + 1
+			isLarge := lineCount > 1 || len(content) > 300
+			if isLarge {
+				// Store raw content and insert a removable placeholder token.
+				// Mirrors CC's "[Pasted text #N +X lines]" UX. The placeholder
+				// is a single pseudo-word so backspace removes it whole.
+				m.pastedSeq++
+				seq := m.pastedSeq
+				if m.pastedBlocks == nil {
+					m.pastedBlocks = map[int]string{}
+				}
+				m.pastedBlocks[seq] = content
+				placeholder := fmt.Sprintf("[Pasted text #%d +%d lines]", seq, lineCount)
+				m.input.InsertString(placeholder)
+				m.flashMsg = fmt.Sprintf("Pasted %d lines  (Esc to clear)", lineCount)
 				return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+			} else {
+				m.input.InsertString(content)
 			}
 		}
 		return m, nil
@@ -999,12 +1027,20 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "tab", "esc":
-		// Clear pending images on Esc.
-		if msg.String() == "esc" && len(m.pendingImages) > 0 {
-			n := len(m.pendingImages)
-			m.pendingImages = nil
-			m.flashMsg = fmt.Sprintf("%d image(s) cleared.", n)
-			return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		// Clear pending images and paste placeholders on Esc.
+		if msg.String() == "esc" {
+			if len(m.pendingImages) > 0 || len(m.pastedBlocks) > 0 {
+				n := len(m.pendingImages)
+				m.pendingImages = nil
+				m.pastedBlocks = nil
+				m.input.SetValue(rePasteToken.ReplaceAllString(m.input.Value(), ""))
+				if n > 0 {
+					m.flashMsg = fmt.Sprintf("%d image(s) and paste(s) cleared.", n)
+				} else {
+					m.flashMsg = "Paste(s) cleared."
+				}
+				return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+			}
 		}
 		if len(m.cmdMatches) > 0 {
 			if msg.String() == "tab" {
@@ -1071,6 +1107,55 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			// ErrNoImage or osascript error — clipboard likely has text.
 			// Fall through to textarea for normal text paste.
 			return m, nil, false
+		}
+
+	case "backspace":
+		// If the cursor is immediately after a paste placeholder token, delete
+		// the entire token in one keystroke (mirroring how CC handles it).
+		if len(m.pastedBlocks) > 0 {
+			val := m.input.Value()
+			col := m.input.Column()
+			// Determine the rune position of the cursor within the full value
+			// by walking lines up to the current line+col.
+			line := m.input.Line()
+			pos := 0
+			for i, l := range strings.Split(val, "\n") {
+				if i == line {
+					pos += col
+					break
+				}
+				pos += len(l) + 1 // +1 for the \n
+			}
+			// Look for any paste token ending exactly at pos.
+			prefix := val[:pos]
+			if strings.HasSuffix(prefix, "]") {
+				loc := rePasteToken.FindStringIndex(prefix)
+				if loc != nil && loc[1] == len(prefix) {
+					// Found a token ending at the cursor — extract its seq#,
+					// delete it from the input, and remove from pastedBlocks.
+					token := prefix[loc[0]:]
+					if sub := rePasteToken.FindStringSubmatch(token); len(sub) == 2 {
+						seq, _ := strconv.Atoi(sub[1])
+						delete(m.pastedBlocks, seq)
+					}
+					newVal := val[:loc[0]] + val[pos:]
+					m.input.SetValue(newVal)
+					// SetValue leaves cursor at the end. Reposition to loc[0]
+					// (where the token was) when there's text after it.
+					if val[pos:] != "" {
+						prefix2 := newVal[:loc[0]]
+						targetLine := strings.Count(prefix2, "\n")
+						lines2 := strings.Split(prefix2, "\n")
+						targetCol := len(lines2[len(lines2)-1])
+						m.input.CursorStart()
+						for i := 0; i < targetLine; i++ {
+							m.input.CursorDown()
+						}
+						m.input.SetCursorColumn(targetCol)
+					}
+					return m, nil, true
+				}
+			}
 		}
 
 	case "ctrl+y":
@@ -1151,6 +1236,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.historyIdx = -1
 		m.historyDraft = ""
 		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+		// Expand paste placeholders before sending to the API.
+		// The textarea holds "[Pasted text #N +X lines]" tokens; the agent
+		// receives the raw pasted content. After expansion, clear the map.
+		apiText := m.expandPastePlaceholders(text)
+		m.pastedBlocks = nil
+
 		// Build user message content. Prepend any queued images as image
 		// blocks so Claude sees screenshot(s) alongside the text. CC
 		// supports multiple images; we mirror that by accumulating on
@@ -1167,7 +1258,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			})
 		}
 		m.pendingImages = nil
-		userContent = append(userContent, api.ContentBlock{Type: "text", Text: text})
+		userContent = append(userContent, api.ContentBlock{Type: "text", Text: apiText})
 		m.history = append(m.history, api.Message{
 			Role:    "user",
 			Content: userContent,
@@ -1194,6 +1285,29 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}, true
 	}
 	return m, nil, false
+}
+
+// expandPastePlaceholders replaces "[Pasted text #N +X lines]" tokens in s
+// with the raw content from m.pastedBlocks. Tokens with no matching entry
+// are left as-is (shouldn't happen in practice).
+func (m Model) expandPastePlaceholders(s string) string {
+	if len(m.pastedBlocks) == 0 {
+		return s
+	}
+	return rePasteToken.ReplaceAllStringFunc(s, func(tok string) string {
+		sub := rePasteToken.FindStringSubmatch(tok)
+		if len(sub) != 2 {
+			return tok
+		}
+		seq, err := strconv.Atoi(sub[1])
+		if err != nil {
+			return tok
+		}
+		if raw, ok := m.pastedBlocks[seq]; ok {
+			return raw
+		}
+		return tok
+	})
 }
 
 // renderCommandPicker renders the slash command picker dropdown.

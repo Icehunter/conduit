@@ -31,6 +31,8 @@
 | M-N Memory completion | ✅ | ScanMemories, RelevantMemories, /memory list/show/scan, age tracking |
 | M-P Bubbletea v2 upgrade | ✅ | charm.land/v2 across bubbletea/bubbles/lipgloss; native Shift+Enter via Kitty keyboard protocol; declarative tea.View; structured key.Code + key.Mod |
 | M-Q Custom keybindings | ✅ | `internal/keybindings/` — parser, resolver, JSON loader, defaults. TUI hookup: `activeContexts()`, `dispatchKeybindingAction()`, `command:*` slash dispatch, chat/select/confirm action IDs. |
+| M-R Image paste | ✅ | ctrl+v reads clipboard via osascript (macOS PNG/TIFF) or xclip/wl-paste (Linux). Multiple images accumulate, badge shows count. tea.PasteMsg for large text pastes. |
+| M-S Bubbletea v2 polish | ✅ | Sticky-bottom scroll, overlay viewport shrink, system msg wrap, innerW lipgloss-v2 fix, ctrl+c signal handling, handleKey/handleKeyBuiltins split (prevents KB recursion), /keybindings live resolver output |
 
 **Test count:** 507 passing, race clean (2026-05-02)
 

@@ -2592,16 +2592,40 @@ func (m Model) View() string {
 	return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
-// paintApp is a passthrough — we don't paint app bg. Terminal bg shows
-// through, becoming the de-facto theme background. TUI character-cell
-// rendering can't perfectly cover every cell without painting every glyph
-// explicitly, and the partial-coverage approach creates more visual
-// artifacts (mismatched bg blocks) than it solves.
+// paintApp paints the theme background across the visible TUI region —
+// but ONLY when the active palette has a Background value set. Dark themes
+// leave Background empty so the terminal bg shows through cleanly.
 //
-// Themes still control all foreground colors and the few opt-in surfaces
-// (code blocks).
+// Light themes set Background so the user sees a light surface even on a
+// dark terminal. The paint isn't pixel-perfect (TUI cell rendering means
+// some widget chrome shows terminal bg), but it makes light themes usable.
+//
+// Two-phase paint to keep bg painted across lipgloss internal resets:
+//  1. Replace internal "\x1b[0m" with soft reset + bg reapply
+//  2. Pad each line to width and wrap in styleAppSurface
 func paintApp(w, h int, content string) string {
-	return content
+	if w <= 0 || h <= 0 {
+		return content
+	}
+	pBg := theme.Active().Background
+	if pBg == "" {
+		// Dark themes — passthrough, terminal bg shows through.
+		return content
+	}
+	bg := theme.AnsiBG(pBg)
+	const fullReset = "\x1b[0m"
+	const softReset = "\x1b[22;23;39m"
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		line = strings.ReplaceAll(line, fullReset, softReset+bg)
+		visW := lipgloss.Width(line)
+		if visW < w {
+			line += strings.Repeat(" ", w-visW)
+		}
+		lines[i] = bg + line + fullReset
+	}
+	out := strings.Join(lines, "\n")
+	return styleAppSurface.Width(w).Height(h).Render(out)
 }
 
 // tallyTokens estimates token usage from conversation history.

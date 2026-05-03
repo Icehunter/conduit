@@ -84,7 +84,15 @@ func RebuildStyles() {
 	colorCodeBg = lipgloss.Color(p.CodeBg)
 	colorBorder = lipgloss.Color(p.Border)
 
-	styleAppSurface = lipgloss.NewStyle().Foreground(colorFg)
+	// styleAppSurface is used by paintApp's outer wrap. Background is set
+	// only when the active palette has a Background value (light themes).
+	if p.Background != "" {
+		styleAppSurface = lipgloss.NewStyle().
+			Background(lipgloss.Color(p.Background)).
+			Foreground(colorFg)
+	} else {
+		styleAppSurface = lipgloss.NewStyle().Foreground(colorFg)
+	}
 	styleModalSurface = lipgloss.NewStyle().Foreground(colorFg)
 
 	// Foreground-only theming. Terminal bg shows through everywhere except

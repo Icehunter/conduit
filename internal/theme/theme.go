@@ -63,18 +63,22 @@ type Palette struct {
 // don't paint backgrounds — fg-only.
 
 var Dark = Palette{
-	Name:            "dark",
-	Primary:         "#CDD6E0",
-	Secondary:       "#8B92A0",
-	Tertiary:        "#4A5160",
-	Accent:          "#DA7756",
-	Success:         "#4ADE80",
-	Danger:          "#F87171",
-	Warning:         "#FDE047",
-	Info:            "#60A5FA",
-	Background:      "#16181D", // app surface
-	ModalBg:         "#1E2128", // panels — slightly lighter
-	CodeBg:          "#0D1117", // code blocks — slightly darker
+	Name:      "dark",
+	Primary:   "#CDD6E0",
+	Secondary: "#8B92A0",
+	Tertiary:  "#4A5160",
+	Accent:    "#DA7756",
+	Success:   "#4ADE80",
+	Danger:    "#F87171",
+	Warning:   "#FDE047",
+	Info:      "#60A5FA",
+	// Background empty → paintApp is a no-op, terminal bg shows through.
+	// Dark themes assume the user already has a dark terminal — painting
+	// our own dark over it adds nothing and creates partial-coverage
+	// artifacts where widgets render their own backgrounds.
+	Background:      "",
+	ModalBg:         "",
+	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
 	ModeAcceptEdits: "#C084FC",
@@ -112,8 +116,8 @@ var DarkDaltonized = Palette{
 	Danger:          "#F59E0B",
 	Warning:         "#FDE047",
 	Info:            "#A78BFA",
-	Background:      "#16181D",
-	ModalBg:         "#1E2128",
+	Background:      "", // see Dark — terminal bg shows through
+	ModalBg:         "",
 	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
@@ -158,14 +162,14 @@ var DarkAnsi = Palette{
 	Danger:          "9",  // redBright
 	Warning:         "11", // yellowBright
 	Info:            "12", // blueBright
-	Background:      "0",  // black
-	ModalBg:         "8",  // brightBlack (slightly lighter)
-	CodeBg:          "0",  // black
-	Border:          "8",  // brightBlack
-	BorderActive:    "9",  // redBright
-	ModeAcceptEdits: "13", // magentaBright
-	ModePlan:        "14", // cyanBright
-	ModeAuto:        "11", // yellowBright
+	Background:      "",   // see Dark — terminal bg shows through
+	ModalBg:         "",
+	CodeBg:          "0", // black
+	Border:          "8", // brightBlack
+	BorderActive:    "9", // redBright
+	ModeAcceptEdits: "13",
+	ModePlan:        "14",
+	ModeAuto:        "11",
 }
 
 var LightAnsi = Palette{

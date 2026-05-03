@@ -13,23 +13,23 @@ func TestSetSwapsPalette(t *testing.T) {
 	if Active().Name != "dark" {
 		t.Fatalf("expected dark, got %s", Active().Name)
 	}
-	if Active().Primary != "#F5F7FA" {
-		t.Fatalf("expected dark Primary #F5F7FA, got %s", Active().Primary)
+	if Active().Primary != "#FFFFFF" {
+		t.Fatalf("expected dark Primary #FFFFFF, got %s", Active().Primary)
 	}
 
 	Set("light")
 	if Active().Name != "light" {
 		t.Fatalf("expected light, got %s", Active().Name)
 	}
-	if Active().Primary != "#1F2328" {
-		t.Fatalf("expected light Primary #1F2328, got %s", Active().Primary)
+	if Active().Primary != "#000000" {
+		t.Fatalf("expected light Primary #000000, got %s", Active().Primary)
 	}
 
 	Set("dark-daltonized")
 	if !strings.Contains(Active().Name, "daltonized") {
 		t.Fatalf("expected dark-daltonized, got %s", Active().Name)
 	}
-	if Active().Success != "#3B82F6" {
+	if Active().Success != "#3399FF" {
 		t.Fatalf("expected daltonized Success blue, got %s", Active().Success)
 	}
 

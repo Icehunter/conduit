@@ -84,6 +84,10 @@ type Settings struct {
 	// "success"); values are #RRGGBB hex or ANSI 0-15 codes.
 	// conduit-only — Claude Code ignores this field.
 	ThemeOverrides map[string]string `json:"themeOverrides,omitempty"`
+	// Themes is a map of custom theme name → field map (same shape as
+	// themeOverrides). Lets users define entirely new themes selectable
+	// via /theme. conduit-only.
+	Themes map[string]map[string]string `json:"themes,omitempty"`
 }
 
 // Merged is the result of loading and merging all settings layers.
@@ -110,6 +114,8 @@ type Merged struct {
 	Theme string
 	// ThemeOverrides is the per-field color override map (last layer wins).
 	ThemeOverrides map[string]string
+	// Themes is the merged custom theme map (last layer wins per name).
+	Themes map[string]map[string]string
 }
 
 // Load reads and merges settings from all layers for the given cwd.
@@ -154,6 +160,14 @@ func loadPaths(paths []string) (*Merged, error) {
 			}
 			for k, v := range s.ThemeOverrides {
 				merged.ThemeOverrides[k] = v
+			}
+		}
+		if len(s.Themes) > 0 {
+			if merged.Themes == nil {
+				merged.Themes = map[string]map[string]string{}
+			}
+			for k, v := range s.Themes {
+				merged.Themes[k] = v
 			}
 		}
 	}

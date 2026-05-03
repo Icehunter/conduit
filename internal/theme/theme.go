@@ -1,19 +1,11 @@
 // Package theme is the single source of truth for conduit's color palette.
 //
-// Other packages (tui/styles.go, commands/style.go) derive their concrete
-// styling from theme.Active(). Switching themes at startup just means
-// reading settings.json and calling theme.Set(name) before any package
-// reads its derived constants.
+// Built-in themes are direct ports of Claude Code's THEME_NAMES with the
+// same RGB values, so settings.json values written by either tool render
+// identically.
 //
-// Themes mirror the names used by Claude Code's settings.json:
-//
-//	dark               — default dark theme
-//	light              — default light theme
-//	dark-daltonism     — dark theme with deuteranopia-friendly red/green
-//	light-daltonism    — light variant of the above
-//
-// Settings file uses these names verbatim; we accept the shorter
-// "dark-accessible" / "light-accessible" as aliases.
+// Users can also define custom themes via settings.json's "themes" field
+// (a map of name to Palette), or tweak individual fields via "themeOverrides".
 package theme
 
 import (
@@ -22,187 +14,193 @@ import (
 	"sync"
 )
 
-// Palette is the semantic color set. Every UI element picks from these
-// roles instead of hardcoding hex values, so retheming is a single switch.
+// Palette is the semantic color set. Maps to a subset of Claude Code's
+// Theme struct fields:
+//
+//   Primary   ← text
+//   Secondary ← inactive
+//   Tertiary  ← subtle
+//   Accent    ← claude
+//   Success   ← success
+//   Danger    ← error
+//   Warning   ← warning
+//   Info      ← suggestion / permission
+//   Background  ← (intentionally empty for terminal-bg passthrough)
+//   ModalBg     ← userMessageBackground
+//   CodeBg      ← bashMessageBackgroundColor
+//   Border      ← promptBorder
+//   BorderActive ← claude
+//   ModeAcceptEdits ← autoAccept
+//   ModePlan        ← planMode
+//   ModeAuto        ← warning
 type Palette struct {
 	Name string
 
-	// Foreground hierarchy
-	Primary   string // main text (#RRGGBB)
-	Secondary string // labels, secondary chrome
-	Tertiary  string // separators, very dim
+	Primary   string
+	Secondary string
+	Tertiary  string
 
-	// Brand
-	Accent string // Claude orange / brand color
+	Accent string
 
-	// Semantic
-	Success string // green ✓
-	Danger  string // red ✗
-	Warning string // yellow
-	Info    string // blue
+	Success string
+	Danger  string
+	Warning string
+	Info    string
 
-	// Surfaces
-	Background   string // app surface — painted across entire TUI region
-	ModalBg      string // panels/modals — slightly distinct from Background
-	CodeBg       string // fenced code blocks — slightly distinct from Background
+	Background   string
+	ModalBg      string
+	CodeBg       string
 	Border       string
 	BorderActive string
 
-	// Permission-mode accents
 	ModeAcceptEdits string
 	ModePlan        string
 	ModeAuto        string
 }
 
-// Built-in palettes — names match Claude Code's THEME_NAMES exactly so
-// settings.json values written by either tool work in both:
-//   dark, light, dark-daltonized, light-daltonized, dark-ansi, light-ansi
-//
-// All themes assume the user's terminal background matches their preference
-// (dark themes for dark terminals, light themes for light terminals). We
-// don't paint backgrounds — fg-only.
+// ----- Built-in palettes (ported from src/utils/theme.ts) -------------------
 
+// Dark — direct port of darkTheme from CC.
 var Dark = Palette{
-	Name:      "dark",
-	Primary:   "#F5F7FA", // near-white for clear legibility on black
-	Secondary: "#C0C6D0", // bright muted gray
-	Tertiary:  "#6E7585",
-	Accent:    "#DA7756",
-	Success:   "#4ADE80",
-	Danger:    "#F87171",
-	Warning:   "#FDE047",
-	Info:      "#60A5FA",
-	// Background empty → paintApp is a no-op, terminal bg shows through.
-	// Dark themes assume the user already has a dark terminal — painting
-	// our own dark over it adds nothing and creates partial-coverage
-	// artifacts where widgets render their own backgrounds.
-	Background:      "",
-	ModalBg:         "",
-	CodeBg:          "#0D1117",
-	Border:          "#30363D",
-	BorderActive:    "#DA7756",
-	ModeAcceptEdits: "#C084FC",
-	ModePlan:        "#22D3EE",
-	ModeAuto:        "#FDE047",
+	Name:            "dark",
+	Primary:         "#FFFFFF", // text
+	Secondary:       "#999999", // inactive
+	Tertiary:        "#505050", // subtle
+	Accent:          "#D77757", // claude
+	Success:         "#4EBA65", // success
+	Danger:          "#FF6B80", // error
+	Warning:         "#FFC107", // warning
+	Info:            "#B1B9F9", // suggestion
+	Background:      "",        // empty — terminal bg shows through
+	ModalBg:         "#373737", // userMessageBackground
+	CodeBg:          "#413C41", // bashMessageBackgroundColor
+	Border:          "#888888", // promptBorder
+	BorderActive:    "#D77757", // claude
+	ModeAcceptEdits: "#AF87FF", // autoAccept
+	ModePlan:        "#48968C", // planMode
+	ModeAuto:        "#FFC107", // warning
 }
 
+// Light — direct port of lightTheme from CC.
 var Light = Palette{
-	Name:      "light",
-	Primary:   "#1F2328",
-	Secondary: "#4D5560",
-	Tertiary:  "#9198A1",
-	Accent:    "#D77757",
-	Success:   "#1A7F37",
-	Danger:    "#CF222E",
-	Warning:   "#9A6700",
-	Info:      "#0969DA",
-	// Background empty — bubbles widgets fight us when painting bg on a
-	// dark terminal. User keeps their terminal bg; light themes only swap
-	// fg colors. Use a light-bg terminal for true light mode.
-	Background:      "",
-	ModalBg:         "",
-	CodeBg:          "#EAEDF0",
-	Border:          "#D0D7DE",
+	Name:            "light",
+	Primary:         "#000000",
+	Secondary:       "#666666",
+	Tertiary:        "#AFAFAF",
+	Accent:          "#D77757",
+	Success:         "#2C7A39",
+	Danger:          "#AB2B3F",
+	Warning:         "#966C1E",
+	Info:            "#5769F7",
+	Background:      "", // empty — light themes only meaningful on light terminals
+	ModalBg:         "#F0F0F0",
+	CodeBg:          "#FAF5FA",
+	Border:          "#999999",
 	BorderActive:    "#D77757",
-	ModeAcceptEdits: "#8250DF",
-	ModePlan:        "#0969DA",
-	ModeAuto:        "#9A6700",
+	ModeAcceptEdits: "#8700FF",
+	ModePlan:        "#006666",
+	ModeAuto:        "#966C1E",
 }
 
+// DarkDaltonized — direct port of darkDaltonizedTheme from CC.
 var DarkDaltonized = Palette{
 	Name:            "dark-daltonized",
-	Primary:         "#F5F7FA",
-	Secondary:       "#C0C6D0",
-	Tertiary:        "#6E7585",
-	Accent:          "#DA7756",
-	Success:         "#3B82F6",
-	Danger:          "#F59E0B",
-	Warning:         "#FDE047",
-	Info:            "#A78BFA",
-	Background:      "", // see Dark — terminal bg shows through
-	ModalBg:         "",
-	CodeBg:          "#0D1117",
-	Border:          "#30363D",
-	BorderActive:    "#DA7756",
-	ModeAcceptEdits: "#C084FC",
-	ModePlan:        "#22D3EE",
-	ModeAuto:        "#FDE047",
+	Primary:         "#FFFFFF",
+	Secondary:       "#999999",
+	Tertiary:        "#505050",
+	Accent:          "#FF9933",
+	Success:         "#3399FF",
+	Danger:          "#FF6666",
+	Warning:         "#FFCC00",
+	Info:            "#99CCFF",
+	Background:      "",
+	ModalBg:         "#373737",
+	CodeBg:          "#413C41",
+	Border:          "#888888",
+	BorderActive:    "#FF9933",
+	ModeAcceptEdits: "#AF87FF",
+	ModePlan:        "#669999",
+	ModeAuto:        "#FFCC00",
 }
 
+// LightDaltonized — direct port of lightDaltonizedTheme from CC.
 var LightDaltonized = Palette{
 	Name:            "light-daltonized",
-	Primary:         "#1F2328",
-	Secondary:       "#4D5560",
-	Tertiary:        "#9198A1",
-	Accent:          "#D77757",
-	Success:         "#0969DA",
-	Danger:          "#9A6700",
-	Warning:         "#7C2D12",
-	Info:            "#6F42C1",
-	Background:      "", // see Light — terminal bg shows through
-	ModalBg:         "",
-	CodeBg:          "#EAEDF0",
-	Border:          "#D0D7DE",
-	BorderActive:    "#D77757",
-	ModeAcceptEdits: "#8250DF",
-	ModePlan:        "#0969DA",
-	ModeAuto:        "#9A6700",
+	Primary:         "#000000",
+	Secondary:       "#666666",
+	Tertiary:        "#AFAFAF",
+	Accent:          "#FF9933",
+	Success:         "#006699",
+	Danger:          "#CC0000",
+	Warning:         "#FF9900",
+	Info:            "#3366FF",
+	Background:      "",
+	ModalBg:         "#DCDCDC",
+	CodeBg:          "#FAF5FA",
+	Border:          "#999999",
+	BorderActive:    "#FF9933",
+	ModeAcceptEdits: "#8700FF",
+	ModePlan:        "#336666",
+	ModeAuto:        "#FF9900",
 }
 
-// ANSI variants — use only the 16 standard ANSI color names for terminals
-// without truecolor support. lipgloss accepts "1".."15" as ANSI color codes:
-//   0=black 1=red 2=green 3=yellow 4=blue 5=magenta 6=cyan 7=white
-//   8..15 = bright versions
-// Mirrors src/utils/theme.ts darkAnsiTheme / lightAnsiTheme intent.
-
+// DarkAnsi — direct port of darkAnsiTheme. Uses 16-color ANSI codes.
 var DarkAnsi = Palette{
 	Name:            "dark-ansi",
 	Primary:         "15", // whiteBright
 	Secondary:       "7",  // white
-	Tertiary:        "8",  // brightBlack (gray)
-	Accent:          "9",  // redBright (Claude's red)
+	Tertiary:        "7",  // white
+	Accent:          "9",  // redBright (claude)
 	Success:         "10", // greenBright
 	Danger:          "9",  // redBright
 	Warning:         "11", // yellowBright
-	Info:            "12", // blueBright
-	Background:      "",   // see Dark — terminal bg shows through
-	ModalBg:         "",
+	Info:            "12", // blueBright (suggestion)
+	Background:      "",
+	ModalBg:         "8", // brightBlack (userMessageBackground)
 	CodeBg:          "0", // black
-	Border:          "8", // brightBlack
-	BorderActive:    "9", // redBright
-	ModeAcceptEdits: "13",
-	ModePlan:        "14",
-	ModeAuto:        "11",
+	Border:          "7", // white (promptBorder)
+	BorderActive:    "9",
+	ModeAcceptEdits: "13", // magentaBright (autoAccept)
+	ModePlan:        "14", // cyanBright
+	ModeAuto:        "11", // yellowBright (warning)
 }
 
+// LightAnsi — direct port of lightAnsiTheme.
 var LightAnsi = Palette{
 	Name:            "light-ansi",
-	Primary:         "0", // black
-	Secondary:       "8", // brightBlack (gray)
-	Tertiary:        "7", // white (lighter gray)
-	Accent:          "1", // red
+	Primary:         "0", // black (text)
+	Secondary:       "8", // blackBright (inactive)
+	Tertiary:        "8", // blackBright (subtle)
+	Accent:          "9", // redBright (claude)
 	Success:         "2", // green
 	Danger:          "1", // red
 	Warning:         "3", // yellow
-	Info:            "4", // blue
-	Background:      "",  // see Light — terminal bg shows through
-	ModalBg:         "",
-	CodeBg:          "15", // whiteBright
-	Border:          "7",  // white
-	BorderActive:    "1", // red
+	Info:            "4", // blue (suggestion)
+	Background:      "",
+	ModalBg:         "7", // white (userMessageBackground)
+	CodeBg:          "15",
+	Border:          "7",
+	BorderActive:    "9",
 	ModeAcceptEdits: "5", // magenta
 	ModePlan:        "6", // cyan
 	ModeAuto:        "3", // yellow
 }
 
+// ----- Active palette + listeners -------------------------------------------
+
 var (
 	mu      sync.RWMutex
 	current = Dark
-	// overrides applies per-field color tweaks on top of the named palette,
-	// loaded from settings.json's themeOverrides object at startup.
+
+	// userThemes is populated by SetUserThemes — custom themes from
+	// settings.json. Custom names take precedence over built-ins of the
+	// same name so users can override.
+	userThemes map[string]Palette
+
+	// overrides applies per-field tweaks on top of the named palette
+	// (settings.json's themeOverrides field).
 	overrides map[string]string
-	// listeners are called after each Set so dependent packages can rebuild
-	// derived state (lipgloss styles, ANSI escape constants).
+
 	listeners []func()
 )
 
@@ -213,38 +211,19 @@ func Active() Palette {
 	return current
 }
 
-// Set switches the active palette by name. Returns true if the name was
-// recognized, false otherwise (current palette unchanged on false).
+// Set switches the active palette by name. Returns true if recognised.
 //
-// Accepted names match Claude Code's THEME_NAMES + common aliases:
-//   dark, light
-//   dark-daltonized, light-daltonized (CC official)
-//   dark-daltonism, light-daltonism   (alias — older spelling)
-//   dark-accessible, light-accessible (alias — friendlier name)
-//   dark-ansi, light-ansi             (16-color terminals)
-//   auto                              (TODO: detect system, falls back to dark)
+// Resolution order:
+//  1. settings.json custom themes (userThemes)
+//  2. Built-in CC-named themes
+//  3. Aliases (dark-accessible → dark-daltonized, etc.)
+//  4. "auto" → Dark (TODO: detect system preference)
 //
-// Calls registered OnChange listeners after a successful swap.
+// Unknown names return false and leave the current palette unchanged.
 func Set(name string) bool {
 	mu.Lock()
-	var picked Palette
-	switch name {
-	case "dark":
-		picked = Dark
-	case "light":
-		picked = Light
-	case "dark-daltonized", "dark-daltonism", "dark-accessible":
-		picked = DarkDaltonized
-	case "light-daltonized", "light-daltonism", "light-accessible":
-		picked = LightDaltonized
-	case "dark-ansi":
-		picked = DarkAnsi
-	case "light-ansi":
-		picked = LightAnsi
-	case "auto":
-		// TODO: detect system dark/light via env. Default to dark for now.
-		picked = Dark
-	default:
+	picked, ok := resolve(name)
+	if !ok {
 		mu.Unlock()
 		return false
 	}
@@ -257,19 +236,39 @@ func Set(name string) bool {
 	return true
 }
 
-// SetOverrides applies per-field color overrides on top of the active palette.
-// Used to honor settings.json's themeOverrides object — keys are lowercase
-// Palette field names (e.g. "accent", "success", "primary") and values are
-// #RRGGBB hex strings or ANSI 0-15 codes.
-//
-// Unknown keys are silently ignored. Pass nil to clear overrides.
-// Triggers OnChange listeners.
-func SetOverrides(o map[string]string) {
+// resolve picks a palette by name. Caller must hold mu.
+func resolve(name string) (Palette, bool) {
+	if p, ok := userThemes[name]; ok {
+		return p, true
+	}
+	switch name {
+	case "dark":
+		return Dark, true
+	case "light":
+		return Light, true
+	case "dark-daltonized", "dark-daltonism", "dark-accessible":
+		return DarkDaltonized, true
+	case "light-daltonized", "light-daltonism", "light-accessible":
+		return LightDaltonized, true
+	case "dark-ansi":
+		return DarkAnsi, true
+	case "light-ansi":
+		return LightAnsi, true
+	case "auto":
+		return Dark, true
+	}
+	return Palette{}, false
+}
+
+// SetUserThemes registers custom palettes loaded from settings.json. Pass
+// nil to clear. Triggers OnChange listeners so the active palette can be
+// re-resolved if it now matches a user override.
+func SetUserThemes(themes map[string]Palette) {
 	mu.Lock()
-	overrides = o
-	// Reapply overrides to the currently-named palette.
-	base := paletteByName(current.Name)
-	current = applyOverrides(base, overrides)
+	userThemes = themes
+	if p, ok := resolve(current.Name); ok {
+		current = applyOverrides(p, overrides)
+	}
 	cbs := append([]func(){}, listeners...)
 	mu.Unlock()
 	for _, cb := range cbs {
@@ -277,20 +276,18 @@ func SetOverrides(o map[string]string) {
 	}
 }
 
-func paletteByName(name string) Palette {
-	switch name {
-	case "light":
-		return Light
-	case "dark-daltonized":
-		return DarkDaltonized
-	case "light-daltonized":
-		return LightDaltonized
-	case "dark-ansi":
-		return DarkAnsi
-	case "light-ansi":
-		return LightAnsi
-	default:
-		return Dark
+// SetOverrides applies per-field colour tweaks on top of the active palette.
+// Pass nil to clear.
+func SetOverrides(o map[string]string) {
+	mu.Lock()
+	overrides = o
+	if p, ok := resolve(current.Name); ok {
+		current = applyOverrides(p, overrides)
+	}
+	cbs := append([]func(){}, listeners...)
+	mu.Unlock()
+	for _, cb := range cbs {
+		cb()
 	}
 }
 
@@ -325,30 +322,30 @@ func applyOverrides(base Palette, o map[string]string) Palette {
 	}
 }
 
-// AvailableThemes returns the list of theme names accepted by Set, in
-// the canonical order matching Claude Code's THEME_NAMES.
+// AvailableThemes returns the list of names accepted by Set, in canonical
+// order: user themes first, then built-ins matching CC's THEME_NAMES.
 func AvailableThemes() []string {
-	return []string{
-		"dark",
-		"light",
-		"dark-daltonized",
-		"light-daltonized",
-		"dark-ansi",
-		"light-ansi",
+	mu.RLock()
+	defer mu.RUnlock()
+	var out []string
+	for name := range userThemes {
+		out = append(out, name)
 	}
+	out = append(out, "dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi")
+	return out
 }
 
-// OnChange registers a callback invoked after each theme switch.
-// Used by tui/styles.go and commands/style.go to rebuild their derived
-// constants without restarting the process.
+// OnChange registers a callback fired after each successful Set.
 func OnChange(cb func()) {
 	mu.Lock()
 	listeners = append(listeners, cb)
 	mu.Unlock()
 }
 
+// ----- ANSI helpers ---------------------------------------------------------
+
 // AnsiFG returns an ANSI escape that sets the foreground.
-// Hex must be #RRGGBB (truecolor) OR a string-encoded 0..15 ANSI code.
+// Hex must be #RRGGBB or a string-encoded 0..255 ANSI code.
 func AnsiFG(value string) string {
 	if isAnsiCode(value) {
 		return fmt.Sprintf("\033[38;5;%sm", value)
@@ -358,7 +355,6 @@ func AnsiFG(value string) string {
 }
 
 // AnsiBG returns an ANSI escape that sets the background.
-// Hex must be #RRGGBB (truecolor) OR a string-encoded 0..15 ANSI code.
 func AnsiBG(value string) string {
 	if isAnsiCode(value) {
 		return fmt.Sprintf("\033[48;5;%sm", value)
@@ -368,7 +364,7 @@ func AnsiBG(value string) string {
 }
 
 func isAnsiCode(s string) bool {
-	if s == "" || len(s) > 2 {
+	if s == "" || len(s) > 3 {
 		return false
 	}
 	for _, c := range s {
@@ -379,17 +375,11 @@ func isAnsiCode(s string) bool {
 	return true
 }
 
-// ANSI escape sequences shared across themes.
-//
-// AnsiReset clears EVERYTHING (fg, bg, bold, italic, etc) — only safe when
-// the parent context will reapply backgrounds. For embedded escapes inside
-// styled regions, prefer AnsiResetSoft which leaves bg intact so the
-// surrounding paint shows through.
 const (
 	AnsiBold      = "\033[1m"
 	AnsiDim       = "\033[2m"
 	AnsiReset     = "\033[0m"
-	AnsiResetSoft = "\033[22;23;39m" // reset bold + italic + fg only; bg untouched
+	AnsiResetSoft = "\033[22;23;39m"
 )
 
 func parseHex(hex string) (r, g, b uint8) {

@@ -80,9 +80,29 @@ func renderMessage(msg Message, width int) string {
 			body := renderMarkdown(msg.Content, inner)
 			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
 		}
+		// Wrap to terminal width — /session, /status, /usage etc. emit long
+		// lines (file paths, session IDs, rate-limit URLs) that otherwise
+		// blow past the right edge and force horizontal scroll. The "· "
+		// prefix sits on the first line; continuation rows indent under
+		// the body so the prefix marks the message boundary.
 		const sysPrefix = "· "
-		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
-		return pad + styleSystemText.Render(sysPrefix) + content
+		prefixW := lipgloss.Width(sysPrefix)
+		body := styleSystemText.Width(inner - prefixW).Render(msg.Content)
+		lines := strings.Split(body, "\n")
+		var sb strings.Builder
+		for i, ln := range lines {
+			sb.WriteString(pad)
+			if i == 0 {
+				sb.WriteString(styleSystemText.Render(sysPrefix))
+			} else {
+				sb.WriteString(strings.Repeat(" ", prefixW))
+			}
+			sb.WriteString(ln)
+			if i < len(lines)-1 {
+				sb.WriteByte('\n')
+			}
+		}
+		return sb.String()
 	}
 	return msg.Content
 }

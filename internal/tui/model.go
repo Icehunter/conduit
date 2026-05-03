@@ -485,8 +485,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = m.cfg.Session.AppendCost(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
 			}
 		}
+		// Final assistant message just committed — refreshViewport's
+		// sticky-bottom honors a scrolled-up user. They explicitly
+		// scrolled away while results were streaming; don't yank them
+		// back when the turn finalizes.
 		m.refreshViewport()
-		m.vp.GotoBottom()
 		m.input.Focus()
 		return m, nil
 
@@ -1788,9 +1791,9 @@ func (m Model) renderPanel() string {
 	if panelH < 4 {
 		panelH = 4
 	}
-	// border left+right=2, padding left+right=4 → 6 chars of horizontal chrome.
-	// style.Width(w-2) sets the outer box; content area = w - 2 - 4 = w - 6.
-	innerW := w - 6
+	// lipgloss v2's Width() is total block width (including border + padding).
+	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
+	innerW := w - 8
 
 	var sb strings.Builder
 
@@ -2769,8 +2772,11 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	switch ev.Type {
 	case agent.EventText:
 		m.streaming += ev.Text
+		// refreshViewport's sticky-bottom logic preserves the user's
+		// scroll position when they've scrolled up to read history mid-
+		// stream. GotoBottom only fires when they're already pinned to
+		// the bottom.
 		m.refreshViewport()
-		m.vp.GotoBottom()
 
 	case agent.EventToolUse:
 		if m.streaming != "" {
@@ -2866,6 +2872,13 @@ func (m Model) applyLayout() Model {
 }
 
 // refreshViewport rebuilds the viewport content string.
+//
+// Sticky-bottom: if the user was already pinned to the bottom (reading
+// new content as it streams), we re-pin after rebuilding. If they
+// scrolled up to read history, SetContent leaves YOffset alone in
+// bubbles v2 — but we explicitly re-call GotoBottom only when AtBottom
+// was already true, so in-flight scrollback is preserved while the
+// model is streaming new tokens.
 func (m *Model) refreshViewport() {
 	if !m.ready {
 		return
@@ -2874,6 +2887,7 @@ func (m *Model) refreshViewport() {
 	if w <= 0 {
 		return
 	}
+	wasAtBottom := m.vp.AtBottom()
 	var sb strings.Builder
 	for i, msg := range m.messages {
 		if i > 0 {
@@ -2892,6 +2906,9 @@ func (m *Model) refreshViewport() {
 		sb.WriteByte('\n')
 	}
 	m.vp.SetContent(sb.String())
+	if wasAtBottom {
+		m.vp.GotoBottom()
+	}
 }
 
 // View renders the full TUI frame. v2 returns tea.View — internally we
@@ -2910,6 +2927,12 @@ func (m Model) View() tea.View {
 		v.SetContent(content)
 		v.AltScreen = true
 		v.KeyboardEnhancements.ReportAlternateKeys = true
+		// Cell-motion mouse mode forwards wheel scroll to the program so the
+		// viewport can scroll back through chat history. Without it, mouse
+		// wheel events stay in the terminal app and only move the alt-screen
+		// itself (which doesn't have scrollback). Cell motion (vs. all motion)
+		// is the cheapest mouse mode that still delivers wheel events.
+		v.MouseMode = tea.MouseModeCellMotion
 		return v
 	}
 	if !m.ready {
@@ -2923,6 +2946,35 @@ func (m Model) View() tea.View {
 	// (just struct field assignment) and guarantees theme switches apply.
 	applyTextareaTheme(&m.input)
 	m.spinner.Style = styleSpinner
+
+	// Compute overlay box first so we can shrink the viewport to keep the
+	// input row + status bar on screen. Without this, a tall overlay
+	// (resume picker with 10 sessions, login picker, permission prompt)
+	// pushes inputBox past the bottom of the alt-screen and lipgloss
+	// Height(m.height) clips it. Order matters: viewport must be rendered
+	// AFTER its height has been adjusted for the overlay.
+	var overlayBox string
+	if m.loginPrompt != nil {
+		overlayBox = m.renderLoginPicker()
+	} else if m.resumePrompt != nil {
+		overlayBox = m.renderResumePicker()
+	} else if m.picker != nil {
+		overlayBox = m.renderPicker()
+	} else if m.onboarding != nil {
+		overlayBox = m.renderOnboarding()
+	} else if m.permPrompt != nil {
+		overlayBox = m.renderPermissionPrompt()
+	} else if len(m.cmdMatches) > 0 {
+		overlayBox = m.renderCommandPicker()
+	}
+	if overlayBox != "" {
+		overlayLines := strings.Count(overlayBox, "\n") + 1
+		newH := m.vp.Height() - overlayLines
+		if newH < 1 {
+			newH = 1
+		}
+		m.vp.SetHeight(newH)
+	}
 
 	// Viewport.
 	vp := m.vp.View()
@@ -3065,21 +3117,7 @@ func (m Model) View() tea.View {
 		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)))
 	}
 
-	// Overlays: login > resume > permission > command picker (appended below vp).
-	var overlayBox string
-	if m.loginPrompt != nil {
-		overlayBox = m.renderLoginPicker()
-	} else if m.resumePrompt != nil {
-		overlayBox = m.renderResumePicker()
-	} else if m.picker != nil {
-		overlayBox = m.renderPicker()
-	} else if m.onboarding != nil {
-		overlayBox = m.renderOnboarding()
-	} else if m.permPrompt != nil {
-		overlayBox = m.renderPermissionPrompt()
-	} else if len(m.cmdMatches) > 0 {
-		overlayBox = m.renderCommandPicker()
-	}
+	// (Overlay was computed earlier so we could shrink the viewport.)
 
 	// JoinVertical with explicit newlines between non-empty parts.
 	// spinRow is always full-width bg-painted (set above) so it covers the

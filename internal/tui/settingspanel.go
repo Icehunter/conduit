@@ -689,7 +689,11 @@ func (m Model) renderSettingsPanel() string {
 	if panelH < 4 {
 		panelH = 4
 	}
-	innerW := w - 6
+	// lipgloss v2's Width() is total block width (including border + padding).
+	// Outer style: Width(w-2), border 1 each side (2), padding 2 each side (4)
+	// → content area = (w-2) - 2 - 4 = w - 8. v1 was w-6 because Width was
+	// content-only there.
+	innerW := w - 8
 
 	var sb strings.Builder
 

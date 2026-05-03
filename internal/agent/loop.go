@@ -354,9 +354,12 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					}
 				}
 			}
-			// Desktop notification on turn complete.
+			// Desktop notification on turn complete. Title carries the
+			// project name so users running multiple conduit windows can
+			// tell which one finished. Body is short so the notification
+			// renders fully on macOS Banner / Linux notify-send.
 			if l.cfg.NotifyOnComplete {
-				hooks.Notify("conduit", "Turn complete")
+				hooks.Notify("conduit · ready", "Your turn.")
 			}
 			// Post-Stop hook for memory extraction etc. Caller is responsible
 			// for single-flighting / backgrounding — Loop just notifies.

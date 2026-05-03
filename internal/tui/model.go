@@ -263,7 +263,7 @@ type Model struct {
 // New builds the initial Model.
 func New(cfg Config) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Message conduit  (Enter ↵ send · Shift+Enter newline)"
+	ta.Placeholder = "Message conduit  (Enter ↵ send · Alt+Enter or Ctrl+J newline)"
 	// Override the bubbles textarea default prompt (┃, U+2503 HEAVY VERTICAL)
 	// with a chevron — feels less like a separator, more like an input cue.
 	ta.Prompt = "❯ "
@@ -271,7 +271,13 @@ func New(cfg Config) Model {
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
-	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
+	// Newline keys: Shift+Enter works on terminals that report it via CSI-u
+	// (Kitty, Ghostty, WezTerm, Warp; iTerm2 only when "Report modifiers in
+	// CSI u mode" is enabled AND bubbletea v2 is in use). Bubbletea v1
+	// doesn't decode CSI-u, so we add the universal-fallback bindings:
+	//   alt+enter — most terminals send ESC+CR for Option/Alt+Enter
+	//   ctrl+j   — the literal newline byte (LF), works everywhere
+	ta.KeyMap.InsertNewline.SetKeys("shift+enter", "alt+enter", "ctrl+j")
 	// Remove default enter binding from the textarea — we handle it ourselves.
 
 	// Static cursor (no blink) — blink causes the chat bar to repaint twice

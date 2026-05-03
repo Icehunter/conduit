@@ -47,7 +47,7 @@ func RegisterTerminalSetupCommand(r *Registry) {
 func terminalSetupAdvice(term string) string {
 	if name, ok := nativeCSIuTerminals[term]; ok {
 		return fmt.Sprintf(
-			"%s natively supports the Kitty keyboard protocol — Shift+Enter already inserts a newline. No setup needed.",
+			"%s supports the Kitty keyboard protocol natively. The TUI library conduit is built on (bubbletea v1) doesn't decode those sequences yet, so Shift+Enter doesn't currently insert a newline. Use Alt+Enter or Ctrl+J for newlines until conduit ships with a key parser that handles CSI-u.",
 			name,
 		)
 	}

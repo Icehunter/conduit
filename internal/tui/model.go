@@ -20,6 +20,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -295,6 +296,10 @@ type Model struct {
 	// When set, the prompt is prepended to the system blocks on each turn.
 	outputStyleName   string
 	outputStylePrompt string
+
+	// kb resolves user-customized keybindings from ~/.claude/keybindings.json.
+	// Nil when keybindings could not be loaded (treated as defaults-only).
+	kb *keybindings.Resolver
 }
 
 // New builds the initial Model.
@@ -381,6 +386,15 @@ func New(cfg Config) Model {
 	} else {
 		m.messages = append(m.messages, m.welcomeCard())
 	}
+
+	// Load user keybindings. Errors are silently ignored — we fall back to
+	// defaults so a malformed keybindings.json never prevents startup.
+	if bindings, err := keybindings.LoadAll(settings.ClaudeDir()); err == nil {
+		m.kb = keybindings.NewResolver(bindings)
+	} else {
+		m.kb = keybindings.NewResolver(keybindings.Defaults())
+	}
+
 	return m
 }
 
@@ -818,6 +832,23 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if m.permPrompt != nil {
 		m2, cmd := m.handlePermissionKey(msg)
 		return m2, cmd, true
+	}
+
+	// User-customizable keybindings. Checked after overlay handlers so
+	// modal overlays always own their own key space. "command:*" actions
+	// execute the named slash command directly; other action IDs not yet
+	// handled here fall through to the built-in switch below.
+	if m.kb != nil {
+		contexts := m.activeContexts()
+		if res := m.kb.Resolve(msg, contexts...); res.Matched {
+			if res.Unbound {
+				// Explicit null — swallow key, skip built-ins.
+				return m, nil, true
+			}
+			if m2, cmd, ok := m.dispatchKeybindingAction(res.Action, msg); ok {
+				return m2, cmd, true
+			}
+		}
 	}
 
 	// Viewport scrollback. Plain Up/Down/PgUp/PgDn are owned by the chat
@@ -3355,4 +3386,89 @@ func applyTextareaTheme(ta *textarea.Model) {
 		styles.Cursor.Color = colorFg
 	}
 	ta.SetStyles(styles)
+}
+
+// activeContexts returns the keybinding context stack for the current UI
+// state. "Global" is always present; one specific context is prepended
+// based on which overlay or input mode is active.
+func (m Model) activeContexts() []string {
+	switch {
+	case m.permPrompt != nil:
+		return []string{"Confirmation", "Global"}
+	case m.picker != nil, m.resumePrompt != nil, m.loginPrompt != nil:
+		return []string{"Select", "Global"}
+	case m.settingsPanel != nil:
+		return []string{"Settings", "Global"}
+	case m.pluginPanel != nil:
+		return []string{"Plugin", "Global"}
+	case m.panel != nil:
+		return []string{"Global"}
+	default:
+		return []string{"Chat", "Global"}
+	}
+}
+
+// dispatchKeybindingAction maps a resolved action ID to an existing handler.
+// Returns (model, cmd, true) when the action was handled, (m, nil, false)
+// when the action ID is not (yet) wired here and should fall through.
+//
+// "command:*" actions dispatch a slash command as if the user had typed it.
+// Other IDs mirror the built-in switch in handleKey.
+func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	// "command:help" → run /help, "command:compact" → run /compact, etc.
+	if strings.HasPrefix(action, "command:") {
+		cmdName := strings.TrimPrefix(action, "command:")
+		if m.cfg.Commands == nil {
+			return m, nil, false
+		}
+		if res, ok := m.cfg.Commands.Dispatch("/" + cmdName); ok {
+			m2, cmd := m.applyCommandResult(res)
+			return m2, cmd, true
+		}
+		return m, nil, false
+	}
+
+	switch action {
+	// App-level
+	case "app:redraw":
+		return m, tea.ClearScreen, true
+
+	// Chat input
+	case "chat:cancel":
+		// Same behaviour as Escape in normal chat mode — cancel running turn
+		// or clear the input.
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+		return m2, cmd, true
+	case "chat:submit":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		return m2, cmd, true
+	case "chat:cycleMode":
+		// Shift+Tab default — cycle permission mode.
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+		return m2, cmd, true
+
+	// Select-context navigation (used by pickers)
+	case "select:next":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+		return m2, cmd, true
+	case "select:previous":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+		return m2, cmd, true
+	case "select:accept":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+		return m2, cmd, true
+	case "select:cancel":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+		return m2, cmd, true
+
+	// Confirmation
+	case "confirm:yes":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: 'y'})
+		return m2, cmd, true
+	case "confirm:no":
+		m2, cmd, _ := m.handleKey(tea.KeyPressMsg{Code: 'n'})
+		return m2, cmd, true
+	}
+
+	return m, nil, false
 }

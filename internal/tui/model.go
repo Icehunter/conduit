@@ -2424,16 +2424,12 @@ func (m Model) applyLayout() Model {
 		m.vp.Height = vpHeight
 	}
 	m.input.SetWidth(inputW)
-	// Pad the placeholder text to full width — bubbles textarea's
-	// placeholderView (line 1 case) doesn't trail-fill spaces, leaving the
-	// cells right of the placeholder unpainted (terminal default bg). On
-	// light theme that's a dark stripe across the input row.
-	const placeholderText = "Message conduit  (Enter ↵ send · Shift+Enter newline)"
-	if pad := inputW - lipgloss.Width(placeholderText); pad > 0 {
-		m.input.Placeholder = placeholderText + strings.Repeat(" ", pad)
-	} else {
-		m.input.Placeholder = placeholderText
-	}
+	// Drop bubbles textarea's Placeholder feature — its internal
+	// placeholderView path emits ANSI sequences (cursor reverse-video,
+	// internal viewport, partial line padding) that our outer bg paint
+	// can't reliably override. We render our own placeholder hint inline
+	// in View() when input is empty.
+	m.input.Placeholder = ""
 	m.refreshViewport()
 	return m
 }

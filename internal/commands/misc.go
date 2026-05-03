@@ -79,22 +79,41 @@ func RegisterMiscCommands(r *Registry) {
 		Handler: func(args string) Result {
 			name := strings.TrimSpace(args)
 			if name == "" {
-				return Result{Type: "text", Text: fmt.Sprintf(
-					"Current theme: %s\nUsage: /theme <dark|light|dark-accessible|light-accessible>",
-					theme.Active().Name,
-				)}
+				return Result{Type: "text", Text: themeStatusText("Current theme")}
 			}
 			theme.Set(name) // hot-swap; styles rebuild via OnChange listeners
-			if err := settings.SaveRawKey("theme", theme.Active().Name); err != nil {
-				return Result{Type: "text", Text: fmt.Sprintf(
-					"Theme switched to %s (failed to persist: %v)",
-					theme.Active().Name, err,
-				)}
+			persistErr := settings.SaveRawKey("theme", theme.Active().Name)
+			head := fmt.Sprintf("Theme switched to %s", theme.Active().Name)
+			if persistErr != nil {
+				head += fmt.Sprintf(" (failed to persist: %v)", persistErr)
+			} else {
+				head += " and saved"
 			}
-			return Result{Type: "text", Text: fmt.Sprintf(
-				"Theme switched to %s and saved.",
-				theme.Active().Name,
-			)}
+			return Result{Type: "text", Text: themeStatusText(head)}
 		},
 	})
+}
+
+// themeStatusText renders a heading + the active palette as a color swatch
+// so the user can SEE what just changed (otherwise theme-vs-theme differences
+// like dark vs dark-accessible are subtle and only show in /doctor).
+func themeStatusText(headline string) string {
+	p := theme.Active()
+	swatch := func(label, hex string) string {
+		return fmt.Sprintf("  %s%-14s%s %s███%s %s",
+			ansiBold, label+":", ansiReset,
+			theme.AnsiFG(hex), ansiReset, hex)
+	}
+	var sb strings.Builder
+	sb.WriteString(ansiBold + headline + " (" + p.Name + ")" + ansiReset + "\n\n")
+	sb.WriteString(swatch("Primary", p.Primary) + "\n")
+	sb.WriteString(swatch("Secondary", p.Secondary) + "\n")
+	sb.WriteString(swatch("Accent", p.Accent) + "\n")
+	sb.WriteString(swatch("Success", p.Success) + "\n")
+	sb.WriteString(swatch("Danger", p.Danger) + "\n")
+	sb.WriteString(swatch("Warning", p.Warning) + "\n")
+	sb.WriteString(swatch("Info", p.Info) + "\n")
+	sb.WriteString("\n  " + ansiDim + "Note: already-rendered messages keep their original colors." + ansiReset + "\n")
+	sb.WriteString("  " + ansiDim + "Available: dark, light, dark-accessible, light-accessible" + ansiReset)
+	return sb.String()
 }

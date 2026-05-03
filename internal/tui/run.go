@@ -27,6 +27,44 @@ import (
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
 
+// SummarizeMessages renders the last n model-visible messages as a
+// plain-text transcript for /memory extract. Tool blocks are flattened so
+// the sub-agent sees a readable conversation, not raw JSON. Exported
+// because cmd/conduit/main.go's auto-extract path also needs it.
+func SummarizeMessages(history []api.Message, n int) string {
+	if len(history) == 0 {
+		return ""
+	}
+	start := 0
+	if len(history) > n {
+		start = len(history) - n
+	}
+	var sb strings.Builder
+	for _, m := range history[start:] {
+		role := strings.ToUpper(m.Role)
+		sb.WriteString("---\n")
+		sb.WriteString(role + ":\n")
+		for _, b := range m.Content {
+			switch b.Type {
+			case "text":
+				sb.WriteString(b.Text)
+				sb.WriteString("\n")
+			case "tool_use":
+				sb.WriteString(fmt.Sprintf("[tool_use %s]\n", b.Name))
+			case "tool_result":
+				txt := b.Text
+				if len(txt) > 500 {
+					txt = txt[:500] + "…"
+				}
+				sb.WriteString("[tool_result]\n")
+				sb.WriteString(txt)
+				sb.WriteString("\n")
+			}
+		}
+	}
+	return sb.String()
+}
+
 // altScreenExit/clearScreen are ANSI sequences for terminal cleanup.
 const (
 	altScreenExit = "\x1b[?1049l\x1b[?25h" // exit alt-screen, show cursor
@@ -334,6 +372,23 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			}
 			act, _ := session.LoadActivity(runOpts.Session.FilePath)
 			return act.LastActivity
+		},
+		// /memory extract — fork a sub-agent over the recent conversation
+		// to update the auto-memory dir. Mirrors CC's extractMemories flow.
+		ExtractMemory: func() (string, error) {
+			if loop == nil {
+				return "", fmt.Errorf("no agent loop")
+			}
+			if modelPtr == nil || len(modelPtr.history) == 0 {
+				return "No conversation to extract from yet.", nil
+			}
+			recent := SummarizeMessages(modelPtr.history, 20)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if err := memdir.RunExtract(ctx, cwd, recent, loop.RunSubAgent); err != nil {
+				return "", err
+			}
+			return "Memory extraction complete.", nil
 		},
 	}
 	commands.RegisterSessionCommands(reg, state)

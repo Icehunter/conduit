@@ -126,6 +126,13 @@ type LoopConfig struct {
 	// OnFileAccess is called after each file tool execution with the operation
 	// ("read" or "write") and the file path. Used to populate /files output.
 	OnFileAccess func(op, path string)
+
+	// OnEndTurn fires after each end_turn (no tool_use) with the up-to-date
+	// message history. Mirrors CC's post-Stop extractMemories trigger. The
+	// caller is expected to single-flight any background work — Loop fires
+	// this synchronously before returning so the caller can choose between
+	// blocking or detaching to a goroutine.
+	OnEndTurn func(history []api.Message)
 }
 
 // Loop drives the agentic query cycle.
@@ -317,6 +324,11 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			// Desktop notification on turn complete.
 			if l.cfg.NotifyOnComplete {
 				hooks.Notify("conduit", "Turn complete")
+			}
+			// Post-Stop hook for memory extraction etc. Caller is responsible
+			// for single-flighting / backgrounding — Loop just notifies.
+			if l.cfg.OnEndTurn != nil {
+				l.cfg.OnEndTurn(msgs)
 			}
 			return msgs, nil
 		}

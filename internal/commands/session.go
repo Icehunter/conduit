@@ -60,6 +60,10 @@ type SessionState struct {
 	GetRateLimitWarning func() string
 	// CheckAuth returns nil if the current bearer token is valid, error otherwise.
 	CheckAuth func() error
+	// ExtractMemory triggers the memory extraction sub-agent over the recent
+	// conversation. Returns a brief status string (or error). Wired in run.go
+	// because the sub-agent runner lives on the agent.Loop.
+	ExtractMemory func() (string, error)
 	// GetSessionInfo returns session ID, file path, message count, and start time.
 	GetSessionInfo func() (id, path string, messages int, startedAt time.Time)
 	// GetSessionActivity returns last-activity time for idle reporting in /session.
@@ -443,7 +447,9 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /memory [list|show|scan]
+	// /memory extract is wired in run.go because it needs the sub-agent runner.
+
+	// /memory [list|show|scan|extract]
 	r.Register(Command{
 		Name:        "memory",
 		Description: "Manage memory files. Subcommands: list (default), show, scan",
@@ -497,8 +503,21 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				}
 				return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 
+			case "extract":
+				if state.ExtractMemory == nil {
+					return Result{Type: "text", Text: "Memory extraction not available (no agent loop)."}
+				}
+				summary, err := state.ExtractMemory()
+				if err != nil {
+					return Result{Type: "error", Text: fmt.Sprintf("extract: %v", err)}
+				}
+				if summary == "" {
+					summary = "Memory extraction complete."
+				}
+				return Result{Type: "text", Text: summary}
+
 			default:
-				return Result{Type: "error", Text: "Usage: /memory [list|show|scan]"}
+				return Result{Type: "error", Text: "Usage: /memory [list|show|scan|extract]"}
 			}
 		},
 	})

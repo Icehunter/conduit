@@ -72,6 +72,10 @@ type Settings struct {
 	// EnabledPlugins mirrors the real Claude Code enabledPlugins field.
 	// Key is "pluginName@marketplace", value is true/false.
 	EnabledPlugins map[string]bool `json:"enabledPlugins,omitempty"`
+	// OnboardingComplete is set to true after the first-run welcome screen
+	// is dismissed. Mirrors CC's projectOnboardingState gate so returning
+	// users skip the welcome.
+	OnboardingComplete bool `json:"onboardingComplete,omitempty"`
 	// MCP project-scope approval gate (mirrors CC's MCPServerApprovalDialog).
 	// A server loaded from .mcp.json is allowed to connect only if its name
 	// is in EnabledMcpjsonServers OR EnableAllProjectMcpServers is true.
@@ -124,6 +128,8 @@ type Merged struct {
 	ThemeOverrides map[string]string
 	// Themes is the merged custom theme map (last layer wins per name).
 	Themes map[string]map[string]string
+	// OnboardingComplete is true once any layer sets it.
+	OnboardingComplete bool
 	// MCP project-scope approval gate. Last layer wins.
 	EnabledMcpjsonServers      []string
 	DisabledMcpjsonServers     []string
@@ -181,6 +187,9 @@ func loadPaths(paths []string) (*Merged, error) {
 			for k, v := range s.Themes {
 				merged.Themes[k] = v
 			}
+		}
+		if s.OnboardingComplete {
+			merged.OnboardingComplete = true
 		}
 		merged.EnabledMcpjsonServers = append(merged.EnabledMcpjsonServers, s.EnabledMcpjsonServers...)
 		merged.DisabledMcpjsonServers = append(merged.DisabledMcpjsonServers, s.DisabledMcpjsonServers...)

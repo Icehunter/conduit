@@ -222,6 +222,10 @@ type Model struct {
 	// Generic picker for /theme, /model, /output-style. Non-nil when active.
 	picker *pickerState
 
+	// Onboarding overlay — shown on first run until the user dismisses it.
+	// Nil after dismissal or for returning users.
+	onboarding *onboardingState
+
 	// loginFlowMsgStart is the index into m.messages where the login flow
 	// messages begin. -1 means no login flow is in progress.
 	loginFlowMsgStart int
@@ -278,6 +282,24 @@ func New(cfg Config) Model {
 	sp.Style = styleSpinner
 
 	m := Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName, historyIdx: -1, loginFlowMsgStart: -1}
+
+	// First-run welcome — only when not resuming and the persistence flag
+	// hasn't been set. Look at user-level settings only since the
+	// onboardingComplete flag is global, not per-project.
+	if !cfg.Resumed {
+		merged, err := settings.Load("")
+		if err == nil && !merged.OnboardingComplete {
+			userName := cfg.Profile.DisplayName
+			if userName == "" {
+				userName = cfg.Profile.Email
+			}
+			m.onboarding = &onboardingState{
+				authenticated: cfg.AuthErr == nil,
+				userName:      userName,
+			}
+		}
+	}
+
 	if cfg.AuthErr != nil {
 		m.messages = append(m.messages, Message{
 			Role:    RoleSystem,
@@ -623,7 +645,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// consume keys (especially Escape) that belong to the overlay.
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.permPrompt != nil ||
-		m.picker != nil
+		m.picker != nil || m.onboarding != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		m.input, taCmd = m.input.Update(msg)
@@ -655,6 +677,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	// Generic picker (/theme /model /output-style) intercepts keys.
 	if m.picker != nil {
 		m2, cmd := m.handlePickerKey(msg)
+		return m2, cmd, true
+	}
+	// First-run onboarding intercepts keys until dismissed.
+	if m.onboarding != nil {
+		m2, cmd := m.handleOnboardingKey(msg)
 		return m2, cmd, true
 	}
 	// Unified panel intercepts all keys when active.
@@ -1154,6 +1181,72 @@ func (m Model) renderResumePicker() string {
 	return style.Width(m.width - 4).Render(sb.String())
 }
 
+
+// ---- First-run onboarding overlay ------------------------------------------
+
+// onboardingState is the first-run welcome shown until the user dismisses
+// it with Enter. Mirrors the gating from src/components/Onboarding.tsx but
+// trimmed to a single screen — conduit doesn't need CC's preflight,
+// API-key, or terminal-setup steps inside the wizard (those are handled
+// elsewhere or descoped).
+type onboardingState struct {
+	authenticated bool
+	userName      string
+}
+
+func (m Model) handleOnboardingKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "esc":
+		m.onboarding = nil
+		// Persist so the welcome doesn't show on next launch. Best-effort —
+		// a failure here just means the user sees the screen again, no data
+		// loss, so silent.
+		_ = settings.SaveRawKey("onboardingComplete", true)
+		m.refreshViewport()
+		return m, nil
+	case "ctrl+c", "q":
+		// Treat as exit so users can bail without persisting.
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m Model) renderOnboarding() string {
+	o := m.onboarding
+	if o == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Welcome to conduit") + "\n\n")
+	sb.WriteString("Conduit is a Go-native CLI for the Claude API — a port of the\n")
+	sb.WriteString("official Claude Code with the same wire protocol, tool set, and\n")
+	sb.WriteString("plugin/MCP system.\n\n")
+
+	if o.authenticated {
+		who := o.userName
+		if who == "" {
+			who = "your account"
+		}
+		sb.WriteString(stylePickerItem.Render("✓ Signed in as ") + styleStatusAccent.Render(who) + "\n\n")
+	} else {
+		sb.WriteString(stylePickerItem.Render("✗ Not signed in") + " — run " + styleStatusAccent.Render("/login") + " when ready.\n\n")
+	}
+
+	sb.WriteString("Useful commands:\n")
+	sb.WriteString("  " + styleStatusAccent.Render("/help") + "    list all slash commands\n")
+	sb.WriteString("  " + styleStatusAccent.Render("/login") + "   authenticate with your Anthropic account\n")
+	sb.WriteString("  " + styleStatusAccent.Render("/theme") + "   pick a color palette\n")
+	sb.WriteString("  " + styleStatusAccent.Render("/doctor") + "  diagnose auth / MCP / settings\n")
+	sb.WriteString("  " + styleStatusAccent.Render("/quit") + "    exit\n\n")
+
+	sb.WriteString(stylePickerDesc.Render("Press Enter to continue · Ctrl+C to exit"))
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
 
 // ---- Generic picker overlay (/theme /model /output-style) ------------------
 
@@ -2830,6 +2923,8 @@ func (m Model) View() string {
 		overlayBox = m.renderResumePicker()
 	} else if m.picker != nil {
 		overlayBox = m.renderPicker()
+	} else if m.onboarding != nil {
+		overlayBox = m.renderOnboarding()
 	} else if m.permPrompt != nil {
 		overlayBox = m.renderPermissionPrompt()
 	} else if len(m.cmdMatches) > 0 {

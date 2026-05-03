@@ -222,7 +222,7 @@
 | Theme picker | `components/ThemePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /theme with no args opens picker; lists built-ins + user themes |
 | Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
-| Onboarding flow | `components/OnboardingComponent.tsx` | — | `internal/tui/run.go` | 🟡 | No-auth hint injected into message list; no full wizard |
+| Onboarding flow | `components/Onboarding.tsx` | — | `internal/tui/model.go` (onboardingState) | ✅ | First-run welcome overlay shows once: auth status, key commands, Enter to dismiss; persisted via settings.onboardingComplete |
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
 | Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only |
@@ -603,7 +603,7 @@
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
-| TUI & Rendering | 18 | 4 | 9 | 0 | 31 |
+| TUI & Rendering | 19 | 3 | 9 | 0 | 31 |
 | Slash Commands | 41 | 1 | 4 | 14 | 60 |
 | MCP Host | 10 | 0 | 3 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **220** | **13** | **108** | **45** | **386** |
+| **TOTAL** | **221** | **12** | **108** | **45** | **386** |
 
-**Overall parity: 233/341 scoped features (68% complete, 4% partial)**
+**Overall parity: 233/341 scoped features (68% complete, 3% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---
@@ -666,10 +666,9 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 
 1. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value; large effort.
 2. **Custom keybindings** — user-defined key mappings. Low value.
-3. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
-4. **Plugin signature verification** — git commit sig check on install (note: not in CC either; aspirational).
-5. **/terminalSetup** — installs Shift+Enter keybindings for Apple Terminal/VSCode/Cursor/Alacritty/Zed (~75KB of per-terminal config recipes).
+3. **Plugin signature verification** — git commit sig check on install (note: not in CC either; aspirational).
+4. **/terminalSetup** — installs Shift+Enter keybindings for Apple Terminal/VSCode/Cursor/Alacritty/Zed (~75KB of per-terminal config recipes).
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go), API preconnect now honors HTTP(S)_PROXY skips and ANTHROPIC_BASE_URL, time-based micro-compaction (clears older tool_results after 60min idle, keeps last 5).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go), API preconnect now honors HTTP(S)_PROXY skips and ANTHROPIC_BASE_URL, time-based micro-compaction (clears older tool_results after 60min idle, keeps last 5), first-run onboarding overlay (auth status + key commands; persisted via onboardingComplete).

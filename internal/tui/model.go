@@ -2718,23 +2718,25 @@ func applyTextareaTheme(ta *textarea.Model) {
 		}
 		return s
 	}
-	taBg := maybeBg(lipgloss.NewStyle())
-	taFg := maybeBg(lipgloss.NewStyle().Foreground(colorFg))
+
+	// Base must have BOTH fg and bg — every other style inherits from Base.
+	// Without explicit fg, text rendered on the cursor row uses terminal
+	// default fg (light gray on most terminals = unreadable on light theme).
+	taBase := maybeBg(lipgloss.NewStyle().Foreground(colorFg))
 	taPlaceholder := maybeBg(lipgloss.NewStyle().Foreground(colorMuted))
 
-	// Apply to every style field so nothing inherits zero-bg from defaults.
 	for _, s := range []*textarea.Style{&ta.FocusedStyle, &ta.BlurredStyle} {
-		s.Base = taBg
-		s.Text = taFg
+		s.Base = taBase
+		s.Text = taBase
 		s.Placeholder = taPlaceholder
-		s.Prompt = taFg
-		s.CursorLine = taBg
-		s.CursorLineNumber = taBg
-		s.EndOfBuffer = taBg
-		s.LineNumber = taBg
+		s.Prompt = taBase
+		s.CursorLine = taBase
+		s.CursorLineNumber = taBase
+		s.EndOfBuffer = taBase
+		s.LineNumber = taBase
 	}
 
-	// Cursor character itself — both blink (Style) and static (TextStyle).
+	// Cursor character itself.
 	cs := lipgloss.NewStyle().Foreground(colorFg)
 	if hasBg {
 		cs = cs.Background(colorBg)

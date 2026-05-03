@@ -842,25 +842,31 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 		}
 
 		var line string
+		// Always wrap label/value in explicit fg styles so they render with
+		// theme colors instead of inheriting the terminal's default fg
+		// (which is light on dark terminals — invisible on light theme).
+		labelStyle := fgOnBg(colorFg)
 		switch item.kind {
 		case "bool":
 			dot := stylePickerDesc.Render("○")
 			if item.on {
 				dot = styleStatusAccent.Render("●")
 			}
-			label := item.label
+			label := labelStyle.Render(item.label)
 			if isSel {
-				label = styleStatusAccent.Render(label)
+				label = styleStatusAccent.Render(item.label)
 			}
 			line = cursor + dot + " " + label
 		case "enum":
-			label := item.label
+			label := labelStyle.Render(item.label)
 			if isSel {
-				label = styleStatusAccent.Render(label)
+				label = styleStatusAccent.Render(item.label)
 			}
 			val := stylePickerDesc.Render(item.value)
 			if isSel {
-				val = styleStatusAccent.Render("‹ "+item.value+" ›")
+				val = styleStatusAccent.Render("‹ " + item.value + " ›")
+			} else {
+				val = labelStyle.Render(item.value)
 			}
 			// Right-align the value.
 			labelW := innerW - 4
@@ -869,11 +875,11 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 			}
 			line = cursor + label + "  " + val
 		case "info":
-			label := item.label
+			label := labelStyle.Render(item.label)
 			if isSel {
-				label = styleStatusAccent.Render(label)
+				label = styleStatusAccent.Render(item.label)
 			}
-			val := stylePickerDesc.Render(item.value)
+			val := labelStyle.Render(item.value)
 			line = cursor + label + "  " + val
 		}
 		sb.WriteString(line + "\n")

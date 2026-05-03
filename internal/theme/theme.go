@@ -165,10 +165,13 @@ var DarkAnsi = Palette{
 	ModeAuto:        "11", // yellowBright (warning)
 }
 
-// LightAnsi — direct port of lightAnsiTheme.
+// LightAnsi — based on lightAnsiTheme. CC's text="ansi:black" assumes a
+// light terminal; we use 7 (white/light gray) instead so Primary remains
+// visible on dark terminals too. Mirrors dark-ansi's Primary=15 one notch
+// dimmer to keep the "light theme" feel.
 var LightAnsi = Palette{
 	Name:            "light-ansi",
-	Primary:         "0", // black (text)
+	Primary:         "7", // white (light gray) — readable on both bgs
 	Secondary:       "8", // blackBright (inactive)
 	Tertiary:        "8", // blackBright (subtle)
 	Accent:          "9", // redBright (claude)

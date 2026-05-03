@@ -265,9 +265,8 @@ func New(cfg Config) Model {
 	m := Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName, historyIdx: -1, loginFlowMsgStart: -1}
 	if cfg.AuthErr != nil {
 		m.messages = append(m.messages, Message{
-			Role: RoleSystem,
-			Content: "Not logged in. Use /login to sign in to your Claude account.\n" +
-				"Supports Claude.ai (Max, Pro, Team) and Anthropic Console accounts.",
+			Role:    RoleSystem,
+			Content: "Not logged in · Run /login to authenticate",
 		})
 		m.noAuth = true
 	} else if cfg.Resumed && len(cfg.ResumedHistory) > 0 {
@@ -1817,7 +1816,7 @@ func (m *Model) persistNewMessages(history []api.Message) {
 // or -1 if it isn't present (e.g. user was already authenticated at startup).
 func (m Model) findNoAuthMsgIdx() int {
 	for i, msg := range m.messages {
-		if msg.Role == RoleSystem && strings.HasPrefix(msg.Content, "Not logged in.") {
+		if msg.Role == RoleSystem && strings.HasPrefix(msg.Content, "Not logged in") {
 			return i
 		}
 	}

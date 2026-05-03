@@ -4,8 +4,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/icehunter/conduit/internal/theme"
 )
 
 const (
@@ -57,15 +55,9 @@ func renderMessage(msg Message, width int) string {
 			body := renderMarkdown(msg.Content, inner)
 			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
 		}
-		// Wrap the body in an explicit bg paint so embedded ANSI from
-		// commands/style.go (which uses AnsiResetSoft and preserves bg)
-		// stays painted against the theme background. Without this, the
-		// lipgloss prefix render emits \033[0m which clears bg back to
-		// terminal default — visible as black holes mid-message.
 		const sysPrefix = "· "
 		content := strings.ReplaceAll(msg.Content, "\n", "\n  ")
-		bg := theme.AnsiBG(theme.Active().Background)
-		return pad + styleSystemText.Render(sysPrefix) + bg + content + theme.AnsiReset
+		return pad + styleSystemText.Render(sysPrefix) + content
 	}
 	return msg.Content
 }
@@ -203,7 +195,7 @@ func renderWelcomeCard(content string, width int) string {
 	// gets wrapped in a bg-painted style at the end so the inner spaces
 	// (which are bare " " concatenations, not lipgloss-styled) inherit
 	// the theme bg instead of exposing terminal default.
-	bgWrap := lipgloss.NewStyle().Background(colorBg)
+	bgWrap := lipgloss.NewStyle()
 	var fullRows []string
 	fullRows = append(fullRows, bgWrap.Render(topBorder))
 	blankInner := strings.Repeat(" ", innerW)
@@ -361,8 +353,8 @@ func renderTable(lines []string, width int) string {
 		}
 	}
 
-	styleCell := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(colorBg)
-	styleHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Background(colorBg)
+	styleCell := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
+	styleHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B"))
 
 	var sb strings.Builder
 	for ri, row := range rows {
@@ -662,14 +654,14 @@ func isOperator(r rune) bool {
 
 // styleHeading1/2/3 are styles for GFM headings.
 var (
-	styleHeading1 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Background(colorBg).Underline(true)
-	styleHeading2 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA")).Background(colorBg)
-	styleHeading3 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF")).Background(colorBg)
-	styleItalic   = lipgloss.NewStyle().Italic(true).Background(colorBg)
-	styleStrike   = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A")).Background(colorBg)
-	styleBQ       = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorBg).Italic(true)
-	styleChecked  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorBg)
-	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorBg)
+	styleHeading1 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Underline(true)
+	styleHeading2 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA"))
+	styleHeading3 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF"))
+	styleItalic   = lipgloss.NewStyle().Italic(true)
+	styleStrike   = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A"))
+	styleBQ       = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
+	styleChecked  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
+	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A"))
 )
 
 // renderLine applies block-level and inline styling, word-wrapping to width.
@@ -726,8 +718,8 @@ func renderLine(line string, width int) string {
 
 // applyInline applies all inline GFM styles: bold, italic, strikethrough, code.
 func applyInline(line string) string {
-	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true).Background(colorBg))
-	line = applyDelim(line, "__", lipgloss.NewStyle().Bold(true).Background(colorBg))
+	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true))
+	line = applyDelim(line, "__", lipgloss.NewStyle().Bold(true))
 	line = applyDelim(line, "~~", styleStrike)
 	line = applyDelim(line, "`", styleInlineCode)
 	// Italic: single * or _ (applied after ** to avoid conflict)

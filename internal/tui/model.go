@@ -1471,8 +1471,6 @@ func (m Model) renderPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		BorderBackground(colorBg).
-		Background(colorModalBg).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
 		Width(w - 2). // -2 for border
 		Height(panelH - 2) // -2 for border
@@ -2413,7 +2411,7 @@ func (m Model) applyLayout() Model {
 
 	if !m.ready {
 		m.vp = viewport.New(m.width, vpHeight)
-		m.vp.Style = lipgloss.NewStyle().Background(colorBg) // app bg behind viewport content
+		m.vp.Style = lipgloss.NewStyle() // app bg behind viewport content
 		m.ready = true
 	} else {
 		m.vp.Width = m.width
@@ -2474,7 +2472,6 @@ func (m Model) View() string {
 	default:
 		spinRow = ""
 	}
-	spinRow = lipgloss.NewStyle().Background(colorBg).Width(m.width).Render(spinRow)
 
 	// Input box.
 	bStyle := styleInputBorder
@@ -2550,11 +2547,7 @@ func (m Model) View() string {
 	if pad < 1 {
 		pad = 1
 	}
-	// Wrap the entire status bar in app bg so the gap between left and right
-	// segments doesn't expose terminal default.
-	statusBar := lipgloss.NewStyle().Background(colorBg).Width(m.width).Render(
-		left + strings.Repeat(" ", pad) + right,
-	)
+	statusBar := left + strings.Repeat(" ", pad) + right
 
 	// Panel is a full-screen takeover — replace vp+spinner+input with it.
 	// Only status bar remains at the bottom.
@@ -2599,63 +2592,16 @@ func (m Model) View() string {
 	return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
-// paintApp wraps the joined View output so the theme background fills every
-// cell of the visible region.
+// paintApp is a passthrough — we don't paint app bg. Terminal bg shows
+// through, becoming the de-facto theme background. TUI character-cell
+// rendering can't perfectly cover every cell without painting every glyph
+// explicitly, and the partial-coverage approach creates more visual
+// artifacts (mismatched bg blocks) than it solves.
 //
-// Two-phase approach:
-//  1. paintLines: replace every internal "\x1b[0m" (full reset) with a soft
-//     reset (\x1b[22;23;39m — clears bold/italic/fg only) followed by a fresh
-//     bg-set escape. This preserves bg across the boundary between styled
-//     segments produced by separate lipgloss.Render calls.
-//  2. Pad each line to full width with bg spaces, wrap in styleAppSurface
-//     for outer padding/Height.
-//
-// Without phase 1, any concatenation of two .Render outputs leaves a black
-// gap between them because lipgloss appends "\x1b[0m" after each segment.
-// Adding .Background to individual styles can't fix this — the reset wins.
+// Themes still control all foreground colors and the few opt-in surfaces
+// (code blocks).
 func paintApp(w, h int, content string) string {
-	if w <= 0 || h <= 0 {
-		return content
-	}
-	bg := theme.AnsiBG(theme.Active().Background)
-	content = paintLines(content, bg)
-	padded := padLinesToWidth(content, w)
-	return styleAppSurface.
-		Width(w).
-		Height(h).
-		Render(padded)
-}
-
-// paintLines transforms a multi-line string so the bg color stays painted
-// across internal lipgloss reset boundaries:
-//   - Each line is prefixed with bg
-//   - Every internal "\x1b[0m" is replaced with soft-reset + bg
-//   - Each line ends with a hard reset (so the next line starts clean)
-func paintLines(s, bg string) string {
-	const fullReset = "\x1b[0m"
-	const softReset = "\x1b[22;23;39m" // reset bold/italic/fg only — bg untouched
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		// Replace internal full resets with soft reset + bg reapply so that
-		// concatenated styled segments don't expose terminal default bg.
-		line = strings.ReplaceAll(line, fullReset, softReset+bg)
-		// Prefix bg so the line starts painted, append hard reset at end.
-		lines[i] = bg + line + fullReset
-	}
-	return strings.Join(lines, "\n")
-}
-
-// padLinesToWidth ensures every line of s is exactly w cells wide, padding
-// short lines on the right with spaces. The wrapping bg paint covers them.
-func padLinesToWidth(s string, w int) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		visW := lipgloss.Width(line)
-		if visW < w {
-			lines[i] = line + strings.Repeat(" ", w-visW)
-		}
-	}
-	return strings.Join(lines, "\n")
+	return content
 }
 
 // tallyTokens estimates token usage from conversation history.
@@ -2735,9 +2681,9 @@ func capitalize(s string) string {
 // Called from Model.New() and from the theme.OnChange listener registered
 // in registerThemeAwareWidgets.
 func applyTextareaTheme(ta *textarea.Model) {
-	taBg := lipgloss.NewStyle().Background(colorBg)
-	taFg := lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
-	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
+	taBg := lipgloss.NewStyle()
+	taFg := lipgloss.NewStyle().Foreground(colorFg)
+	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted)
 	ta.FocusedStyle.Base = taBg
 	ta.FocusedStyle.Text = taFg
 	ta.FocusedStyle.Placeholder = taPlaceholder

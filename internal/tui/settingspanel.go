@@ -712,8 +712,6 @@ func (m Model) renderSettingsPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		BorderBackground(colorBg).
-		Background(colorModalBg).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
 		Width(w - 2).
 		Height(panelH - 2)
@@ -728,7 +726,7 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 		snap = p.getStatus()
 	}
 
-	bold := lipgloss.NewStyle().Bold(true).Background(colorModalBg).Foreground(colorFg)
+	bold := lipgloss.NewStyle().Bold(true).Foreground(colorFg)
 	dim := stylePickerDesc
 
 	row := func(label, value string) {
@@ -1055,7 +1053,7 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 	}
 
 	// Tokens per Day chart using asciigraph (top 3 models as separate colored series).
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Background(colorModalBg).Foreground(colorFg).Render("  Tokens per Day") + "\n")
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorFg).Render("  Tokens per Day") + "\n")
 	buildTokensLineChart(sb, stats.dailyModelTokens, rows, modelColors, innerW)
 	sb.WriteByte('\n')
 
@@ -1068,7 +1066,7 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 		}
 		color := modelColors[idx%len(modelColors)]
 		dot := fgOnModal(color).Render("●")
-		name := lipgloss.NewStyle().Bold(true).Background(colorModalBg).Foreground(colorFg).Render(shortModelName(r.name))
+		name := lipgloss.NewStyle().Bold(true).Foreground(colorFg).Render(shortModelName(r.name))
 		line1 = dot + " " + name + " " + stylePickerDesc.Render(fmt.Sprintf("(%d%%)", pct))
 		line2 = stylePickerDesc.Render(fmt.Sprintf("    In: %s · Out: %s",
 			formatNum(r.u.inputTokens), formatNum(r.u.outputTokens)))
@@ -1111,7 +1109,7 @@ func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, i
 		snap = p.getStatus()
 	}
 
-	bold := lipgloss.NewStyle().Bold(true).Background(colorModalBg).Foreground(colorFg)
+	bold := lipgloss.NewStyle().Bold(true).Foreground(colorFg)
 	dim := stylePickerDesc
 
 	sb.WriteString(bold.Render("Session") + "\n\n")

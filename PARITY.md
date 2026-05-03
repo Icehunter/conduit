@@ -75,7 +75,7 @@
 | API pre-connect optimization | `utils/apiPreconnect.ts` | — | `cmd/conduit/main.go` | ✅ | Background HEAD to api.anthropic.com during startup |
 | Rate limit quota tracking | `services/claudeAiLimits.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | Parse anthropic-ratelimit-* headers, <20% warning in status bar |
 | Rate limit messages | `services/rateLimitMessages.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | WarningMessage() in status bar |
-| Token estimation | `services/tokenEstimation.ts` | — | `internal/tui/model.go` | 🟡 | Char/4 estimate; /context shows breakdown |
+| Token estimation | `services/tokenEstimation.ts` | — | `internal/tokens/tokens.go` | ✅ | cl100k_base via tiktoken-go; falls back to chars/4 if encoder init fails |
 | Cost tracking | `cost-tracker.ts` (323 LOC) | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
 
 ---
@@ -296,10 +296,10 @@
 | /copy | `commands/copy/` | `internal/commands/session.go` | ✅ | Copies last response to clipboard |
 | /search | — | `internal/commands/session.go` | ✅ | conduit-only; scans JSONL transcripts |
 | /pr-comments | `commands/pr_comments/` | `internal/commands/session.go` | ✅ | conduit-only; PR review workflow |
-| /passes | `commands/passes/` | ❌ | ❌ | Multi-pass analysis |
+| /passes | `commands/passes/` | ❌ | ⬛ | Anthropic referral/rewards system; not in OAuth Max scope |
 | /rate-limit-options | `commands/rate-limit-options/` | ❌ | ❌ | Rate limit config |
 | /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
-| /extra-usage | `commands/extra-usage/` | ❌ | ❌ | Extended usage breakdown |
+| /extra-usage | `commands/extra-usage/` | ❌ | ⬛ | Anthropic overage credit provisioning; not in OAuth Max scope |
 | /terminalSetup | `commands/terminalSetup/` | ❌ | ❌ | Shell integration setup |
 
 ---
@@ -598,13 +598,13 @@
 | Area | ✅ Complete | 🟡 Partial | ❌ Missing | ⬛ Descoped | Total |
 |------|------------|-----------|-----------|------------|-------|
 | Auth & OAuth | 9 | 0 | 6 | 3 | 18 |
-| API Client & SSE | 9 | 1 | 2 | 0 | 12 |
+| API Client & SSE | 10 | 0 | 2 | 0 | 12 |
 | Agent Loop | 11 | 1 | 1 | 1 | 14 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
 | TUI & Rendering | 18 | 4 | 9 | 0 | 31 |
-| Slash Commands | 41 | 1 | 6 | 12 | 60 |
+| Slash Commands | 41 | 1 | 4 | 14 | 60 |
 | MCP Host | 10 | 0 | 3 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
 | Memory System | 10 | 0 | 3 | 3 | 16 |
@@ -620,10 +620,10 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **217** | **14** | **112** | **43** | **386** |
+| **TOTAL** | **219** | **13** | **109** | **45** | **386** |
 
-**Overall parity: 231/343 scoped features (67% complete, 4% partial)**
-**Descoped: 43 features (intentionally excluded)**
+**Overall parity: 232/341 scoped features (68% complete, 4% partial)**
+**Descoped: 45 features (intentionally excluded)**
 
 ---
 
@@ -667,12 +667,11 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 1. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value; large effort.
 2. **Custom keybindings** — user-defined key mappings. Low value.
 3. **API preconnect** — warm TCP connection to api.anthropic.com on startup. Low value.
-4. **Token counting (accurate)** — cl100k token estimation before sending. Medium value.
-5. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
-6. **Plugin signature verification** — git commit sig check on install.
-7. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
-8. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
+4. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
+5. **Plugin signature verification** — git commit sig check on install (note: not in CC either; aspirational).
+6. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
+7. **/terminalSetup** — installs Shift+Enter keybindings for Apple Terminal/VSCode/Cursor/Alacritty/Zed (~75KB of per-terminal config recipes).
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go).

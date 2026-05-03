@@ -31,6 +31,7 @@ import (
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
+	"github.com/icehunter/conduit/internal/tokens"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
@@ -2883,12 +2884,14 @@ func paintApp(w, h int, content string) string {
 	return styleAppSurface.Width(w).Height(h).Render(out)
 }
 
-// tallyTokens estimates token usage from conversation history.
+// tallyTokens estimates token usage from conversation history using
+// cl100k_base — the tokenizer Claude approximates for billing. Falls
+// back to chars/4 if the encoder fails to initialize (offline first run).
 func (m *Model) tallyTokens() {
 	total := 0
 	for _, msg := range m.history {
 		for _, b := range msg.Content {
-			total += len([]rune(b.Text)) / 4
+			total += tokens.Estimate(b.Text)
 		}
 	}
 	m.totalInputTokens = total

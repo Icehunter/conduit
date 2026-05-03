@@ -42,7 +42,8 @@ type Palette struct {
 	Info    string // blue
 
 	// Surfaces
-	CodeBg       string
+	Background   string // app surface — painted across the whole TUI
+	CodeBg       string // fenced code-block background (slightly distinct from app bg)
 	Border       string
 	BorderActive string
 
@@ -57,13 +58,14 @@ type Palette struct {
 var Dark = Palette{
 	Name:            "dark",
 	Primary:         "#CDD6E0",
-	Secondary:       "#636D7E",
-	Tertiary:        "#3D4554",
+	Secondary:       "#8B92A0", // brighter than before so labels are readable on app bg
+	Tertiary:        "#4A5160",
 	Accent:          "#DA7756",
 	Success:         "#4ADE80",
 	Danger:          "#F87171",
 	Warning:         "#FDE047",
 	Info:            "#60A5FA",
+	Background:      "#16181D", // very dark blue-black — distinct "app surface"
 	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
@@ -75,14 +77,15 @@ var Dark = Palette{
 var Light = Palette{
 	Name:            "light",
 	Primary:         "#1F2328",
-	Secondary:       "#656D76",
+	Secondary:       "#4D5560",
 	Tertiary:        "#9198A1",
 	Accent:          "#D77757",
 	Success:         "#1A7F37",
 	Danger:          "#CF222E",
 	Warning:         "#9A6700",
 	Info:            "#0969DA",
-	CodeBg:          "#F6F8FA",
+	Background:      "#FBFBFA", // off-white app surface
+	CodeBg:          "#F1F3F5",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
 	ModeAcceptEdits: "#8250DF",
@@ -93,13 +96,14 @@ var Light = Palette{
 var DarkAccessible = Palette{
 	Name:            "dark-daltonism",
 	Primary:         "#CDD6E0",
-	Secondary:       "#636D7E",
-	Tertiary:        "#3D4554",
+	Secondary:       "#8B92A0",
+	Tertiary:        "#4A5160",
 	Accent:          "#DA7756",
 	Success:         "#3B82F6", // blue instead of green for deuteranopia
 	Danger:          "#F59E0B", // amber instead of red
 	Warning:         "#FDE047",
 	Info:            "#A78BFA",
+	Background:      "#16181D",
 	CodeBg:          "#0D1117",
 	Border:          "#30363D",
 	BorderActive:    "#DA7756",
@@ -111,14 +115,15 @@ var DarkAccessible = Palette{
 var LightAccessible = Palette{
 	Name:            "light-daltonism",
 	Primary:         "#1F2328",
-	Secondary:       "#656D76",
+	Secondary:       "#4D5560",
 	Tertiary:        "#9198A1",
 	Accent:          "#D77757",
 	Success:         "#0969DA", // blue instead of green
 	Danger:          "#9A6700", // amber instead of red
 	Warning:         "#7C2D12",
 	Info:            "#6F42C1",
-	CodeBg:          "#F6F8FA",
+	Background:      "#FBFBFA",
+	CodeBg:          "#F1F3F5",
 	Border:          "#D0D7DE",
 	BorderActive:    "#D77757",
 	ModeAcceptEdits: "#8250DF",

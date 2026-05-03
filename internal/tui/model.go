@@ -2542,19 +2542,19 @@ func (m Model) View() string {
 	// Only status bar remains at the bottom.
 	if m.panel != nil {
 		panel := m.renderPanel()
-		return lipgloss.JoinVertical(lipgloss.Left, panel, statusBar)
+		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, statusBar))
 	}
 
 	// Plugin panel is also a full-screen takeover.
 	if m.pluginPanel != nil {
 		pluginPanel := m.renderPluginPanel()
-		return lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar)
+		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar))
 	}
 
 	// Settings panel is a full-screen takeover.
 	if m.settingsPanel != nil {
 		sp := m.renderSettingsPanel()
-		return lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)
+		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar))
 	}
 
 	// Overlays: login > resume > permission > command picker (appended below vp).
@@ -2580,7 +2580,18 @@ func (m Model) View() string {
 		parts = append(parts, overlayBox)
 	}
 	parts = append(parts, inputBox, statusBar)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// paintApp wraps the joined-vertical View output in styleAppSurface so the
+// theme background fills every cell of the visible region (including line
+// padding to width and rows below the content). Without this, terminal
+// default bg shows through wherever lipgloss didn't explicitly paint.
+func paintApp(w, h int, content string) string {
+	if w <= 0 || h <= 0 {
+		return content
+	}
+	return styleAppSurface.Width(w).Height(h).Render(content)
 }
 
 // tallyTokens estimates token usage from conversation history.

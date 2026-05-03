@@ -2615,15 +2615,23 @@ func (m Model) View() string {
 // paintApp wraps the joined View output so the theme background fills every
 // cell of the visible region.
 //
-// Approach: lipgloss.Place positions the content top-left within an
-// (m.width × m.height) box and fills empty whitespace with bg-painted
-// spaces. The outer .Background ensures any inner styles that DON'T set
-// their own bg (third-party widgets like textarea) inherit the surface bg.
+// Two-phase approach:
+//  1. paintLines: replace every internal "\x1b[0m" (full reset) with a soft
+//     reset (\x1b[22;23;39m — clears bold/italic/fg only) followed by a fresh
+//     bg-set escape. This preserves bg across the boundary between styled
+//     segments produced by separate lipgloss.Render calls.
+//  2. Pad each line to full width with bg spaces, wrap in styleAppSurface
+//     for outer padding/Height.
+//
+// Without phase 1, any concatenation of two .Render outputs leaves a black
+// gap between them because lipgloss appends "\x1b[0m" after each segment.
+// Adding .Background to individual styles can't fix this — the reset wins.
 func paintApp(w, h int, content string) string {
 	if w <= 0 || h <= 0 {
 		return content
 	}
-	// Pad each content line to full width so right-side padding gets bg too.
+	bg := theme.AnsiBG(theme.Active().Background)
+	content = paintLines(content, bg)
 	padded := padLinesToWidth(content, w)
 	return styleAppSurface.
 		Width(w).
@@ -2631,10 +2639,27 @@ func paintApp(w, h int, content string) string {
 		Render(padded)
 }
 
+// paintLines transforms a multi-line string so the bg color stays painted
+// across internal lipgloss reset boundaries:
+//   - Each line is prefixed with bg
+//   - Every internal "\x1b[0m" is replaced with soft-reset + bg
+//   - Each line ends with a hard reset (so the next line starts clean)
+func paintLines(s, bg string) string {
+	const fullReset = "\x1b[0m"
+	const softReset = "\x1b[22;23;39m" // reset bold/italic/fg only — bg untouched
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		// Replace internal full resets with soft reset + bg reapply so that
+		// concatenated styled segments don't expose terminal default bg.
+		line = strings.ReplaceAll(line, fullReset, softReset+bg)
+		// Prefix bg so the line starts painted, append hard reset at end.
+		lines[i] = bg + line + fullReset
+	}
+	return strings.Join(lines, "\n")
+}
+
 // padLinesToWidth ensures every line of s is exactly w cells wide, padding
-// short lines on the right with bg-painted spaces. Required so the cells to
-// the right of widgets like textarea (which renders short lines) get our bg
-// instead of showing terminal default.
+// short lines on the right with spaces. The wrapping bg paint covers them.
 func padLinesToWidth(s string, w int) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {

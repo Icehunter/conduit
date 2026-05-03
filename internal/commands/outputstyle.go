@@ -20,18 +20,22 @@ func RegisterOutputStyleCommand(r *Registry, cwd string) {
 
 			name := strings.TrimSpace(args)
 
-			// No arg → list available styles.
+			// No arg → open picker. The picker dispatches `/output-style <name>`
+			// on Enter, which falls into the lookup branch below.
 			if name == "" {
 				if len(styles) == 0 {
 					return Result{Type: "text", Text: "No output styles found.\n\nPlace *.md files in .claude/output-styles/ or ~/.claude/output-styles/"}
 				}
-				var sb strings.Builder
-				sb.WriteString("Available output styles:\n\n")
-				for _, s := range styles {
-					sb.WriteString(fmt.Sprintf("  %-20s %s\n", s.Name, s.Description))
+				values := make([]string, len(styles))
+				labels := make([]string, len(styles))
+				for i, s := range styles {
+					values[i] = s.Name
+					labels[i] = s.Name
+					if s.Description != "" {
+						labels[i] = fmt.Sprintf("%-20s %s", s.Name, s.Description)
+					}
 				}
-				sb.WriteString("\nUsage: /output-style <name>  to activate a style")
-				return Result{Type: "text", Text: sb.String()}
+				return pickerResult("output-style", "Pick an output style", "", values, labels)
 			}
 
 			// Find the requested style.

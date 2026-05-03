@@ -1,12 +1,51 @@
 package commands
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
 )
+
+func TestPickerResult_RoundTrip(t *testing.T) {
+	r := pickerResult("theme", "Pick a theme", "dark",
+		[]string{"dark", "light"}, []string{"Dark", "Light mode"})
+	if r.Type != "picker" {
+		t.Fatalf("Type = %q, want picker", r.Type)
+	}
+	if r.Model != "theme" {
+		t.Fatalf("Model = %q, want theme", r.Model)
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(r.Text), &got); err != nil {
+		t.Fatalf("payload unmarshal: %v", err)
+	}
+	if got.Title != "Pick a theme" || got.Current != "dark" {
+		t.Errorf("title/current mismatch: %+v", got)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("items len = %d, want 2", len(got.Items))
+	}
+	if got.Items[0].Value != "dark" || got.Items[0].Label != "Dark" {
+		t.Errorf("item[0] = %+v", got.Items[0])
+	}
+	if got.Items[1].Label != "Light mode" {
+		t.Errorf("item[1] label = %q, want 'Light mode'", got.Items[1].Label)
+	}
+}
+
+func TestPickerResult_LabelsFallbackToValues(t *testing.T) {
+	r := pickerResult("model", "Pick", "", []string{"a", "b", "c"})
+	var got pickerPayload
+	_ = json.Unmarshal([]byte(r.Text), &got)
+	for i, it := range got.Items {
+		if it.Label != it.Value {
+			t.Errorf("item[%d] label %q should fall back to value %q", i, it.Label, it.Value)
+		}
+	}
+}
 
 func TestRegisterPermissionsCommand_NilGate(t *testing.T) {
 	r := New()

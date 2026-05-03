@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -216,6 +217,9 @@ type Model struct {
 
 	// Resume picker state — non-nil when /resume is showing session list.
 	resumePrompt *resumePromptState
+
+	// Generic picker for /theme, /model, /output-style. Non-nil when active.
+	picker *pickerState
 
 	// loginFlowMsgStart is the index into m.messages where the login flow
 	// messages begin. -1 means no login flow is in progress.
@@ -581,7 +585,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Skip textarea/viewport when an overlay is active — they must not
 	// consume keys (especially Escape) that belong to the overlay.
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
-		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.permPrompt != nil
+		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.permPrompt != nil ||
+		m.picker != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		m.input, taCmd = m.input.Update(msg)
@@ -608,6 +613,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	// Resume picker intercepts all keys when active.
 	if m.resumePrompt != nil {
 		m2, cmd := m.handleResumeKey(msg)
+		return m2, cmd, true
+	}
+	// Generic picker (/theme /model /output-style) intercepts keys.
+	if m.picker != nil {
+		m2, cmd := m.handlePickerKey(msg)
 		return m2, cmd, true
 	}
 	// Unified panel intercepts all keys when active.
@@ -1107,6 +1117,94 @@ func (m Model) renderResumePicker() string {
 	return style.Width(m.width - 4).Render(sb.String())
 }
 
+
+// ---- Generic picker overlay (/theme /model /output-style) ------------------
+
+// pickerItem is one row in a small selection picker.
+// JSON tags let commands construct payloads with json.Marshal directly.
+type pickerItem struct {
+	Value string `json:"value"` // dispatched as `/<kind> <value>` on Enter
+	Label string `json:"label"` // human-readable display
+}
+
+// pickerState drives the small select-one overlay used by /theme, /model,
+// and /output-style. The picker has no awareness of what each kind does:
+// on Enter it dispatches `/<kind> <value>` back through the command
+// registry, so the underlying command does the actual work.
+type pickerState struct {
+	kind     string       // "theme" | "model" | "output-style"
+	title    string       // header line
+	items    []pickerItem // options (caller-ordered)
+	selected int          // current cursor row
+	current  string       // value to highlight as "active"
+}
+
+func (m Model) handlePickerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	p := m.picker
+	switch msg.String() {
+	case "up", "k":
+		if p.selected > 0 {
+			p.selected--
+		}
+	case "down", "j":
+		if p.selected < len(p.items)-1 {
+			p.selected++
+		}
+	case "home", "g":
+		p.selected = 0
+	case "end", "G":
+		p.selected = len(p.items) - 1
+	case "enter", " ":
+		if p.selected < 0 || p.selected >= len(p.items) {
+			return m, nil
+		}
+		picked := p.items[p.selected].Value
+		kind := p.kind
+		m.picker = nil
+		if m.cfg.Commands == nil {
+			return m, nil
+		}
+		if res, ok := m.cfg.Commands.Dispatch("/" + kind + " " + picked); ok {
+			return m.applyCommandResult(res)
+		}
+		return m, nil
+	case "esc", "ctrl+c", "q":
+		m.picker = nil
+		m.refreshViewport()
+		return m, nil
+	}
+	m.picker = p
+	return m, nil
+}
+
+func (m Model) renderPicker() string {
+	p := m.picker
+	if p == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render(p.title) + "\n\n")
+
+	for i, it := range p.items {
+		marker := "  "
+		if it.Value == p.current {
+			marker = "● "
+		}
+		label := marker + it.Label
+		if i == p.selected {
+			sb.WriteString(stylePickerItemSelected.Render("▶ "+label) + "\n")
+		} else {
+			sb.WriteString(stylePickerItem.Render("  "+label) + "\n")
+		}
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter select · Escape cancel"))
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
 
 // ---- Unified panel (MCP / Plugins / Marketplaces) --------------------------
 
@@ -2188,6 +2286,38 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, statsCmd
 
+	case "picker":
+		// Open generic picker overlay. JSON payload in res.Text:
+		//   {"title":"...","current":"dark","items":[{"value":"dark","label":"Dark"}]}
+		// Kind ("theme"|"model"|"output-style") comes from res.Model.
+		var payload struct {
+			Title   string       `json:"title"`
+			Current string       `json:"current"`
+			Items   []pickerItem `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(res.Text), &payload); err != nil || len(payload.Items) == 0 {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "picker: invalid or empty payload"})
+			m.refreshViewport()
+			return m, nil
+		}
+		// Position cursor on the current value if present.
+		sel := 0
+		for i, it := range payload.Items {
+			if it.Value == payload.Current {
+				sel = i
+				break
+			}
+		}
+		m.picker = &pickerState{
+			kind:     res.Model,
+			title:    payload.Title,
+			items:    payload.Items,
+			selected: sel,
+			current:  payload.Current,
+		}
+		m.refreshViewport()
+		return m, nil
+
 	case "resume-pick":
 		// Parse tab-separated session lines from the command result.
 		var sessions []resumeSession
@@ -2623,6 +2753,8 @@ func (m Model) View() string {
 		overlayBox = m.renderLoginPicker()
 	} else if m.resumePrompt != nil {
 		overlayBox = m.renderResumePicker()
+	} else if m.picker != nil {
+		overlayBox = m.renderPicker()
 	} else if m.permPrompt != nil {
 		overlayBox = m.renderPermissionPrompt()
 	} else if len(m.cmdMatches) > 0 {

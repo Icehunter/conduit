@@ -6,6 +6,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,6 +20,45 @@ type Result struct {
 	Text string
 	// Model is the new model name (for Type=="model").
 	Model string
+}
+
+// PickerOption is one row in the small generic picker overlay used by
+// /theme, /model, and /output-style. Exported because the TUI parses
+// these via JSON (see model.go renderPicker).
+type PickerOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// pickerPayload is the JSON wire format for picker Result.Text.
+type pickerPayload struct {
+	Title   string         `json:"title"`
+	Current string         `json:"current"`
+	Items   []PickerOption `json:"items"`
+}
+
+// pickerResult builds a Result that opens a generic picker overlay in the
+// TUI. On Enter the TUI dispatches `/<kind> <selectedValue>` back through
+// the registry, so this command is also responsible for handling the
+// post-selection arg-form invocation. labels defaults to values.
+func pickerResult(kind, title, current string, values []string, labels ...[]string) Result {
+	items := make([]PickerOption, len(values))
+	var labelList []string
+	if len(labels) > 0 {
+		labelList = labels[0]
+	}
+	for i, v := range values {
+		label := v
+		if i < len(labelList) {
+			label = labelList[i]
+		}
+		items[i] = PickerOption{Value: v, Label: label}
+	}
+	data, err := json.Marshal(pickerPayload{Title: title, Current: current, Items: items})
+	if err != nil {
+		return Result{Type: "error", Text: "picker: " + err.Error()}
+	}
+	return Result{Type: "picker", Model: kind, Text: string(data)}
 }
 
 // Handler is a slash command implementation.

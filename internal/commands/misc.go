@@ -79,7 +79,9 @@ func RegisterMiscCommands(r *Registry) {
 		Handler: func(args string) Result {
 			name := strings.TrimSpace(args)
 			if name == "" {
-				return Result{Type: "text", Text: themeStatusText("Current theme")}
+				// Open picker: lets the user see and choose any registered
+				// theme (built-ins + user-defined from settings.json).
+				return pickerResult("theme", "Pick a theme", theme.Active().Name, theme.AvailableThemes())
 			}
 			if !theme.Set(name) {
 				return Result{Type: "text", Text: fmt.Sprintf(

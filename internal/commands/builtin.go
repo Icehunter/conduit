@@ -42,7 +42,13 @@ func RegisterModelCommand(r *Registry, getModel func() string, setModel func(str
 		Handler: func(args string) Result {
 			args = strings.TrimSpace(args)
 			if args == "" {
-				return Result{Type: "text", Text: fmt.Sprintf("Current model: %s\n\nAvailable models:\n  claude-opus-4-7\n  claude-sonnet-4-6\n  claude-haiku-4-5-20251001", getModel())}
+				values := []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
+				labels := []string{
+					"Opus 4.7   — most capable",
+					"Sonnet 4.6 — balanced (default)",
+					"Haiku 4.5  — fastest, cheapest",
+				}
+				return pickerResult("model", "Pick a model", getModel(), values, labels)
 			}
 			// Normalise shorthand names.
 			name := resolveModelName(args)

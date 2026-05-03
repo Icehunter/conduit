@@ -218,9 +218,9 @@
 | Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
 | Log selector | `components/LogSelector.tsx` | — | ❌ | ❌ | |
 | Global search dialog | `components/GlobalSearchDialog.tsx` | — | ❌ | ❌ | |
-| Model picker dialog | `components/ModelPicker.tsx` | — | `/model` command only | 🟡 | No visual picker |
-| Theme picker | `components/ThemePicker.tsx` | — | ❌ | ❌ | |
-| Output style picker | `components/OutputStylePicker.tsx` | — | `/output-style` command | 🟡 | Text-only |
+| Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑↓/jk Enter; current marked ● |
+| Theme picker | `components/ThemePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /theme with no args opens picker; lists built-ins + user themes |
+| Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
 | Onboarding flow | `components/OnboardingComponent.tsx` | — | `internal/tui/run.go` | 🟡 | No-auth hint injected into message list; no full wizard |
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
@@ -603,7 +603,7 @@
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
-| TUI & Rendering | 15 | 6 | 10 | 0 | 31 |
+| TUI & Rendering | 18 | 4 | 9 | 0 | 31 |
 | Slash Commands | 41 | 1 | 6 | 12 | 60 |
 | MCP Host | 9 | 0 | 4 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **209** | **16** | **118** | **43** | **386** |
+| **TOTAL** | **212** | **14** | **117** | **43** | **386** |
 
-**Overall parity: 225/343 scoped features (65% complete, 5% partial)**
+**Overall parity: 226/343 scoped features (66% complete, 4% partial)**
 **Descoped: 43 features (intentionally excluded)**
 
 ---
@@ -678,4 +678,4 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style.

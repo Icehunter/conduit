@@ -38,6 +38,87 @@ func TestDiscoverAuthServer_OAuthMetadata(t *testing.T) {
 	}
 }
 
+func TestDiscoverAuthServer_FollowsProtectedResourcePointer(t *testing.T) {
+	// Two servers: an MCP origin that exposes only a protected-resource
+	// document pointing at a separate authorization server origin.
+	asMux := http.NewServeMux()
+	var asURL string
+	as := httptest.NewServer(asMux)
+	defer as.Close()
+	asURL = as.URL
+	asMux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+			AuthorizationEndpoint: asURL + "/authorize",
+			TokenEndpoint:         asURL + "/token",
+			RegistrationEndpoint:  asURL + "/register",
+		})
+	})
+
+	mcpMux := http.NewServeMux()
+	mcpMux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(ProtectedResourceMetadata{
+			Resource:             "https://mcp.example/mcp",
+			AuthorizationServers: []string{asURL},
+		})
+	})
+	mcp := httptest.NewServer(mcpMux)
+	defer mcp.Close()
+
+	md, err := DiscoverAuthServer(context.Background(), mcp.URL+"/mcp/")
+	if err != nil {
+		t.Fatalf("DiscoverAuthServer: %v", err)
+	}
+	if md.AuthorizationEndpoint != asURL+"/authorize" {
+		t.Errorf("expected authorization_endpoint at %s; got %q", asURL, md.AuthorizationEndpoint)
+	}
+	if md.RegistrationEndpoint != asURL+"/register" {
+		t.Errorf("registration_endpoint = %q; want %s/register", md.RegistrationEndpoint, asURL)
+	}
+}
+
+func TestDiscoverAuthServer_FallsBackWhenNoProtectedResource(t *testing.T) {
+	// Server has no protected-resource document but exposes RFC 8414 at
+	// its own origin — discovery should still succeed via the fallback
+	// path. (This is the common case for MCPs where server == AS.)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			http.NotFound(w, r)
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				AuthorizationEndpoint: "https://example.com/authorize",
+				TokenEndpoint:         "https://example.com/token",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	md, err := DiscoverAuthServer(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("DiscoverAuthServer: %v", err)
+	}
+	if md.TokenEndpoint != "https://example.com/token" {
+		t.Errorf("fallback path failed: %+v", md)
+	}
+}
+
+func TestDiscoverAuthServer_NoMetadataAnywhere(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := DiscoverAuthServer(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected error when nothing is exposed; got nil")
+	}
+	if !strings.Contains(err.Error(), "does not expose") {
+		t.Errorf("error should explain the discovery failure clearly; got %v", err)
+	}
+}
+
 func TestDiscoverAuthServer_OIDCFallback(t *testing.T) {
 	// First well-known returns 404 (RFC 8414 not supported); OIDC fallback wins.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

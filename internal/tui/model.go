@@ -1769,7 +1769,15 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 	}
 	writeField("Tools", fmt.Sprintf("%d tool%s", item.toolCount, pluralS(item.toolCount)))
 	if item.err != "" {
-		sb.WriteString("\n" + fgOnBg(colorError).Render("Error: "+item.err) + "\n")
+		// Wrap long error messages to the inner panel width — without
+		// this, OAuth errors (which can be hundreds of chars long with
+		// a URL chain) get clipped at the right edge.
+		wrapW := innerW - 2
+		if wrapW < 20 {
+			wrapW = 20
+		}
+		errStyle := fgOnBg(colorError).Width(wrapW)
+		sb.WriteString("\n" + errStyle.Render("Error: "+item.err) + "\n")
 	}
 	sb.WriteByte('\n')
 	// Context-sensitive actions matching Claude Code's MCPStdioServerMenu:

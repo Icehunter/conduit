@@ -96,32 +96,107 @@ type tokenResponse struct {
 // oauthHTTPClient is the default client used for OAuth requests. Tests override.
 var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// DiscoverAuthServer fetches the authorization server metadata for the
-// MCP server at serverURL. Tries `/.well-known/oauth-authorization-server`
-// first, then falls back to `/.well-known/openid-configuration`.
+// ProtectedResourceMetadata is the subset of RFC 9728 fields we use. The
+// MCP spec requires servers that gate tools behind OAuth to expose this
+// document so clients can find the right authorization server (which may
+// be a different origin from the MCP server itself — e.g. GitHub
+// Copilot's MCP at api.githubcopilot.com points at github.com as its AS).
+type ProtectedResourceMetadata struct {
+	Resource             string   `json:"resource"`
+	AuthorizationServers []string `json:"authorization_servers"`
+	ScopesSupported      []string `json:"scopes_supported,omitempty"`
+}
+
+// DiscoverProtectedResource probes the MCP server for an RFC 9728
+// `/.well-known/oauth-protected-resource` document and returns the first
+// authorization_servers entry. Mirrors what CC's MCP SDK does on a 401.
 //
-// serverURL should be the MCP server's base — e.g. https://mcp.example.com.
-// If the URL has a path, discovery is rooted at the URL's origin (RFC 8414
-// requires well-known to live at the AS issuer's origin).
-func DiscoverAuthServer(ctx context.Context, serverURL string) (*AuthServerMetadata, error) {
+// Returns ("", nil) when the server doesn't expose this document — the
+// caller can then fall through to the legacy "discover at server origin"
+// path for MCPs where the server and the AS share an origin.
+func DiscoverProtectedResource(ctx context.Context, serverURL string) (string, error) {
 	base, err := originOf(serverURL)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	// RFC 8414 well-known path goes after the host, before any issuer path.
+	url := base + "/.well-known/oauth-protected-resource"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := oauthHTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mcp oauth: protected-resource at %s returned %d", url, resp.StatusCode)
+	}
+	var prm ProtectedResourceMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&prm); err != nil {
+		return "", fmt.Errorf("mcp oauth: decode protected-resource: %w", err)
+	}
+	if len(prm.AuthorizationServers) == 0 {
+		return "", nil
+	}
+	return prm.AuthorizationServers[0], nil
+}
+
+// DiscoverAuthServer fetches the authorization server metadata for the
+// MCP server at serverURL.
+//
+// Discovery order (matches CC's MCP SDK):
+//
+//  1. RFC 9728 protected-resource document at
+//     `<server-origin>/.well-known/oauth-protected-resource`. If present,
+//     it points at the real authorization server origin (which may be
+//     different from the MCP server's own origin — e.g. github.com as
+//     the AS for an MCP at api.githubcopilot.com).
+//
+//  2. RFC 8414 metadata at the (resolved) AS origin's
+//     `/.well-known/oauth-authorization-server`.
+//
+//  3. OIDC discovery at the (resolved) AS origin's
+//     `/.well-known/openid-configuration`.
+//
+// If protected-resource discovery fails or returns no AS, we fall back to
+// treating the MCP server's own origin as the AS — that's the right
+// behavior for MCPs where the two are colocated.
+func DiscoverAuthServer(ctx context.Context, serverURL string) (*AuthServerMetadata, error) {
+	asOrigin := ""
+	if as, err := DiscoverProtectedResource(ctx, serverURL); err == nil && as != "" {
+		// Got a pointer to the real AS — use its origin for the well-known.
+		if origin, err := originOf(as); err == nil {
+			asOrigin = origin
+		}
+	}
+	if asOrigin == "" {
+		// No protected-resource doc — fall back to "MCP and AS share origin".
+		o, err := originOf(serverURL)
+		if err != nil {
+			return nil, err
+		}
+		asOrigin = o
+	}
+
 	candidates := []string{
-		base + "/.well-known/oauth-authorization-server",
-		base + "/.well-known/openid-configuration",
+		asOrigin + "/.well-known/oauth-authorization-server",
+		asOrigin + "/.well-known/openid-configuration",
 	}
-	var lastErr error
+	var statuses []string
 	for _, u := range candidates {
 		md, err := fetchMetadata(ctx, u)
 		if err == nil {
 			return md, nil
 		}
-		lastErr = err
+		statuses = append(statuses, u+": "+err.Error())
 	}
-	return nil, fmt.Errorf("mcp oauth: discovery failed for %s: %w", base, lastErr)
+	return nil, fmt.Errorf("mcp oauth: no OAuth metadata at %s — server does not expose RFC 8414/OIDC discovery (%s)",
+		asOrigin, strings.Join(statuses, "; "))
 }
 
 func originOf(rawURL string) (string, error) {
@@ -325,7 +400,7 @@ func PerformOAuthFlow(ctx context.Context, serverName, serverURL string, scopes 
 		// Without registration, we can't get a client_id. Some MCPs publish
 		// a static one in metadata under a non-standard key; we don't try
 		// to handle those — the user must register out-of-band.
-		return nil, fmt.Errorf("mcp oauth: %s does not support Dynamic Client Registration", serverName)
+		return nil, fmt.Errorf("mcp oauth: %s incompatible auth server: does not support dynamic client registration", serverName)
 	}
 
 	verifier, err := auth.GenerateVerifier()
@@ -396,7 +471,7 @@ func AuthorizeURLForFlow(ctx context.Context, serverName, serverURL string, scop
 
 	if md.RegistrationEndpoint == "" {
 		_ = listener.Close()
-		err = fmt.Errorf("mcp oauth: %s does not support Dynamic Client Registration", serverName)
+		err = fmt.Errorf("mcp oauth: %s incompatible auth server: does not support dynamic client registration", serverName)
 		return
 	}
 	client, err = RegisterClient(ctx, md.RegistrationEndpoint, "conduit ("+serverName+")", []string{redirectURI})

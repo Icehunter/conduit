@@ -1389,7 +1389,10 @@ func (m Model) expandPastePlaceholders(s string) string {
 // displayed as a companion speech bubble. Fires when all of:
 //   - A companion is configured (buddy store has a name)
 //   - The last user message mentioned the companion by name
-//   - The last assistant message is a single short line (≤ 100 chars)
+//   - The last assistant message is brief (≤ 4 lines, ≤ 200 chars total)
+//
+// Multi-line companion quips (e.g. "*action*\n\nReply") are allowed —
+// CC shows them in the bubble too.
 //
 // Mirrors the fireCompanionObserver logic from src/screens/REPL.tsx.
 func (m Model) maybeFireCompanionBubble() tea.Cmd {
@@ -1418,10 +1421,20 @@ func (m Model) maybeFireCompanionBubble() tea.Cmd {
 			continue
 		}
 		text := strings.TrimSpace(msg.Content)
-		if strings.Contains(text, "\n") || len(text) > 100 || text == "" {
-			return nil // too long or empty — regular response, not a quip
+		if text == "" {
+			return nil
 		}
-		// It's a short single-line response — show as companion bubble.
+		lines := strings.Split(text, "\n")
+		// Blank-line normalized count (paragraphs).
+		var nonBlank int
+		for _, l := range lines {
+			if strings.TrimSpace(l) != "" {
+				nonBlank++
+			}
+		}
+		if nonBlank > 4 || len(text) > 200 {
+			return nil // too long — regular response, not a quip
+		}
 		return func() tea.Msg {
 			return companionBubbleMsg{text: text}
 		}

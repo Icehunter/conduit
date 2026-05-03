@@ -33,6 +33,8 @@ type SubAgent interface {
 type Command struct {
 	// QualifiedName is the slash-command name ("pluginName:commandName" or just "commandName").
 	QualifiedName string
+	// Description is shown in /skills and the system prompt skill listing.
+	Description string
 	// Body is the markdown body (frontmatter stripped).
 	Body string
 }

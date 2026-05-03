@@ -339,7 +339,7 @@
 | Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | LoadFromPluginDirs; merged at startup, plugin < user/project priority |
 | Plugin slash commands | `services/plugins/` | — | `internal/plugins/loader.go` | ✅ | |
 | Skill discovery from plugins | `skills/loadSkillsDir.ts` | — | `internal/tools/skilltool/` | ✅ | |
-| Bundled/built-in skills | `skills/bundledSkills.ts` | — | ❌ | ❌ | No bundled skills |
+| Bundled/built-in skills | `skills/bundledSkills.ts` | — | `internal/skills/bundled.go` | ✅ | /simplify (3-agent code review) and /remember (memory promotion review) |
 | Skill listing in system prompt | `skills/` | — | `internal/agent/systemprompt.go` | ✅ | |
 | SkillTool invocation | `tools/SkillTool/` | — | `internal/tools/skilltool/` | ✅ | |
 | Plugin marketplace management | `commands/plugin/` | — | `internal/plugins/marketplace.go` | ✅ | |

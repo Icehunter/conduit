@@ -56,6 +56,8 @@ type SessionState struct {
 	GetRateLimitWarning func() string
 	// CheckAuth returns nil if the current bearer token is valid, error otherwise.
 	CheckAuth func() error
+	// GetSessionInfo returns session ID, file path, message count, and start time.
+	GetSessionInfo func() (id, path string, messages int, startedAt time.Time)
 }
 
 // RegisterSessionCommands registers all session-dependent slash commands.
@@ -636,6 +638,35 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			}
 			removed := state.Rewind(n)
 			return Result{Type: "rewind", Text: fmt.Sprintf("%d", removed)}
+		},
+	})
+
+	// /session — show session ID, file path, message count, duration.
+	r.Register(Command{
+		Name:        "session",
+		Description: "Show session ID, file path, message count, and duration",
+		Handler: func(string) Result {
+			if state.GetSessionInfo == nil {
+				return Result{Type: "text", Text: "No session info available."}
+			}
+			id, path, msgs, startedAt := state.GetSessionInfo()
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Session ID:   %s\n", id))
+			if path != "" {
+				sb.WriteString(fmt.Sprintf("File:         %s\n", path))
+			}
+			sb.WriteString(fmt.Sprintf("Messages:     %d\n", msgs))
+			if !startedAt.IsZero() {
+				dur := time.Since(startedAt)
+				h := int(dur.Hours())
+				m := int(dur.Minutes()) % 60
+				if h > 0 {
+					sb.WriteString(fmt.Sprintf("Duration:     %dh %dm\n", h, m))
+				} else {
+					sb.WriteString(fmt.Sprintf("Duration:     %dm\n", m))
+				}
+			}
+			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
 	})
 

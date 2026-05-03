@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -125,6 +126,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPluginCommands(reg, loadedPlugins)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
+
+	sessionStart := time.Now()
 
 	// Session state shared between commands and the TUI model.
 	// live is a thread-safe bag updated by Model.syncLive() on every relevant
@@ -293,6 +296,18 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				return runOpts.AuthErr
 			}
 			return nil
+		},
+		// /session — session ID, file path, message count, start time.
+		GetSessionInfo: func() (id, path string, messages int, startedAt time.Time) {
+			if runOpts.Session != nil {
+				id = runOpts.Session.ID
+				path = runOpts.Session.FilePath
+			}
+			if modelPtr != nil {
+				messages = len(modelPtr.messages)
+			}
+			startedAt = sessionStart
+			return
 		},
 	}
 	commands.RegisterSessionCommands(reg, state)

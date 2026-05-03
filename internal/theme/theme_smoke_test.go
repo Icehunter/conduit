@@ -48,18 +48,31 @@ func TestSetSwapsPalette(t *testing.T) {
 	}
 }
 
-// TestAvailableThemes lists all six canonical theme names.
+// TestAvailableThemes lists the dark canonical theme names.
+//
+// Light variants (light, light-daltonized, light-ansi) are intentionally
+// excluded from the picker because their colors are unreadable on a dark
+// terminal. They remain resolvable via Set for settings.json round-trip
+// parity with Claude Code.
 func TestAvailableThemes(t *testing.T) {
 	got := AvailableThemes()
-	want := []string{"dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"}
+	want := []string{"dark", "dark-daltonized", "dark-ansi"}
 	if len(got) != len(want) {
-		t.Fatalf("expected %d themes, got %d", len(want), len(got))
+		t.Fatalf("expected %d themes, got %d (%v)", len(want), len(got), got)
 	}
 	for i, name := range want {
 		if got[i] != name {
 			t.Fatalf("at index %d: got %s, want %s", i, got[i], name)
 		}
 	}
+
+	// Light names must still resolve via Set for settings.json compatibility.
+	for _, name := range []string{"light", "light-daltonized", "light-ansi"} {
+		if !Set(name) {
+			t.Fatalf("Set(%q) should still work for back-compat", name)
+		}
+	}
+	Set("dark") // restore
 }
 
 // TestOnChangeFires verifies listeners are invoked exactly once per Set.

@@ -291,9 +291,11 @@ func (p *settingsPanelState) rebuildConfigItems() {
 				}
 				return v
 			}(),
-			// Match canonical theme names (matches Claude Code's THEME_NAMES).
-			options:    []string{"dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"},
-			optionVals: []string{"dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"},
+			// Only dark variants — light themes have dark text and aren't
+			// usable on dark terminals (which conduit assumes). Light
+			// values still resolve via theme.Set for settings.json parity.
+			options:    []string{"dark", "dark-daltonized", "dark-ansi"},
+			optionVals: []string{"dark", "dark-daltonized", "dark-ansi"},
 		},
 		{
 			id:    "notifChannel",

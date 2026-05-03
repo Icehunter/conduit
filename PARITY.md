@@ -437,7 +437,7 @@
 | Settings sync service | `services/settingsSync/` | — | ❌ | ⬛ | Anthropic-internal |
 | Platform-specific settings | `utils/platformSettings.ts` | — | ❌ | ❌ | |
 | GrowthBook feature flags | `utils/featureFlags.ts` | — | ❌ | ⬛ | Anthropic-internal |
-| Migrations | `migrations/` (11 files) | — | ❌ | ❌ | Schema migration system |
+| Migrations | `migrations/` (11 files) | — | `internal/migrations/migrations.go` | ✅ | modelNormalize migration; completedMigrations in settings.json; 5 tests |
 | XDG base directory | `utils/xdg.ts` | — | `internal/settings/env.go` `claudeDir()` | ✅ | XDG_CONFIG_HOME/claude on Linux |
 | Windows paths | `utils/windowsPaths.ts` | — | `internal/settings/env.go` `claudeDir()` | ✅ | %APPDATA%/claude on Windows |
 
@@ -497,16 +497,16 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Image paste from clipboard | `utils/imagePaste.ts` (416 LOC) | — | ❌ | ❌ | M13 |
-| Image resize | `utils/imageResizer.ts` (880 LOC) | — | ❌ | ❌ | M13 |
-| Image storage | `utils/imageStore.ts` | — | ❌ | ❌ | M13 |
+| Image paste from clipboard | `utils/imagePaste.ts` (416 LOC) | — | `internal/attach/clipboard.go` | ✅ | ctrl+v; macOS osascript PNG+TIFF; Linux xclip/wl-paste |
+| Image resize | `utils/imageResizer.ts` (880 LOC) | — | `internal/attach/resize.go` | ✅ | Resize if >2000px or >3.75MB; CatmullRom downsampling; re-encode JPEG; TIFF decode via x/image/tiff |
+| Image storage | `utils/imageStore.ts` | — | `internal/tui/model.go` (pendingImages) | ✅ | Multiple images accumulated per turn |
 | PDF handling | `utils/pdf.ts` (300 LOC) | — | ❌ | ❌ | M13 |
 | File drag-drop | `utils/attachments.ts` (3997 LOC) | — | ❌ | ❌ | M13 |
 | ANSI to PNG | `utils/ansiToPng.ts` (334 LOC) | — | ❌ | ❌ | M13 |
 | ANSI to SVG | `utils/ansiToSvg.ts` | — | ❌ | ❌ | M13 |
-| Screenshot clipboard | `utils/screenshotClipboard.ts` | — | ❌ | ❌ | M13 |
+| Screenshot clipboard | `utils/screenshotClipboard.ts` | — | `internal/attach/clipboard.go` | ✅ | Covered by image paste (TIFF fallback handles macOS screenshots) |
 | Asciinema recording | `utils/asciicast.ts` | — | ❌ | ❌ | M13 |
-| @file mention parsing | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
+| @file mention parsing | `utils/attachments.ts` | — | `internal/attach/atmention.go` | ✅ | @path @"path" #L10-20 line ranges; dirs listed; injected as file_content blocks; 7 tests |
 | IDE inbound attachments | `bridge/inboundAttachments.ts` | — | ❌ | ❌ | M13+bridge |
 
 ---
@@ -614,19 +614,19 @@
 | Memory System | 10 | 0 | 3 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
 | Session & History | 11 | 2 | 1 | 0 | 14 |
-| Config & Settings | 8 | 0 | 7 | 3 | 18 |
+| Config & Settings | 9 | 0 | 6 | 3 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
 | Coordinator / Swarms | 1 | 1 | 7 | 0 | 9 |
-| Attachments (M13) | 0 | 0 | 11 | 0 | 11 |
+| Attachments (M13) | 4 | 0 | 7 | 0 | 11 |
 | Buddy / Voice / KAIROS | 6 | 1 | 4 | 2 | 13 |
 | Output Styles & Undercover | 6 | 0 | 3 | 0 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **226** | **14** | **101** | **45** | **386** |
+| **TOTAL** | **231** | **14** | **96** | **45** | **386** |
 
-**Overall parity: 240/341 scoped features (70% complete, 4% partial)**
+**Overall parity: 245/341 scoped features (72% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---

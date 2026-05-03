@@ -1258,6 +1258,16 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			})
 		}
 		m.pendingImages = nil
+		// Process @file mentions: inject referenced file/dir contents as
+		// additional text blocks before the user's message text.
+		if cwd, err := os.Getwd(); err == nil {
+			for _, ref := range attach.ProcessAtMentions(apiText, cwd) {
+				userContent = append(userContent, api.ContentBlock{
+					Type: "text",
+					Text: attach.FormatAtResult(ref),
+				})
+			}
+		}
 		userContent = append(userContent, api.ContentBlock{Type: "text", Text: apiText})
 		m.history = append(m.history, api.Message{
 			Role:    "user",

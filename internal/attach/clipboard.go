@@ -88,10 +88,12 @@ func readDarwinType(appleType string) (*Image, error) {
 	if err != nil || len(data) == 0 {
 		return nil, ErrNoImage
 	}
-	return &Image{
+	img := &Image{
 		Data:      base64.StdEncoding.EncodeToString(data),
 		MediaType: "image/png",
-	}, nil
+	}
+	_ = MaybeResize(img) // silently skip resize failures
+	return img, nil
 }
 
 // readLinux tries xclip then wl-paste (Wayland) for PNG clipboard data.

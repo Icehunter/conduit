@@ -294,14 +294,14 @@
 | /agents | `commands/agents/` | `internal/commands/session.go` | ✅ | Lists active sub-agents |
 | /stickers | `commands/stickers/` | ❌ | ⬛ | Cosmetic |
 | /thinkback | `commands/thinkback/` | `internal/commands/session.go` | ✅ | Shows last thinking blocks |
-| /thinkback-play | `commands/thinkback-play/` | ❌ | ❌ | Replay thinking animation |
+| /thinkback-play | `commands/thinkback-play/` | ❌ | ⬛ | Cosmetic animation replay; terminal rendering doesn't support smooth animation |
 | /upgrade | `commands/upgrade/` | ❌ | ⬛ | Auto-update |
 | /color | `commands/color/` | `internal/commands/session.go` | ✅ | Toggle ANSI color output |
 | /copy | `commands/copy/` | `internal/commands/session.go` | ✅ | Copies last response to clipboard |
 | /search | — | `internal/commands/session.go` | ✅ | conduit-only; scans JSONL transcripts |
 | /pr-comments | `commands/pr_comments/` | `internal/commands/session.go` | ✅ | conduit-only; PR review workflow |
 | /passes | `commands/passes/` | ❌ | ⬛ | Anthropic referral/rewards system; not in OAuth Max scope |
-| /rate-limit-options | `commands/rate-limit-options/` | ❌ | ❌ | Rate limit config |
+| /rate-limit-options | `commands/rate-limit-options/` | ❌ | ⬛ | Billing dialog (upgrade/extra-usage); Anthropic billing API required |
 | /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
 | /extra-usage | `commands/extra-usage/` | ❌ | ⬛ | Anthropic overage credit provisioning; not in OAuth Max scope |
 | /terminalSetup | `commands/terminalSetup/` | `internal/commands/terminalsetup.go` | 🟡 | Detects TERM_PROGRAM and prints exact recipes for Apple Terminal / VSCode / Cursor / Windsurf / Alacritty / Zed; informational only — automated plist/keybindings.json edits not yet ported |
@@ -347,9 +347,9 @@
 | Skill listing in system prompt | `skills/` | — | `internal/agent/systemprompt.go` | ✅ | |
 | SkillTool invocation | `tools/SkillTool/` | — | `internal/tools/skilltool/` | ✅ | |
 | Plugin marketplace management | `commands/plugin/` | — | `internal/plugins/marketplace.go` | ✅ | |
-| Plugin signature verification | — | — | ❌ | ❌ | |
-| Plugin version management | — | — | ❌ | ❌ | |
-| Built-in plugins list | `plugins/builtinPlugins.ts` | — | ❌ | ❌ | |
+| Plugin signature verification | — | — | ❌ | ⬛ | Not in CC either; aspirational |
+| Plugin version management | — | — | ❌ | ⬛ | No version conflict resolution in CC; just git pull |
+| Built-in plugins list | `plugins/builtinPlugins.ts` | — | ❌ | ⬛ | Empty in CC external build (scaffolding only) |
 | MagicDocs | `services/MagicDocs/` | — | ❌ | ⬛ | |
 
 ---
@@ -414,7 +414,7 @@
 | File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
 | Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | 🟡 | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat is descoped (bridge-only) |
 | Session environment setup | `utils/sessionEnvironment.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv + cleanup restore |
-| Session URL handling | `utils/sessionUrl.ts` | — | ❌ | ❌ | |
+| Session URL handling | `utils/sessionUrl.ts` | — | `cmd/conduit/main.go` `--resume` flag | 🟡 | `--resume <uuid>` and `--resume <file.jsonl>` supported; URL-based remote resume (M10) not supported |
 | Cost tracking persistence | `cost-tracker.ts` | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
 | Transcript search | `utils/transcriptSearch.ts` | — | `internal/session/extras.go` | ✅ | Case-insensitive JSONL search |
 
@@ -432,10 +432,10 @@
 | CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | — | `internal/claudemd/claudemd.go` | ✅ | Dir walk, @include, .claudeignore, per-session cache |
 | Output style setting | `utils/config.ts` | — | `internal/settings/settings.go`, `internal/tui/run.go` | ✅ | Persisted to settings.json; loaded on startup |
 | Environment variable management | `utils/env.ts`, `envDynamic.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv; session.Env injected into BashTool subprocess |
-| Managed env constants | `utils/managedEnvConstants.ts` | — | ❌ | ❌ | |
+| Managed env constants | `utils/managedEnvConstants.ts` | — | `internal/settings/env.go` `dangerousEnvKeys` | ✅ | DANGEROUS_SHELL_SETTINGS filtered from ApplyEnv |
 | Remote managed settings | `services/remoteManagedSettings/` | — | ❌ | ⬛ | Anthropic-internal |
 | Settings sync service | `services/settingsSync/` | — | ❌ | ⬛ | Anthropic-internal |
-| Platform-specific settings | `utils/platformSettings.ts` | — | ❌ | ❌ | |
+| Platform-specific settings | `utils/platformSettings.ts` | — | ❌ | ⬛ | File does not exist in TS source; probably removed |
 | GrowthBook feature flags | `utils/featureFlags.ts` | — | ❌ | ⬛ | Anthropic-internal |
 | Migrations | `migrations/` (11 files) | — | `internal/migrations/migrations.go` | ✅ | modelNormalize migration; completedMigrations in settings.json; 5 tests |
 | XDG base directory | `utils/xdg.ts` | — | `internal/settings/env.go` `claudeDir()` | ✅ | XDG_CONFIG_HOME/claude on Linux |
@@ -520,7 +520,7 @@
 | ASCII sprite renderer | `buddy/sprites.ts` (514 LOC) | — | `internal/buddy/buddy.go` | 🟡 | Simplified sprites |
 | Companion soul persistence | `buddy/companion.ts` | — | `internal/buddy/store.go` | ✅ | |
 | /buddy command | `buddy/useBuddyNotification.tsx` | — | `internal/commands/buddy.go` | ✅ | |
-| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | ❌ | ❌ | No live animation. Required follow-up to companion intro injection — the intro tells the model to defer to "the bubble" but the bubble UI doesn't exist yet, so addressing the buddy by name produces a one-line nothing-response. |
+| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | `internal/tui/model.go` (companionBubble) | 🟡 | Static bubble (no animation) shows when user addresses buddy by name; auto-clears after 10s. Missing: idle sprite animation, pet hearts, frame cycling (TICK_MS sequence). |
 | Companion intro injection | `buddy/prompt.ts` | — | `internal/buddy/buddy.go` (IntroPrompt) | ✅ | When a companion is configured, system prompt gains a "# Companion" block telling the model to defer to the buddy by name |
 | Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ⬛ | One-time CC launch promo (rainbow /buddy notification, April 1-7 2026 only). Window has passed; permanent /buddy command already exists. |
 | Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ❌ | Requires cgo |

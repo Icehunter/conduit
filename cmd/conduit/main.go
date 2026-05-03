@@ -88,12 +88,15 @@ func main() {
 func run() error {
 	var printMode bool
 	var continueMode bool
+	var resumeID string
 	flag.BoolVar(&printMode, "print", false, "non-interactive: send a one-shot prompt and print the response")
 	flag.BoolVar(&printMode, "p", false, "alias for --print")
 	flag.BoolVar(&continueMode, "continue", false, "resume the most recent conversation for the current directory")
 	flag.BoolVar(&continueMode, "c", false, "alias for --continue")
+	flag.StringVar(&resumeID, "resume", "", "resume a specific session (session UUID or path to .jsonl file)")
+	flag.StringVar(&resumeID, "r", "", "alias for --resume")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: conduit [version] | conduit --print \"prompt\" | conduit [--continue] (REPL)")
+		fmt.Fprintln(os.Stderr, "usage: conduit [version] | conduit --print \"prompt\" | conduit [--continue|--resume <id>] (REPL)")
 		fmt.Fprintln(os.Stderr, "       Login and logout are managed via /login and /logout inside the REPL.")
 		flag.PrintDefaults()
 	}
@@ -104,7 +107,7 @@ func run() error {
 		return runPrint(args)
 	}
 	if len(args) == 0 {
-		return runREPL(continueMode)
+		return runREPL(continueMode, resumeID)
 	}
 
 	switch args[0] {
@@ -261,7 +264,7 @@ func buildMetadata() map[string]any {
 // runREPL launches the full-screen Bubble Tea TUI.
 // If credentials are absent or invalid the TUI still starts — it shows a
 // "not logged in" welcome message and the user can /login from within.
-func runREPL(continueMode bool) error {
+func runREPL(continueMode bool, resumeID string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -308,7 +311,31 @@ func runREPL(continueMode bool) error {
 	sessionID := newSessionID()
 	var resumedHistory []api.Message
 
-	if continueMode {
+	if resumeID != "" {
+		// --resume <uuid> or --resume <path.jsonl>
+		var filePath string
+		if strings.HasSuffix(strings.ToLower(resumeID), ".jsonl") {
+			filePath = resumeID
+			// Derive session ID from filename (strip path + .jsonl).
+			base := filepath.Base(resumeID)
+			sessionID = strings.TrimSuffix(base, ".jsonl")
+		} else {
+			// Treat as session UUID — look it up in the session list.
+			sessions, err := session.List(cwd)
+			if err == nil {
+				for _, s := range sessions {
+					if s.ID == resumeID {
+						filePath = s.FilePath
+						sessionID = s.ID
+						break
+					}
+				}
+			}
+		}
+		if filePath != "" {
+			resumedHistory, _ = session.LoadMessages(filePath)
+		}
+	} else if continueMode {
 		// Load the most recent session for this directory.
 		sessions, err := session.List(cwd)
 		if err == nil && len(sessions) > 0 {

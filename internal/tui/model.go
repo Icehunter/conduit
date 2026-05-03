@@ -260,27 +260,14 @@ func New(cfg Config) Model {
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
 	// Remove default enter binding from the textarea — we handle it ourselves.
 
-	// Theme the textarea so its bg matches the app surface (otherwise
-	// terminal default bg shows through inside the input border).
-	taBg := lipgloss.NewStyle().Background(colorBg)
-	taFg := lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
-	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
-	ta.FocusedStyle.Base = taBg
-	ta.FocusedStyle.Text = taFg
-	ta.FocusedStyle.Placeholder = taPlaceholder
-	ta.FocusedStyle.Prompt = taFg
-	ta.FocusedStyle.CursorLine = taBg
-	ta.BlurredStyle.Base = taBg
-	ta.BlurredStyle.Text = taFg
-	ta.BlurredStyle.Placeholder = taPlaceholder
-	ta.BlurredStyle.Prompt = taFg
-	ta.BlurredStyle.CursorLine = taBg
+	applyTextareaTheme(&ta)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styleSpinner
 
 	m := Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName, historyIdx: -1, loginFlowMsgStart: -1}
+	registerThemeAwareWidgets(&m)
 	if cfg.AuthErr != nil {
 		m.messages = append(m.messages, Message{
 			Role:    RoleSystem,
@@ -2738,4 +2725,27 @@ func capitalize(s string) string {
 		return ""
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// applyTextareaTheme rebuilds the textarea's stored Focused/Blurred styles
+// from the current theme palette. Bubbles textarea caches styles by VALUE,
+// so reassigning the package-level color vars in RebuildStyles doesn't
+// reach the textarea — we have to re-set them explicitly.
+//
+// Called from Model.New() and from the theme.OnChange listener registered
+// in registerThemeAwareWidgets.
+func applyTextareaTheme(ta *textarea.Model) {
+	taBg := lipgloss.NewStyle().Background(colorBg)
+	taFg := lipgloss.NewStyle().Foreground(colorFg).Background(colorBg)
+	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted).Background(colorBg)
+	ta.FocusedStyle.Base = taBg
+	ta.FocusedStyle.Text = taFg
+	ta.FocusedStyle.Placeholder = taPlaceholder
+	ta.FocusedStyle.Prompt = taFg
+	ta.FocusedStyle.CursorLine = taBg
+	ta.BlurredStyle.Base = taBg
+	ta.BlurredStyle.Text = taFg
+	ta.BlurredStyle.Placeholder = taPlaceholder
+	ta.BlurredStyle.Prompt = taFg
+	ta.BlurredStyle.CursorLine = taBg
 }

@@ -1,9 +1,10 @@
 package tui
 
 import (
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/theme"
 )
@@ -451,7 +452,7 @@ func highlightCode(code, lang string) string {
 // theme. Light themes get darker token colors so they remain readable on
 // light bg; dark themes use the original Material Theme palette.
 type codePaletteSet struct {
-	keyword, str, comment, number, operator, typ, plain lipgloss.Color
+	keyword, str, comment, number, operator, typ, plain color.Color
 }
 
 var (
@@ -477,7 +478,7 @@ var (
 
 // codeStyle returns a foreground-only style for one syntax category,
 // picking the palette set based on the active theme.
-func codeStyle(get func(codePaletteSet) lipgloss.Color) lipgloss.Style {
+func codeStyle(get func(codePaletteSet) color.Color) lipgloss.Style {
 	set := codePaletteDark
 	if isLightTheme() {
 		set = codePaletteLight
@@ -493,13 +494,13 @@ func isLightTheme() bool {
 }
 
 // Token style accessors — call at render time so theme switches apply.
-func cKeywordStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.keyword }) }
-func cStringStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.str }) }
-func cCommentStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.comment }).Italic(true) }
-func cNumberStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.number }) }
-func cOperatorStyle() lipgloss.Style { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.operator }) }
-func cTypeStyle() lipgloss.Style     { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.typ }) }
-func cPlainStyle() lipgloss.Style    { return codeStyle(func(s codePaletteSet) lipgloss.Color { return s.plain }) }
+func cKeywordStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) color.Color { return s.keyword }) }
+func cStringStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) color.Color { return s.str }) }
+func cCommentStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) color.Color { return s.comment }).Italic(true) }
+func cNumberStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) color.Color { return s.number }) }
+func cOperatorStyle() lipgloss.Style { return codeStyle(func(s codePaletteSet) color.Color { return s.operator }) }
+func cTypeStyle() lipgloss.Style     { return codeStyle(func(s codePaletteSet) color.Color { return s.typ }) }
+func cPlainStyle() lipgloss.Style    { return codeStyle(func(s codePaletteSet) color.Color { return s.plain }) }
 
 var langKeywords = map[string][]string{
 	"go": {

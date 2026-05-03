@@ -1,7 +1,9 @@
 package tui
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/theme"
 )
@@ -19,16 +21,16 @@ import (
 //   colorBorder → palette.Border
 //   colorCodeBg → palette.CodeBg
 var (
-	colorAccent  lipgloss.Color
-	colorMuted   lipgloss.Color
-	colorDim     lipgloss.Color
-	colorError   lipgloss.Color
-	colorTool    lipgloss.Color
-	colorFg      lipgloss.Color
-	colorBg      lipgloss.Color
-	colorModalBg lipgloss.Color
-	colorCodeBg  lipgloss.Color
-	colorBorder  lipgloss.Color
+	colorAccent  color.Color
+	colorMuted   color.Color
+	colorDim     color.Color
+	colorError   color.Color
+	colorTool    color.Color
+	colorFg      color.Color
+	colorBg      color.Color
+	colorModalBg color.Color
+	colorCodeBg  color.Color
+	colorBorder  color.Color
 )
 
 // styleAppSurface paints the entire TUI region with the theme background.
@@ -163,7 +165,7 @@ func init() {
 // Background value (light themes), it also sets bg so embedded escapes
 // don't punch holes through the painted surface. For dark themes, bg is
 // left unset and the terminal default shows through.
-func fgOnBg(c lipgloss.Color) lipgloss.Style {
+func fgOnBg(c color.Color) lipgloss.Style {
 	s := lipgloss.NewStyle().Foreground(c)
 	if theme.Active().Background != "" {
 		s = s.Background(colorBg)
@@ -173,7 +175,7 @@ func fgOnBg(c lipgloss.Color) lipgloss.Style {
 
 // fgOnCode is the same but uses CodeBg — for tokens inside code blocks.
 // Code blocks no longer paint bg in the new approach, but kept for callers.
-func fgOnCode(c lipgloss.Color) lipgloss.Style {
+func fgOnCode(c color.Color) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(c)
 }
 

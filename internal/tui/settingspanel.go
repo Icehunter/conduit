@@ -17,6 +17,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/guptarohit/asciigraph"
 
 	"github.com/icehunter/conduit/internal/mcp"
@@ -1064,13 +1065,13 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 	})
 
 	// Model colors — shared by chart legend and 2-column breakdown below.
-	modelColors := []lipgloss.Color{
-		"#74C69D", // green
-		"#ADB5BD", // gray
-		"#FFD166", // yellow
-		"#EF476F", // red
-		"#118AB2", // blue
-		"#9B5DE5", // purple
+	modelColors := []color.Color{
+		lipgloss.Color("#74C69D"), // green
+		lipgloss.Color("#ADB5BD"), // gray
+		lipgloss.Color("#FFD166"), // yellow
+		lipgloss.Color("#EF476F"), // red
+		lipgloss.Color("#118AB2"), // blue
+		lipgloss.Color("#9B5DE5"), // purple
 	}
 
 	// Tokens per Day chart using asciigraph (top 3 models as separate colored series).
@@ -1705,7 +1706,7 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 	}
 
 	// Colour scale: 4 levels + empty.
-	heatColors := []lipgloss.Color{"#1B4332", "#2D6A4F", "#52B788", "#B7E4C7"}
+	heatColors := []color.Color{lipgloss.Color("#1B4332"), lipgloss.Color("#2D6A4F"), lipgloss.Color("#52B788"), lipgloss.Color("#B7E4C7")}
 	heatChars := []string{"░", "▒", "▓", "█"}
 
 	cell := func(count int) string {
@@ -1788,7 +1789,7 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 // buildTokensLineChart renders a per-model step-line chart using asciigraph,
 // matching Claude Code's "Tokens per Day" chart exactly.
 // Top 3 models are drawn as separate colored lines; x-axis labels show dates.
-func buildTokensLineChart(sb *strings.Builder, dailyModelTokens []dailyModelEntry, rows []modelRow, modelColors []lipgloss.Color, innerW int) {
+func buildTokensLineChart(sb *strings.Builder, dailyModelTokens []dailyModelEntry, rows []modelRow, modelColors []color.Color, innerW int) {
 	if len(dailyModelTokens) < 2 {
 		sb.WriteString(stylePickerDesc.Render("  Not enough data for chart.\n"))
 		return
@@ -1828,7 +1829,7 @@ func buildTokensLineChart(sb *strings.Builder, dailyModelTokens []dailyModelEntr
 	// asciigraph color constants matching CC theme (suggestion=green, success=yellow, warning=red).
 	agColors := []asciigraph.AnsiColor{asciigraph.Green, asciigraph.Yellow, asciigraph.Red}
 	// Lipgloss colors for legend bullets (match the asciigraph ANSI colors visually).
-	legendColors := []lipgloss.Color{"#22C55E", "#EAB308", "#EF4444"}
+	legendColors := []color.Color{lipgloss.Color("#22C55E"), lipgloss.Color("#EAB308"), lipgloss.Color("#EF4444")}
 
 	var series [][]float64
 	var legendParts []string

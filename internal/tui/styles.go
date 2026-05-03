@@ -36,7 +36,7 @@ var (
 			Foreground(colorError)
 
 	styleSystemText = lipgloss.NewStyle().
-			Foreground(colorDim).Italic(true)
+			Foreground(colorMuted).Italic(true)
 
 	styleInlineCode = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#79C0FF")) // soft blue for inline code

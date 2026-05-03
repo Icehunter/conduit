@@ -84,7 +84,9 @@ var Dark = Palette{
 // Light — direct port of lightTheme from CC.
 var Light = Palette{
 	Name:            "light",
-	Primary:         "#000000",
+	// Dark gray instead of pure black so the foreground remains visible
+	// on a dark terminal too — pure #000000 vanishes against most defaults.
+	Primary:         "#2A2A2A",
 	Secondary:       "#666666",
 	Tertiary:        "#AFAFAF",
 	Accent:          "#D77757",
@@ -126,7 +128,7 @@ var DarkDaltonized = Palette{
 // LightDaltonized — direct port of lightDaltonizedTheme from CC.
 var LightDaltonized = Palette{
 	Name:            "light-daltonized",
-	Primary:         "#000000",
+	Primary:         "#2A2A2A",
 	Secondary:       "#666666",
 	Tertiary:        "#AFAFAF",
 	Accent:          "#FF9933",

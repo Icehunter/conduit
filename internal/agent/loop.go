@@ -136,6 +136,10 @@ type LoopConfig struct {
 	// blocking or detaching to a goroutine.
 	OnEndTurn func(history []api.Message)
 
+	// OnCompact fires when auto-compaction runs and provides the summary text.
+	// Used by the TUI to persist the summary to the session transcript.
+	OnCompact func(summary string)
+
 	// MicroCompact, when true, runs time-based microcompaction before each
 	// request (mirrors src/services/compact/microCompact.ts time-based path).
 	// When the gap since the last assistant message exceeds MicroCompactGap,
@@ -351,6 +355,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				if inputTokens > threshold {
 					if result, err := compact.Compact(ctx, l.client, msgs, ""); err == nil {
 						msgs = result.NewHistory
+						if l.cfg.OnCompact != nil && result.Summary != "" {
+							l.cfg.OnCompact(result.Summary)
+						}
 					}
 				}
 			}
@@ -375,6 +382,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if inputTokens > threshold {
 				if result, err := compact.Compact(ctx, l.client, msgs, ""); err == nil {
 					msgs = result.NewHistory
+					if l.cfg.OnCompact != nil && result.Summary != "" {
+						l.cfg.OnCompact(result.Summary)
+					}
 				}
 			}
 		}

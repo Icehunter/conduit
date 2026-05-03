@@ -631,6 +631,11 @@ func runREPL(continueMode bool, resumeID string) error {
 				}()
 			}
 		},
+		OnCompact: func(summary string) {
+			if sess != nil && summary != "" {
+				_ = sess.SetSummary(summary)
+			}
+		},
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.

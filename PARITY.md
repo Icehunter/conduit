@@ -98,7 +98,7 @@
 | Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Micro-compaction | `services/compact/microCompact.ts` | — | `internal/microcompact/microcompact.go` | ✅ | Time-based path: when last assistant >60min old, replace older tool_results with `[Old tool result content cleared]`, keep last 5. Cache-editing path is Anthropic-internal. |
 | Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ⬛ | GrowthBook-gated (`tengu_sm_compact`+`tengu_session_memory`); see FEATURE_FLAGS.md |
-| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go`, `internal/tui/livestate.go` | 🟡 | Shows ctx%, no hard limits |
+| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go`, `internal/tui/livestate.go`, `internal/agent/loop.go` | ✅ | Shows ctx%; auto-compact fires at 80% of MaxTokens |
 | Extended thinking / effort modes | `utils/effort.ts` | — | `internal/model/model.go`, `internal/agent/loop.go` | ✅ | ThinkingBudgets map; /effort low\|medium\|high\|max; CLAUDE_THINKING_BUDGET env |
 | Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
 | Stop hooks (clean shutdown) | `query/stopHooks.ts` | — | `internal/hooks/hooks.go` `RunStop` | ✅ | |
@@ -262,7 +262,7 @@
 | /output-style | `commands/output-style/` | `internal/commands/outputstyle.go` | ✅ | |
 | /rtk gain | — | `internal/commands/rtk.go` | ✅ | conduit-only |
 | /buddy | — | `internal/commands/buddy.go` | ✅ | conduit-only |
-| /keybindings | `commands/keybindings/` | `internal/commands/session.go` | 🟡 | Shows hardcoded list |
+| /keybindings | `commands/keybindings/` | `internal/commands/session.go` | ✅ | Live resolver bindings grouped by context; fixed bindings listed; edit ~/.claude/keybindings.json hint |
 | /plan | `commands/plan/` | `internal/commands/misc.go` | ✅ | Sets plan mode; EnterPlanMode tool wired |
 | /memory | `commands/memory/` | `internal/commands/session.go` | ✅ | list\|show\|scan subcommands; memdir.ScanMemories |
 | /config | `commands/config/` | `internal/commands/session.go` | ✅ | list / get <key> / set <key> <value>; raw-map write |
@@ -407,7 +407,7 @@
 | Session list (newest first) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | ✅ | |
 | Session resume (--continue) | `utils/sessionRestore.ts` | — | `cmd/claude/main.go` | ✅ | |
 | Session title | `utils/sessionTitle.ts` | — | `internal/session/session.go`, `internal/tui/model.go` | ✅ | Shown in status bar; /rename persists; auto-title from first message |
-| Session summary (compact) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | 🟡 | SetSummary() exists |
+| Session summary (compact) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | ✅ | SetSummary() persisted on every auto-compact via OnCompact callback |
 | Message compaction | `services/compact/compact.ts` | — | `internal/compact/compact.go` | ✅ | |
 | Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Conversation recovery | `utils/conversationRecovery.ts` | — | `internal/agent/loop.go` + `internal/session/session.go` | ✅ | Partial assistant message persisted on stream error; orphan tool_use filtered on /resume |

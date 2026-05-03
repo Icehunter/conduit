@@ -44,7 +44,29 @@ func renderMessage(msg Message, width int) string {
 		return pad + "  " + styleToolBadge.Render("⚙ "+msg.ToolName) + "  " + styleToolContent.Render(msg.Content)
 
 	case RoleError:
-		return pad + styleErrorText.Render("✗ "+msg.Content)
+		// Wrap long error text — OAuth/API errors regularly run hundreds
+		// of characters with URL chains. lipgloss.Width handles word
+		// wrapping. The "✗ " marker sits on the first line; continuation
+		// lines indent under the body so the marker stands out.
+		const errPrefix = "✗ "
+		prefixW := lipgloss.Width(errPrefix)
+		body := styleErrorText.Width(inner - prefixW).Render(msg.Content)
+		// hangIndent: prefix on the first line, blanks on the rest.
+		lines := strings.Split(body, "\n")
+		var sb strings.Builder
+		for i, ln := range lines {
+			sb.WriteString(pad)
+			if i == 0 {
+				sb.WriteString(styleErrorText.Render(errPrefix))
+			} else {
+				sb.WriteString(strings.Repeat(" ", prefixW))
+			}
+			sb.WriteString(ln)
+			if i < len(lines)-1 {
+				sb.WriteByte('\n')
+			}
+		}
+		return sb.String()
 
 	case RoleSystem:
 		if msg.WelcomeCard {

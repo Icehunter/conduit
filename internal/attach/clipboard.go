@@ -44,16 +44,30 @@ func ReadClipboardImage() (*Image, error) {
 	}
 }
 
-// readDarwin uses osascript to read the clipboard as PNG. osascript is
-// available on every macOS install — no external dependencies needed.
+// readDarwin uses osascript to read the clipboard as PNG or TIFF. Each
+// `-e` flag is a separate AppleScript statement (correct syntax); never
+// use `&` between statements — that is string concatenation in AppleScript.
+// cmd+shift+4 screenshots land as TIFF on macOS, so we try PNG first then
+// fall back to TIFF (osascript coerces TIFF→PNG internally via NSImage).
 func readDarwin() (*Image, error) {
-	// Check: does the clipboard contain an image? osascript will error if not.
-	check := exec.Command("osascript", "-e", "the clipboard as «class PNGf»")
+	// Try PNG first, then TIFF. cmd+shift+4 screenshots are often TIFF.
+	appleTypes := []string{"«class PNGf»", "«class TIFF»"}
+	for _, appleType := range appleTypes {
+		img, err := readDarwinType(appleType)
+		if err == nil {
+			return img, nil
+		}
+	}
+	return nil, ErrNoImage
+}
+
+func readDarwinType(appleType string) (*Image, error) {
+	// Quick check: does clipboard hold this type?
+	check := exec.Command("osascript", "-e", "the clipboard as "+appleType)
 	if err := check.Run(); err != nil {
 		return nil, ErrNoImage
 	}
 
-	// Write PNG bytes to a temp file.
 	tmp, err := os.CreateTemp("", "conduit-paste-*.png")
 	if err != nil {
 		return nil, fmt.Errorf("clipboard temp file: %w", err)
@@ -61,25 +75,16 @@ func readDarwin() (*Image, error) {
 	defer os.Remove(tmp.Name())
 	tmp.Close()
 
-	script := fmt.Sprintf(
-		`set png_data to (the clipboard as «class PNGf»)`+
-			` & set fp to open for access POSIX file %q with write permission`+
-			` & write png_data to fp`+
-			` & close access fp`,
-		tmp.Name(),
+	// Each -e flag is one AppleScript statement. DO NOT join with & —
+	// that is string concatenation, not a line separator in AppleScript.
+	save := exec.Command("osascript",
+		"-e", "set img_data to (the clipboard as "+appleType+")",
+		"-e", fmt.Sprintf("set fp to open for access POSIX file %q with write permission", tmp.Name()),
+		"-e", "write img_data to fp",
+		"-e", "close access fp",
 	)
-	save := exec.Command("osascript", "-e", script)
 	if out, err := save.CombinedOutput(); err != nil {
-		// Try alternative one-liner approach.
-		alt := exec.Command("osascript",
-			"-e", "set png_data to (the clipboard as «class PNGf»)",
-			"-e", fmt.Sprintf("set fp to open for access POSIX file %q with write permission", tmp.Name()),
-			"-e", "write png_data to fp",
-			"-e", "close access fp",
-		)
-		if out2, err2 := alt.CombinedOutput(); err2 != nil {
-			return nil, fmt.Errorf("osascript save failed: %v\n%s\n%s", err, out, out2)
-		}
+		return nil, fmt.Errorf("osascript write failed: %v — %s", err, strings.TrimSpace(string(out)))
 	}
 
 	data, err := os.ReadFile(tmp.Name())

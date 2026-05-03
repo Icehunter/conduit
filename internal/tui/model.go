@@ -428,12 +428,6 @@ type mcpApprovalMsg struct {
 // so the coordinator footer panel re-renders with updated elapsed times.
 type coordTickMsg struct{}
 
-// clipboardImageMsg is sent by the async clipboard-read goroutine.
-// img is nil when the clipboard held no image (or the read failed).
-type clipboardImageMsg struct {
-	img *attach.Image
-	err error
-}
 
 // coordTick schedules the next coordinator tick — only resubscribes when
 // there's still at least one in_progress task to display.
@@ -757,18 +751,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case clipboardImageMsg:
-		if msg.err != nil || msg.img == nil {
-			// No image on clipboard — fall back to normal text paste (already
-			// handled by the textarea via the subsequent ctrl+v pass-through).
-			m.flashMsg = ""
-			return m, nil
-		}
-		m.pendingImage = msg.img
-		m.flashMsg = "📎 image attached — press Enter to send or Esc to clear"
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg {
-			return clearFlash{}
-		})
 	}
 
 	// Propagate remaining messages to sub-components.
@@ -1024,15 +1006,19 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Quit, true
 
 	case "ctrl+v":
-		// Async clipboard image read. If the clipboard contains an image,
-		// clipboardImageMsg arrives and sets m.pendingImage. If it contains
-		// text, we return false so the textarea handles the paste normally.
-		// osascript / xclip are synchronous but fast (~50 ms) — run off the
-		// event loop so the UI doesn't stutter.
-		return m, func() tea.Msg {
-			img, err := attach.ReadClipboardImage()
-			return clipboardImageMsg{img: img, err: err}
-		}, true
+		// Synchronous clipboard image check — ~50ms, acceptable on a
+		// deliberate keypress. This lets us decide whether to consume the
+		// key before returning: if the clipboard has text (not an image),
+		// we return consumed=false so the textarea handles text paste
+		// normally. If the clipboard has an image, we attach it and consume.
+		img, err := attach.ReadClipboardImage()
+		if err != nil || img == nil {
+			// No image — fall through to textarea for text paste.
+			return m, nil, false
+		}
+		m.pendingImage = img
+		m.flashMsg = "📎 image attached — press Enter to send or Esc to clear"
+		return m, tea.Tick(4*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to

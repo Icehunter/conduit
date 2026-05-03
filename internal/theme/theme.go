@@ -64,9 +64,9 @@ type Palette struct {
 
 var Dark = Palette{
 	Name:      "dark",
-	Primary:   "#E8EDF4", // brighter than #CDD6E0 for legibility on black
-	Secondary: "#A1A8B5", // bumped from #8B92A0 to match brighter Primary
-	Tertiary:  "#5A6170",
+	Primary:   "#F5F7FA", // near-white for clear legibility on black
+	Secondary: "#C0C6D0", // bright muted gray
+	Tertiary:  "#6E7585",
 	Accent:    "#DA7756",
 	Success:   "#4ADE80",
 	Danger:    "#F87171",
@@ -111,9 +111,9 @@ var Light = Palette{
 
 var DarkDaltonized = Palette{
 	Name:            "dark-daltonized",
-	Primary:         "#E8EDF4",
-	Secondary:       "#A1A8B5",
-	Tertiary:        "#5A6170",
+	Primary:         "#F5F7FA",
+	Secondary:       "#C0C6D0",
+	Tertiary:        "#6E7585",
 	Accent:          "#DA7756",
 	Success:         "#3B82F6",
 	Danger:          "#F59E0B",

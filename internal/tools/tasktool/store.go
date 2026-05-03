@@ -48,6 +48,11 @@ var globalStore = &Store{
 	nextID: 1,
 }
 
+// GlobalStore returns the shared task store for live UI consumers like
+// the coordinator footer panel. Don't mutate via this handle — use the
+// dedicated tools so updates flow through the same entry points.
+func GlobalStore() *Store { return globalStore }
+
 func (s *Store) Create(subject, description, activeForm string, metadata map[string]any) *Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()

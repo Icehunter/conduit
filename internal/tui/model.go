@@ -32,6 +32,7 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tokens"
+	"github.com/icehunter/conduit/internal/tools/tasktool"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
@@ -328,9 +329,10 @@ func New(cfg Config) Model {
 }
 
 // Init starts the blink + spinner tick. Also kicks off the MCP approval
-// picker if any project-scope servers are awaiting consent.
+// picker if any project-scope servers are awaiting consent, and the
+// coordinator-panel tick that drives the active-task footer.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick}
+	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick, coordTick()}
 	if m.cfg.MCPManager != nil {
 		if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
 			cmds = append(cmds, func() tea.Msg {
@@ -345,6 +347,16 @@ func (m Model) Init() tea.Cmd {
 // user approval. The Update handler opens a picker per server, sequentially.
 type mcpApprovalMsg struct {
 	pending []string
+}
+
+// coordTickMsg fires every second whenever active sub-agent tasks exist,
+// so the coordinator footer panel re-renders with updated elapsed times.
+type coordTickMsg struct{}
+
+// coordTick schedules the next coordinator tick — only resubscribes when
+// there's still at least one in_progress task to display.
+func coordTick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return coordTickMsg{} })
 }
 
 // Update is the Elm update function.
@@ -533,6 +545,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resumePrompt = &resumePromptState{sessions: msg.sessions, selected: 0}
 		m.refreshViewport()
 		return m, nil
+
+	case coordTickMsg:
+		// Re-arm the tick whenever there's still active work to display.
+		// When idle, we let it fall off — next sub-agent run schedules a
+		// fresh tick from wherever the work was kicked off (TaskCreate
+		// could call coordTick if needed, but the spinner tick is already
+		// running during agent.Run so we don't lose ticks during work).
+		hasActive := false
+		for _, t := range tasktool.GlobalStore().List() {
+			if t.Status == tasktool.StatusInProgress {
+				hasActive = true
+				break
+			}
+		}
+		if hasActive {
+			cmds = append(cmds, coordTick())
+		}
+		return m, tea.Batch(cmds...)
 
 	case mcpApprovalMsg:
 		// Open a 3-option picker for the first pending server. Once
@@ -2950,8 +2980,57 @@ func (m Model) View() string {
 	if overlayBox != "" {
 		parts = append(parts, overlayBox)
 	}
-	parts = append(parts, inputBox, statusBar)
+	parts = append(parts, inputBox)
+	if coord := renderCoordinatorPanel(m.width); coord != "" {
+		parts = append(parts, coord)
+	}
+	parts = append(parts, statusBar)
 	return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// renderCoordinatorPanel renders a footer row per active sub-agent task
+// (in_progress) so the user can see what background work is running.
+// Mirrors src/components/CoordinatorAgentStatus.tsx CoordinatorTaskPanel
+// trimmed to a static one-line-per-task layout. Empty when no tasks
+// are in_progress.
+func renderCoordinatorPanel(width int) string {
+	if width < 20 {
+		return ""
+	}
+	var active []*tasktool.Task
+	for _, t := range tasktool.GlobalStore().List() {
+		if t.Status == tasktool.StatusInProgress {
+			active = append(active, t)
+		}
+	}
+	if len(active) == 0 {
+		return ""
+	}
+	pad := strings.Repeat(" ", outerPad)
+	var sb strings.Builder
+	for i, t := range active {
+		label := t.ActiveForm
+		if label == "" {
+			label = t.Subject
+		}
+		elapsed := time.Since(t.CreatedAt).Round(time.Second)
+		// Truncate label so [elapsed] fits without wrapping.
+		const tailMax = 12 // " · 999s"-ish
+		max := width - outerPad*2 - 4 - tailMax
+		if max < 10 {
+			max = 10
+		}
+		runes := []rune(label)
+		if len(runes) > max {
+			label = string(runes[:max-1]) + "…"
+		}
+		line := pad + styleStatusAccent.Render("⚙ ") + styleStatus.Render(label) + " " + stylePickerDesc.Render("· "+elapsed.String())
+		sb.WriteString(line)
+		if i < len(active)-1 {
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
 }
 
 // paintApp paints the theme background across the visible TUI region —

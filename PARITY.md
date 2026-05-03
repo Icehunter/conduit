@@ -223,7 +223,7 @@
 | Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
 | Onboarding flow | `components/Onboarding.tsx` | — | `internal/tui/model.go` (onboardingState) | ✅ | First-run welcome overlay shows once: auth status, key commands, Enter to dismiss; persisted via settings.onboardingComplete |
-| Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
+| Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
 | Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only |
 | Image/PDF paste | `utils/imagePaste.ts`, `pdf.ts` | — | ❌ | ❌ | M13 |
@@ -485,7 +485,7 @@
 | Team discovery | `utils/teamDiscovery.ts` | — | ❌ | ❌ | |
 | ULTRAPLAN | `services/ultraplan/` | — | ❌ | ❌ | |
 | Agent listing delta | `utils/agentContext.ts` | — | ❌ | ❌ | |
-| Coordinator agent status UI | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
+| Coordinator agent status UI | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks with elapsed time; 1s tick refreshes only while active tasks exist |
 
 ---
 
@@ -603,7 +603,7 @@
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 33 | 0 | 2 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
-| TUI & Rendering | 19 | 3 | 9 | 0 | 31 |
+| TUI & Rendering | 20 | 3 | 8 | 0 | 31 |
 | Slash Commands | 41 | 1 | 4 | 14 | 60 |
 | MCP Host | 11 | 0 | 2 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
@@ -613,16 +613,16 @@
 | Config & Settings | 8 | 0 | 7 | 3 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
-| Coordinator / Swarms | 0 | 1 | 8 | 0 | 9 |
+| Coordinator / Swarms | 1 | 1 | 7 | 0 | 9 |
 | Attachments (M13) | 0 | 0 | 11 | 0 | 11 |
 | Buddy / Voice / KAIROS | 5 | 1 | 5 | 2 | 13 |
 | Output Styles & Undercover | 6 | 0 | 3 | 0 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **223** | **13** | **105** | **45** | **386** |
+| **TOTAL** | **225** | **13** | **103** | **45** | **386** |
 
-**Overall parity: 236/341 scoped features (69% complete, 4% partial)**
+**Overall parity: 238/341 scoped features (70% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---

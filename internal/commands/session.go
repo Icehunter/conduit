@@ -688,14 +688,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /theme
-	r.Register(Command{
-		Name:        "theme",
-		Description: "Change the terminal theme",
-		Handler: func(args string) Result {
-			return Result{Type: "text", Text: "Theme switching not yet implemented.\nThe TUI uses a dark coral theme by default."}
-		},
-	})
+	// /theme is registered in RegisterMiscCommands (theme.Set + persist).
 
 	// /status — opens full-screen settings panel on Status tab
 	r.Register(Command{

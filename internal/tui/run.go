@@ -15,6 +15,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
@@ -378,6 +379,20 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		if s, ok := byName[runOpts.InitialOutputStyle]; ok {
 			m.outputStyleName = s.Name
 			m.outputStylePrompt = s.Prompt
+			// Push the style into the loop's system blocks. Built-in
+			// "default" carries an empty Prompt — leave the loop's
+			// default base blocks alone in that case. The style block
+			// must be APPENDED, never prepended, because the Max
+			// fingerprint requires system[0] to be the billing header.
+			if s.Prompt != "" && loop != nil {
+				mem := memdir.BuildPrompt(cwd)
+				baseBlocks := agent.BuildSystemBlocks(mem, "")
+				styleBlock := api.SystemBlock{
+					Type: "text",
+					Text: "# Output style: " + s.Name + "\n\n" + s.Prompt,
+				}
+				loop.SetSystem(append(baseBlocks, styleBlock))
+			}
 		}
 	}
 	modelPtr = &m

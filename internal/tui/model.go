@@ -2345,14 +2345,18 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		// res.Model = style name, res.Text = style prompt (empty to clear).
 		m.outputStyleName = res.Model
 		m.outputStylePrompt = res.Text
-		// Rebuild system blocks with the new style prompt prepended.
+		// Rebuild system blocks. The Max-subscription wire fingerprint
+		// requires system[0..3] to be billing/identity/agent/output-guidance
+		// in exact order — prepending anything else returns a literal
+		// 429 rate_limit_error with no quota actually hit. So we append
+		// the style block AFTER the base fingerprint blocks.
 		if m.cfg.Loop != nil {
 			cwd, _ := os.Getwd()
 			mem := memdir.BuildPrompt(cwd)
 			baseBlocks := agent.BuildSystemBlocks(mem, "")
 			if res.Text != "" {
 				styleBlock := api.SystemBlock{Type: "text", Text: "# Output style: " + res.Model + "\n\n" + res.Text}
-				newBlocks := append([]api.SystemBlock{styleBlock}, baseBlocks...)
+				newBlocks := append(baseBlocks, styleBlock)
 				m.cfg.Loop.SetSystem(newBlocks)
 			} else {
 				m.cfg.Loop.SetSystem(baseBlocks)

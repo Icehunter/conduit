@@ -846,6 +846,7 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 		// theme colors instead of inheriting the terminal's default fg
 		// (which is light on dark terminals — invisible on light theme).
 		labelStyle := fgOnBg(colorFg)
+		valueStyle := fgOnBg(colorFg).Bold(true) // values stand out with bold
 		switch item.kind {
 		case "bool":
 			dot := stylePickerDesc.Render("○")
@@ -862,11 +863,11 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 			if isSel {
 				label = styleStatusAccent.Render(item.label)
 			}
-			val := stylePickerDesc.Render(item.value)
+			var val string
 			if isSel {
 				val = styleStatusAccent.Render("‹ " + item.value + " ›")
 			} else {
-				val = labelStyle.Render(item.value)
+				val = valueStyle.Render(item.value)
 			}
 			// Right-align the value.
 			labelW := innerW - 4
@@ -879,7 +880,7 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 			if isSel {
 				label = styleStatusAccent.Render(item.label)
 			}
-			val := labelStyle.Render(item.value)
+			val := valueStyle.Render(item.value)
 			line = cursor + label + "  " + val
 		}
 		sb.WriteString(line + "\n")

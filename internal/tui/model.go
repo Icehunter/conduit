@@ -2495,7 +2495,30 @@ func (m Model) View() string {
 		bStyle = styleInputBorderActive
 	}
 	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
-	inputBox := bStyle.Width(m.width - 2).Render(m.input.View())
+	// Force-pad the textarea view to its inner width with bg-painted spaces
+	// before wrapping in the border, because bubbles textarea's
+	// placeholderView (line 1 case) doesn't trail-fill — the cells after
+	// the placeholder text expose terminal default bg as a dark stripe
+	// in light themes.
+	innerView := m.input.View()
+	if theme.Active().Background != "" {
+		// inputW = m.width - border(2) - padding(2) = m.width - 4
+		innerW := m.width - 4
+		if innerW < 1 {
+			innerW = 1
+		}
+		paintFill := lipgloss.NewStyle().Background(colorBg).Foreground(colorFg)
+		var padded []string
+		for _, line := range strings.Split(innerView, "\n") {
+			w := lipgloss.Width(line)
+			if w < innerW {
+				line += strings.Repeat(" ", innerW-w)
+			}
+			padded = append(padded, paintFill.Render(line))
+		}
+		innerView = strings.Join(padded, "\n")
+	}
+	inputBox := bStyle.Width(m.width - 2).Render(innerView)
 
 	// Status bar — fixed left-anchor layout so nothing shifts when mode changes.
 	//

@@ -22,6 +22,80 @@ func projectPaths(dir string) []string {
 	}
 }
 
+func TestApproveMcpjsonServer_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := ApproveMcpjsonServer("foo", "yes"); err != nil {
+		t.Fatalf("approve yes: %v", err)
+	}
+	merged, err := loadPaths([]string{UserSettingsPath()})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !contains(merged.EnabledMcpjsonServers, "foo") {
+		t.Errorf("expected 'foo' in EnabledMcpjsonServers; got %v", merged.EnabledMcpjsonServers)
+	}
+
+	// "no" moves it to disabled and removes from enabled.
+	if err := ApproveMcpjsonServer("foo", "no"); err != nil {
+		t.Fatalf("approve no: %v", err)
+	}
+	merged, _ = loadPaths([]string{UserSettingsPath()})
+	if contains(merged.EnabledMcpjsonServers, "foo") {
+		t.Errorf("'foo' should have been removed from enabled; got %v", merged.EnabledMcpjsonServers)
+	}
+	if !contains(merged.DisabledMcpjsonServers, "foo") {
+		t.Errorf("expected 'foo' in DisabledMcpjsonServers; got %v", merged.DisabledMcpjsonServers)
+	}
+}
+
+func TestApproveMcpjsonServer_YesAllSetsFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := ApproveMcpjsonServer("bar", "yes_all"); err != nil {
+		t.Fatalf("approve yes_all: %v", err)
+	}
+	merged, _ := loadPaths([]string{UserSettingsPath()})
+	if !merged.EnableAllProjectMcpServers {
+		t.Errorf("EnableAllProjectMcpServers should be true after yes_all")
+	}
+	if !contains(merged.EnabledMcpjsonServers, "bar") {
+		t.Errorf("'bar' should also be in EnabledMcpjsonServers; got %v", merged.EnabledMcpjsonServers)
+	}
+}
+
+func TestApproveMcpjsonServer_PreservesOtherKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	// Pre-populate settings with an unrelated key.
+	_ = SaveRawKey("model", "claude-sonnet-4-6")
+
+	if err := ApproveMcpjsonServer("baz", "yes"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	data, _ := os.ReadFile(UserSettingsPath())
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(data, &raw)
+	if _, ok := raw["model"]; !ok {
+		t.Errorf("model key was clobbered by ApproveMcpjsonServer; raw=%s", data)
+	}
+	if _, ok := raw["enabledMcpjsonServers"]; !ok {
+		t.Errorf("enabledMcpjsonServers missing; raw=%s", data)
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLoad_Empty(t *testing.T) {
 	dir := t.TempDir()
 	m, err := loadPaths(projectPaths(dir))

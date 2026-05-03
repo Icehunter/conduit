@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -59,6 +60,15 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 	if IsDisabled(name, cwd) {
 		srv.Status = StatusDisconnected
 		srv.Disabled = true
+		m.store(name, srv)
+		return
+	}
+
+	// Project-scope security gate: a server loaded from a .mcp.json
+	// (committed to a repo) shouldn't auto-execute on first checkout.
+	// User must approve via the startup dialog or explicit settings entry.
+	if cfg.Scope == "project" && !isMcpjsonApproved(name, cwd) {
+		srv.Status = StatusNeedsApproval
 		m.store(name, srv)
 		return
 	}
@@ -222,6 +232,22 @@ func (m *Manager) Reconnect(ctx context.Context, name, cwd string) error {
 	}
 	m.connectWithCwd(ctx, name, cfg, cwd)
 	return nil
+}
+
+// PendingApprovals returns the names of project-scope MCP servers that
+// are awaiting user approval (StatusNeedsApproval), in deterministic
+// order. Used by the TUI to drive the approval dialog on startup.
+func (m *Manager) PendingApprovals() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	for name, srv := range m.servers {
+		if srv.Status == StatusNeedsApproval {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Servers returns a snapshot of all server states.

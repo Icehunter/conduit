@@ -301,9 +301,24 @@ func New(cfg Config) Model {
 	return m
 }
 
-// Init starts the blink + spinner tick.
+// Init starts the blink + spinner tick. Also kicks off the MCP approval
+// picker if any project-scope servers are awaiting consent.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.spinner.Tick)
+	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick}
+	if m.cfg.MCPManager != nil {
+		if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
+			cmds = append(cmds, func() tea.Msg {
+				return mcpApprovalMsg{pending: pending}
+			})
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// mcpApprovalMsg is sent on startup when project-scope MCP servers need
+// user approval. The Update handler opens a picker per server, sequentially.
+type mcpApprovalMsg struct {
+	pending []string
 }
 
 // Update is the Elm update function.
@@ -490,6 +505,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.resumePrompt = &resumePromptState{sessions: msg.sessions, selected: 0}
+		m.refreshViewport()
+		return m, nil
+
+	case mcpApprovalMsg:
+		// Open a 3-option picker for the first pending server. Once
+		// resolved (via the /mcp-approve handler invoked by the picker),
+		// we re-check PendingApprovals and queue the next one.
+		if len(msg.pending) == 0 {
+			return m, nil
+		}
+		name := msg.pending[0]
+		m.picker = &pickerState{
+			kind:  "mcp-approve",
+			title: fmt.Sprintf("Approve MCP server %q from .mcp.json?", name),
+			items: []pickerItem{
+				{Value: name + " yes", Label: "Yes — approve this server"},
+				{Value: name + " yes_all", Label: "Yes, all project servers"},
+				{Value: name + " no", Label: "No — deny and don't ask again"},
+			},
+			selected: 0,
+		}
 		m.refreshViewport()
 		return m, nil
 
@@ -2416,6 +2452,20 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		return m, nil
+	case "flash":
+		// Briefly surface in the spinner row, then queue the next pending
+		// MCP approval if any are still waiting after this one resolved.
+		if res.Text != "" {
+			m.flashMsg = res.Text
+		}
+		m.refreshViewport()
+		var cmd tea.Cmd
+		if m.cfg.MCPManager != nil {
+			if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
+				cmd = func() tea.Msg { return mcpApprovalMsg{pending: pending} }
+			}
+		}
+		return m, tea.Batch(cmd, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearFlash{} }))
 	default: // "text"
 		if res.Text != "" {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})

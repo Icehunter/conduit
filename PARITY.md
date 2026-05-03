@@ -315,7 +315,7 @@
 | Config loading (.mcp.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | |
 | Plugin MCP server registration | `services/mcp/` | — | `internal/mcp/manager.go` `SyncPluginServers` | ✅ | |
 | Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
-| MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | ❌ | ❌ | No per-server approval prompt |
+| MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | `internal/mcp/manager.go`, `internal/tui/model.go`, `internal/commands/mcp.go` | ✅ | Project-scope (.mcp.json) servers gated on user approval; startup picker offers Yes/Yes-All/No; persisted to settings.json (enabledMcpjsonServers / disabledMcpjsonServers / enableAllProjectMcpServers) |
 | OAuth for MCP servers | `services/mcp/` | — | ❌ | ❌ | McpAuthTool not implemented |
 | MCP resource listing | `tools/ListMcpResourcesTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/list JSON-RPC |
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
@@ -605,7 +605,7 @@
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
 | TUI & Rendering | 18 | 4 | 9 | 0 | 31 |
 | Slash Commands | 41 | 1 | 6 | 12 | 60 |
-| MCP Host | 9 | 0 | 4 | 0 | 13 |
+| MCP Host | 10 | 0 | 3 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
 | Memory System | 8 | 0 | 5 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **214** | **14** | **115** | **43** | **386** |
+| **TOTAL** | **215** | **14** | **114** | **43** | **386** |
 
-**Overall parity: 228/343 scoped features (66% complete, 4% partial)**
+**Overall parity: 229/343 scoped features (67% complete, 4% partial)**
 **Descoped: 43 features (intentionally excluded)**
 
 ---
@@ -677,4 +677,4 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No).

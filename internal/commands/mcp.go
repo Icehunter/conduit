@@ -1,11 +1,13 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // RegisterMCPCommand registers /mcp — interactive MCP server browser.
@@ -85,6 +87,36 @@ func RegisterMCPCommand(r *Registry, manager *mcp.Manager) {
 				lines = append(lines, line)
 			}
 			return Result{Type: "mcp-dialog", Text: strings.Join(lines, "\n")}
+		},
+	})
+}
+
+// RegisterMCPApproveCommand registers /mcp-approve, the back-end for the
+// startup approval picker. Args: "<server-name> <yes|yes_all|no>". Persists
+// the choice to user settings then triggers a reconnect for "yes"/"yes_all".
+func RegisterMCPApproveCommand(r *Registry, manager *mcp.Manager, cwd string) {
+	r.Register(Command{
+		Name:        "mcp-approve",
+		Description: "Internal: approve or deny a project-scope MCP server",
+		Handler: func(args string) Result {
+			parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+			if len(parts) != 2 {
+				return Result{Type: "error", Text: "Usage: /mcp-approve <name> <yes|yes_all|no>"}
+			}
+			name, choice := parts[0], parts[1]
+			if err := settings.ApproveMcpjsonServer(name, choice); err != nil {
+				return Result{Type: "error", Text: fmt.Sprintf("mcp-approve: %v", err)}
+			}
+			if (choice == "yes" || choice == "yes_all") && manager != nil {
+				_ = manager.Reconnect(context.Background(), name, cwd)
+			}
+			verb := "Approved"
+			if choice == "no" {
+				verb = "Denied"
+			} else if choice == "yes_all" {
+				verb = "Approved (all project servers)"
+			}
+			return Result{Type: "flash", Text: fmt.Sprintf("%s MCP server: %s", verb, name)}
 		},
 	})
 }

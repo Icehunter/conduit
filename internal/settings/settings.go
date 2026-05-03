@@ -10,6 +10,7 @@ package settings
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -71,6 +72,13 @@ type Settings struct {
 	// EnabledPlugins mirrors the real Claude Code enabledPlugins field.
 	// Key is "pluginName@marketplace", value is true/false.
 	EnabledPlugins map[string]bool `json:"enabledPlugins,omitempty"`
+	// MCP project-scope approval gate (mirrors CC's MCPServerApprovalDialog).
+	// A server loaded from .mcp.json is allowed to connect only if its name
+	// is in EnabledMcpjsonServers OR EnableAllProjectMcpServers is true.
+	// Names in DisabledMcpjsonServers are never connected.
+	EnabledMcpjsonServers      []string `json:"enabledMcpjsonServers,omitempty"`
+	DisabledMcpjsonServers     []string `json:"disabledMcpjsonServers,omitempty"`
+	EnableAllProjectMcpServers bool     `json:"enableAllProjectMcpServers,omitempty"`
 	// Model is the preferred model name (e.g. "claude-opus-4-7").
 	Model string `json:"model,omitempty"`
 	// OutputStyle is the active output style name, persisted across sessions.
@@ -116,6 +124,10 @@ type Merged struct {
 	ThemeOverrides map[string]string
 	// Themes is the merged custom theme map (last layer wins per name).
 	Themes map[string]map[string]string
+	// MCP project-scope approval gate. Last layer wins.
+	EnabledMcpjsonServers      []string
+	DisabledMcpjsonServers     []string
+	EnableAllProjectMcpServers bool
 }
 
 // Load reads and merges settings from all layers for the given cwd.
@@ -169,6 +181,11 @@ func loadPaths(paths []string) (*Merged, error) {
 			for k, v := range s.Themes {
 				merged.Themes[k] = v
 			}
+		}
+		merged.EnabledMcpjsonServers = append(merged.EnabledMcpjsonServers, s.EnabledMcpjsonServers...)
+		merged.DisabledMcpjsonServers = append(merged.DisabledMcpjsonServers, s.DisabledMcpjsonServers...)
+		if s.EnableAllProjectMcpServers {
+			merged.EnableAllProjectMcpServers = true
 		}
 	}
 	return merged, nil
@@ -295,6 +312,79 @@ func updateSettingsFile(path string, fn func(*Settings)) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// ApproveMcpjsonServer records an approval decision for a project-scope MCP
+// server. Choices: "yes" → add to enabledMcpjsonServers; "yes_all" → set
+// enableAllProjectMcpServers=true and add to enabled; "no" → add to
+// disabledMcpjsonServers. Idempotent; preserves all other settings keys.
+func ApproveMcpjsonServer(name, choice string) error {
+	path := UserSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+
+	enabled := decodeStringList(raw["enabledMcpjsonServers"])
+	disabled := decodeStringList(raw["disabledMcpjsonServers"])
+
+	switch choice {
+	case "yes", "yes_all":
+		enabled = appendUnique(enabled, name)
+		disabled = removeFrom(disabled, name)
+		if choice == "yes_all" {
+			raw["enableAllProjectMcpServers"] = json.RawMessage("true")
+		}
+	case "no":
+		disabled = appendUnique(disabled, name)
+		enabled = removeFrom(enabled, name)
+	default:
+		return fmt.Errorf("ApproveMcpjsonServer: unknown choice %q", choice)
+	}
+
+	if b, err := json.Marshal(enabled); err == nil {
+		raw["enabledMcpjsonServers"] = b
+	}
+	if b, err := json.Marshal(disabled); err == nil {
+		raw["disabledMcpjsonServers"] = b
+	}
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
+}
+
+func decodeStringList(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []string
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func appendUnique(list []string, s string) []string {
+	for _, x := range list {
+		if x == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
+func removeFrom(list []string, s string) []string {
+	out := list[:0]
+	for _, x := range list {
+		if x != s {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // SaveRawKey persists an arbitrary key/value to the user settings file using

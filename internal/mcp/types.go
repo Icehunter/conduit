@@ -103,10 +103,14 @@ func (e *jsonrpcError) Error() string { return e.Message }
 type ServerStatus string
 
 const (
-	StatusPending    ServerStatus = "pending"
-	StatusConnected  ServerStatus = "connected"
-	StatusFailed     ServerStatus = "failed"
+	StatusPending      ServerStatus = "pending"
+	StatusConnected    ServerStatus = "connected"
+	StatusFailed       ServerStatus = "failed"
 	StatusDisconnected ServerStatus = "disconnected"
+	// StatusNeedsApproval is set on a project-scope server (loaded from
+	// .mcp.json) that the user hasn't explicitly approved or denied.
+	// Mirrors CC's MCPServerApprovalDialog gate.
+	StatusNeedsApproval ServerStatus = "needs-approval"
 )
 
 // ConnectedServer holds a live connection to one MCP server.

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // pluginsInstalledV2 is the minimal shape of installed_plugins.json we need.
@@ -252,6 +254,32 @@ func expandEnv(s string) string {
 		}
 		return ""
 	})
+}
+
+// isMcpjsonApproved checks the project-scope MCP approval state from the
+// user/project settings.json hierarchy. Returns true if the server should
+// be allowed to connect: explicitly enabled, OR enableAllProjectMcpServers
+// is set, AND not explicitly disabled. Mirrors CC's MCPServerApprovalDialog
+// gate (see src/components/MCPServerApprovalDialog.tsx).
+func isMcpjsonApproved(name, cwd string) bool {
+	merged, err := settings.Load(cwd)
+	if err != nil || merged == nil {
+		return false
+	}
+	for _, n := range merged.DisabledMcpjsonServers {
+		if n == name {
+			return false
+		}
+	}
+	if merged.EnableAllProjectMcpServers {
+		return true
+	}
+	for _, n := range merged.EnabledMcpjsonServers {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // IsDisabled returns true if the named server is in disabledMcpServers for cwd.

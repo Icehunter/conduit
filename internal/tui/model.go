@@ -601,7 +601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// back when the turn finalizes.
 		m.refreshViewport()
 		m.input.Focus()
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	case loginStartMsg:
 		useClaudeAI := msg.claudeAI

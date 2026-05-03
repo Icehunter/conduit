@@ -338,6 +338,21 @@ func runREPL(continueMode bool) error {
 		gate.AllowForSession("Write(" + dir + "/*)")
 	}
 
+	// Auto-allow conduit's own per-project storage tree without prompting.
+	// The auto-extract memory sub-agent writes to <home>/.claude/projects/
+	// <sanitized-cwd>/memory/, the session-memory sub-agent writes to
+	// <home>/.claude/projects/<sanitized-cwd>/<sessionID>/session-memory/
+	// summary.md, and dream consolidation reads/writes the same memory
+	// dir. Without these allows, every conduit-internal write triggered
+	// the user permission prompt — annoying and meaningless because the
+	// model never picked the path itself; conduit picked it.
+	if home, err := os.UserHomeDir(); err == nil {
+		conduitDataDir := filepath.Join(home, ".claude", "projects")
+		gate.AllowForSession("Read(" + conduitDataDir + "/**)")
+		gate.AllowForSession("Edit(" + conduitDataDir + "/**)")
+		gate.AllowForSession("Write(" + conduitDataDir + "/**)")
+	}
+
 	// Apply theme from settings.json. Style packages init at import time
 	// from default Dark, then re-derive via theme.OnChange when we Set here.
 	// Unknown theme names are silently ignored (current palette stays Dark)

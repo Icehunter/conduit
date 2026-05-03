@@ -23,8 +23,9 @@ import (
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
-	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/attach"
+	"github.com/icehunter/conduit/internal/buddy"
+	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
@@ -165,7 +166,8 @@ type (
 		allow       bool
 		alwaysAllow bool // add to session allow list
 	}
-	clearFlash struct{}
+	clearFlash  struct{}
+	clearBubble struct{}
 
 	// setPermissionModeMsg is sent by EnterPlanMode/ExitPlanMode tool
 	// callbacks to change the active permission mode from outside the TUI event loop.
@@ -243,6 +245,12 @@ type Model struct {
 
 	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
 	flashMsg string
+
+	// companionBubble is the text shown in the companion speech bubble overlay.
+	// Set when the agent produces a short (<= 100 char) single-line response
+	// while a companion is configured and the user addressed it by name.
+	// Auto-cleared after ~10 seconds via a clearBubble tick.
+	companionBubble string
 
 	// rateLimitWarning is non-empty when a recent turn's rate-limit headers
 	// indicate quota is running low (<20% remaining). Shown in the status bar.
@@ -581,6 +589,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfg.Session != nil && m.totalInputTokens > 0 {
 				_ = m.cfg.Session.AppendCost(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
 			}
+			// Companion speech bubble: if the final assistant text is a single
+			// short line (≤ 100 chars) and the user addressed the companion by
+			// name, show it in the corner bubble instead of (in addition to)
+			// the conversation history.
+			cmds = append(cmds, m.maybeFireCompanionBubble())
 		}
 		// Final assistant message just committed — refreshViewport's
 		// sticky-bottom honors a scrolled-up user. They explicitly
@@ -774,6 +787,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearFlash:
 		m.flashMsg = ""
 		return m, nil
+
+	case clearBubble:
+		m.companionBubble = ""
+		return m, nil
+
+	case companionBubbleMsg:
+		m.companionBubble = msg.text
+		return m, tea.Tick(10*time.Second, func(_ time.Time) tea.Msg { return clearBubble{} })
 
 	case setPermissionModeMsg:
 		m.permissionMode = msg.mode
@@ -1362,6 +1383,98 @@ func (m Model) expandPastePlaceholders(s string) string {
 		}
 		return tok
 	})
+}
+
+// maybeFireCompanionBubble checks if the last assistant message should be
+// displayed as a companion speech bubble. Fires when all of:
+//   - A companion is configured (buddy store has a name)
+//   - The last user message mentioned the companion by name
+//   - The last assistant message is a single short line (≤ 100 chars)
+//
+// Mirrors the fireCompanionObserver logic from src/screens/REPL.tsx.
+func (m Model) maybeFireCompanionBubble() tea.Cmd {
+	sc, err := buddy.Load()
+	if err != nil || sc == nil || sc.Name == "" {
+		return nil
+	}
+	// Find last user message and check if it mentions the companion name.
+	companionName := strings.ToLower(sc.Name)
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == RoleUser {
+			if !strings.Contains(strings.ToLower(msg.Content), companionName) {
+				return nil // user didn't address the companion
+			}
+			break
+		}
+		if msg.Role == RoleAssistant {
+			break // assistant responded but no user turn above — skip
+		}
+	}
+	// Find last assistant message.
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role != RoleAssistant {
+			continue
+		}
+		text := strings.TrimSpace(msg.Content)
+		if strings.Contains(text, "\n") || len(text) > 100 || text == "" {
+			return nil // too long or empty — regular response, not a quip
+		}
+		// It's a short single-line response — show as companion bubble.
+		return func() tea.Msg {
+			return companionBubbleMsg{text: text}
+		}
+	}
+	return nil
+}
+
+// companionBubbleMsg is sent when the companion should speak.
+type companionBubbleMsg struct{ text string }
+
+// renderCompanionBubble renders a speech bubble in the top-right corner of the
+// viewport. Returns "" when no bubble is active or companion not configured.
+func (m Model) renderCompanionBubble() string {
+	if m.companionBubble == "" {
+		return ""
+	}
+	sc, err := buddy.Load()
+	if err != nil || sc == nil {
+		return ""
+	}
+	bones := buddy.GenerateBones(sc.UserID)
+	face := buddy.RenderFace(bones)
+	const maxW = 30
+	// Word-wrap the text to maxW.
+	var wrapped []string
+	words := strings.Fields(m.companionBubble)
+	var line string
+	for _, w := range words {
+		if line == "" {
+			line = w
+		} else if len(line)+1+len(w) <= maxW {
+			line += " " + w
+		} else {
+			wrapped = append(wrapped, line)
+			line = w
+		}
+	}
+	if line != "" {
+		wrapped = append(wrapped, line)
+	}
+	// Build bubble box.
+	textStyle := lipgloss.NewStyle().Foreground(colorFg).Italic(true)
+	var rows []string
+	for _, l := range wrapped {
+		rows = append(rows, textStyle.Render(l))
+	}
+	boxStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(1).PaddingRight(1).
+		Width(maxW + 2)
+	box := boxStyle.Render(strings.Join(rows, "\n"))
+	return fmt.Sprintf("%s  %s", face, box)
 }
 
 // renderCommandPicker renders the slash command picker dropdown.
@@ -3635,6 +3748,11 @@ func (m Model) View() tea.View {
 	// spinRow is always full-width bg-painted (set above) so it covers the
 	// gap between viewport and input regardless of whether it has content.
 	parts := []string{vp}
+	// Companion speech bubble floats between the viewport and the spinner row
+	// when active. Mirrors CompanionFloatingBubble in CC's REPL.
+	if bubble := m.renderCompanionBubble(); bubble != "" {
+		parts = append(parts, bubble)
+	}
 	parts = append(parts, spinRow)
 	if overlayBox != "" {
 		parts = append(parts, overlayBox)

@@ -97,7 +97,7 @@
 | Max turns limit | `query.ts` | — | `internal/agent/loop.go` | ✅ | |
 | Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Micro-compaction | `services/compact/microCompact.ts` | — | `internal/microcompact/microcompact.go` | ✅ | Time-based path: when last assistant >60min old, replace older tool_results with `[Old tool result content cleared]`, keep last 5. Cache-editing path is Anthropic-internal. |
-| Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ❌ | |
+| Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ⬛ | GrowthBook-gated (`tengu_sm_compact`+`tengu_session_memory`); see FEATURE_FLAGS.md |
 | Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go`, `internal/tui/livestate.go` | 🟡 | Shows ctx%, no hard limits |
 | Extended thinking / effort modes | `utils/effort.ts` | — | `internal/model/model.go`, `internal/agent/loop.go` | ✅ | ThinkingBudgets map; /effort low\|medium\|high\|max; CLAUDE_THINKING_BUDGET env |
 | Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
@@ -230,7 +230,7 @@
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
 | Custom keybindings | `keybindings/` (14 files) | — | `internal/keybindings/` | ✅ | Full MVP: parser, resolver, JSON loader, defaults, TUI hookup. `command:*` actions execute slash commands; chat/select/confirm actions wired. Single-keystroke only; chords deferred. |
-| Image/PDF paste | `utils/imagePaste.ts`, `pdf.ts` | — | ❌ | ❌ | M13 |
+| Image paste | `utils/imagePaste.ts` | — | `internal/attach/clipboard.go` + resize | 🟡 | Image paste ✅; PDF paste ❌ (M13) |
 | Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
 | Ink rendering engine | `ink/` (96 files, 13306 LOC) | — | Bubble Tea | 🔲 | Different framework |
 
@@ -481,14 +481,14 @@
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
 | Coordinator mode | `coordinator/coordinatorMode.ts` (369 LOC) | — | `internal/agent/loop.go` (partial) | 🟡 | Parallel tools only, no full coordinator |
-| TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ❌ | |
-| TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ❌ | |
-| SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ❌ | |
-| Teammate mailbox | `utils/teammateMailbox.ts` (1183 LOC) | — | ❌ | ❌ | |
-| Team memory ops | `utils/teamMemoryOps.ts` | — | ❌ | ❌ | |
-| Team discovery | `utils/teamDiscovery.ts` | — | ❌ | ❌ | |
-| ULTRAPLAN | `services/ultraplan/` | — | ❌ | ❌ | |
-| Agent listing delta | `utils/agentContext.ts` | — | ❌ | ❌ | |
+| TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ⬛ | Requires teammate mailbox (swarm) |
+| TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ⬛ | Same |
+| SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ⬛ | Same |
+| Teammate mailbox | `utils/teammateMailbox.ts` (1183 LOC) | — | ❌ | ⬛ | Full swarm feature |
+| Team memory ops | `utils/teamMemoryOps.ts` | — | ❌ | ⬛ | Team feature |
+| Team discovery | `utils/teamDiscovery.ts` | — | ❌ | ⬛ | Team feature |
+| ULTRAPLAN | `services/ultraplan/` | — | ❌ | ⬛ | Depends on bridge + remote |
+| Agent listing delta | `utils/agentContext.ts` | — | ❌ | ⬛ | AsyncLocalStorage analytics context; Anthropic-internal |
 | Coordinator agent status UI | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks with elapsed time; 1s tick refreshes only while active tasks exist |
 
 ---
@@ -537,11 +537,11 @@
 | Output style loader | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | Built-in default/Explanatory/Learning + user/project/plugin merge |
 | YAML frontmatter parsing | `utils/frontmatterParser.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
 | Project + user dir merge | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
-| Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | ❌ | ❌ | |
+| Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | LoadFromPluginDirs; merged at startup (same as section 9) |
 | /output-style command | `commands/output-style/` | — | `internal/commands/outputstyle.go` | ✅ | |
 | Undercover mode | `utils/undercover.ts` | — | `internal/undercover/undercover.go` | ✅ | |
-| Undercover auto-detection | `utils/undercover.ts` | — | ❌ | ❌ | Always off unless env set |
-| Undercover auto-notice | `utils/undercover.ts` | — | ❌ | ❌ | |
+| Undercover auto-detection | `utils/undercover.ts` | — | ❌ | ⬛ | Gated on `USER_TYPE===ant`; dead code in external build |
+| Undercover auto-notice | `utils/undercover.ts` | — | ❌ | ⬛ | Same gate |
 
 ---
 
@@ -563,23 +563,23 @@
 
 | Feature | TS Source | Go (conduit) | Status | Notes |
 |---------|-----------|--------------|--------|-------|
-| Git utilities | `utils/git.ts` (926 LOC) | ❌ | ❌ | Used by commit attribution |
-| Git diff parsing | `utils/gitDiff.ts` | ❌ | ❌ | |
-| Commit attribution | `utils/commitAttribution.ts` | ❌ | ❌ | Used by undercover auto-detect |
+| Git utilities | `utils/git.ts` (926 LOC) | ❌ | ⬛ | Used by commit attribution (Anthropic-internal, undercover gate) |
+| Git diff parsing | `utils/gitDiff.ts` | ❌ | ⬛ | Used by commit attribution only |
+| Commit attribution | `utils/commitAttribution.ts` | ❌ | ⬛ | Anthropic-internal (classifies repos as internal/external for undercover) |
 | Ripgrep integration | `utils/ripgrep.ts` (679 LOC) | `internal/tools/greptool/` | 🟡 | In greptool only |
-| File I/O utilities | `utils/file.ts`, `fsOperations.ts` | ❌ | ❌ | Scattered in tools |
-| File read cache | `utils/fileReadCache.ts` | ❌ | ❌ | |
-| Shell command wrapper | `utils/ShellCommand.ts` | ❌ | ❌ | |
-| Shell config | `utils/shellConfig.ts` | ❌ | ❌ | |
+| File I/O utilities | `utils/file.ts`, `fsOperations.ts` | ❌ | ⬛ | Functionality scattered in tools; no standalone port needed |
+| File read cache | `utils/fileReadCache.ts` | ❌ | ⬛ | Optimization used by attachment system; not needed standalone |
+| Shell command wrapper | `utils/ShellCommand.ts` | ❌ | ⬛ | Wrapped in bashtool; no standalone port needed |
+| Shell config | `utils/shellConfig.ts` | ❌ | ⬛ | Shell detection already in bashtool |
 | HTTP proxy | `utils/proxy.ts` | `internal/api/retry.go` `NewClientWithProxy` | ✅ | HTTPS_PROXY / HTTP_PROXY env vars |
-| Markdown utilities | `utils/markdown.ts` | ❌ | ❌ | |
-| Memoization | `utils/memoize.ts` | ❌ | ❌ | sync.Once used ad-hoc |
-| Cron scheduler | `utils/cronScheduler.ts` (565 LOC) | ❌ | ❌ | |
-| Token counting | `utils/tokens.ts` | ❌ | ❌ | |
-| Theme management | `utils/theme.ts` | ❌ | ❌ | |
-| String utilities | `utils/stringUtils.ts` | ❌ | ❌ | |
-| Word utilities | `utils/words.ts` | ❌ | ❌ | |
-| Context analysis | `utils/analyzeContext.ts` | ❌ | ❌ | |
+| Markdown utilities | `utils/markdown.ts` | ❌ | ⬛ | Inline in render.go; no standalone port needed |
+| Memoization | `utils/memoize.ts` | ❌ | ⬛ | sync.Once used ad-hoc throughout |
+| Cron scheduler | `utils/cronScheduler.ts` (565 LOC) | ❌ | ⬛ | Used by ScheduleCronTool (KAIROS-gated) |
+| Token counting | `utils/tokens.ts` | `internal/tokens/tokens.go` | ✅ | cl100k_base estimate; chars/4 fallback |
+| Theme management | `utils/theme.ts` | `internal/theme/` | ✅ | 4 built-in themes + user themes; hot-swap |
+| String utilities | `utils/stringUtils.ts` | ❌ | ⬛ | Inline; no standalone port needed |
+| Word utilities | `utils/words.ts` | ❌ | ⬛ | Used by tab-wrap in CC Ink; not needed in Bubble Tea |
+| Context analysis | `utils/analyzeContext.ts` | ❌ | ⬛ | Analytics/GrowthBook context classification |
 | CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | `internal/claudemd/claudemd.go` | ✅ | Done in M-A |
 | Auto-updater | `utils/autoUpdater.ts` | ❌ | ⬛ | |
 | Platform detection | `utils/platform.ts` | `cmd/claude/util.go` | 🟡 | OS/arch only |
@@ -603,31 +603,31 @@
 |------|------------|-----------|-----------|------------|-------|
 | Auth & OAuth | 9 | 1 | 5 | 3 | 18 |
 | API Client & SSE | 10 | 0 | 2 | 0 | 12 |
-| Agent Loop | 12 | 1 | 0 | 1 | 14 |
+| Agent Loop | 12 | 1 | 0 | 2 | 15 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 33 | 0 | 2 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
-| TUI & Rendering | 20 | 3 | 8 | 0 | 31 |
+| TUI & Rendering | 20 | 4 | 6 | 1 | 31 |
 | Slash Commands | 41 | 2 | 3 | 14 | 60 |
 | MCP Host | 11 | 0 | 2 | 0 | 13 |
-| Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
+| Plugins & Skills | 12 | 0 | 3 | 2 | 17 |
 | Memory System | 10 | 0 | 3 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
 | Session & History | 11 | 2 | 1 | 0 | 14 |
 | Config & Settings | 9 | 0 | 6 | 3 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
-| Coordinator / Swarms | 1 | 1 | 7 | 0 | 9 |
-| Attachments (M13) | 4 | 0 | 7 | 0 | 11 |
+| Coordinator / Swarms | 1 | 1 | 0 | 8 | 10 |
+| Attachments (M13) | 4 | 1 | 6 | 0 | 11 |
 | Buddy / Voice / KAIROS | 6 | 1 | 4 | 2 | 13 |
-| Output Styles & Undercover | 6 | 0 | 3 | 0 | 9 |
+| Output Styles & Undercover | 7 | 0 | 0 | 2 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
-| Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
+| Utilities (shared) | 3 | 3 | 0 | 13 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **231** | **14** | **96** | **45** | **386** |
+| **TOTAL** | **234** | **16** | **69** | **68** | **387** |
 
-**Overall parity: 245/341 scoped features (72% complete, 4% partial)**
-**Descoped: 45 features (intentionally excluded)**
+**Overall parity: 250/319 scoped features (78% complete, 5% partial)**
+**Descoped: 68 features (intentionally excluded)**
 
 ---
 

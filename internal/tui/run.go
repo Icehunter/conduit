@@ -70,6 +70,10 @@ type RunOptions struct {
 
 	// InitialOutputStyle is the style name to activate at startup (from settings).
 	InitialOutputStyle string
+
+	// PluginDirs is the list of installed plugin root directories, used to
+	// load plugin-provided output styles (lowest priority — overridden by user/project).
+	PluginDirs []string
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -320,18 +324,32 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 
 	m := New(cfg)
 	// Apply saved output style at startup.
+	// Plugin styles are lowest priority; user/project styles override them.
 	if runOpts.InitialOutputStyle != "" {
-		styles, err := outputstyles.LoadAll(cwd)
-		if err == nil {
-			for i := range styles {
-				if styles[i].Name == runOpts.InitialOutputStyle {
-					m.outputStyleName = styles[i].Name
-					m.outputStylePrompt = styles[i].Prompt
-					break
-				}
-			}
+		pluginStyles := outputstyles.LoadFromPluginDirs(runOpts.PluginDirs)
+		userProjStyles, _ := outputstyles.LoadAll(cwd)
+		// Build merged map: plugin < user/project.
+		byName := make(map[string]outputstyles.Style)
+		for _, s := range pluginStyles {
+			byName[s.Name] = s
+		}
+		for _, s := range userProjStyles {
+			byName[s.Name] = s
+		}
+		if s, ok := byName[runOpts.InitialOutputStyle]; ok {
+			m.outputStyleName = s.Name
+			m.outputStylePrompt = s.Prompt
 		}
 	}
+	// Onboarding: if no credentials were found, inject a hint so first-time
+	// users know what to do without reading documentation.
+	if runOpts.AuthErr != nil && len(m.messages) == 0 {
+		m.messages = append(m.messages, Message{
+			Role:    RoleSystem,
+			Content: "No credentials found. Type /login to authenticate with your Claude account.",
+		})
+	}
+
 	modelPtr = &m
 	prog = tea.NewProgram(
 		m,

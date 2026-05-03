@@ -1,11 +1,11 @@
 .PHONY: build test test-race lint vet fuzz tidy clean
 
-BIN := bin/claude
+BIN := bin/conduit
 PKG := ./...
 
 build:
 	@mkdir -p bin
-	go build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/claude
+	go build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/conduit
 	cp $(BIN) ./conduit
 
 test:

@@ -72,7 +72,7 @@
 | Stainless headers | `utils/api.ts` | `4500.js` | `internal/api/client.go` | ✅ | |
 | HTTP proxy support | `utils/proxy.ts` | — | `internal/api/retry.go` | ✅ | HTTPS_PROXY/HTTP_PROXY via NewClientWithProxy |
 | VCR request recording/playback | `services/vcr.ts` | — | ❌ | ⬛ | Debug/testing only |
-| API pre-connect optimization | `utils/apiPreconnect.ts` | — | ❌ | ❌ | Cold start optimization |
+| API pre-connect optimization | `utils/apiPreconnect.ts` | — | `cmd/conduit/main.go` | ✅ | Background HEAD to api.anthropic.com during startup |
 | Rate limit quota tracking | `services/claudeAiLimits.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | Parse anthropic-ratelimit-* headers, <20% warning in status bar |
 | Rate limit messages | `services/rateLimitMessages.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | WarningMessage() in status bar |
 | Token estimation | `services/tokenEstimation.ts` | — | `internal/tui/model.go` | 🟡 | Char/4 estimate; /context shows breakdown |
@@ -222,7 +222,7 @@
 | Theme picker | `components/ThemePicker.tsx` | — | ❌ | ❌ | |
 | Output style picker | `components/OutputStylePicker.tsx` | — | `/output-style` command | 🟡 | Text-only |
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
-| Onboarding flow | `components/OnboardingComponent.tsx` | — | ❌ | ❌ | |
+| Onboarding flow | `components/OnboardingComponent.tsx` | — | `internal/tui/run.go` | 🟡 | No-auth hint injected into message list; no full wizard |
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | ❌ | ❌ | |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
 | Custom keybindings | `keybindings/` (14 files) | — | ❌ | ❌ | Hardcoded only |
@@ -336,7 +336,7 @@
 | Install counts (GitHub stats) | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | |
 | Plugin enable/disable | `services/plugins/` | — | `internal/settings/settings.go` | ✅ | |
 | Plugin MCP server sync | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
-| Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | ❌ | ❌ | Plugin-forced styles |
+| Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | LoadFromPluginDirs; merged at startup, plugin < user/project priority |
 | Plugin slash commands | `services/plugins/` | — | `internal/plugins/loader.go` | ✅ | |
 | Skill discovery from plugins | `skills/loadSkillsDir.ts` | — | `internal/tools/skilltool/` | ✅ | |
 | Bundled/built-in skills | `skills/bundledSkills.ts` | — | ❌ | ❌ | No bundled skills |

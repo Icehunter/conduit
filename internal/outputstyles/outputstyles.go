@@ -57,6 +57,26 @@ func LoadAll(cwd string) ([]Style, error) {
 	return out, nil
 }
 
+// LoadFromPluginDirs scans each pluginDir for an "output-styles" subdirectory
+// and loads any styles found there. Plugin styles are lowest priority — they
+// are overridden by user/project styles of the same name.
+// pluginDirs should be the InstallPath of each loaded plugin.
+func LoadFromPluginDirs(pluginDirs []string) []Style {
+	var out []Style
+	seen := map[string]bool{}
+	for _, dir := range pluginDirs {
+		stylesDir := filepath.Join(dir, "output-styles")
+		styles, _ := loadDir(stylesDir)
+		for _, s := range styles {
+			if !seen[s.Name] {
+				seen[s.Name] = true
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
 // loadDir reads all *.md files from dir and returns parsed styles.
 func loadDir(dir string) ([]Style, error) {
 	entries, err := os.ReadDir(dir)

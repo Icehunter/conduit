@@ -71,6 +71,10 @@ type Settings struct {
 	// EnabledPlugins mirrors the real Claude Code enabledPlugins field.
 	// Key is "pluginName@marketplace", value is true/false.
 	EnabledPlugins map[string]bool `json:"enabledPlugins,omitempty"`
+	// Model is the preferred model name (e.g. "claude-opus-4-7").
+	Model string `json:"model,omitempty"`
+	// OutputStyle is the active output style name, persisted across sessions.
+	OutputStyle string `json:"outputStyle,omitempty"`
 }
 
 // Merged is the result of loading and merging all settings layers.
@@ -89,6 +93,10 @@ type Merged struct {
 	Env map[string]string
 	// AdditionalDirs is the merged set of additional allowed dirs.
 	AdditionalDirs []string
+	// Model is the preferred model override from settings (last layer wins).
+	Model string
+	// OutputStyle is the active output style name (last layer wins).
+	OutputStyle string
 }
 
 // Load reads and merges settings from all layers for the given cwd.
@@ -117,6 +125,12 @@ func loadPaths(paths []string) (*Merged, error) {
 		mergeHooks(&merged.Hooks, &s.Hooks)
 		for k, v := range s.Env {
 			merged.Env[k] = v
+		}
+		if s.Model != "" {
+			merged.Model = s.Model
+		}
+		if s.OutputStyle != "" {
+			merged.OutputStyle = s.OutputStyle
 		}
 	}
 	return merged, nil
@@ -157,6 +171,32 @@ func mergeHooks(dst, src *HooksSettings) {
 // UserSettingsPath returns the path to the user-global settings file.
 func UserSettingsPath() string {
 	return filepath.Join(claudeDir(), "settings.json")
+}
+
+// SaveOutputStyle persists the active output style name to the user settings file.
+func SaveOutputStyle(name string) error {
+	path := UserSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+	encoded, err := json.Marshal(name)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		delete(raw, "outputStyle")
+	} else {
+		raw["outputStyle"] = encoded
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
 // SetPluginEnabled sets enabledPlugins[pluginID] in the user settings file.
@@ -217,4 +257,31 @@ func updateSettingsFile(path string, fn func(*Settings)) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// SaveRawKey persists an arbitrary key/value to the user settings file using
+// raw-map preservation so no other fields are disturbed.
+func SaveRawKey(key string, value interface{}) error {
+	path := UserSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+	if value == nil {
+		delete(raw, key)
+	} else {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		raw[key] = encoded
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
 }

@@ -11,6 +11,9 @@
 package permissions
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -174,6 +177,12 @@ func matchRule(rule, toolName, toolInput string) bool {
 // matchPattern matches an input string against a rule pattern.
 // Supports exact match, prefix (trailing " *"), and simple glob (*).
 func matchPattern(pattern, input string) bool {
+	// TS uses "//path" as canonical form for absolute paths (double leading slash).
+	// Strip the extra leading slash so patterns match real filesystem paths.
+	if strings.HasPrefix(pattern, "//") {
+		pattern = pattern[1:]
+	}
+
 	// Legacy "prefix:*" form.
 	if strings.HasSuffix(pattern, ":*") {
 		prefix := pattern[:len(pattern)-2]
@@ -195,8 +204,21 @@ func matchPattern(pattern, input string) bool {
 	return pattern == input
 }
 
-// matchGlob does simple single-wildcard glob matching.
+// matchGlob does simple glob matching supporting * (single segment) and ** (any depth).
 func matchGlob(pattern, input string) bool {
+	// Fast path: trailing /** means "this directory and anything under it".
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := pattern[:len(pattern)-3]
+		return input == prefix || strings.HasPrefix(input, prefix+"/")
+	}
+	// Fast path: trailing /* means "anything directly under this directory".
+	if strings.HasSuffix(pattern, "/*") {
+		prefix := pattern[:len(pattern)-2]
+		rest := strings.TrimPrefix(input, prefix+"/")
+		return rest != input && !strings.Contains(rest, "/")
+	}
+
+	// General single-wildcard matching.
 	parts := strings.SplitN(pattern, "*", 2)
 	if len(parts) == 1 {
 		return pattern == input
@@ -209,14 +231,133 @@ func matchGlob(pattern, input string) bool {
 	if right == "" {
 		return true
 	}
+	// right may itself contain wildcards — recurse.
+	if strings.Contains(right, "*") {
+		return matchGlob(right, remaining)
+	}
 	return strings.HasSuffix(remaining, right)
 }
 
-// SuggestRule returns the recommended permission rule string for a tool call.
-// Used when asking the user "always allow?".
+// SuggestRule returns the broad rule string to use for "always allow".
+// Mirrors TS suggestionForPrefix / createReadRuleSuggestion:
+//   - Read/Edit/Write: directory-level  Read(//dir/**)
+//   - Bash: prefix wildcard  Bash(cmd subcmd:*)  or exact  Bash(full command)
+//   - others: tool name only
 func SuggestRule(toolName, toolInput string) string {
-	if toolInput == "" {
-		return toolName
+	switch toolName {
+	case "Read", "Edit", "Write":
+		// Use directory-level glob: Read(//dir/**)
+		dir := filepath.Dir(toolInput)
+		if dir == "" || dir == "." || dir == "/" {
+			return toolName
+		}
+		// Prepend extra / for absolute paths matching TS "//{path}/**" pattern.
+		if filepath.IsAbs(dir) {
+			return toolName + "(/" + dir + "/**)"
+		}
+		return toolName + "(" + dir + "/**)"
+
+	case "Bash":
+		// Try to extract "cmd subcmd" prefix → "Bash(cmd subcmd:*)"
+		if prefix := bashCommandPrefix(toolInput); prefix != "" {
+			return "Bash(" + prefix + ":*)"
+		}
+		if toolInput != "" {
+			return "Bash(" + toolInput + ")"
+		}
+		return "Bash"
+
+	default:
+		if toolInput == "" {
+			return toolName
+		}
+		return toolName + "(" + toolInput + ")"
 	}
-	return toolName + "(" + toolInput + ")"
+}
+
+// bashCommandPrefix returns "cmd subcmd" if the command has a recognisable
+// subcommand (git status → "git status", npm install → "npm install").
+// Returns "" if no subcommand pattern is found.
+func bashCommandPrefix(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) < 2 {
+		return ""
+	}
+	bin := fields[0]
+	if idx := strings.LastIndexByte(bin, '/'); idx >= 0 {
+		bin = bin[idx+1:]
+	}
+	// Tools with well-known subcommands.
+	subcmdTools := map[string]bool{
+		"git": true, "npm": true, "yarn": true, "pnpm": true,
+		"cargo": true, "go": true, "gh": true, "docker": true,
+		"kubectl": true, "terraform": true, "aws": true, "make": true,
+	}
+	if !subcmdTools[bin] {
+		return ""
+	}
+	// First arg that doesn't start with "-" is the subcommand.
+	for _, f := range fields[1:] {
+		if !strings.HasPrefix(f, "-") {
+			return bin + " " + f
+		}
+	}
+	return ""
+}
+
+// PersistAllow writes rule to the allow list in <cwd>/.claude/settings.local.json.
+// This is the "always allow" persistence path — mirrors TS localSettings destination.
+// Uses raw-JSON map so unknown fields are preserved.
+func PersistAllow(rule, cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	path := filepath.Join(cwd, ".claude", "settings.local.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+
+	// Read existing permissions.allow list.
+	var perms map[string]json.RawMessage
+	if p, ok := raw["permissions"]; ok {
+		_ = json.Unmarshal(p, &perms)
+	}
+	if perms == nil {
+		perms = make(map[string]json.RawMessage)
+	}
+
+	var allow []string
+	if a, ok := perms["allow"]; ok {
+		_ = json.Unmarshal(a, &allow)
+	}
+
+	// Deduplicate.
+	for _, existing := range allow {
+		if existing == rule {
+			return nil
+		}
+	}
+	allow = append(allow, rule)
+
+	allowRaw, err := json.Marshal(allow)
+	if err != nil {
+		return err
+	}
+	perms["allow"] = allowRaw
+	permsRaw, err := json.Marshal(perms)
+	if err != nil {
+		return err
+	}
+	raw["permissions"] = permsRaw
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
 }

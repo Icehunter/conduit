@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(//Volumes/Engineering/Icehunter/claude-go/**)"
+    ]
+  }
+}

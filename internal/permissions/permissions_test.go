@@ -60,6 +60,29 @@ func TestMatchRule_NoParenMismatch(t *testing.T) {
 	}
 }
 
+func TestMatchRule_DirectoryGlob(t *testing.T) {
+	// Read(//dir/**) should match any file under dir.
+	if !matchRule("Read(//home/user/project/**)", "Read", "/home/user/project/foo.go") {
+		t.Error("directory glob should match file in dir")
+	}
+	if !matchRule("Read(//home/user/project/**)", "Read", "/home/user/project/sub/bar.go") {
+		t.Error("directory glob should match file in subdirectory")
+	}
+	if matchRule("Read(//home/user/project/**)", "Read", "/home/user/other/baz.go") {
+		t.Error("directory glob should not match file outside dir")
+	}
+}
+
+func TestMatchRule_BashSubcmdColonStar(t *testing.T) {
+	// Bash(git log:*) matches "git log ..." but not "git status"
+	if !matchRule("Bash(git log:*)", "Bash", "git log --oneline HEAD") {
+		t.Error("git log:* should match 'git log ...'")
+	}
+	if matchRule("Bash(git log:*)", "Bash", "git status") {
+		t.Error("git log:* should not match 'git status'")
+	}
+}
+
 func TestGate_BypassMode(t *testing.T) {
 	g := New(ModeBypassPermissions, nil, nil, nil)
 	if g.Check("Bash", "rm -rf /") != DecisionAllow {
@@ -102,11 +125,24 @@ func TestGate_SetMode(t *testing.T) {
 }
 
 func TestSuggestRule(t *testing.T) {
-	if SuggestRule("Bash", "git log") != "Bash(git log)" {
-		t.Errorf("unexpected: %s", SuggestRule("Bash", "git log"))
+	tests := []struct {
+		tool, input, want string
+	}{
+		{"Bash", "git log --oneline", "Bash(git log:*)"},
+		{"Bash", "git status", "Bash(git status:*)"},
+		{"Bash", "npm install", "Bash(npm install:*)"},
+		{"Bash", "foobar --flag", "Bash(foobar --flag)"},
+		{"Bash", "", "Bash"},
+		{"Read", "/home/user/project/foo.go", "Read(//home/user/project/**)"},
+		{"Edit", "/tmp/file.txt", "Edit(//tmp/**)"},
+		{"Edit", "", "Edit"},
+		{"Grep", "pattern", "Grep(pattern)"},
 	}
-	if SuggestRule("Edit", "") != "Edit" {
-		t.Errorf("unexpected: %s", SuggestRule("Edit", ""))
+	for _, tt := range tests {
+		got := SuggestRule(tt.tool, tt.input)
+		if got != tt.want {
+			t.Errorf("SuggestRule(%q, %q) = %q; want %q", tt.tool, tt.input, got, tt.want)
+		}
 	}
 }
 

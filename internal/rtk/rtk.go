@@ -21,6 +21,12 @@ type Result struct {
 	Category   string
 }
 
+// IsClassified returns true if the command is handled by a RTK filter rule.
+// Used by /rtk discover to find unhandled commands.
+func IsClassified(cmd string) bool {
+	return classify(strings.TrimSpace(cmd)) != nil
+}
+
 // Filter applies RTK compression to the output of the given shell command.
 // cmd is the full command string; output is its combined stdout+stderr.
 // Returns the (possibly compressed) output and metadata.

@@ -1,9 +1,11 @@
 // Package model centralises model selection for the agent loop.
 //
 // Priority order (mirrors getRuntimeMainLoopModel in the TS source):
-//  1. ANTHROPIC_MODEL env var (explicit override)
-//  2. CLAUDE_CODE_MODEL env var (alias)
-//  3. DefaultModel constant
+//  1. Runtime /model override (highest)
+//  2. ANTHROPIC_MODEL env var
+//  3. CLAUDE_CODE_MODEL env var
+//  4. settings.json "model" field (via SetDefault at startup)
+//  5. Default constant
 //
 // The default matches the model shipped in Claude Code 2.1.126.
 package model
@@ -17,6 +19,9 @@ import (
 // Uses atomic pointer so it's safe to read from concurrent goroutines.
 var runtimeOverride atomic.Pointer[string]
 
+// settingsDefault holds the model from settings.json, set once at startup.
+var settingsDefault atomic.Pointer[string]
+
 // SetOverride sets the runtime model override (from /model slash command).
 func SetOverride(name string) {
 	runtimeOverride.Store(&name)
@@ -27,8 +32,13 @@ func ClearOverride() {
 	runtimeOverride.Store(nil)
 }
 
-// Default is the model used when no override is set. Matches the model
-// Claude Code 2.1.126 ships with.
+// SetDefault sets the model from settings.json. Called once at startup before
+// any goroutines read Resolve(). Lower priority than env vars.
+func SetDefault(name string) {
+	settingsDefault.Store(&name)
+}
+
+// Default is the hardcoded fallback model. Matches Claude Code 2.1.126.
 const Default = "claude-opus-4-7"
 
 // Fast is the faster/cheaper model used when /fast is active.
@@ -39,17 +49,16 @@ const Fast = "claude-sonnet-4-6"
 // Real CC uses 16000 for the main loop; we match that.
 const MaxTokens = 16000
 
-// thinkingBudgets maps effort levels to token budgets.
+// ThinkingBudgets maps effort levels to token budgets.
 // Mirrors the thinking budget constants from the real CLI.
 var ThinkingBudgets = map[string]int{
 	"low":    1000,
-	"normal": 0,     // disabled
+	"normal": 0,
 	"high":   8000,
 	"max":    16000,
 }
 
-// Resolve returns the model name to use, respecting environment overrides
-// and the runtime /model override (highest priority after env).
+// Resolve returns the model name to use, applying priority order.
 func Resolve() string {
 	if p := runtimeOverride.Load(); p != nil && *p != "" {
 		return *p
@@ -59,6 +68,9 @@ func Resolve() string {
 	}
 	if m := os.Getenv("CLAUDE_CODE_MODEL"); m != "" {
 		return m
+	}
+	if p := settingsDefault.Load(); p != nil && *p != "" {
+		return *p
 	}
 	return Default
 }

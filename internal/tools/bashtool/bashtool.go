@@ -89,8 +89,101 @@ func (*Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
-// IsReadOnly: Bash is never read-only.
-func (*Tool) IsReadOnly(json.RawMessage) bool { return false }
+// IsReadOnly returns true for shell commands that are known to be read-only
+// (ls, cat, echo, git log/status/diff/show, find, head, tail, wc, etc.).
+// This prevents permission prompts for benign inspection commands, matching
+// Claude Code's isReadOnlyBashCommand heuristic.
+func (*Tool) IsReadOnly(raw json.RawMessage) bool {
+	var inp Input
+	if err := json.Unmarshal(raw, &inp); err != nil || inp.Command == "" {
+		return false
+	}
+	return isReadOnlyCommand(inp.Command)
+}
+
+// readOnlyPrefixes are command prefixes whose base form is always safe.
+// We match the first token (binary name) only, since flags don't change safety.
+var readOnlyPrefixes = map[string]bool{
+	"ls": true, "ll": true, "la": true, "dir": true,
+	"cat": true, "bat": true, "less": true, "more": true, "head": true, "tail": true,
+	"echo": true, "printf": true,
+	"pwd": true, "which": true, "type": true, "whereis": true,
+	"find": true, "fd": true, "locate": true,
+	"wc": true, "du": true, "df": true, "stat": true, "file": true,
+	"uname": true, "hostname": true, "whoami": true, "id": true, "date": true, "uptime": true,
+	"ps": true, "top": true, "htop": true,
+	"env": true, "printenv": true,
+	"diff": true, "cmp": true,
+	"grep": true, "egrep": true, "fgrep": true, "rg": true, "ag": true,
+	"sort": true, "uniq": true, "cut": true, "awk": true, "sed": true,
+	"jq": true, "yq": true, "xmllint": true,
+	"python": true, "python3": true, "node": true, // read-only when just -c or --version
+	"go": true,   // covered by subcommand check below
+	"make": true, // covered by subcommand check below
+}
+
+// readOnlySubcommands maps binary → set of safe subcommands.
+var readOnlySubcommands = map[string]map[string]bool{
+	"git": {"log": true, "status": true, "diff": true, "show": true, "blame": true,
+		"branch": true, "tag": true, "remote": true, "stash": true, "describe": true,
+		"rev-parse": true, "ls-files": true, "shortlog": true, "reflog": true, "config": true},
+	"go":    {"version": true, "env": true, "list": true, "doc": true, "vet": true},
+	"cargo": {"check": true, "clippy": true, "doc": true, "test": true, "bench": true},
+	"npm":   {"list": true, "ls": true, "outdated": true, "audit": true, "info": true, "view": true},
+	"gh":    {"pr": true, "issue": true, "repo": true, "release": true, "run": true, "workflow": true},
+	"make":  {"--dry-run": true, "-n": true, "--question": true, "-q": true},
+}
+
+func isReadOnlyCommand(cmd string) bool {
+	// Strip leading env-var assignments (FOO=bar cmd ...)
+	for len(cmd) > 0 && cmd[0] != ' ' {
+		eq := false
+		for i, c := range cmd {
+			if c == '=' {
+				eq = true
+				_ = i
+			}
+			if c == ' ' {
+				if eq {
+					cmd = cmd[i+1:]
+				}
+				break
+			}
+		}
+		break
+	}
+
+	// Get first token (the binary).
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+	bin := fields[0]
+	// Strip path prefix.
+	if idx := strings.LastIndexByte(bin, '/'); idx >= 0 {
+		bin = bin[idx+1:]
+	}
+
+	if readOnlyPrefixes[bin] {
+		// For tools with subcommand lists, verify the subcommand is safe.
+		if subs, hasSubs := readOnlySubcommands[bin]; hasSubs {
+			if len(fields) < 2 {
+				return false
+			}
+			return subs[fields[1]]
+		}
+		return true
+	}
+
+	// Check subcommand-based tools not in the prefix list.
+	if subs, hasSubs := readOnlySubcommands[bin]; hasSubs {
+		if len(fields) >= 2 {
+			return subs[fields[1]]
+		}
+	}
+
+	return false
+}
 
 // IsConcurrencySafe: Bash is never concurrency-safe (commands may write
 // to shared state).

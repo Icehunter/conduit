@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -279,6 +280,19 @@ func runREPL(continueMode bool) error {
 
 	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
 
+	// additionalDirectories: auto-allow file operations under each directory.
+	for _, dir := range s.AdditionalDirs {
+		dir = filepath.Clean(dir)
+		gate.AllowForSession("Read(" + dir + "/*)")
+		gate.AllowForSession("Edit(" + dir + "/*)")
+		gate.AllowForSession("Write(" + dir + "/*)")
+	}
+
+	// Apply model from settings.json if no env/runtime override is set.
+	if s.Model != "" {
+		internalmodel.SetDefault(s.Model)
+	}
+
 	// Inject session env vars into the bash tool so every subprocess inherits them.
 	if len(s.Env) > 0 {
 		bashtool.SessionEnv = s.Env
@@ -335,9 +349,15 @@ func runREPL(continueMode bool) error {
 		Gate:           gate,
 		Hooks:          &s.Hooks,
 		SessionID:      sessionID,
+		Cwd:            cwd,
 		AutoCompact:      true,
 		ThinkingBudget:   thinkingBudget(),
 		NotifyOnComplete: true,
+		OnFileAccess: func(op, path string) {
+			if sess != nil {
+				_ = sess.AppendFileAccess(op, path)
+			}
+		},
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.
@@ -346,15 +366,16 @@ func runREPL(continueMode bool) error {
 	reg.Register(skilltool.New(skillLoader, lp.RunSubAgent))
 
 	tuiErr := tui.Run(Version, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
-		AuthErr:         authErr,
-		Profile:         prof,
-		Session:         sess,
-		ResumedHistory:  resumedHistory,
-		Resumed:         continueMode && len(resumedHistory) > 0,
-		MCPManager:      mcpManager,
-		EnterPlan:       rOpts.enterPlan,
-		ExitPlan:        rOpts.exitPlan,
-		AskUser:         rOpts.askUser,
+		AuthErr:             authErr,
+		Profile:             prof,
+		Session:             sess,
+		ResumedHistory:      resumedHistory,
+		Resumed:             continueMode && len(resumedHistory) > 0,
+		MCPManager:          mcpManager,
+		EnterPlan:           rOpts.enterPlan,
+		ExitPlan:            rOpts.exitPlan,
+		AskUser:             rOpts.askUser,
+		InitialOutputStyle:  s.OutputStyle,
 		LoadAuth: func(ctx context.Context) (string, *profile.Info, error) {
 			tok, err := loadAuth(ctx)
 			if err != nil {

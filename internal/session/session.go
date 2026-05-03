@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,11 @@ type Session struct {
 }
 
 // New creates a new session rooted at cwd, using sessionID as the file name.
+// ProjectDir returns the directory where session files for cwd are stored.
+func ProjectDir(cwd, home string) string {
+	return filepath.Join(home, ".claude", "projects", sanitizePath(cwd))
+}
+
 func New(cwd, sessionID string) (*Session, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -156,8 +162,7 @@ func List(cwd string) ([]SessionMeta, error) {
 		return nil, err
 	}
 	var out []SessionMeta
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
@@ -173,6 +178,10 @@ func List(cwd string) ([]SessionMeta, error) {
 			Modified: mod,
 		})
 	}
+	// Sort newest first by modification time.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Modified.After(out[j].Modified)
+	})
 	return out, nil
 }
 

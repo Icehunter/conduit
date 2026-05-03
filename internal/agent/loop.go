@@ -81,6 +81,9 @@ type LoopConfig struct {
 	// MaxTurns caps the number of API calls (tool-use follow-ups each count
 	// as one turn). 0 means no limit (use carefully).
 	MaxTurns int
+	// Cwd is the working directory for the session. Used for persisting
+	// "always allow" rules to <cwd>/.claude/settings.local.json.
+	Cwd string
 
 	// Gate is the permission gate to consult before each tool call.
 	// nil means no gate (all tools allowed).
@@ -111,6 +114,10 @@ type LoopConfig struct {
 	// It blocks until the user responds. Returns (allow, alwaysAllow).
 	// nil means DecisionAsk → allow through silently.
 	AskPermission func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)
+
+	// OnFileAccess is called after each file tool execution with the operation
+	// ("read" or "write") and the file path. Used to populate /files output.
+	OnFileAccess func(op, path string)
 }
 
 // Loop drives the agentic query cycle.
@@ -499,6 +506,16 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 
 		task := toolTask{block: block, rawInput: rawInput}
 
+		// Resolve the tool early so we can check IsReadOnly before the permission gate.
+		t, ok := l.reg.Lookup(block.Name)
+		if !ok {
+			task.denied = true
+			task.denyMsg = fmt.Sprintf("Tool %q not found", block.Name)
+			tasks = append(tasks, task)
+			continue
+		}
+		task.tool = t
+
 		// --- PreToolUse hooks ---
 		hookApproved := false
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PreToolUse) > 0 {
@@ -522,7 +539,10 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		}
 
 		// --- Permission gate check ---
-		if l.cfg.Gate != nil {
+		// Read-only tools are auto-approved in default and plan modes — they cannot
+		// modify state, so prompting for every FileRead/Glob/Grep call is noise.
+		readOnly := t.IsReadOnly(rawInput)
+		if l.cfg.Gate != nil && !readOnly {
 			decision := l.cfg.Gate.Check(block.Name, permInput)
 			switch decision {
 			case permissions.DecisionDeny:
@@ -540,19 +560,22 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 						continue
 					}
 					if alwaysAllow {
-						l.cfg.Gate.AllowForSession(permissions.SuggestRule(block.Name, permInput))
+						rule := permissions.SuggestRule(block.Name, permInput)
+						l.cfg.Gate.AllowForSession(rule)
+						if l.cfg.Cwd != "" {
+							_ = permissions.PersistAllow(rule, l.cfg.Cwd)
+						}
 					}
 				}
 			}
-		}
-
-		// Resolve the tool for execution.
-		t, ok := l.reg.Lookup(block.Name)
-		if !ok {
-			task.denied = true
-			task.denyMsg = fmt.Sprintf("Tool %q not found", block.Name)
-		} else {
-			task.tool = t
+		} else if l.cfg.Gate != nil && readOnly {
+			// Still check the deny list — a user can explicitly deny reads.
+			if l.cfg.Gate.Check(block.Name, permInput) == permissions.DecisionDeny {
+				task.denied = true
+				task.denyMsg = "Tool denied by permission rules"
+				tasks = append(tasks, task)
+				continue
+			}
 		}
 		tasks = append(tasks, task)
 	}
@@ -596,6 +619,9 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 					taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true}
 					return
 				}
+				if !res.IsError {
+					l.notifyFileAccess(wi.task.block.Name, wi.task.block.Input)
+				}
 				text := ""
 				if len(res.Content) > 0 {
 					text = res.Content[0].Text
@@ -616,6 +642,9 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if err != nil {
 			taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true}
 			continue
+		}
+		if !res.IsError {
+			l.notifyFileAccess(wi.task.block.Name, wi.task.block.Input)
 		}
 		text := ""
 		if len(res.Content) > 0 {
@@ -675,6 +704,23 @@ func toolPermissionInput(toolName string, input map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// notifyFileAccess fires cfg.OnFileAccess for file-mutating and file-reading tools.
+func (l *Loop) notifyFileAccess(toolName string, input map[string]any) {
+	if l.cfg.OnFileAccess == nil {
+		return
+	}
+	switch toolName {
+	case "Read":
+		if p, ok := input["file_path"].(string); ok {
+			l.cfg.OnFileAccess("read", p)
+		}
+	case "Edit", "Write":
+		if p, ok := input["file_path"].(string); ok {
+			l.cfg.OnFileAccess("write", p)
+		}
+	}
 }
 
 // buildToolDefs converts the registry into the API tool definitions array.

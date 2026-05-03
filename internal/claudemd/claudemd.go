@@ -52,8 +52,12 @@ func Load(cwd string) ([]File, error) {
 	seen := map[string]bool{}
 
 	// 1. User global: ~/.claude/CLAUDE.md and ~/.claude/rules/*.md
-	if home != "" {
-		userClaudeDir := filepath.Join(home, ".claude")
+	// Honour CLAUDE_CONFIG_DIR if set (matches mcp/config.go and settings/env.go).
+	userClaudeDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if userClaudeDir == "" && home != "" {
+		userClaudeDir = filepath.Join(home, ".claude")
+	}
+	if userClaudeDir != "" {
 		if f, err := loadFile(filepath.Join(userClaudeDir, "CLAUDE.md"), TypeUser, seen); err == nil && f != nil {
 			files = append(files, *f)
 		}
@@ -86,9 +90,6 @@ func Load(cwd string) ([]File, error) {
 	// Resolve @include directives in all loaded files.
 	expanded := make([]File, 0, len(files))
 	includeSeen := map[string]bool{}
-	for _, f := range expanded {
-		includeSeen[f.Path] = true
-	}
 	for _, f := range files {
 		includeSeen[f.Path] = true
 		included := resolveIncludes(f, includeSeen)

@@ -108,10 +108,63 @@ func ExtractTitle(path string) string {
 	if firstUserText == "" {
 		return ""
 	}
+	return titleFromText(firstUserText)
+}
+
+// titleFromText derives a display title from a user message.
+// Slash commands get descriptive names; long messages are truncated.
+var slashTitles = map[string]string{
+	"/init":       "Initialize CLAUDE.md",
+	"/review":     "Code review",
+	"/commit":     "Create commit",
+	"/fix":        "Fix issue",
+	"/pr-comments": "Address PR comments",
+	"/compact":    "Compact session",
+	"/diff":       "View diff",
+}
+
+// promptPrefixTitles maps the opening words of known injected prompts to display names.
+// These are the first ~40 chars of the prompts in commands/prompts.go.
+var promptPrefixTitles = []struct {
+	prefix string
+	title  string
+}{
+	{"Set up a minimal CLAUDE.md for this repo", "Initialize CLAUDE.md"},
+	{"Create a git commit for the current changes", "Create commit"},
+	{"Address the review comments on the current pull request", "Address PR comments"},
+	{"You are an expert code reviewer", "Code review"},
+	{"Please fix the following issue:", "Fix issue"},
+	{"Please look at the current state of the codebase", "Fix issues"},
+	{"Enter plan mode.", "Plan mode session"},
+}
+
+func titleFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	// Check for slash commands.
+	if strings.HasPrefix(text, "/") {
+		cmd := strings.Fields(text)[0]
+		if label, ok := slashTitles[cmd]; ok {
+			return label
+		}
+		// Unknown slash command — use command name capitalized.
+		name := strings.TrimPrefix(cmd, "/")
+		if name != "" {
+			return strings.ToUpper(name[:1]) + name[1:]
+		}
+	}
+	// Reverse-map injected prompt text to a friendly name.
+	for _, pp := range promptPrefixTitles {
+		if strings.HasPrefix(text, pp.prefix) {
+			return pp.title
+		}
+	}
 	// Truncate to 60 runes.
-	runes := []rune(firstUserText)
+	runes := []rune(text)
 	if len(runes) <= 60 {
-		return firstUserText
+		return text
 	}
 	return string(runes[:57]) + "…"
 }

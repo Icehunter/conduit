@@ -252,10 +252,23 @@ func runREPL(continueMode bool) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Warm the TCP+TLS connection to the API in the background to overlap with
-	// the rest of startup (mirrors utils/apiPreconnect.ts).
+	// Warm the TCP+TLS connection to the API in the background to overlap
+	// with the rest of startup (mirrors utils/apiPreconnect.ts). Skipped
+	// when a proxy is configured because the request would warm the wrong
+	// pool — the real request goes through a different transport. Honors
+	// ANTHROPIC_BASE_URL for staging/local overrides.
 	go func() {
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, "https://api.anthropic.com", nil)
+		if os.Getenv("HTTPS_PROXY") != "" || os.Getenv("https_proxy") != "" ||
+			os.Getenv("HTTP_PROXY") != "" || os.Getenv("http_proxy") != "" {
+			return
+		}
+		baseURL := os.Getenv("ANTHROPIC_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://api.anthropic.com"
+		}
+		preCtx, cancelPre := context.WithTimeout(ctx, 10*time.Second)
+		defer cancelPre()
+		req, err := http.NewRequestWithContext(preCtx, http.MethodHead, baseURL, nil)
 		if err == nil {
 			resp, err := http.DefaultClient.Do(req)
 			if err == nil {
@@ -461,19 +474,31 @@ func runREPL(continueMode bool) error {
 		})
 	}
 
+	// Seed lastAssistantTime from the resumed session's JSONL so the very
+	// first request after a long-idle resume can trigger time-based
+	// microcompact without waiting for an additional assistant turn.
+	var lastAssistant time.Time
+	if continueMode && sess != nil {
+		if act, err := session.LoadActivity(sess.FilePath); err == nil {
+			lastAssistant = act.LastActivity
+		}
+	}
+
 	var lp *agent.Loop
 	lp = agent.NewLoop(c, reg, agent.LoopConfig{
-		Model:            modelName,
-		MaxTokens:        internalmodel.MaxTokens,
-		System:           systemBlocks,
-		MaxTurns:         50,
-		Gate:             gate,
-		Hooks:            &s.Hooks,
-		SessionID:        sessionID,
-		Cwd:              cwd,
-		AutoCompact:      true,
-		ThinkingBudget:   thinkingBudget(),
-		NotifyOnComplete: true,
+		Model:             modelName,
+		MaxTokens:         internalmodel.MaxTokens,
+		System:            systemBlocks,
+		MaxTurns:          50,
+		Gate:              gate,
+		Hooks:             &s.Hooks,
+		SessionID:         sessionID,
+		Cwd:               cwd,
+		AutoCompact:       true,
+		MicroCompact:      true,
+		LastAssistantTime: lastAssistant,
+		ThinkingBudget:    thinkingBudget(),
+		NotifyOnComplete:  true,
 		OnFileAccess: func(op, path string) {
 			if sess != nil {
 				_ = sess.AppendFileAccess(op, path)

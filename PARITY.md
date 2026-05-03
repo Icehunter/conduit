@@ -92,7 +92,7 @@
 | Sub-agent spawning | `tools/AgentTool/` | — | `internal/agent/loop.go` `RunSubAgent` | ✅ | |
 | Max turns limit | `query.ts` | — | `internal/agent/loop.go` | ✅ | |
 | Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
-| Micro-compaction | `services/compact/microCompact.ts` | — | ❌ | ❌ | |
+| Micro-compaction | `services/compact/microCompact.ts` | — | `internal/microcompact/microcompact.go` | ✅ | Time-based path: when last assistant >60min old, replace older tool_results with `[Old tool result content cleared]`, keep last 5. Cache-editing path is Anthropic-internal. |
 | Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ❌ | |
 | Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go`, `internal/tui/livestate.go` | 🟡 | Shows ctx%, no hard limits |
 | Extended thinking / effort modes | `utils/effort.ts` | — | `internal/model/model.go`, `internal/agent/loop.go` | ✅ | ThinkingBudgets map; /effort low\|medium\|high\|max; CLAUDE_THINKING_BUDGET env |
@@ -599,7 +599,7 @@
 |------|------------|-----------|-----------|------------|-------|
 | Auth & OAuth | 9 | 0 | 6 | 3 | 18 |
 | API Client & SSE | 10 | 0 | 2 | 0 | 12 |
-| Agent Loop | 11 | 1 | 1 | 1 | 14 |
+| Agent Loop | 12 | 1 | 0 | 1 | 14 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **219** | **13** | **109** | **45** | **386** |
+| **TOTAL** | **220** | **13** | **108** | **45** | **386** |
 
-**Overall parity: 232/341 scoped features (68% complete, 4% partial)**
+**Overall parity: 233/341 scoped features (68% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---
@@ -666,12 +666,10 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 
 1. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value; large effort.
 2. **Custom keybindings** — user-defined key mappings. Low value.
-3. **API preconnect** — warm TCP connection to api.anthropic.com on startup. Low value.
-4. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
-5. **Plugin signature verification** — git commit sig check on install (note: not in CC either; aspirational).
-6. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
-7. **/terminalSetup** — installs Shift+Enter keybindings for Apple Terminal/VSCode/Cursor/Alacritty/Zed (~75KB of per-terminal config recipes).
+3. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
+4. **Plugin signature verification** — git commit sig check on install (note: not in CC either; aspirational).
+5. **/terminalSetup** — installs Shift+Enter keybindings for Apple Terminal/VSCode/Cursor/Alacritty/Zed (~75KB of per-terminal config recipes).
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go), API preconnect now honors HTTP(S)_PROXY skips and ANTHROPIC_BASE_URL, time-based micro-compaction (clears older tool_results after 60min idle, keeps last 5).

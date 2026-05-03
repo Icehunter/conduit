@@ -26,10 +26,12 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/hooks"
+	"github.com/icehunter/conduit/internal/microcompact"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/settings"
@@ -133,6 +135,19 @@ type LoopConfig struct {
 	// this synchronously before returning so the caller can choose between
 	// blocking or detaching to a goroutine.
 	OnEndTurn func(history []api.Message)
+
+	// MicroCompact, when true, runs time-based microcompaction before each
+	// request (mirrors src/services/compact/microCompact.ts time-based path).
+	// When the gap since the last assistant message exceeds MicroCompactGap,
+	// older tool_results are replaced with a placeholder. The cache is
+	// expired anyway past that gap, so this shrinks what gets re-cached
+	// without changing functional context.
+	MicroCompact         bool
+	MicroCompactGap      time.Duration // default 60m if zero
+	MicroCompactKeep     int           // default 5 if zero
+	// LastAssistantTime seeds the gap calculation on resume. If zero, the
+	// loop initializes from the first assistant response.
+	LastAssistantTime time.Time
 }
 
 // Loop drives the agentic query cycle.
@@ -243,6 +258,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	tools := buildToolDefs(l.reg)
 
 	turn := 0
+	lastAssistantTime := l.cfg.LastAssistantTime
 	for {
 		if ctx.Err() != nil {
 			return msgs, ctx.Err()
@@ -251,6 +267,22 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			return msgs, nil
 		}
 		turn++
+
+		// Time-based microcompact: after a long idle (cache expired), shrink
+		// older tool_results to a placeholder so the re-cache is cheaper.
+		if l.cfg.MicroCompact && !lastAssistantTime.IsZero() {
+			gap := l.cfg.MicroCompactGap
+			if gap == 0 {
+				gap = microcompact.DefaultThreshold
+			}
+			keep := l.cfg.MicroCompactKeep
+			if keep == 0 {
+				keep = microcompact.DefaultKeepRecent
+			}
+			if r := microcompact.Apply(msgs, lastAssistantTime, gap, keep); r.Triggered {
+				msgs = r.Messages
+			}
+		}
 
 		req := &api.MessageRequest{
 			Model:     l.cfg.Model,
@@ -308,6 +340,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			Role:    "assistant",
 			Content: assistantBlocks,
 		})
+		lastAssistantTime = time.Now()
 
 		if stopReason != "tool_use" {
 			// end_turn or unknown — we're done.

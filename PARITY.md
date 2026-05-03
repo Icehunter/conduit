@@ -530,7 +530,7 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Output style loader | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
+| Output style loader | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | Built-in default/Explanatory/Learning + user/project/plugin merge |
 | YAML frontmatter parsing | `utils/frontmatterParser.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
 | Project + user dir merge | `outputStyles/loadOutputStylesDir.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | |
 | Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | ❌ | ❌ | |

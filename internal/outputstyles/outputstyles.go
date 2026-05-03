@@ -30,9 +30,11 @@ type Style struct {
 	KeepCodingInstructions bool
 }
 
-// LoadAll loads output styles from both the user home directory and the
-// project directory, with project styles taking precedence over user styles
-// of the same name.
+// LoadAll returns all available output styles. Priority (lowest → highest):
+// built-in, user dir, project dir. Same name in a higher tier overrides.
+//
+// Built-in "default", "Explanatory", "Learning" are always present so
+// /output-style with no args is never empty out of the box.
 func LoadAll(cwd string) ([]Style, error) {
 	home, _ := os.UserHomeDir()
 	userDir := filepath.Join(home, ".claude", "output-styles")
@@ -41,8 +43,10 @@ func LoadAll(cwd string) ([]Style, error) {
 	userStyles, _ := loadDir(userDir)
 	projStyles, _ := loadDir(projDir)
 
-	// Merge: project overrides user by name.
-	byName := make(map[string]Style, len(userStyles)+len(projStyles))
+	byName := make(map[string]Style)
+	for _, s := range builtinStyles() {
+		byName[s.Name] = s
+	}
 	for _, s := range userStyles {
 		byName[s.Name] = s
 	}

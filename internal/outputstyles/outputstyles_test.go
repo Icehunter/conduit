@@ -17,6 +17,58 @@ func TestLoad_EmptyDir(t *testing.T) {
 	}
 }
 
+// TestLoadAll_IncludesBuiltins verifies that the picker is never empty —
+// "default", "Explanatory", "Learning" always show up even with no
+// user/project styles on disk.
+func TestLoadAll_IncludesBuiltins(t *testing.T) {
+	// Use a tempdir as cwd and unset HOME so neither user nor project dir
+	// exists; only built-ins should remain.
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	styles, err := LoadAll(dir)
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	want := map[string]bool{"default": false, "Explanatory": false, "Learning": false}
+	for _, s := range styles {
+		if _, ok := want[s.Name]; ok {
+			want[s.Name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("built-in style %q missing from LoadAll", name)
+		}
+	}
+}
+
+// TestLoadAll_ProjectOverridesBuiltin ensures a user-defined style with
+// the same name as a built-in wins.
+func TestLoadAll_ProjectOverridesBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	stylesDir := filepath.Join(dir, ".claude", "output-styles")
+	if err := os.MkdirAll(stylesDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(stylesDir, "Explanatory.md"), "---\ndescription: my override\n---\noverridden")
+
+	styles, err := LoadAll(dir)
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	for _, s := range styles {
+		if s.Name == "Explanatory" {
+			if s.Description != "my override" {
+				t.Errorf("project Explanatory should override built-in; got desc %q", s.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("Explanatory missing")
+}
+
 func TestLoad_PlainMarkdown(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "concise.md"), "Be concise. Use bullet points.")

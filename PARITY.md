@@ -274,7 +274,7 @@
 | /session | `commands/session/` | `internal/commands/session.go` | ✅ | ID, path, message count, duration |
 | /stats | `commands/stats/` | `internal/commands/session.go` + settings panel | ✅ | Opens Stats panel (Overview + Models tabs) |
 | /status | `commands/status/` | `internal/commands/session.go` | ✅ | Model, mode, session ID, cost, context% |
-| /tag | `commands/tag/` | ❌ | ❌ | Session tagging |
+| /tag | `commands/tag/` | `internal/commands/session.go` | ✅ | Tag/clear current session; tag shown in /session and /resume picker |
 | /tasks | `commands/tasks/` | `internal/commands/session.go` | ✅ | Lists active TaskTool tasks |
 | /theme | `commands/theme/` | `internal/commands/misc.go` + `internal/theme/` | ✅ | Switch palette: dark/light/dark-accessible/light-accessible; hot-swap via OnChange listeners; persisted to settings.json |
 | /usage | `commands/usage/` | `internal/commands/session.go` | ✅ | Token/cost breakdown by turn |
@@ -408,7 +408,7 @@
 | Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Conversation recovery | `utils/conversationRecovery.ts` | — | ❌ | ❌ | |
 | File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
-| Session activity tracking | `utils/sessionActivity.ts` | — | ❌ | ❌ | |
+| Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | 🟡 | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat is descoped (bridge-only) |
 | Session environment setup | `utils/sessionEnvironment.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv + cleanup restore |
 | Session URL handling | `utils/sessionUrl.ts` | — | ❌ | ❌ | |
 | Cost tracking persistence | `cost-tracker.ts` | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
@@ -604,12 +604,12 @@
 | Tools (individual, 40) | 32 | 0 | 3 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
 | TUI & Rendering | 15 | 6 | 10 | 0 | 31 |
-| Slash Commands | 40 | 1 | 7 | 12 | 60 |
+| Slash Commands | 41 | 1 | 6 | 12 | 60 |
 | MCP Host | 9 | 0 | 4 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
 | Memory System | 8 | 0 | 5 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
-| Session & History | 10 | 1 | 3 | 0 | 14 |
+| Session & History | 10 | 2 | 2 | 0 | 14 |
 | Config & Settings | 8 | 0 | 7 | 3 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **208** | **15** | **120** | **43** | **386** |
+| **TOTAL** | **209** | **16** | **118** | **43** | **386** |
 
-**Overall parity: 223/343 scoped features (65% complete, 4% partial)**
+**Overall parity: 225/343 scoped features (65% complete, 5% partial)**
 **Descoped: 43 features (intentionally excluded)**
 
 ---
@@ -674,9 +674,8 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 8. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
 9. **Session memory service** — inject recent session summaries on resume (`services/SessionMemory/`).
 10. **Memory extraction** — auto-extract memorable facts after session end (`services/extractMemories/`).
-11. **/tag command** — tag sessions for later retrieval.
-12. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
+11. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session).

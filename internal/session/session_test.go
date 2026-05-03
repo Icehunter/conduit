@@ -205,5 +205,105 @@ func TestLoadFileAccess_Empty(t *testing.T) {
 	}
 }
 
+// --- tag persistence ---
+
+func TestAppendTag_AndLoad(t *testing.T) {
+	s := newTestSession(t)
+
+	if err := s.AppendTag("refactor"); err != nil {
+		t.Fatalf("AppendTag: %v", err)
+	}
+
+	tag, err := LoadTag(s.FilePath)
+	if err != nil {
+		t.Fatalf("LoadTag: %v", err)
+	}
+	if tag != "refactor" {
+		t.Errorf("LoadTag = %q; want refactor", tag)
+	}
+}
+
+func TestLoadTag_LastWins(t *testing.T) {
+	s := newTestSession(t)
+	_ = s.AppendTag("first")
+	_ = s.AppendTag("second")
+
+	tag, err := LoadTag(s.FilePath)
+	if err != nil {
+		t.Fatalf("LoadTag: %v", err)
+	}
+	if tag != "second" {
+		t.Errorf("LoadTag = %q; want second (last entry wins)", tag)
+	}
+}
+
+func TestLoadTag_EmptyClears(t *testing.T) {
+	s := newTestSession(t)
+	_ = s.AppendTag("removeme")
+	_ = s.AppendTag("")
+
+	tag, err := LoadTag(s.FilePath)
+	if err != nil {
+		t.Fatalf("LoadTag: %v", err)
+	}
+	if tag != "" {
+		t.Errorf("LoadTag = %q; want empty (tag cleared)", tag)
+	}
+}
+
+func TestLoadTag_NoTag(t *testing.T) {
+	s := newTestSession(t)
+	_ = s.AppendMessage(api.Message{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}})
+
+	tag, err := LoadTag(s.FilePath)
+	if err != nil {
+		t.Fatalf("LoadTag: %v", err)
+	}
+	if tag != "" {
+		t.Errorf("LoadTag = %q; want empty for untagged session", tag)
+	}
+}
+
+// --- activity tracking ---
+
+func TestActivity_FromTimestamps(t *testing.T) {
+	s := newTestSession(t)
+
+	_ = s.AppendMessage(api.Message{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "first"}}})
+	_ = s.AppendMessage(api.Message{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "reply"}}})
+
+	act, err := LoadActivity(s.FilePath)
+	if err != nil {
+		t.Fatalf("LoadActivity: %v", err)
+	}
+	if act.FirstActivity.IsZero() {
+		t.Error("FirstActivity should be set after appending a message")
+	}
+	if act.LastActivity.IsZero() {
+		t.Error("LastActivity should be set after appending a message")
+	}
+	if act.LastActivity.Before(act.FirstActivity) {
+		t.Errorf("LastActivity (%v) should be ≥ FirstActivity (%v)", act.LastActivity, act.FirstActivity)
+	}
+	if act.MessageCount != 2 {
+		t.Errorf("MessageCount = %d; want 2", act.MessageCount)
+	}
+}
+
+func TestActivity_EmptySession(t *testing.T) {
+	s := newTestSession(t)
+
+	act, err := LoadActivity(s.FilePath)
+	if err != nil {
+		t.Fatalf("LoadActivity: %v", err)
+	}
+	if !act.FirstActivity.IsZero() || !act.LastActivity.IsZero() {
+		t.Errorf("expected zero times for empty session; got %+v", act)
+	}
+	if act.MessageCount != 0 {
+		t.Errorf("MessageCount = %d; want 0", act.MessageCount)
+	}
+}
+
 // ensure json import is used
 var _ = json.Marshal

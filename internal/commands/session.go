@@ -50,6 +50,10 @@ type SessionState struct {
 	CopyLast    func() string
 	// RenameSession sets the title of the current session.
 	RenameSession func(title string) error
+	// TagSession assigns a tag label to the current session. Empty clears.
+	TagSession func(tag string) error
+	// GetSessionTag returns the active tag for the current session ("" if none).
+	GetSessionTag func() string
 	// GetSessionFiles returns (reads, writes) file paths from session JSONL.
 	GetSessionFiles func() (reads, writes []string)
 	// GetRateLimitWarning returns the current rate limit warning string (empty if none).
@@ -58,6 +62,8 @@ type SessionState struct {
 	CheckAuth func() error
 	// GetSessionInfo returns session ID, file path, message count, and start time.
 	GetSessionInfo func() (id, path string, messages int, startedAt time.Time)
+	// GetSessionActivity returns last-activity time for idle reporting in /session.
+	GetSessionActivity func() time.Time
 }
 
 // RegisterSessionCommands registers all session-dependent slash commands.
@@ -393,6 +399,28 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
+	// /tag [name]  — name "" or "clear" removes the tag.
+	r.Register(Command{
+		Name:        "tag",
+		Description: "Tag the current session for later retrieval (empty arg clears)",
+		Handler: func(args string) Result {
+			if state.TagSession == nil {
+				return Result{Type: "text", Text: "Session tagging not available."}
+			}
+			tag := strings.TrimSpace(args)
+			if tag == "clear" {
+				tag = ""
+			}
+			if err := state.TagSession(tag); err != nil {
+				return Result{Type: "error", Text: fmt.Sprintf("tag failed: %v", err)}
+			}
+			if tag == "" {
+				return Result{Type: "flash", Text: "Tag cleared"}
+			}
+			return Result{Type: "flash", Text: "Tagged: #" + tag}
+		},
+	})
+
 	// /feedback
 	r.Register(Command{
 		Name:        "feedback",
@@ -568,6 +596,9 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if title == "" {
 					title = "session " + s.ID[:min(8, len(s.ID))]
 				}
+				if tag, _ := session.LoadTag(s.FilePath); tag != "" {
+					title = "#" + tag + " · " + title
+				}
 				lines = append(lines, s.FilePath+"\t"+age+"\t"+title)
 			}
 			return Result{Type: "resume-pick", Text: strings.Join(lines, "\n")}
@@ -654,16 +685,22 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			if path != "" {
 				sb.WriteString(statusRow("File:", path, "", labelW))
 			}
+			if state.GetSessionTag != nil {
+				if tag := state.GetSessionTag(); tag != "" {
+					sb.WriteString(statusRow("Tag:", "#"+tag, "", labelW))
+				}
+			}
 			sb.WriteString(statusRow("Messages:", fmt.Sprintf("%d", msgs), "", labelW))
 			if !startedAt.IsZero() {
-				dur := time.Since(startedAt)
-				h := int(dur.Hours())
-				m := int(dur.Minutes()) % 60
-				durStr := fmt.Sprintf("%dm", m)
-				if h > 0 {
-					durStr = fmt.Sprintf("%dh %dm", h, m)
+				sb.WriteString(statusRow("Duration:", humanDuration(time.Since(startedAt)), "", labelW))
+			}
+			if state.GetSessionActivity != nil {
+				if last := state.GetSessionActivity(); !last.IsZero() {
+					idle := time.Since(last)
+					if idle >= 30*time.Second {
+						sb.WriteString(statusRow("Idle:", humanDuration(idle), "", labelW))
+					}
 				}
-				sb.WriteString(statusRow("Duration:", durStr, "", labelW))
 			}
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
@@ -780,6 +817,34 @@ func min(a, b int) int {
 }
 
 // formatSessionAge returns a concise human-readable age string.
+// humanDuration formats a Duration as "5s", "2m", "1h 13m", "3d 4h".
+func humanDuration(d time.Duration) string {
+	if d < time.Minute {
+		s := int(d.Seconds())
+		if s < 1 {
+			s = 1
+		}
+		return fmt.Sprintf("%ds", s)
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	days := int(d.Hours() / 24)
+	h := int(d.Hours()) % 24
+	if h == 0 {
+		return fmt.Sprintf("%dd", days)
+	}
+	return fmt.Sprintf("%dd %dh", days, h)
+}
+
 func formatSessionAge(d time.Duration) string {
 	switch {
 	case d < time.Minute:

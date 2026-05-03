@@ -261,6 +261,21 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			}
 			return runOpts.Session.SetTitle(title)
 		},
+		// /tag — persist a tag to the session JSONL ("" clears).
+		TagSession: func(tag string) error {
+			if runOpts.Session == nil {
+				return fmt.Errorf("no active session")
+			}
+			return runOpts.Session.AppendTag(tag)
+		},
+		// GetSessionTag — look up the latest tag for /session display.
+		GetSessionTag: func() string {
+			if runOpts.Session == nil {
+				return ""
+			}
+			tag, _ := session.LoadTag(runOpts.Session.FilePath)
+			return tag
+		},
 		// /files — deduplicated read/write lists from the session JSONL.
 		GetSessionFiles: func() (reads, writes []string) {
 			if runOpts.Session == nil {
@@ -309,6 +324,14 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			}
 			startedAt = sessionStart
 			return
+		},
+		// GetSessionActivity — last activity timestamp from JSONL for idle reporting.
+		GetSessionActivity: func() time.Time {
+			if runOpts.Session == nil {
+				return time.Time{}
+			}
+			act, _ := session.LoadActivity(runOpts.Session.FilePath)
+			return act.LastActivity
 		},
 	}
 	commands.RegisterSessionCommands(reg, state)

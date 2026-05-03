@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 )
 
 // CostSnapshot is the cost entry written to JSONL on each turn.
@@ -219,6 +220,93 @@ func Search(path string, term string) ([]SearchResult, error) {
 		}
 	}
 	return results, nil
+}
+
+// AppendTag persists a tag label for the session. Empty tag clears it.
+// Mirrors src/utils/sessionStorage.ts saveTag — tag entries are appended
+// to the JSONL transcript and the most recent value wins on read.
+func (s *Session) AppendTag(tag string) error {
+	return s.Append(Entry{Type: "tag", Title: tag})
+}
+
+// LoadTag returns the current tag for a session, or "" if untagged.
+func LoadTag(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var tag string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Type == "tag" {
+			tag = entry.Title
+		}
+	}
+	return tag, nil
+}
+
+// Activity summarizes a session's temporal footprint.
+type Activity struct {
+	FirstActivity time.Time
+	LastActivity  time.Time
+	MessageCount  int
+}
+
+// IdleSince returns how long since the last recorded activity, or 0 if none.
+func (a Activity) IdleSince(now time.Time) time.Duration {
+	if a.LastActivity.IsZero() {
+		return 0
+	}
+	return now.Sub(a.LastActivity)
+}
+
+// LoadActivity walks the JSONL and returns first/last entry timestamps and
+// message count. Mirrors the temporal half of src/utils/sessionActivity.ts —
+// we do not run the heartbeat timer (that's a remote/bridge feature) but we
+// expose enough for /session to display "active for X" / "idle for Y".
+func LoadActivity(path string) (Activity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Activity{}, nil
+		}
+		return Activity{}, err
+	}
+	var act Activity
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Timestamp == 0 {
+			continue
+		}
+		ts := time.UnixMilli(entry.Timestamp)
+		if act.FirstActivity.IsZero() || ts.Before(act.FirstActivity) {
+			act.FirstActivity = ts
+		}
+		if ts.After(act.LastActivity) {
+			act.LastActivity = ts
+		}
+		if entry.Type == "message" {
+			act.MessageCount++
+		}
+	}
+	return act, nil
 }
 
 // FileAccessEntry records a file read or write.

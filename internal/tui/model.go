@@ -2476,6 +2476,8 @@ func (m Model) View() string {
 	vp := m.vp.View()
 
 	// Spinner row — always 1 line to prevent layout shift.
+	// Always emit a full-width bg-painted line so the area under the viewport
+	// doesn't expose terminal default bg.
 	var spinRow string
 	switch {
 	case m.flashMsg != "":
@@ -2485,6 +2487,7 @@ func (m Model) View() string {
 	default:
 		spinRow = ""
 	}
+	spinRow = lipgloss.NewStyle().Background(colorBg).Width(m.width).Render(spinRow)
 
 	// Input box.
 	bStyle := styleInputBorder
@@ -2560,7 +2563,11 @@ func (m Model) View() string {
 	if pad < 1 {
 		pad = 1
 	}
-	statusBar := left + strings.Repeat(" ", pad) + right
+	// Wrap the entire status bar in app bg so the gap between left and right
+	// segments doesn't expose terminal default.
+	statusBar := lipgloss.NewStyle().Background(colorBg).Width(m.width).Render(
+		left + strings.Repeat(" ", pad) + right,
+	)
 
 	// Panel is a full-screen takeover — replace vp+spinner+input with it.
 	// Only status bar remains at the bottom.
@@ -2594,12 +2601,10 @@ func (m Model) View() string {
 	}
 
 	// JoinVertical with explicit newlines between non-empty parts.
+	// spinRow is always full-width bg-painted (set above) so it covers the
+	// gap between viewport and input regardless of whether it has content.
 	parts := []string{vp}
-	if spinRow != "" {
-		parts = append(parts, spinRow)
-	} else {
-		parts = append(parts, "")
-	}
+	parts = append(parts, spinRow)
 	if overlayBox != "" {
 		parts = append(parts, overlayBox)
 	}

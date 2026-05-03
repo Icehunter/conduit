@@ -199,22 +199,24 @@ func renderWelcomeCard(content string, width int) string {
 	topBorder := borderStyle.Render("╭─") + titleRendered +
 		borderStyle.Render(strings.Repeat("─", afterTitle)+"╮")
 
-	// Content rows flanked by │ and one space of inner padding.
+	// Content rows flanked by │ and one space of inner padding. Each row
+	// gets wrapped in a bg-painted style at the end so the inner spaces
+	// (which are bare " " concatenations, not lipgloss-styled) inherit
+	// the theme bg instead of exposing terminal default.
+	bgWrap := lipgloss.NewStyle().Background(colorBg)
 	var fullRows []string
-	fullRows = append(fullRows, topBorder)
-	// Blank padding row at top.
+	fullRows = append(fullRows, bgWrap.Render(topBorder))
 	blankInner := strings.Repeat(" ", innerW)
-	fullRows = append(fullRows, borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│"))
+	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│")))
 	for _, r := range bodyRows {
 		lw := lipgloss.Width(r)
 		if lw < rowW {
 			r += strings.Repeat(" ", rowW-lw)
 		}
-		fullRows = append(fullRows, borderStyle.Render("│")+" "+r+" "+borderStyle.Render("│"))
+		fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+r+" "+borderStyle.Render("│")))
 	}
-	// Blank padding row at bottom.
-	fullRows = append(fullRows, borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│"))
-	fullRows = append(fullRows, borderStyle.Render("╰"+strings.Repeat("─", outerW-2)+"╯"))
+	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│")))
+	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("╰"+strings.Repeat("─", outerW-2)+"╯")))
 
 	pad := strings.Repeat(" ", outerPad)
 	return indentLines(strings.Join(fullRows, "\n"), pad)

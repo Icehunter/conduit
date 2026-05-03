@@ -3674,6 +3674,8 @@ func (m Model) View() tea.View {
 		overlayBox = m.renderCommandPicker()
 	} else if len(m.atMatches) > 0 {
 		overlayBox = m.renderAtPicker()
+	} else if m.companionBubble != "" {
+		overlayBox = m.renderCompanionBubble()
 	}
 	if overlayBox != "" {
 		overlayLines := strings.Count(overlayBox, "\n") + 1
@@ -3837,11 +3839,6 @@ func (m Model) View() tea.View {
 	// spinRow is always full-width bg-painted (set above) so it covers the
 	// gap between viewport and input regardless of whether it has content.
 	parts := []string{vp}
-	// Companion speech bubble floats between the viewport and the spinner row
-	// when active. Mirrors CompanionFloatingBubble in CC's REPL.
-	if bubble := m.renderCompanionBubble(); bubble != "" {
-		parts = append(parts, bubble)
-	}
 	parts = append(parts, spinRow)
 	if overlayBox != "" {
 		parts = append(parts, overlayBox)

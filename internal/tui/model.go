@@ -229,6 +229,11 @@ type Model struct {
 	streaming   string
 	turnID      int // incremented each turn; agentDoneMsg with stale ID is ignored
 
+	// companionTurn is true when the current turn is addressed to the companion.
+	// Suppresses streaming from the viewport so the response goes straight to
+	// the bubble without a flash-and-disappear in chat.
+	companionTurn bool
+
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands
 	cmdSelected int                // selected index in cmdMatches
@@ -569,8 +574,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancelled = false
 		m.cancelTurn = nil
+		ct := m.companionTurn
+		m.companionTurn = false
 		if m.streaming != "" {
-			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+			// Suppress companion-turn responses from chat history — they go
+			// straight to the bubble via maybeFireCompanionBubble below.
+			if !ct {
+				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+			}
 			m.streaming = ""
 		}
 		if msg.cancelled || isCancelError(msg.err) {
@@ -1304,6 +1315,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.historyIdx = -1
 		m.historyDraft = ""
 		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+		// Detect companion-addressed turns early so we can suppress streaming
+		// from the viewport — the response goes directly to the bubble.
+		m.companionTurn = false
+		if sc, err := buddy.Load(); err == nil && sc != nil && sc.Name != "" {
+			m.companionTurn = strings.Contains(strings.ToLower(text), strings.ToLower(sc.Name))
+		}
 		// Expand paste placeholders before sending to the API.
 		// The textarea holds "[Pasted text #N +X lines]" tokens; the agent
 		// receives the raw pasted content. After expansion, clear the map.
@@ -3603,7 +3620,9 @@ func (m *Model) refreshViewport() {
 		sb.WriteString(renderMessage(msg, w))
 		sb.WriteByte('\n')
 	}
-	if m.streaming != "" {
+	// Suppress streaming text for companion-addressed turns: the response
+	// will go straight to the bubble, not the chat history.
+	if m.streaming != "" && !m.companionTurn {
 		if len(m.messages) > 0 {
 			sb.WriteString(separator(w))
 			sb.WriteByte('\n')

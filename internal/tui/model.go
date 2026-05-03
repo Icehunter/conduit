@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -960,14 +961,31 @@ func (m Model) computeCommandMatches() ([]commands.Command, int) {
 	}
 	query := strings.ToLower(strings.TrimPrefix(text, "/"))
 	all := m.cfg.Commands.All()
-	var matches []commands.Command
+	// Rank matches: 0 = name prefix, 1 = name contains, 2 = description contains.
+	// Stable within each rank to preserve alphabetical order from Registry.All().
+	type ranked struct {
+		cmd  commands.Command
+		rank int
+	}
+	var rs []ranked
 	for _, c := range all {
 		if c.Name == "quit" {
-			continue // deduplicate with exit
+			continue
 		}
-		if strings.Contains(c.Name, query) || strings.Contains(strings.ToLower(c.Description), query) {
-			matches = append(matches, c)
+		switch {
+		case strings.HasPrefix(c.Name, query):
+			rs = append(rs, ranked{c, 0})
+		case strings.Contains(c.Name, query):
+			rs = append(rs, ranked{c, 1})
+		case strings.Contains(strings.ToLower(c.Description), query):
+			rs = append(rs, ranked{c, 2})
 		}
+	}
+	// Stable sort by rank only; alphabetical order within rank is preserved.
+	sort.SliceStable(rs, func(i, j int) bool { return rs[i].rank < rs[j].rank })
+	matches := make([]commands.Command, len(rs))
+	for i, r := range rs {
+		matches[i] = r.cmd
 	}
 	// Preserve selection if the same set, otherwise reset.
 	sel := m.cmdSelected

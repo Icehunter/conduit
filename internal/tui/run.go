@@ -455,10 +455,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 	}
 	modelPtr = &m
-	prog = tea.NewProgram(
-		m,
-		tea.WithAltScreen(),
-	)
+	// AltScreen now lives on the View struct (bubbletea v2) — see Model.View.
+	prog = tea.NewProgram(m)
 
 	// Wire interactive permission prompts — the callback runs in the agent
 	// goroutine, sends permissionAskMsg to Bubble Tea, then blocks on the

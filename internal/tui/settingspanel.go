@@ -436,7 +436,7 @@ func max(a, b int) int {
 // Keyboard handler
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (m Model) handleSettingsPanelKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	p := m.settingsPanel
 	if p == nil {
 		return m, nil, false
@@ -551,7 +551,7 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 				if p.selected < len(p.filteredIdx)-1 {
 					p.selected++
 				}
-			case "enter", " ":
+			case "enter", "space":
 				p.toggleSelected()
 			case "backspace":
 				if len(p.search) > 0 {

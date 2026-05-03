@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/cursor"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -59,7 +58,7 @@ const (
 // textarea.KeyMap.InsertNewline (shift+enter, alt+enter, ctrl+j) — kept
 // in sync manually because bubbles textarea doesn't expose the bound
 // key list as a string set.
-func isNewlineInsertKey(k tea.KeyMsg) bool {
+func isNewlineInsertKey(k tea.KeyPressMsg) bool {
 	switch k.String() {
 	case "shift+enter", "alt+enter", "ctrl+j":
 		return true
@@ -307,8 +306,8 @@ func New(cfg Config) Model {
 	// HEAVY VERTICAL), and a row of repeating "❯" looks like a confused list,
 	// not an input cue. SetPromptFunc gives us a per-line callback so
 	// continuation rows render as plain spaces of the same width.
-	ta.SetPromptFunc(2, func(line int) string {
-		if line == 0 {
+	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
 			return "❯ "
 		}
 		return "  "
@@ -328,8 +327,11 @@ func New(cfg Config) Model {
 
 	// Static cursor (no blink) — blink causes the chat bar to repaint twice
 	// a second, and on light themes the repaint cycle is visible as flashing
-	// because lipgloss bg paint regenerates each frame.
-	ta.Cursor.SetMode(cursor.CursorStatic)
+	// because lipgloss bg paint regenerates each frame. v2 reads cursor
+	// blink off Styles.Cursor.Blink instead of cursor.SetMode.
+	tas := ta.Styles()
+	tas.Cursor.Blink = false
+	ta.SetStyles(tas)
 
 	applyTextareaTheme(&ta)
 
@@ -432,7 +434,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			},
 		)...)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		m2, cmd, consumed := m.handleKey(msg)
 		m = m2
 		if cmd != nil {
@@ -742,7 +744,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// first row stays scrolled offscreen. Pre-growing means the insert
 		// happens with capacity already in place: cursor on row N is still
 		// within [YOffset=0, YOffset+Height-1=N], no scroll fires.
-		if k, ok := msg.(tea.KeyMsg); ok && isNewlineInsertKey(k) {
+		if k, ok := msg.(tea.KeyPressMsg); ok && isNewlineInsertKey(k) {
 			nextLines := m.input.LineCount() + 1
 			cap := chromeHeight(nextLines, m.height) - chromeFixed
 			if nextLines <= cap {
@@ -771,7 +773,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes a key event. The bool return indicates whether the key
 // was fully consumed (true = skip textarea/viewport propagation).
-func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// Login picker intercepts all keys when active.
 	if m.loginPrompt != nil {
 		m2, cmd := m.handleLoginKey(msg)
@@ -1231,7 +1233,7 @@ type resumePromptState struct {
 	selected int
 }
 
-func (m Model) handleResumeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.resumePrompt
 	switch msg.String() {
 	case "up":
@@ -1242,7 +1244,7 @@ func (m Model) handleResumeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if p.selected < len(p.sessions)-1 {
 			p.selected++
 		}
-	case "enter", " ":
+	case "enter", "space":
 		picked := p.sessions[p.selected]
 		m.resumePrompt = nil
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Loading session…"})
@@ -1302,7 +1304,7 @@ type onboardingState struct {
 	userName      string
 }
 
-func (m Model) handleOnboardingKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleOnboardingKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "esc":
 		m.onboarding = nil
@@ -1377,7 +1379,7 @@ type pickerState struct {
 	current  string       // value to highlight as "active"
 }
 
-func (m Model) handlePickerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.picker
 	switch msg.String() {
 	case "up", "k":
@@ -1392,7 +1394,7 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		p.selected = 0
 	case "end", "G":
 		p.selected = len(p.items) - 1
-	case "enter", " ":
+	case "enter", "space":
 		if p.selected < 0 || p.selected >= len(p.items) {
 			return m, nil
 		}
@@ -1605,7 +1607,7 @@ func (p *panelState) selectedMCPItem() *panelMCPItem {
 }
 
 // handlePanelKey routes keyboard input through the panel navigation stack.
-func (m Model) handlePanelKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.panel
 	key := msg.String()
 
@@ -2022,7 +2024,7 @@ var loginOptions = []struct {
 	{"Anthropic Console", "Console / Platform / API account", false},
 }
 
-func (m Model) handleLoginKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleLoginKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.loginPrompt
 	switch msg.String() {
 	case "up", "left":
@@ -2033,7 +2035,7 @@ func (m Model) handleLoginKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if p.selected < len(loginOptions)-1 {
 			p.selected++
 		}
-	case "enter", " ":
+	case "enter", "space":
 		opt := loginOptions[p.selected]
 		m.loginPrompt = nil
 		// Remove the "Not logged in" welcome message if present so the entire
@@ -2058,11 +2060,11 @@ func (m Model) handleLoginKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "1":
 		p.selected = 0
 		m.loginPrompt = p
-		return m.handleLoginKey(tea.KeyMsg{Type: tea.KeyEnter})
+		return m.handleLoginKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	case "2":
 		p.selected = 1
 		m.loginPrompt = p
-		return m.handleLoginKey(tea.KeyMsg{Type: tea.KeyEnter})
+		return m.handleLoginKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	}
 	m.loginPrompt = p
 	return m, nil
@@ -2227,7 +2229,7 @@ type permissionPromptState struct {
 var permissionOptions = []string{"Allow once", "Always allow", "Deny"}
 
 // handlePermissionKey routes keys to the permission modal.
-func (m Model) handlePermissionKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.permPrompt
 	switch msg.String() {
 	case "up", "left", "shift+tab":
@@ -2238,7 +2240,7 @@ func (m Model) handlePermissionKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if p.selected < len(permissionOptions)-1 {
 			p.selected++
 		}
-	case "enter", " ":
+	case "enter", "space":
 		reply := permissionReply{
 			allow:       p.selected != 2,
 			alwaysAllow: p.selected == 1,
@@ -2890,10 +2892,18 @@ func (m *Model) refreshViewport() {
 	m.vp.SetContent(sb.String())
 }
 
-// View renders the full TUI frame.
-func (m Model) View() string {
+// View renders the full TUI frame. v2 returns tea.View — internally we
+// still build a string and wrap it via mkView so all the existing
+// rendering/paint logic stays unchanged.
+func (m Model) View() tea.View {
+	mkView := func(content string) tea.View {
+		var v tea.View
+		v.SetContent(content)
+		v.AltScreen = true
+		return v
+	}
 	if !m.ready {
-		return "Loading…\n"
+		return mkView("Loading…\n")
 	}
 
 	// Re-apply theme styles to widgets every render. Necessary because
@@ -3030,19 +3040,19 @@ func (m Model) View() string {
 	// Only status bar remains at the bottom.
 	if m.panel != nil {
 		panel := m.renderPanel()
-		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, statusBar))
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, statusBar)))
 	}
 
 	// Plugin panel is also a full-screen takeover.
 	if m.pluginPanel != nil {
 		pluginPanel := m.renderPluginPanel()
-		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar))
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar)))
 	}
 
 	// Settings panel is a full-screen takeover.
 	if m.settingsPanel != nil {
 		sp := m.renderSettingsPanel()
-		return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar))
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)))
 	}
 
 	// Overlays: login > resume > permission > command picker (appended below vp).
@@ -3074,7 +3084,7 @@ func (m Model) View() string {
 		parts = append(parts, coord)
 	}
 	parts = append(parts, statusBar)
-	return paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...))
+	return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...)))
 }
 
 // renderCoordinatorPanel renders a footer row per active sub-agent task

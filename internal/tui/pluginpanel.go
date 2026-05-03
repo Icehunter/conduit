@@ -362,7 +362,7 @@ func (p *pluginPanelState) currentListLen() int {
 
 // ---- Key handler -----------------------------------------------------------
 
-func (m Model) handlePluginPanelKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handlePluginPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.pluginPanel
 	key := msg.String()
 
@@ -433,7 +433,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 		if p.selected < p.currentListLen()-1 {
 			p.selected++
 		}
-	case " ":
+	case "space":
 		if p.tab == pluginTabDiscover && len(p.discoverFiltered) > 0 {
 			idx := p.discoverFiltered[p.selected]
 			p.discoverItems[idx].selected = !p.discoverItems[idx].selected

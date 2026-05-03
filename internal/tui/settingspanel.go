@@ -318,8 +318,12 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			label: "Output style",
 			kind:  "enum",
 			value: outputDisplay,
+			// Stored values match CC's built-in names exactly: "default"
+			// is lowercase, "Explanatory" and "Learning" are capitalized.
+			// Mismatched casing here would make the panel display "Default"
+			// no matter what was actually selected.
 			options:    []string{"Default", "Explanatory", "Learning"},
-			optionVals: []string{"default", "explanatory", "learning"},
+			optionVals: []string{"default", "Explanatory", "Learning"},
 		},
 		{
 			id:    "model",
@@ -372,12 +376,14 @@ func permModeStoredVal(display string) string {
 }
 
 // outputStyleStoredVal converts a display name back to the stored value.
+// Built-in style names are case-sensitive — "Explanatory" and "Learning"
+// stay capitalized; only "default" is lowercase.
 func outputStyleStoredVal(display string) string {
 	switch display {
 	case "Explanatory":
-		return "explanatory"
+		return "Explanatory"
 	case "Learning":
-		return "learning"
+		return "Learning"
 	default:
 		return "default"
 	}
@@ -385,9 +391,9 @@ func outputStyleStoredVal(display string) string {
 
 func outputStyleDisplay(val string) string {
 	switch val {
-	case "explanatory":
+	case "Explanatory", "explanatory":
 		return "Explanatory"
-	case "learning":
+	case "Learning", "learning":
 		return "Learning"
 	default:
 		return "Default"

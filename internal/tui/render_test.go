@@ -3,24 +3,30 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
+// plainText strips ANSI escapes so substring assertions don't fail when
+// lipgloss v2 emits per-rune styling that interleaves with the text.
+func plainText(s string) string { return ansi.Strip(s) }
+
 func TestRenderMarkdown_Heading1(t *testing.T) {
-	out := renderMarkdown("# Hello World", 80)
+	out := plainText(renderMarkdown("# Hello World", 80))
 	if !strings.Contains(out, "Hello World") {
 		t.Errorf("h1 text missing: %q", out)
 	}
 }
 
 func TestRenderMarkdown_Heading2(t *testing.T) {
-	out := renderMarkdown("## Section", 80)
+	out := plainText(renderMarkdown("## Section", 80))
 	if !strings.Contains(out, "Section") {
 		t.Errorf("h2 text missing: %q", out)
 	}
 }
 
 func TestRenderMarkdown_Strikethrough(t *testing.T) {
-	out := renderMarkdown("~~deleted text~~", 80)
+	out := plainText(renderMarkdown("~~deleted text~~", 80))
 	// Should contain the text (strikethrough styling is cosmetic)
 	if !strings.Contains(out, "deleted text") {
 		t.Errorf("strikethrough text missing: %q", out)
@@ -28,7 +34,7 @@ func TestRenderMarkdown_Strikethrough(t *testing.T) {
 }
 
 func TestRenderMarkdown_Italic(t *testing.T) {
-	out := renderMarkdown("*italic* and _also italic_", 80)
+	out := plainText(renderMarkdown("*italic* and _also italic_", 80))
 	if !strings.Contains(out, "italic") {
 		t.Errorf("italic text missing: %q", out)
 	}

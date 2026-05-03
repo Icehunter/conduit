@@ -2845,12 +2845,12 @@ func (m Model) applyLayout() Model {
 	}
 
 	if !m.ready {
-		m.vp = viewport.New(m.width, vpHeight)
+		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
 		m.vp.Style = lipgloss.NewStyle() // app bg behind viewport content
 		m.ready = true
 	} else {
-		m.vp.Width = m.width
-		m.vp.Height = vpHeight
+		m.vp.SetWidth(m.width)
+		m.vp.SetHeight(vpHeight)
 	}
 	m.input.SetWidth(inputW)
 	// Drop bubbles textarea's Placeholder feature — its internal
@@ -2868,7 +2868,7 @@ func (m *Model) refreshViewport() {
 	if !m.ready {
 		return
 	}
-	w := m.vp.Width
+	w := m.vp.Width()
 	if w <= 0 {
 		return
 	}
@@ -3261,7 +3261,9 @@ func applyTextareaTheme(ta *textarea.Model) {
 	taBase := maybeBg(lipgloss.NewStyle().Foreground(colorFg))
 	taPlaceholder := maybeBg(lipgloss.NewStyle().Foreground(colorMuted))
 
-	for _, s := range []*textarea.Style{&ta.FocusedStyle, &ta.BlurredStyle} {
+	// v2: textarea Styles is a value-typed accessor — read, mutate, write back.
+	styles := ta.Styles()
+	for _, s := range []*textarea.StyleState{&styles.Focused, &styles.Blurred} {
 		s.Base = taBase
 		s.Text = taBase
 		s.Placeholder = taPlaceholder
@@ -3271,12 +3273,12 @@ func applyTextareaTheme(ta *textarea.Model) {
 		s.EndOfBuffer = taBase
 		s.LineNumber = taBase
 	}
-
-	// Cursor character itself.
-	cs := lipgloss.NewStyle().Foreground(colorFg)
+	// v2: cursor color/blink live on Styles.Cursor (CursorStyle struct).
+	// Static (non-blink) was preserved earlier in New() via Blink=false.
 	if hasBg {
-		cs = cs.Background(colorBg)
+		styles.Cursor.Color = colorFg
+	} else {
+		styles.Cursor.Color = colorFg
 	}
-	ta.Cursor.Style = cs
-	ta.Cursor.TextStyle = cs
+	ta.SetStyles(styles)
 }

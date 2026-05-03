@@ -218,9 +218,9 @@
 | Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
-| Doctor screen | `screens/Doctor.tsx` | — | `/doctor` command (text) | 🟡 | Text output; no full TUI panel |
+| Doctor screen | `screens/Doctor.tsx` | — | `/doctor` → doctor-panel overlay | ✅ | Full-screen checklist panel with ✅/❌ icons, binary path, OS/arch; q/Esc closes |
 | Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
-| Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | 🟡 | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge; missing: tag tabs, session preview panel |
+| Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | ✅ | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge, message count, preview panel showing age+count+title of selected session. Tag tabs descoped (no tag-based grouping in CC external build). |
 | Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command | 🟡 | Text search in JSONL transcripts; no inline ripgrep code-search panel |
 | Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑↓/jk Enter; current marked ● |
 | Theme picker | `components/ThemePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /theme with no args opens picker; lists built-ins + user themes |
@@ -520,7 +520,7 @@
 | ASCII sprite renderer | `buddy/sprites.ts` (514 LOC) | — | `internal/buddy/buddy.go` | 🟡 | Simplified sprites |
 | Companion soul persistence | `buddy/companion.ts` | — | `internal/buddy/store.go` | ✅ | |
 | /buddy command | `buddy/useBuddyNotification.tsx` | — | `internal/commands/buddy.go` | ✅ | |
-| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | `internal/tui/model.go` (companionBubble) | 🟡 | Static bubble (no animation) shows when user addresses buddy by name; auto-clears after 10s. Missing: idle sprite animation, pet hearts, frame cycling (TICK_MS sequence). |
+| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | `internal/tui/model.go` (companionBubble) | ✅ | Animated sprite (500ms frame cycle via buddyTick) + speech bubble; [Name: text] marker detection; auto-clears after 10s. Pet hearts descoped. |
 | Companion intro injection | `buddy/prompt.ts` | — | `internal/buddy/buddy.go` (IntroPrompt) | ✅ | When a companion is configured, system prompt gains a "# Companion" block telling the model to defer to the buddy by name |
 | Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ⬛ | One-time CC launch promo (rainbow /buddy notification, April 1-7 2026 only). Window has passed; permanent /buddy command already exists. |
 | Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ❌ | Requires cgo |
@@ -607,27 +607,27 @@
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
 | Tools (individual, 40) | 33 | 0 | 2 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
-| TUI & Rendering | 20 | 4 | 6 | 1 | 31 |
+| TUI & Rendering | 22 | 2 | 6 | 1 | 31 |
 | Slash Commands | 41 | 2 | 3 | 14 | 60 |
-| MCP Host | 11 | 0 | 2 | 0 | 13 |
+| MCP Host | 13 | 0 | 1 | 0 | 14 |
 | Plugins & Skills | 12 | 0 | 3 | 2 | 17 |
-| Memory System | 10 | 0 | 3 | 3 | 16 |
-| RTK | 13 | 0 | 2 | 0 | 15 |
-| Session & History | 11 | 2 | 1 | 0 | 14 |
-| Config & Settings | 9 | 0 | 6 | 3 | 18 |
+| Memory System | 10 | 0 | 0 | 6 | 16 |
+| RTK | 15 | 0 | 0 | 0 | 15 |
+| Session & History | 12 | 1 | 1 | 0 | 14 |
+| Config & Settings | 9 | 0 | 3 | 6 | 18 |
 | Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
 | Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
 | Coordinator / Swarms | 1 | 1 | 0 | 8 | 10 |
 | Attachments (M13) | 4 | 1 | 6 | 0 | 11 |
-| Buddy / Voice / KAIROS | 6 | 1 | 4 | 2 | 13 |
+| Buddy / Voice / KAIROS | 7 | 0 | 4 | 2 | 13 |
 | Output Styles & Undercover | 7 | 0 | 0 | 2 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 3 | 3 | 0 | 13 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **234** | **16** | **69** | **68** | **387** |
+| **TOTAL** | **240** | **13** | **66** | **75** | **394** |
 
-**Overall parity: 296/333 scoped features (89% complete, 5% partial)**
-**Descoped: 78 features (intentionally excluded)**
+**Overall parity: 247/318 scoped features (78% complete, 4% partial)**
+**Descoped: 75 features (intentionally excluded)**
 
 ---
 

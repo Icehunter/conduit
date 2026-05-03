@@ -236,11 +236,10 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		Name:        "doctor",
 		Description: "Check auth, tools, and settings",
 		Handler: func(string) Result {
+			exe, _ := os.Executable()
 			const labelW = 14
 			var sb strings.Builder
 			sb.WriteString(statusTitle("Conduit diagnostics"))
-
-			exe, _ := os.Executable()
 			sb.WriteString(statusRow("Binary:", exe, "", labelW))
 			sb.WriteString(statusRow("Platform:", runtime.GOOS+"/"+runtime.GOARCH, "", labelW))
 			sb.WriteByte('\n')
@@ -291,7 +290,38 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			}
 			sb.WriteString(statusRow("img paste:", statusCheck(imagePasteOK), imgHint, labelW))
 
-			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+			_ = sb // unused now — data goes to doctor-panel
+			// Build structured check list for the TUI panel.
+			type check struct {
+				Label string
+				OK    bool
+				Hint  string
+			}
+			checks := []check{
+				{"Auth", authOK, authHint},
+				{"git", gitErr == nil, ""},
+				{"ripgrep (rg)", rgErr == nil, rgHint},
+				{"settings.json", settingsErr == nil, ""},
+				{"claude.json", claudeErr == nil, ""},
+				{"img paste", imagePasteOK, imgHint},
+			}
+			var rows []string
+			for _, c := range checks {
+				icon := "✅"
+				if !c.OK {
+					icon = "❌"
+				}
+				row := icon + " " + c.Label
+				if c.Hint != "" {
+					row += "  (" + c.Hint + ")"
+				}
+				rows = append(rows, row)
+			}
+			return Result{
+				Type:  "doctor-panel",
+				Text:  strings.Join(rows, "\n"),
+				Model: exe + " · " + runtime.GOOS + "/" + runtime.GOARCH,
+			}
 		},
 	})
 
@@ -630,7 +660,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				sessions = sessions[:20]
 			}
 			// Encode sessions as tab-separated lines for the TUI to parse.
-			// Format: "<filePath>\t<age>\t<title>"
+			// Format: "<filePath>\t<age>\t<title>\t<msgCount>"
 			var lines []string
 			for _, s := range sessions {
 				age := formatSessionAge(time.Since(s.Modified))
@@ -641,7 +671,8 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if tag, _ := session.LoadTag(s.FilePath); tag != "" {
 					title = "#" + tag + " · " + title
 				}
-				lines = append(lines, s.FilePath+"\t"+age+"\t"+title)
+				msgCount := countJSONLLines(s.FilePath)
+				lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%d", s.FilePath, age, title, msgCount))
 			}
 			return Result{Type: "resume-pick", Text: strings.Join(lines, "\n")}
 		},
@@ -1031,4 +1062,28 @@ func openBrowser(url string) {
 		return
 	}
 	_ = exec.Command(cmd, url).Start()
+}
+
+// countJSONLLines counts the number of non-empty lines in a JSONL file —
+// each line is one message record, so this gives an approximate message count.
+func countJSONLLines(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	buf := make([]byte, 32*1024)
+	count := 0
+	for {
+		n, err := f.Read(buf)
+		for _, b := range buf[:n] {
+			if b == '\n' {
+				count++
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return count
 }

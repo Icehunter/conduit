@@ -247,11 +247,19 @@ type Model struct {
 	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
 	flashMsg string
 
+	// companionName is the configured companion's name, loaded once at startup.
+	// Empty when no companion is configured. Used to strip [Name: ...] markers
+	// from streaming content before they reach the viewport.
+	companionName string
+
 	// companionBubble is the text shown in the companion speech bubble overlay.
-	// Set when the agent produces a short (<= 100 char) single-line response
-	// while a companion is configured and the user addressed it by name.
+	// Set when the agent produces a [Name: ...] marker in a response.
 	// Auto-cleared after ~10 seconds via a clearBubble tick.
 	companionBubble string
+
+	// buddyFrame is the current animation frame for the companion sprite.
+	// Cycled by buddyTickMsg at ~500ms intervals whenever the companion is present.
+	buddyFrame int
 
 	// rateLimitWarning is non-empty when a recent turn's rate-limit headers
 	// indicate quota is running low (<20% remaining). Shown in the status bar.
@@ -281,6 +289,10 @@ type Model struct {
 
 	// Resume picker state — non-nil when /resume is showing session list.
 	resumePrompt *resumePromptState
+
+	// doctorPanel holds the /doctor full-screen diagnostics overlay.
+	// Non-nil when the doctor panel is open; nil otherwise.
+	doctorPanel *doctorPanelState
 
 	// Generic picker for /theme, /model, /output-style. Non-nil when active.
 	picker *pickerState
@@ -384,6 +396,9 @@ func New(cfg Config) Model {
 	sp.Style = styleSpinner
 
 	m := Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName, historyIdx: -1, loginFlowMsgStart: -1}
+	if sc, err := buddy.Load(); err == nil && sc != nil {
+		m.companionName = sc.Name
+	}
 
 	// First-run welcome — only when not resuming and the persistence flag
 	// hasn't been set. Look at user-level settings only since the
@@ -447,7 +462,16 @@ func (m Model) Init() tea.Cmd {
 			})
 		}
 	}
+	if m.companionName != "" {
+		cmds = append(cmds, buddyTick())
+	}
 	return tea.Batch(cmds...)
+}
+
+type buddyTickMsg struct{}
+
+func buddyTick() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return buddyTickMsg{} })
 }
 
 // mcpApprovalMsg is sent on startup when project-scope MCP servers need
@@ -513,7 +537,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Normalize line endings: terminals may send \r\n or bare \r.
 		hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 			m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
-			m.permPrompt != nil || m.picker != nil || m.onboarding != nil
+			m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
+			m.doctorPanel != nil
 		if !hasOverlay {
 			content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "\n")
@@ -798,6 +823,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.companionBubble = msg.text
 		return m, tea.Tick(10*time.Second, func(_ time.Time) tea.Msg { return clearBubble{} })
 
+	case buddyTickMsg:
+		if m.companionName != "" {
+			m.buddyFrame++
+			return m, buddyTick()
+		}
+		return m, nil
+
 	case setPermissionModeMsg:
 		m.permissionMode = msg.mode
 		if m.cfg.Gate != nil {
@@ -913,6 +945,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// Resume picker intercepts all keys when active.
 	if m.resumePrompt != nil {
 		m2, cmd := m.handleResumeKey(msg)
+		return m2, cmd, true
+	}
+	// Doctor panel intercepts all keys when active.
+	if m.doctorPanel != nil {
+		m2, cmd := m.handleDoctorPanelKey(msg)
 		return m2, cmd, true
 	}
 	// Generic picker (/theme /model /output-style) intercepts keys.
@@ -1387,75 +1424,87 @@ func (m Model) expandPastePlaceholders(s string) string {
 	})
 }
 
-// maybeFireCompanionBubble checks if the last assistant message should be
-// displayed as a companion speech bubble. When detected it:
-//   - Removes the message from m.messages (chat history) so it only shows
-//     in the bubble, not duplicated in the conversation
+// maybeFireCompanionBubble checks if the last assistant message contains a
+// companion quip marker of the form [Name: ...]. When found it:
+//   - Strips the marker from the assistant message (leaving any remaining text)
+//   - If the message is now empty, removes it from m.messages entirely
 //   - Returns a cmd that fires companionBubbleMsg to show the bubble
 //
-// Fires when:
-//   - A companion is configured
-//   - The last user message mentioned the companion by name
-//   - The last assistant message is brief (≤ 4 non-blank lines, ≤ 200 chars)
+// The system prompt instructs Claude to wrap companion speech as [Name: text].
 func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 	sc, err := buddy.Load()
 	if err != nil || sc == nil || sc.Name == "" {
 		return m, nil
 	}
-	// Find last user message and check if it mentions the companion name.
-	companionName := strings.ToLower(sc.Name)
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		msg := m.messages[i]
-		if msg.Role == RoleUser {
-			if !strings.Contains(strings.ToLower(msg.Content), companionName) {
-				return m, nil // user didn't address the companion
-			}
-			break
-		}
-		if msg.Role == RoleAssistant {
-			break
-		}
-	}
-	// Find last assistant message and check if it looks like a companion quip.
-	// Companion quips are recognised by:
-	//   1. Starts with a *roleplay action* marker (e.g. "*pats your hand*")
-	//   2. OR is a single very short line (≤ 60 chars) — pure emoji/one-word reactions
-	// Claude's own responses (even short ones like "Not true!") don't start
-	// with * so they stay in chat.
+	prefix := "[" + sc.Name + ": "
+	closingBracket := "]"
+
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		msg := m.messages[i]
 		if msg.Role != RoleAssistant {
 			continue
 		}
-		text := strings.TrimSpace(msg.Content)
-		if text == "" {
+		text := msg.Content
+		// Look for [Name: ...] anywhere in the response.
+		start := strings.Index(text, prefix)
+		if start < 0 {
+			return m, nil // no companion marker — leave as-is
+		}
+		end := strings.Index(text[start:], closingBracket)
+		if end < 0 {
+			return m, nil // malformed marker
+		}
+		end += start // absolute index
+		quip := strings.TrimSpace(text[start+len(prefix) : end])
+		if quip == "" {
 			return m, nil
 		}
-		startsWithAction := strings.HasPrefix(text, "*")
-		lines := strings.Split(text, "\n")
-		var nonBlank []string
-		for _, l := range lines {
-			if strings.TrimSpace(l) != "" {
-				nonBlank = append(nonBlank, l)
-			}
+		// Strip the marker from the assistant message.
+		cleaned := strings.TrimSpace(text[:start] + text[end+1:])
+		if cleaned == "" {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+		} else {
+			m.messages[i].Content = cleaned
 		}
-		isSingleShort := len(nonBlank) == 1 && len([]rune(text)) <= 60
-
-		if !startsWithAction && !isSingleShort {
-			return m, nil // Claude's real response — leave in chat
-		}
-		if len(nonBlank) > 4 || len(text) > 200 {
-			return m, nil // too long even with action marker
-		}
-		// Companion quip — remove from chat, show in bubble only.
-		m.messages = append(m.messages[:i], m.messages[i+1:]...)
-		return m, func() tea.Msg { return companionBubbleMsg{text: text} }
+		return m, func() tea.Msg { return companionBubbleMsg{text: quip} }
 	}
 	return m, nil
 }
 
 // companionBubbleMsg is sent when the companion should speak.
 type companionBubbleMsg struct{ text string }
+
+// stripCompanionMarker removes any [Name: ...] companion tag from s.
+// Used during streaming so the raw marker never reaches the viewport.
+// Handles three cases:
+//  1. Complete tag present → strip it, return surrounding text
+//  2. Tag partially streamed (e.g. "[Na" before closing "]") → hide from "["
+//  3. End of s is a partial prefix match (e.g. s ends with "[N") → strip tail
+func (m Model) stripCompanionMarker(s string) string {
+	if m.companionName == "" {
+		return s
+	}
+	prefix := "[" + m.companionName + ": "
+
+	// Case 1 & 2: full prefix found somewhere in s.
+	if start := strings.Index(s, prefix); start >= 0 {
+		end := strings.Index(s[start:], "]")
+		if end < 0 {
+			return strings.TrimSpace(s[:start])
+		}
+		return strings.TrimSpace(s[:start] + s[start+end+1:])
+	}
+
+	// Case 3: s ends with a partial prefix — "[", "[N", "[Na", etc.
+	// Walk from longest possible partial down to 1.
+	for i := len(prefix) - 1; i >= 1; i-- {
+		if strings.HasSuffix(s, prefix[:i]) {
+			return strings.TrimSpace(s[:len(s)-i])
+		}
+	}
+
+	return s
+}
 
 // renderCompanionBubble renders a speech bubble with the companion face.
 // The face and bubble box are joined horizontally so they align properly.
@@ -1469,7 +1518,7 @@ func (m Model) renderCompanionBubble() string {
 		return ""
 	}
 	bones := buddy.GenerateBones(sc.UserID)
-	face := buddy.RenderFace(bones)
+	sprite := buddy.RenderSprite(bones, m.buddyFrame)
 
 	const maxW = 28
 	// Word-wrap the text to maxW columns.
@@ -1503,9 +1552,9 @@ func (m Model) renderCompanionBubble() string {
 		Width(maxW + 2)
 	bubble := bubbleStyle.Render(strings.Join(rows, "\n"))
 
-	// Join face (center-aligned vertically) + bubble side by side.
-	faceStyle := lipgloss.NewStyle().PaddingRight(1).PaddingTop(1)
-	return lipgloss.JoinHorizontal(lipgloss.Center, faceStyle.Render(face), bubble)
+	// Join animated sprite + bubble side by side.
+	spriteStyle := lipgloss.NewStyle().PaddingRight(1)
+	return lipgloss.JoinHorizontal(lipgloss.Center, spriteStyle.Render(sprite), bubble)
 }
 
 // renderCommandPicker renders the slash command picker dropdown.
@@ -1875,7 +1924,8 @@ type resumeSession struct {
 	id       string
 	filePath string
 	age      string
-	preview  string // first user message, truncated
+	preview  string // session title / first user message
+	msgCount int    // approximate JSONL line count
 }
 
 // resumePromptState holds the /resume session picker state.
@@ -1999,6 +2049,24 @@ func (m Model) renderResumePicker() string {
 	}
 	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter load · Esc clear search · Ctrl+C cancel"))
 
+	// Preview panel: show selected session detail below the list.
+	if len(p.filtered) > 0 {
+		sel := p.sessions[p.filtered[p.selected]]
+		var detail strings.Builder
+		detail.WriteString("\n")
+		detail.WriteString(strings.Repeat("─", m.width-12))
+		detail.WriteString("\n")
+		meta := sel.age
+		if sel.msgCount > 0 {
+			meta += fmt.Sprintf("  ·  %d messages", sel.msgCount)
+		}
+		detail.WriteString(stylePickerDesc.Render(meta) + "\n")
+		// Word-wrap the title to available width.
+		titleStyle := lipgloss.NewStyle().Foreground(colorFg)
+		detail.WriteString(titleStyle.Render(sel.preview))
+		sb.WriteString(detail.String())
+	}
+
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
@@ -2006,6 +2074,43 @@ func (m Model) renderResumePicker() string {
 	return style.Width(m.width - 4).Render(sb.String())
 }
 
+
+// ---- Doctor panel overlay --------------------------------------------------
+
+type doctorPanelState struct {
+	checks   []string // pre-rendered check lines ("✅ Auth", "❌ ripgrep  (hint)")
+	platform string   // binary path + OS/arch
+}
+
+func (m Model) handleDoctorPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "ctrl+c":
+		m.doctorPanel = nil
+		m.refreshViewport()
+	}
+	return m, nil
+}
+
+func (m Model) renderDoctorPanel() string {
+	if m.doctorPanel == nil {
+		return ""
+	}
+	dp := m.doctorPanel
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Conduit Diagnostics") + "\n\n")
+	if dp.platform != "" {
+		sb.WriteString(stylePickerDesc.Render(dp.platform) + "\n\n")
+	}
+	for _, line := range dp.checks {
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("q / Esc  close"))
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
 
 // ---- First-run onboarding overlay ------------------------------------------
 
@@ -3291,17 +3396,22 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 
 	case "resume-pick":
 		// Parse tab-separated session lines from the command result.
+		// Format: filePath\tage\ttitle\tmsgCount
 		var sessions []resumeSession
 		for _, line := range strings.Split(res.Text, "\n") {
-			parts := strings.SplitN(line, "\t", 3)
+			parts := strings.SplitN(line, "\t", 4)
 			if len(parts) < 3 {
 				continue
 			}
-			sessions = append(sessions, resumeSession{
+			rs := resumeSession{
 				filePath: parts[0],
 				age:      parts[1],
 				preview:  parts[2],
-			})
+			}
+			if len(parts) == 4 {
+				fmt.Sscanf(parts[3], "%d", &rs.msgCount)
+			}
+			sessions = append(sessions, rs)
 		}
 		if len(sessions) == 0 {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "No previous sessions found."})
@@ -3315,6 +3425,15 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			p.filtered[i] = i
 		}
 		m.resumePrompt = p
+		m.refreshViewport()
+		return m, nil
+
+	case "doctor-panel":
+		// res.Text = newline-separated check lines; res.Model = binary + platform.
+		m.doctorPanel = &doctorPanelState{
+			checks:   strings.Split(strings.TrimSpace(res.Text), "\n"),
+			platform: res.Model,
+		}
 		m.refreshViewport()
 		return m, nil
 
@@ -3618,8 +3737,11 @@ func (m *Model) refreshViewport() {
 			sb.WriteString(separator(w))
 			sb.WriteByte('\n')
 		}
-		sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: m.streaming}, w))
-		sb.WriteByte('\n')
+		displayStreaming := m.stripCompanionMarker(m.streaming)
+		if displayStreaming != "" {
+			sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: displayStreaming}, w))
+			sb.WriteByte('\n')
+		}
 	}
 	m.vp.SetContent(sb.String())
 	if wasAtBottom {
@@ -3676,6 +3798,8 @@ func (m Model) View() tea.View {
 		overlayBox = m.renderLoginPicker()
 	} else if m.resumePrompt != nil {
 		overlayBox = m.renderResumePicker()
+	} else if m.doctorPanel != nil {
+		overlayBox = m.renderDoctorPanel()
 	} else if m.picker != nil {
 		overlayBox = m.renderPicker()
 	} else if m.onboarding != nil {

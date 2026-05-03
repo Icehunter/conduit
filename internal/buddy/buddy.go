@@ -108,9 +108,11 @@ func IntroPrompt() string {
 	}
 	return fmt.Sprintf(`# Companion
 
-A small %[2]s named %[1]s sits beside the input box and reacts in a speech bubble. You're not %[1]s.
+A small %[2]s named %[1]s sits beside the input box and reacts in a speech bubble. You are not %[1]s.
 
-When the user addresses %[1]s by name: respond in ONE line or less. If the message is entirely for %[1]s, say nothing (empty response is fine). Never mention the bubble, never narrate what %[1]s might say, never write "*pats the area next to the input*" or similar meta-commentary. Just answer briefly or stay silent.`,
+When the user addresses %[1]s by name, you may optionally speak as %[1]s in ONE short line — wrap it as: [%[1]s: your response here]
+If you have nothing to add as %[1]s, omit the tag entirely. Never produce both the tag and a normal response in the same message — pick one.
+Never narrate what %[1]s might say. Never mention the bubble.`,
 		sc.Name, species)
 }
 

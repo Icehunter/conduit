@@ -273,7 +273,6 @@ func New(cfg Config) Model {
 	sp.Style = styleSpinner
 
 	m := Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName, historyIdx: -1, loginFlowMsgStart: -1}
-	registerThemeAwareWidgets(&m)
 	if cfg.AuthErr != nil {
 		m.messages = append(m.messages, Message{
 			Role:    RoleSystem,
@@ -2468,6 +2467,14 @@ func (m Model) View() string {
 	if !m.ready {
 		return "Loading…\n"
 	}
+
+	// Re-apply theme styles to widgets every render. Necessary because
+	// Bubble Tea returns NEW Model values from Update — any closure that
+	// captured a pointer at startup (e.g. theme.OnChange listener) refers
+	// to a stale Model the framework no longer uses. Cheap to do per-frame
+	// (just struct field assignment) and guarantees theme switches apply.
+	applyTextareaTheme(&m.input)
+	m.spinner.Style = styleSpinner
 
 	// Viewport.
 	vp := m.vp.View()

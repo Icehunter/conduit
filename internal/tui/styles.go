@@ -177,15 +177,6 @@ func fgOnCode(c lipgloss.Color) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(c)
 }
 
-// registerThemeAwareWidgets wires the Model's stateful widgets (textarea,
-// spinner) into the theme listener so theme switches re-apply their cached
-// styles immediately — without these, bubbles widgets keep their stale
-// colors until the process restarts.
-//
-// Implementation lives in model.go (where the bubbles imports are).
-func registerThemeAwareWidgets(m *Model) {
-	theme.OnChange(func() {
-		applyTextareaTheme(&m.input)
-		m.spinner.Style = styleSpinner
-	})
-}
+// Widget theme refresh is handled in Model.View() (re-applies styles every
+// render) rather than via theme.OnChange — Bubble Tea returns new Model
+// values from Update so a captured pointer would go stale.

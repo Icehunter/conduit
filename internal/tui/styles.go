@@ -142,3 +142,21 @@ func init() {
 	RebuildStyles()
 	theme.OnChange(RebuildStyles)
 }
+
+// fgOnBg returns a foreground-colored lipgloss style with the app bg set,
+// so embedded escapes don't punch holes through the painted theme bg.
+// Use this anywhere code currently builds an inline lipgloss.NewStyle().Foreground(c).
+func fgOnBg(c lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(c).Background(colorBg)
+}
+
+// fgOnModal is the same as fgOnBg but uses ModalBg — for content rendered
+// inside settings/plugin panel boxes.
+func fgOnModal(c lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(c).Background(colorModalBg)
+}
+
+// fgOnCode is the same but uses CodeBg — for tokens inside code blocks.
+func fgOnCode(c lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(c).Background(colorCodeBg)
+}

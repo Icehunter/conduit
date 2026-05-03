@@ -109,10 +109,10 @@ func renderWelcomeCard(content string, width int) string {
 		rightW = 10
 	}
 
-	titleStyle := lipgloss.NewStyle().Foreground(colorFg).Bold(true)
-	metaStyle := lipgloss.NewStyle().Foreground(colorMuted)
-	accentStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
+	titleStyle := fgOnBg(colorFg).Bold(true)
+	metaStyle := fgOnBg(colorMuted)
+	accentStyle := fgOnBg(colorAccent).Bold(true)
+	dimStyle := fgOnBg(colorDim)
 
 	// Build greeting — use display name if available.
 	greeting := "Welcome back!"
@@ -186,9 +186,9 @@ func renderWelcomeCard(content string, width int) string {
 	}
 
 	// ── Manual border with title in top line ─────────────────────────────────
-	borderStyle := lipgloss.NewStyle().Foreground(colorAccent)
+	borderStyle := fgOnBg(colorAccent)
 	titleText := " conduit v" + version + " "
-	titleRendered := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(titleText)
+	titleRendered := fgOnBg(colorAccent).Bold(true).Render(titleText)
 	titleW := len(titleText) // plain width (no ANSI) for dash counting
 
 	// Top: ╭─ title ───────────────╮
@@ -359,8 +359,8 @@ func renderTable(lines []string, width int) string {
 		}
 	}
 
-	styleCell := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
-	styleHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B"))
+	styleCell := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(colorBg)
+	styleHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Background(colorBg)
 
 	var sb strings.Builder
 	for ri, row := range rows {
@@ -431,13 +431,13 @@ func highlightCode(code, lang string) string {
 
 // Token color styles — foreground only, transparent background.
 var (
-	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA"))
-	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D"))
-	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
-	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C"))
-	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
-	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B"))
-	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
+	cKeyword  = lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")).Background(colorCodeBg)
+	cString   = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(colorCodeBg)
+	cComment  = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorCodeBg).Italic(true)
+	cNumber   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F78C6C")).Background(colorCodeBg)
+	cOperator = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorCodeBg)
+	cType     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFCB6B")).Background(colorCodeBg)
+	cPlain    = lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(colorCodeBg)
 )
 
 var langKeywords = map[string][]string{
@@ -505,16 +505,16 @@ var langComments = map[string][]string{
 }
 
 var (
-	cDiffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Bold(false) // actually green
-	cDiffDel    = lipgloss.NewStyle().Foreground(lipgloss.Color("#F07178"))
-	cDiffHunk   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
-	cDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("#7986CB"))
+	cDiffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorCodeBg).Bold(false) // actually green
+	cDiffDel    = lipgloss.NewStyle().Foreground(lipgloss.Color("#F07178")).Background(colorCodeBg)
+	cDiffHunk   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorCodeBg)
+	cDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("#7986CB")).Background(colorCodeBg)
 )
 
 func init() {
 	// Override with proper green — lipgloss colors set in var block above need
 	// to reference each other, so we fix the add color here.
-	cDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D"))
+	cDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(colorCodeBg)
 }
 
 func highlightLine(line, lang string) string {
@@ -660,14 +660,14 @@ func isOperator(r rune) bool {
 
 // styleHeading1/2/3 are styles for GFM headings.
 var (
-	styleHeading1 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Underline(true)
-	styleHeading2 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA"))
-	styleHeading3 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF"))
-	styleItalic   = lipgloss.NewStyle().Italic(true)
-	styleStrike   = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A"))
-	styleBQ       = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
-	styleChecked  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
-	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A"))
+	styleHeading1 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Background(colorBg).Underline(true)
+	styleHeading2 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA")).Background(colorBg)
+	styleHeading3 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF")).Background(colorBg)
+	styleItalic   = lipgloss.NewStyle().Italic(true).Background(colorBg)
+	styleStrike   = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A")).Background(colorBg)
+	styleBQ       = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorBg).Italic(true)
+	styleChecked  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorBg)
+	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorBg)
 )
 
 // renderLine applies block-level and inline styling, word-wrapping to width.
@@ -724,8 +724,8 @@ func renderLine(line string, width int) string {
 
 // applyInline applies all inline GFM styles: bold, italic, strikethrough, code.
 func applyInline(line string) string {
-	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true))
-	line = applyDelim(line, "__", lipgloss.NewStyle().Bold(true))
+	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true).Background(colorBg))
+	line = applyDelim(line, "__", lipgloss.NewStyle().Bold(true).Background(colorBg))
 	line = applyDelim(line, "~~", styleStrike)
 	line = applyDelim(line, "`", styleInlineCode)
 	// Italic: single * or _ (applied after ** to avoid conflict)

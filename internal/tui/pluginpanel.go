@@ -978,7 +978,7 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 		}
 		installed := ""
 		if item.installed {
-			installed = " " + lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("[installed]")
+			installed = " " + fgOnModal(lipgloss.Color("2")).Render("[installed]")
 		}
 		installs := ""
 		if item.installs > 0 {
@@ -1087,7 +1087,7 @@ func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState) {
 		return
 	}
 	for _, e := range p.errors {
-		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✗ "+e) + "\n")
+		sb.WriteString(fgOnModal(lipgloss.Color("1")).Render("✗ "+e) + "\n")
 	}
 }
 

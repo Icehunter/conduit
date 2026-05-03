@@ -1510,7 +1510,7 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
 				lastScope = item.scope
 				src := item.source
 				sb.WriteString(fmt.Sprintf("\n  %s (%s)\n",
-					lipgloss.NewStyle().Bold(true).Render(item.scope+" MCPs"), src))
+					fgOnModal(colorFg).Bold(true).Render(item.scope+" MCPs"), src))
 			}
 			cursor := "  "
 			nameStyle := stylePickerItem
@@ -1548,7 +1548,7 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 	}
 	writeField("Tools", fmt.Sprintf("%d tool%s", item.toolCount, pluralS(item.toolCount)))
 	if item.err != "" {
-		sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("Error: "+item.err) + "\n")
+		sb.WriteString("\n" + fgOnModal(colorError).Render("Error: "+item.err) + "\n")
 	}
 	sb.WriteByte('\n')
 	// Context-sensitive actions matching Claude Code's MCPStdioServerMenu:
@@ -1651,9 +1651,9 @@ func (m Model) renderPanelToolDetail(sb *strings.Builder, p *panelState, innerW 
 func renderMCPStatus(status string) string {
 	switch status {
 	case "connected":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("✔ connected")
+		return fgOnModal(lipgloss.Color("2")).Render("✔ connected")
 	case "failed":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✗ failed")
+		return fgOnModal(lipgloss.Color("1")).Render("✗ failed")
 	default:
 		return stylePickerDesc.Render("… " + status)
 	}
@@ -2426,7 +2426,7 @@ func (m Model) applyLayout() Model {
 
 	if !m.ready {
 		m.vp = viewport.New(m.width, vpHeight)
-		m.vp.Style = lipgloss.NewStyle() // no extra styling on the viewport itself
+		m.vp.Style = lipgloss.NewStyle().Background(colorBg) // app bg behind viewport content
 		m.ready = true
 	} else {
 		m.vp.Width = m.width

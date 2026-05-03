@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/theme"
 )
 
 // RegisterMiscCommands adds miscellaneous slash commands.
@@ -69,12 +72,29 @@ func RegisterMiscCommands(r *Registry) {
 		},
 	})
 
-	// /theme — deferred
+	// /theme — switch active palette and persist to settings.json
 	r.Register(Command{
 		Name:        "theme",
-		Description: "Change the terminal theme (coming soon)",
-		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Theme switching is not yet implemented."}
+		Description: "Switch theme: dark | light | dark-accessible | light-accessible",
+		Handler: func(args string) Result {
+			name := strings.TrimSpace(args)
+			if name == "" {
+				return Result{Type: "text", Text: fmt.Sprintf(
+					"Current theme: %s\nUsage: /theme <dark|light|dark-accessible|light-accessible>",
+					theme.Active().Name,
+				)}
+			}
+			theme.Set(name) // hot-swap; styles rebuild via OnChange listeners
+			if err := settings.SaveRawKey("theme", theme.Active().Name); err != nil {
+				return Result{Type: "text", Text: fmt.Sprintf(
+					"Theme switched to %s (failed to persist: %v)",
+					theme.Active().Name, err,
+				)}
+			}
+			return Result{Type: "text", Text: fmt.Sprintf(
+				"Theme switched to %s and saved.",
+				theme.Active().Name,
+			)}
 		},
 	})
 }

@@ -276,7 +276,7 @@
 | /status | `commands/status/` | `internal/commands/session.go` | ✅ | Model, mode, session ID, cost, context% |
 | /tag | `commands/tag/` | ❌ | ❌ | Session tagging |
 | /tasks | `commands/tasks/` | `internal/commands/session.go` | ✅ | Lists active TaskTool tasks |
-| /theme | `commands/theme/` | `internal/commands/misc.go` | ✅ | Set dark/light/accessible theme |
+| /theme | `commands/theme/` | `internal/commands/misc.go` + `internal/theme/` | ✅ | Switch palette: dark/light/dark-accessible/light-accessible; hot-swap via OnChange listeners; persisted to settings.json |
 | /usage | `commands/usage/` | `internal/commands/session.go` | ✅ | Token/cost breakdown by turn |
 | /vim | `commands/vim/` | ❌ | ❌ | Vim mode not implemented |
 | /voice | `commands/voice/` | ❌ | ⬛ | Requires cgo audio |

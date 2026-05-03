@@ -75,6 +75,8 @@ type Settings struct {
 	Model string `json:"model,omitempty"`
 	// OutputStyle is the active output style name, persisted across sessions.
 	OutputStyle string `json:"outputStyle,omitempty"`
+	// Theme is the active palette name (dark|light|dark-accessible|light-accessible).
+	Theme string `json:"theme,omitempty"`
 }
 
 // Merged is the result of loading and merging all settings layers.
@@ -97,6 +99,8 @@ type Merged struct {
 	Model string
 	// OutputStyle is the active output style name (last layer wins).
 	OutputStyle string
+	// Theme is the active palette name (last layer wins).
+	Theme string
 }
 
 // Load reads and merges settings from all layers for the given cwd.
@@ -131,6 +135,9 @@ func loadPaths(paths []string) (*Merged, error) {
 		}
 		if s.OutputStyle != "" {
 			merged.OutputStyle = s.OutputStyle
+		}
+		if s.Theme != "" {
+			merged.Theme = s.Theme
 		}
 	}
 	return merged, nil

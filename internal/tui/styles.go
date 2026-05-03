@@ -1,103 +1,120 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
 
+	"github.com/icehunter/conduit/internal/theme"
+)
+
+// All styles derive from theme.Active(). RebuildStyles() reassigns them
+// when the theme changes — wired via theme.OnChange in init().
+//
+// Color name aliases kept for back-compat with existing render code:
+//   colorAccent → palette.Accent
+//   colorMuted  → palette.Secondary
+//   colorDim    → palette.Tertiary
+//   colorFg     → palette.Primary
+//   colorError  → palette.Danger
+//   colorTool   → palette.Info
+//   colorBorder → palette.Border
+//   colorCodeBg → palette.CodeBg
 var (
-	colorAccent = lipgloss.Color("#DA7756") // coral — Claude brand
-	colorMuted  = lipgloss.Color("#636D7E") // gray for secondary text
-	colorDim    = lipgloss.Color("#3D4554") // very dim for separators/chrome
-	colorError  = lipgloss.Color("#F87171") // red
-	colorTool   = lipgloss.Color("#60A5FA") // blue
-	colorFg     = lipgloss.Color("#CDD6E0") // primary text (slightly cooler)
-	colorCodeBg = lipgloss.Color("#0D1117") // code bg — GitHub dark
-	colorBorder = lipgloss.Color("#30363D") // visible but subtle border
+	colorAccent lipgloss.Color
+	colorMuted  lipgloss.Color
+	colorDim    lipgloss.Color
+	colorError  lipgloss.Color
+	colorTool   lipgloss.Color
+	colorFg     lipgloss.Color
+	colorCodeBg lipgloss.Color
+	colorBorder lipgloss.Color
 )
 
 var (
-	styleYouPrefix = lipgloss.NewStyle().
-			Foreground(colorAccent).Bold(true)
+	styleYouPrefix         lipgloss.Style
+	styleClaudePrefix      lipgloss.Style
+	styleUserText          lipgloss.Style
+	styleAssistantText     lipgloss.Style
+	styleToolBadge         lipgloss.Style
+	styleToolContent       lipgloss.Style
+	styleErrorText         lipgloss.Style
+	styleSystemText        lipgloss.Style
+	styleInlineCode        lipgloss.Style
+	styleCodeBorder        lipgloss.Style
+	styleCodeLang          lipgloss.Style
+	styleInputBorder       lipgloss.Style
+	styleInputBorderActive lipgloss.Style
+	styleStatus            lipgloss.Style
+	styleStatusModel       lipgloss.Style
+	styleStatusAccent      lipgloss.Style
+	styleModePurple        lipgloss.Style
+	styleModeCyan          lipgloss.Style
+	styleModeYellow        lipgloss.Style
+	styleSpinner           lipgloss.Style
+	styleSep               lipgloss.Style
+	stylePickerBorder      lipgloss.Style
+	stylePickerItem        lipgloss.Style
+	stylePickerItemSelected lipgloss.Style
+	stylePickerDesc        lipgloss.Style
+	stylePickerHighlight   lipgloss.Style
+)
 
-	styleClaudePrefix = lipgloss.NewStyle().
-				Foreground(colorMuted)
+// RebuildStyles regenerates every package-level style from theme.Active().
+// Called at init() and after every theme switch via theme.OnChange.
+func RebuildStyles() {
+	p := theme.Active()
 
-	styleUserText = lipgloss.NewStyle().
-			Foreground(colorFg)
+	colorAccent = lipgloss.Color(p.Accent)
+	colorMuted = lipgloss.Color(p.Secondary)
+	colorDim = lipgloss.Color(p.Tertiary)
+	colorError = lipgloss.Color(p.Danger)
+	colorTool = lipgloss.Color(p.Info)
+	colorFg = lipgloss.Color(p.Primary)
+	colorCodeBg = lipgloss.Color(p.CodeBg)
+	colorBorder = lipgloss.Color(p.Border)
 
-	styleAssistantText = lipgloss.NewStyle().
-				Foreground(colorFg)
+	styleYouPrefix = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	styleClaudePrefix = lipgloss.NewStyle().Foreground(colorMuted)
+	styleUserText = lipgloss.NewStyle().Foreground(colorFg)
+	styleAssistantText = lipgloss.NewStyle().Foreground(colorFg)
+	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Bold(true)
+	styleToolContent = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	styleErrorText = lipgloss.NewStyle().Foreground(colorError)
+	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF"))
+	styleCodeBorder = lipgloss.NewStyle().PaddingLeft(2)
+	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted).Background(lipgloss.NoColor{})
 
-	styleToolBadge = lipgloss.NewStyle().
-			Foreground(colorTool).Bold(true)
-
-	styleToolContent = lipgloss.NewStyle().
-				Foreground(colorMuted).Italic(true)
-
-	styleErrorText = lipgloss.NewStyle().
-			Foreground(colorError)
-
-	styleSystemText = lipgloss.NewStyle().
-			Foreground(colorMuted).Italic(true)
-
-	styleInlineCode = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#79C0FF")) // soft blue for inline code
-
-	// Code block — no border, no background, just a left indent to visually
-	// separate it from prose. Syntax colors do the work.
-	styleCodeBorder = lipgloss.NewStyle().
-				PaddingLeft(2)
-
-	// Language label — explicit NoColor background so it's transparent on the viewport.
-	styleCodeLang = lipgloss.NewStyle().
-			Foreground(colorMuted).
-			Background(lipgloss.NoColor{})
-
-	// Input borders
 	styleInputBorder = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(colorDim).
-				PaddingLeft(1).PaddingRight(1)
-
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorDim).
+		PaddingLeft(1).PaddingRight(1)
 	styleInputBorderActive = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(colorAccent).
-				PaddingLeft(1).PaddingRight(1)
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(1).PaddingRight(1)
 
-	// Status bar segments
-	styleStatus = lipgloss.NewStyle().
-			Foreground(colorDim)
+	styleStatus = lipgloss.NewStyle().Foreground(colorDim)
+	styleStatusModel = lipgloss.NewStyle().Foreground(colorMuted)
+	styleStatusAccent = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 
-	styleStatusModel = lipgloss.NewStyle().
-				Foreground(colorMuted)
+	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Bold(true)
+	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Bold(true)
+	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Bold(true)
 
-	styleStatusAccent = lipgloss.NewStyle().
-				Foreground(colorAccent).Bold(true)
+	styleSpinner = lipgloss.NewStyle().Foreground(colorAccent)
+	styleSep = lipgloss.NewStyle().Foreground(colorDim)
 
-	// Permission mode badges — each mode has its own color.
-	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color("#C084FC")).Bold(true) // acceptEdits
-	styleModeCyan   = lipgloss.NewStyle().Foreground(lipgloss.Color("#22D3EE")).Bold(true) // plan
-	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#FDE047")).Bold(true) // auto/bypassPermissions
-
-	styleSpinner = lipgloss.NewStyle().
-			Foreground(colorAccent)
-
-	styleSep = lipgloss.NewStyle().
-			Foreground(colorDim)
-
-	// Command picker
 	stylePickerBorder = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(colorAccent).
-				PaddingLeft(1).PaddingRight(1)
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(1).PaddingRight(1)
+	stylePickerItem = lipgloss.NewStyle().Foreground(colorFg)
+	stylePickerItemSelected = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	stylePickerDesc = lipgloss.NewStyle().Foreground(colorMuted)
+	stylePickerHighlight = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Underline(true)
+}
 
-	stylePickerItem = lipgloss.NewStyle().
-				Foreground(colorFg)
-
-	stylePickerItemSelected = lipgloss.NewStyle().
-					Foreground(colorAccent).Bold(true)
-
-	stylePickerDesc = lipgloss.NewStyle().
-				Foreground(colorMuted)
-
-	stylePickerHighlight = lipgloss.NewStyle().
-					Foreground(colorAccent).Bold(true).Underline(true)
-)
+func init() {
+	RebuildStyles()
+	theme.OnChange(RebuildStyles)
+}

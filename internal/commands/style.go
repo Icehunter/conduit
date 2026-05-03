@@ -3,56 +3,84 @@
 // Slash commands return Result{Type: "text"} and the TUI renders the text
 // as a system message. To make labeled status output readable on dark
 // backgrounds we embed ANSI escape sequences directly. The TUI render
-// layer detects ANSI escapes and passes them through unmodified instead
-// of wrapping in styleSystemText (which would force italic+muted on top).
+// layer renders the "· " prefix dim and lets these escapes show through.
 //
-// Use these helpers from any /command handler that wants /doctor-style
-// label/value output.
+// All ANSI escape constants derive from theme.Active() and rebuild on
+// theme switch via theme.OnChange.
 package commands
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
 
-// ANSI escape constants used by status output. Embedded directly in
-// command result text — the TUI viewport detects and passes them through.
-//
-// Labels use bold + colorMuted (#636D7E) — bold grey for hierarchy.
-// Values use the terminal default foreground (no styling) so they read
-// naturally against the dimmer labels.
-const (
-	ansiBold   = "\033[1m"
-	ansiLabel  = "\033[1;38;2;99;109;126m" // bold + #636D7E (colorMuted)
-	ansiGreen  = "\033[32m"
-	ansiRed    = "\033[31m"
-	ansiYellow = "\033[33m"
-	ansiCyan   = "\033[36m"
-	ansiDim    = "\033[2m"
-	ansiReset  = "\033[0m"
+	"github.com/icehunter/conduit/internal/theme"
 )
+
+var (
+	styleMu       sync.RWMutex
+	ansiLabel     string // bold + Secondary color (label text)
+	ansiSuccess   string // Success color
+	ansiDanger    string // Danger color
+	ansiAccent    string // Accent color
+	ansiInfo      string // Info color
+	ansiSecondary string // Secondary color (no bold)
+)
+
+// Stable references to theme constants — these don't change with palette swap.
+const (
+	ansiBold  = theme.AnsiBold
+	ansiDim   = theme.AnsiDim
+	ansiReset = theme.AnsiReset
+)
+
+func rebuildStyles() {
+	p := theme.Active()
+	styleMu.Lock()
+	defer styleMu.Unlock()
+	ansiLabel = ansiBold + theme.AnsiFG(p.Secondary)
+	ansiSuccess = theme.AnsiFG(p.Success)
+	ansiDanger = theme.AnsiFG(p.Danger)
+	ansiAccent = theme.AnsiFG(p.Accent)
+	ansiInfo = theme.AnsiFG(p.Info)
+	ansiSecondary = theme.AnsiFG(p.Secondary)
+}
+
+func init() {
+	rebuildStyles()
+	theme.OnChange(rebuildStyles)
+}
 
 // statusTitle formats a heading line ("Conduit diagnostics", "Session", etc.).
 func statusTitle(s string) string {
 	return ansiBold + s + ansiReset + "\n\n"
 }
 
-// statusRow formats one "Label  value  (hint)" row with a bold-grey label of
-// fixed width labelW (so multiple rows line up), default-foreground value,
-// and dim hint in parens.
+// statusRow formats one "Label  value  (hint)" row with a bold-secondary
+// label of fixed width labelW (so multiple rows line up), default-foreground
+// value, and dim hint in parens.
 func statusRow(label, value, hint string, labelW int) string {
+	styleMu.RLock()
+	lbl := ansiLabel
+	styleMu.RUnlock()
 	if hint != "" {
 		hint = "  " + ansiDim + "(" + hint + ")" + ansiReset
 	}
-	return fmt.Sprintf("  %s%-*s%s %s%s\n", ansiLabel, labelW, label, ansiReset, value, hint)
+	return fmt.Sprintf("  %s%-*s%s %s%s\n", lbl, labelW, label, ansiReset, value, hint)
 }
 
-// statusCheck returns a green ✓ or red ✗ marker.
+// statusCheck returns a green ✓ or red ✗ marker (theme Success/Danger).
 func statusCheck(ok bool) string {
+	styleMu.RLock()
+	defer styleMu.RUnlock()
 	if ok {
-		return ansiGreen + "✓" + ansiReset
+		return ansiSuccess + "✓" + ansiReset
 	}
-	return ansiRed + "✗" + ansiReset
+	return ansiDanger + "✗" + ansiReset
 }
 
-// statusValue accents a value in cyan (used for IDs, paths, counts).
+// statusValue accents a value with theme.Info (used for IDs, paths, counts).
 func statusValue(s string) string {
-	return ansiCyan + s + ansiReset
+	styleMu.RLock()
+	defer styleMu.RUnlock()
+	return ansiInfo + s + ansiReset
 }

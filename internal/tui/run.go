@@ -341,15 +341,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			m.outputStylePrompt = s.Prompt
 		}
 	}
-	// Onboarding: if no credentials were found, inject a hint so first-time
-	// users know what to do without reading documentation.
-	if runOpts.AuthErr != nil && len(m.messages) == 0 {
-		m.messages = append(m.messages, Message{
-			Role:    RoleSystem,
-			Content: "No credentials found. Type /login to authenticate with your Claude account.",
-		})
-	}
-
 	modelPtr = &m
 	prog = tea.NewProgram(
 		m,

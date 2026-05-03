@@ -365,7 +365,7 @@
 | Memory age tracking | `memdir/memoryAge.ts` | — | `internal/memdir/scan.go` | ✅ | ModTime tracking, human-readable age |
 | Relevant memory search | `memdir/findRelevantMemories.ts` | — | `internal/memdir/scan.go` | ✅ | Keyword matching (no embeddings) |
 | Memory extraction from conversations | `services/extractMemories/` | — | `internal/memdir/extract.go` | ✅ | RunExtract spawns sub-agent w/ buildExtractPrompt; auto-fires on every Loop end_turn (single-flighted); /memory extract triggers manually |
-| Session memory management | `services/SessionMemory/` | `3901.js` | ❌ | ❌ | |
+| Session memory management | `services/SessionMemory/` | `3901.js` | `internal/sessionmem/sessionmem.go` | ✅ | summary.md per session, throttled sub-agent updates (every 3 end_turns), loaded as system block on --continue/resume |
 | Team memory paths | `memdir/teamMemPaths.ts` | — | ❌ | ⬛ | Team feature |
 | Team memory prompts | `memdir/teamMemPrompts.ts` | — | ❌ | ⬛ | Team feature |
 | Team memory sync | `services/teamMemorySync/` | — | ❌ | ⬛ | Team feature |
@@ -607,7 +607,7 @@
 | Slash Commands | 41 | 1 | 6 | 12 | 60 |
 | MCP Host | 10 | 0 | 3 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
-| Memory System | 9 | 0 | 4 | 3 | 16 |
+| Memory System | 10 | 0 | 3 | 3 | 16 |
 | RTK | 13 | 0 | 2 | 0 | 15 |
 | Session & History | 11 | 2 | 1 | 0 | 14 |
 | Config & Settings | 8 | 0 | 7 | 3 | 18 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **216** | **14** | **113** | **43** | **386** |
+| **TOTAL** | **217** | **14** | **112** | **43** | **386** |
 
-**Overall parity: 230/343 scoped features (67% complete, 4% partial)**
+**Overall parity: 231/343 scoped features (67% complete, 4% partial)**
 **Descoped: 43 features (intentionally excluded)**
 
 ---
@@ -671,9 +671,8 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 5. **Onboarding flow** — first-run auth check + key command hints (`components/OnboardingComponent.tsx`).
 6. **Plugin signature verification** — git commit sig check on install.
 7. **Micro-compaction** — compact just the oldest turns, not the full context (`services/compact/microCompact.ts`).
-8. **Session memory service** — inject recent session summaries on resume (`services/SessionMemory/`).
-9. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
+8. **/passes, /extra-usage, /terminalSetup** — low-value CC-specific commands.
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
-Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract).
+Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume).

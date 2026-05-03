@@ -36,6 +36,7 @@ import (
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/sessionmem"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tool"
@@ -428,13 +429,43 @@ func runREPL(continueMode bool) error {
 	var (
 		extractMu       sync.Mutex
 		extractInflight bool
+		// Session-memory throttle: fire updateSessionMemory every Nth end_turn
+		// so the sub-agent doesn't run on every reply. Mirrors CC's
+		// toolCallsBetweenUpdates default.
+		sessionMemTurnCount int
+		sessionMemMu        sync.Mutex
+		sessionMemInflight  bool
 	)
+	// projectDir for session memory layout — mirrors session.ProjectDir.
+	homeDir, _ := os.UserHomeDir()
+	projectDir := ""
+	if homeDir != "" && sess != nil {
+		// session.ProjectDir is what session.New computed already.
+		projectDir = sess.ProjectDir
+	}
+
+	// Inject prior session memory into the system blocks on resume.
+	priorSummary := ""
+	if continueMode && sess != nil && projectDir != "" {
+		priorSummary, _ = sessionmem.Load(sessionmem.Path(projectDir, sess.ID))
+	}
+
+	// Build system blocks; append prior session summary on resume so the
+	// new turn picks up where the previous one left off. Append (not
+	// prepend) keeps the Max wire fingerprint intact.
+	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsPrompt, skillEntries...)
+	if strings.TrimSpace(priorSummary) != "" {
+		systemBlocks = append(systemBlocks, api.SystemBlock{
+			Type: "text",
+			Text: "# Previous session summary (resumed)\n\n" + priorSummary,
+		})
+	}
 
 	var lp *agent.Loop
 	lp = agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:            modelName,
 		MaxTokens:        internalmodel.MaxTokens,
-		System:           agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsPrompt, skillEntries...),
+		System:           systemBlocks,
 		MaxTurns:         50,
 		Gate:             gate,
 		Hooks:            &s.Hooks,
@@ -449,31 +480,61 @@ func runREPL(continueMode bool) error {
 			}
 		},
 		OnEndTurn: func(history []api.Message) {
-			// Mirrors src/services/extractMemories/extractMemories.ts:
-			// fires after every Stop, single-flight via extractInflight,
-			// runs the sub-agent in the background so the user sees the
-			// final assistant response without an extra blocking turn.
-			extractMu.Lock()
-			if extractInflight {
-				extractMu.Unlock()
-				return
-			}
-			extractInflight = true
-			extractMu.Unlock()
-
 			snapshot := make([]api.Message, len(history))
 			copy(snapshot, history)
-			go func() {
-				defer func() {
-					extractMu.Lock()
-					extractInflight = false
-					extractMu.Unlock()
+
+			// Memory extraction (every Stop, single-flighted). Mirrors
+			// src/services/extractMemories/extractMemories.ts inProgress guard.
+			extractMu.Lock()
+			extractWasIdle := !extractInflight
+			if extractWasIdle {
+				extractInflight = true
+			}
+			extractMu.Unlock()
+			if extractWasIdle {
+				go func() {
+					defer func() {
+						extractMu.Lock()
+						extractInflight = false
+						extractMu.Unlock()
+					}()
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					defer cancel()
+					recent := tui.SummarizeMessages(snapshot, 20)
+					_ = memdir.RunExtract(ctx, cwd, recent, lp.RunSubAgent)
 				}()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer cancel()
-				recent := tui.SummarizeMessages(snapshot, 20)
-				_ = memdir.RunExtract(ctx, cwd, recent, lp.RunSubAgent)
-			}()
+			}
+
+			// Session-memory update (throttled to every UpdateEveryNTurns
+			// end_turns, single-flighted). Mirrors CC's SessionMemory
+			// sub-agent which runs less often than per-Stop extraction.
+			if sess == nil || projectDir == "" {
+				return
+			}
+			sessionMemMu.Lock()
+			sessionMemTurnCount++
+			shouldUpdate := !sessionMemInflight && sessionMemTurnCount%sessionmem.UpdateEveryNTurns == 0
+			if shouldUpdate {
+				sessionMemInflight = true
+			}
+			sessionMemMu.Unlock()
+			if shouldUpdate {
+				go func() {
+					defer func() {
+						sessionMemMu.Lock()
+						sessionMemInflight = false
+						sessionMemMu.Unlock()
+					}()
+					path, err := sessionmem.EnsureFile(projectDir, sess.ID)
+					if err != nil {
+						return
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					defer cancel()
+					recent := tui.SummarizeMessages(snapshot, 30)
+					_ = sessionmem.RunUpdate(ctx, path, recent, lp.RunSubAgent)
+				}()
+			}
 		},
 	})
 

@@ -2722,21 +2722,23 @@ func applyTextareaTheme(ta *textarea.Model) {
 	taFg := maybeBg(lipgloss.NewStyle().Foreground(colorFg))
 	taPlaceholder := maybeBg(lipgloss.NewStyle().Foreground(colorMuted))
 
-	ta.FocusedStyle.Base = taBg
-	ta.FocusedStyle.Text = taFg
-	ta.FocusedStyle.Placeholder = taPlaceholder
-	ta.FocusedStyle.Prompt = taFg
-	ta.FocusedStyle.CursorLine = taBg
-	ta.BlurredStyle.Base = taBg
-	ta.BlurredStyle.Text = taFg
-	ta.BlurredStyle.Placeholder = taPlaceholder
-	ta.BlurredStyle.Prompt = taFg
-	ta.BlurredStyle.CursorLine = taBg
+	// Apply to every style field so nothing inherits zero-bg from defaults.
+	for _, s := range []*textarea.Style{&ta.FocusedStyle, &ta.BlurredStyle} {
+		s.Base = taBg
+		s.Text = taFg
+		s.Placeholder = taPlaceholder
+		s.Prompt = taFg
+		s.CursorLine = taBg
+		s.CursorLineNumber = taBg
+		s.EndOfBuffer = taBg
+		s.LineNumber = taBg
+	}
 
-	// Cursor character itself — block on bg-tinted theme, otherwise default.
+	// Cursor character itself — both blink (Style) and static (TextStyle).
 	cs := lipgloss.NewStyle().Foreground(colorFg)
 	if hasBg {
 		cs = cs.Background(colorBg)
 	}
 	ta.Cursor.Style = cs
+	ta.Cursor.TextStyle = cs
 }

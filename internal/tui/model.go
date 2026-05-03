@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -228,6 +230,12 @@ type Model struct {
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands
 	cmdSelected int                // selected index in cmdMatches
+
+	// @ file/dir completion picker state. Active when the last word (no
+	// spaces) in the input starts with "@". Cleared on space, Tab-accept,
+	// or Escape.
+	atMatches  []string // relative paths matching the @ query
+	atSelected int      // selected index
 
 	totalInputTokens  int
 	totalOutputTokens int
@@ -533,6 +541,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// doesn't also move the textarea cursor or scroll the viewport.
 			if !m.running && m.cfg.Commands != nil {
 				m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
+			}
+			if !m.running {
+				m.atMatches, m.atSelected = m.computeAtMatches()
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -859,6 +870,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !m.running && m.cfg.Commands != nil {
 		m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
 	}
+	// Recompute @ file picker matches after every key.
+	if !m.running {
+		m.atMatches, m.atSelected = m.computeAtMatches()
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -964,6 +979,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
+		if len(m.atMatches) > 0 {
+			if m.atSelected > 0 {
+				m.atSelected--
+			}
+			return m, nil, true
+		}
 		// History: navigate backwards (older).
 		if len(m.inputHistory) > 0 && !m.running {
 			if m.historyIdx == -1 {
@@ -981,6 +1002,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if len(m.cmdMatches) > 0 {
 			if m.cmdSelected < len(m.cmdMatches)-1 {
 				m.cmdSelected++
+			}
+			return m, nil, true
+		}
+		if len(m.atMatches) > 0 {
+			if m.atSelected < len(m.atMatches)-1 {
+				m.atSelected++
 			}
 			return m, nil, true
 		}
@@ -1040,6 +1067,17 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 					m.flashMsg = "Paste(s) cleared."
 				}
 				return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+			}
+		}
+		if len(m.atMatches) > 0 {
+			if msg.String() == "tab" || msg.String() == "esc" {
+				if msg.String() == "tab" {
+					m = m.acceptAtMatch()
+				} else {
+					m.atMatches = nil
+					m.atSelected = 0
+				}
+				return m, nil, true
 			}
 		}
 		if len(m.cmdMatches) > 0 {
@@ -1176,6 +1214,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 	case "enter":
 		if m.running {
+			return m, nil, true
+		}
+
+		// If the @ file picker is open, accept selected path.
+		if len(m.atMatches) > 0 {
+			m = m.acceptAtMatch()
 			return m, nil, true
 		}
 
@@ -1468,6 +1512,187 @@ func (m Model) computeCommandMatches() ([]commands.Command, int) {
 		sel = 0
 	}
 	return matches, sel
+}
+
+// --- @ file completion ---
+
+// atFragment returns the partial @query at the end of the current input
+// (i.e. the last whitespace-delimited token if it starts with "@").
+// Returns "" if no @ fragment is present.
+func atFragment(val string) string {
+	// Get the last non-space token.
+	idx := strings.LastIndexAny(val, " \t\n")
+	token := val
+	if idx >= 0 {
+		token = val[idx+1:]
+	}
+	if strings.HasPrefix(token, "@") {
+		return token[1:] // strip the @
+	}
+	return ""
+}
+
+// computeAtMatches returns file/dir paths matching the current @fragment.
+// Returns (nil,0) when no @ fragment is active or the input starts with "/".
+func (m Model) computeAtMatches() ([]string, int) {
+	val := m.input.Value()
+	if strings.HasPrefix(val, "/") || m.running {
+		return nil, 0
+	}
+	// Find the last token in the input.
+	lastIdx := strings.LastIndexAny(val, " \t\n")
+	lastToken := val
+	if lastIdx >= 0 {
+		lastToken = val[lastIdx+1:]
+	}
+	if !strings.HasPrefix(lastToken, "@") {
+		return nil, 0 // no @ at end of input
+	}
+	frag := lastToken[1:] // query after @
+
+	cwd, _ := os.Getwd()
+	matches := searchFiles(cwd, frag, 8)
+	if len(matches) == 0 {
+		return nil, 0
+	}
+	sel := m.atSelected
+	if sel >= len(matches) {
+		sel = 0
+	}
+	return matches, sel
+}
+
+// acceptAtMatch inserts the selected @ match into the input, replacing the
+// current @ fragment.
+func (m Model) acceptAtMatch() Model {
+	if len(m.atMatches) == 0 {
+		return m
+	}
+	chosen := m.atMatches[m.atSelected]
+	val := m.input.Value()
+	// Find the @ token at the end and replace it.
+	idx := strings.LastIndexAny(val, " \t\n")
+	var prefix string
+	if idx >= 0 {
+		prefix = val[:idx+1]
+	}
+	// Construct the replacement: @path + space (so user can keep typing).
+	replacement := "@" + chosen + " "
+	// Quote paths with spaces.
+	if strings.Contains(chosen, " ") {
+		replacement = `@"` + chosen + `" `
+	}
+	m.input.SetValue(prefix + replacement)
+	m.input.CursorEnd()
+	m.atMatches = nil
+	m.atSelected = 0
+	return m
+}
+
+// searchFiles returns up to max relative paths in dir matching query.
+// It tries fd first (respects .gitignore), falls back to filepath.WalkDir.
+func searchFiles(dir, query string, max int) []string {
+	// Try fd (fast, respects .gitignore).
+	if _, err := exec.LookPath("fd"); err == nil {
+		args := []string{"--type", "f", "--type", "d", "--max-results", fmt.Sprintf("%d", max)}
+		if query != "" {
+			args = append(args, query)
+		}
+		out, err := exec.Command("fd", append(args, ".", dir)...).Output()
+		if err == nil {
+			var paths []string
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if line == "" {
+					continue
+				}
+				rel, err := filepath.Rel(dir, line)
+				if err == nil {
+					paths = append(paths, rel)
+				} else {
+					paths = append(paths, line)
+				}
+				if len(paths) >= max {
+					break
+				}
+			}
+			if len(paths) > 0 {
+				return paths
+			}
+		}
+	}
+	// Fallback: WalkDir with depth ≤ 3.
+	queryLow := strings.ToLower(query)
+	var paths []string
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || len(paths) >= max {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, path)
+		if rel == "." {
+			return nil
+		}
+		// Skip hidden dirs, .git, node_modules, vendor at depth > 0.
+		name := d.Name()
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Depth check: count separators.
+		depth := strings.Count(rel, string(os.PathSeparator))
+		if d.IsDir() && depth >= 3 {
+			return filepath.SkipDir
+		}
+		if queryLow == "" || strings.Contains(strings.ToLower(name), queryLow) {
+			paths = append(paths, rel)
+		}
+		return nil
+	})
+	return paths
+}
+
+// renderAtPicker renders the @ file completion picker above the input box.
+// Returns "" when no matches are active.
+func (m Model) renderAtPicker() string {
+	if len(m.atMatches) == 0 {
+		return ""
+	}
+	const maxItems = 8
+	cwd, _ := os.Getwd()
+	start := m.atSelected - maxItems/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxItems
+	if end > len(m.atMatches) {
+		end = len(m.atMatches)
+		start = end - maxItems
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var sb strings.Builder
+	for i := start; i < end; i++ {
+		path := m.atMatches[i]
+		icon := "+"
+		if info, err := os.Stat(filepath.Join(cwd, path)); err == nil && info.IsDir() {
+			icon = "◇"
+			path += "/"
+		}
+		line := fmt.Sprintf(" %s %s", icon, path)
+		if i == m.atSelected {
+			line = stylePickerItemSelected.Render(line)
+		} else {
+			line = stylePickerItem.Render(line)
+		}
+		sb.WriteString(line)
+		if i < end-1 {
+			sb.WriteByte('\n')
+		}
+	}
+	return stylePickerBorder.Width(m.width - 2).Render(sb.String())
 }
 
 // tabComplete returns the best completion for a partial slash command.
@@ -3245,6 +3470,8 @@ func (m Model) View() tea.View {
 		overlayBox = m.renderPermissionPrompt()
 	} else if len(m.cmdMatches) > 0 {
 		overlayBox = m.renderCommandPicker()
+	} else if len(m.atMatches) > 0 {
+		overlayBox = m.renderAtPicker()
 	}
 	if overlayBox != "" {
 		overlayLines := strings.Count(overlayBox, "\n") + 1

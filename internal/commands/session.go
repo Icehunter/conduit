@@ -268,6 +268,25 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			_, claudeErr := os.Stat(home + "/.claude.json")
 			sb.WriteString(statusRow("claude.json:", statusCheck(claudeErr == nil), "", labelW))
 
+			// Image paste availability.
+			_, osascriptErr := exec.LookPath("osascript")
+			imagePasteOK := osascriptErr == nil && runtime.GOOS == "darwin"
+			if !imagePasteOK && runtime.GOOS == "linux" {
+				_, xclipErr := exec.LookPath("xclip")
+				_, wlErr := exec.LookPath("wl-paste")
+				imagePasteOK = xclipErr == nil || wlErr == nil
+			}
+			imgHint := ""
+			if !imagePasteOK {
+				imgHint = "install xclip or wl-paste"
+				if runtime.GOOS == "darwin" {
+					imgHint = "osascript not found (unexpected)"
+				} else if runtime.GOOS == "windows" {
+					imgHint = "not supported on Windows"
+				}
+			}
+			sb.WriteString(statusRow("img paste:", statusCheck(imagePasteOK), imgHint, labelW))
+
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
 	})

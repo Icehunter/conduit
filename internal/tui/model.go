@@ -1006,19 +1006,24 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Quit, true
 
 	case "ctrl+v":
-		// Synchronous clipboard image check — ~50ms, acceptable on a
-		// deliberate keypress. This lets us decide whether to consume the
-		// key before returning: if the clipboard has text (not an image),
-		// we return consumed=false so the textarea handles text paste
-		// normally. If the clipboard has an image, we attach it and consume.
+		// Synchronous clipboard image check (~50ms on macOS via osascript).
+		// If clipboard has an image, attach it and consume the key.
+		// If clipboard has text (not an image), return consumed=false so
+		// the textarea handles normal text paste.
 		img, err := attach.ReadClipboardImage()
-		if err != nil || img == nil {
-			// No image — fall through to textarea for text paste.
+		switch {
+		case err == nil && img != nil:
+			m.pendingImage = img
+			m.flashMsg = "📎 image attached  (Enter to send · Esc to clear)"
+			return m, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		case errors.Is(err, attach.ErrNotSupported):
+			// Platform doesn't support image paste — let textarea handle ctrl+v normally.
+			return m, nil, false
+		default:
+			// ErrNoImage or osascript error — clipboard likely has text.
+			// Fall through to textarea for normal text paste.
 			return m, nil, false
 		}
-		m.pendingImage = img
-		m.flashMsg = "📎 image attached — press Enter to send or Esc to clear"
-		return m, tea.Tick(4*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to

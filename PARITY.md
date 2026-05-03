@@ -221,7 +221,7 @@
 | Doctor screen | `screens/Doctor.tsx` | — | `/doctor` → doctor-panel overlay | ✅ | Full-screen checklist panel with ✅/❌ icons, binary path, OS/arch; q/Esc closes |
 | Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
 | Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | ✅ | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge, message count, preview panel showing age+count+title of selected session. Tag tabs descoped (no tag-based grouping in CC external build). |
-| Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command | 🟡 | Text search in JSONL transcripts; no inline ripgrep code-search panel |
+| Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command → search-panel overlay | ✅ | Navigable search results panel; j/k navigation; Enter loads matching session; grouped by session title+age; ripgrep code-search panel descoped |
 | Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑↓/jk Enter; current marked ● |
 | Theme picker | `components/ThemePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /theme with no args opens picker; lists built-ins + user themes |
 | Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |

@@ -294,6 +294,9 @@ type Model struct {
 	// Non-nil when the doctor panel is open; nil otherwise.
 	doctorPanel *doctorPanelState
 
+	// searchPanel holds the /search results overlay. Non-nil when active.
+	searchPanel *searchPanelState
+
 	// Generic picker for /theme, /model, /output-style. Non-nil when active.
 	picker *pickerState
 
@@ -538,7 +541,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 			m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 			m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-			m.doctorPanel != nil
+			m.doctorPanel != nil || m.searchPanel != nil
 		if !hasOverlay {
 			content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "\n")
@@ -950,6 +953,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// Doctor panel intercepts all keys when active.
 	if m.doctorPanel != nil {
 		m2, cmd := m.handleDoctorPanelKey(msg)
+		return m2, cmd, true
+	}
+	// Search results panel intercepts all keys when active.
+	if m.searchPanel != nil {
+		m2, cmd := m.handleSearchPanelKey(msg)
 		return m2, cmd, true
 	}
 	// Generic picker (/theme /model /output-style) intercepts keys.
@@ -2074,6 +2082,105 @@ func (m Model) renderResumePicker() string {
 	return style.Width(m.width - 4).Render(sb.String())
 }
 
+
+// ---- Search results panel --------------------------------------------------
+
+type searchResult struct {
+	filePath string
+	title    string
+	age      string
+	role     string
+	snippet  string
+}
+
+type searchPanelState struct {
+	query    string
+	results  []searchResult
+	selected int
+}
+
+func (m Model) handleSearchPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	p := m.searchPanel
+	switch msg.String() {
+	case "up", "k":
+		if p.selected > 0 {
+			p.selected--
+		}
+	case "down", "j":
+		if p.selected < len(p.results)-1 {
+			p.selected++
+		}
+	case "enter":
+		if len(p.results) == 0 {
+			break
+		}
+		picked := p.results[p.selected]
+		m.searchPanel = nil
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Loading session…"})
+		m.refreshViewport()
+		filePath := picked.filePath
+		return m, func() tea.Msg {
+			msgs, err := session.LoadMessages(filePath)
+			return resumeLoadMsg{msgs: msgs, err: err}
+		}
+	case "q", "esc", "ctrl+c":
+		m.searchPanel = nil
+		m.refreshViewport()
+	}
+	m.searchPanel = p
+	return m, nil
+}
+
+func (m Model) renderSearchPanel() string {
+	if m.searchPanel == nil {
+		return ""
+	}
+	p := m.searchPanel
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render(fmt.Sprintf("Search: %q", p.query)))
+	sb.WriteString("  " + stylePickerDesc.Render(fmt.Sprintf("%d results", len(p.results))) + "\n\n")
+
+	const maxVisible = 10
+	start := p.selected - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(p.results) {
+		end = len(p.results)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	if len(p.results) == 0 {
+		sb.WriteString(stylePickerDesc.Render("  (no results)") + "\n")
+	}
+	lastTitle := ""
+	for vi := start; vi < end; vi++ {
+		r := p.results[vi]
+		// Print session header when title changes.
+		if r.title != lastTitle {
+			header := fmt.Sprintf("  ─ %s  %s", r.title, r.age)
+			sb.WriteString(stylePickerDesc.Render(header) + "\n")
+			lastTitle = r.title
+		}
+		roleTag := "[" + r.role + "]"
+		label := stylePickerDesc.Render(roleTag) + " " + r.snippet
+		if vi == p.selected {
+			sb.WriteString(stylePickerItemSelected.Render("▶ ") + label + "\n")
+		} else {
+			sb.WriteString("  " + label + "\n")
+		}
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter load session · q/Esc close"))
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
 
 // ---- Doctor panel overlay --------------------------------------------------
 
@@ -3428,6 +3535,26 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case "search-panel":
+		// res.Text = newline-separated tab-separated results; res.Model = query term.
+		var results []searchResult
+		for _, line := range strings.Split(strings.TrimSpace(res.Text), "\n") {
+			parts := strings.SplitN(line, "\t", 5)
+			if len(parts) < 5 {
+				continue
+			}
+			results = append(results, searchResult{
+				filePath: parts[0],
+				title:    parts[1],
+				age:      parts[2],
+				role:     parts[3],
+				snippet:  parts[4],
+			})
+		}
+		m.searchPanel = &searchPanelState{query: res.Model, results: results}
+		m.refreshViewport()
+		return m, nil
+
 	case "doctor-panel":
 		// res.Text = newline-separated check lines; res.Model = binary + platform.
 		m.doctorPanel = &doctorPanelState{
@@ -3800,6 +3927,8 @@ func (m Model) View() tea.View {
 		overlayBox = m.renderResumePicker()
 	} else if m.doctorPanel != nil {
 		overlayBox = m.renderDoctorPanel()
+	} else if m.searchPanel != nil {
+		overlayBox = m.renderSearchPanel()
 	} else if m.picker != nil {
 		overlayBox = m.renderPicker()
 	} else if m.onboarding != nil {

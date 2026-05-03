@@ -678,19 +678,15 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /search <term> — scan JSONL transcripts for matching turns
+	// /search <term> — scan JSONL transcripts and open a navigable results panel
 	r.Register(Command{
 		Name:        "search",
-		Description: "Search conversation history for a term. Usage: /search <term>",
+		Description: "Search conversation history. Usage: /search <term>",
 		Handler: func(args string) Result {
 			term := strings.TrimSpace(args)
 			if term == "" {
 				return Result{Type: "error", Text: "Usage: /search <term>"}
 			}
-			if state.SearchTranscript != nil {
-				return Result{Type: "text", Text: state.SearchTranscript(term)}
-			}
-			// Fallback: search current session files.
 			cwd := "."
 			if state.GetCwd != nil {
 				cwd = state.GetCwd()
@@ -699,8 +695,8 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			if err != nil || len(sessions) == 0 {
 				return Result{Type: "text", Text: "No sessions found for this directory."}
 			}
-			var sb strings.Builder
-			found := 0
+			// Encode results as tab-separated: filePath\ttitle\tage\trole\tsnippet
+			var lines []string
 			for _, s := range sessions {
 				results, err := session.Search(s.FilePath, term)
 				if err != nil || len(results) == 0 {
@@ -710,16 +706,21 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if title == "" {
 					title = s.ID[:min(8, len(s.ID))]
 				}
-				sb.WriteString(fmt.Sprintf("─── %s ───\n", title))
+				age := formatSessionAge(time.Since(s.Modified))
 				for _, r := range results {
-					sb.WriteString(fmt.Sprintf("[%s] %s\n\n", r.Role, r.Text))
-					found++
+					// Flatten snippet to one line for transport.
+					snippet := strings.ReplaceAll(strings.TrimSpace(r.Text), "\n", " ↵ ")
+					if len([]rune(snippet)) > 120 {
+						snippet = string([]rune(snippet)[:120]) + "…"
+					}
+					lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+						s.FilePath, title, age, r.Role, snippet))
 				}
 			}
-			if found == 0 {
+			if len(lines) == 0 {
 				return Result{Type: "text", Text: fmt.Sprintf("No matches found for %q.", term)}
 			}
-			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+			return Result{Type: "search-panel", Text: strings.Join(lines, "\n"), Model: term}
 		},
 	})
 

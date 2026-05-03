@@ -300,7 +300,7 @@
 | /rate-limit-options | `commands/rate-limit-options/` | ❌ | ❌ | Rate limit config |
 | /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
 | /extra-usage | `commands/extra-usage/` | ❌ | ⬛ | Anthropic overage credit provisioning; not in OAuth Max scope |
-| /terminalSetup | `commands/terminalSetup/` | ❌ | ❌ | Shell integration setup |
+| /terminalSetup | `commands/terminalSetup/` | `internal/commands/terminalsetup.go` | 🟡 | Detects TERM_PROGRAM and prints exact recipes for Apple Terminal / VSCode / Cursor / Windsurf / Alacritty / Zed; informational only — automated plist/keybindings.json edits not yet ported |
 
 ---
 
@@ -516,9 +516,9 @@
 | ASCII sprite renderer | `buddy/sprites.ts` (514 LOC) | — | `internal/buddy/buddy.go` | 🟡 | Simplified sprites |
 | Companion soul persistence | `buddy/companion.ts` | — | `internal/buddy/store.go` | ✅ | |
 | /buddy command | `buddy/useBuddyNotification.tsx` | — | `internal/commands/buddy.go` | ✅ | |
-| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | ❌ | ❌ | No live animation |
+| Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | ❌ | ❌ | No live animation. Required follow-up to companion intro injection — the intro tells the model to defer to "the bubble" but the bubble UI doesn't exist yet, so addressing the buddy by name produces a one-line nothing-response. |
 | Companion intro injection | `buddy/prompt.ts` | — | `internal/buddy/buddy.go` (IntroPrompt) | ✅ | When a companion is configured, system prompt gains a "# Companion" block telling the model to defer to the buddy by name |
-| Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ❌ | |
+| Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ⬛ | One-time CC launch promo (rainbow /buddy notification, April 1-7 2026 only). Window has passed; permanent /buddy command already exists. |
 | Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ❌ | Requires cgo |
 | Voice STT (WebSocket) | `services/voiceStreamSTT.ts` (544 LOC) | — | ❌ | ❌ | Requires cgo |
 | Voice keyterms | `services/voiceKeyterms.ts` | — | ❌ | ❌ | |
@@ -604,7 +604,7 @@
 | Tools (individual, 40) | 33 | 0 | 2 | 5 | 40 |
 | Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
 | TUI & Rendering | 20 | 3 | 8 | 0 | 31 |
-| Slash Commands | 41 | 1 | 4 | 14 | 60 |
+| Slash Commands | 41 | 2 | 3 | 14 | 60 |
 | MCP Host | 11 | 0 | 2 | 0 | 13 |
 | Plugins & Skills | 12 | 0 | 5 | 0 | 17 |
 | Memory System | 10 | 0 | 3 | 3 | 16 |
@@ -620,9 +620,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 0 | 3 | 13 | 3 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **226** | **13** | **102** | **45** | **386** |
+| **TOTAL** | **226** | **14** | **101** | **45** | **386** |
 
-**Overall parity: 239/341 scoped features (70% complete, 4% partial)**
+**Overall parity: 240/341 scoped features (70% complete, 4% partial)**
 **Descoped: 45 features (intentionally excluded)**
 
 ---

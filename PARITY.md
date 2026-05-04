@@ -140,7 +140,7 @@
 | GlobTool | `tools/GlobTool/` | — | `internal/tools/globtool/` | ✅ | |
 | GrepTool | `tools/GrepTool/` | — | `internal/tools/greptool/` | ✅ | rg backend |
 | ListMcpResources | `tools/ListMcpResourcesTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Lists from all connected servers |
-| LSPTool | `tools/LSPTool/` | — | ❌ | ❌ | Language server |
+| LSPTool | `tools/LSPTool/` | — | `internal/tools/lsp/`, `internal/lsp/` | ✅ | hover, definition, references, diagnostics; JSON-RPC/stdio; auto-detects gopls/typescript-language-server/pylsp/rust-analyzer |
 | McpAuthTool | `tools/McpAuthTool/` | — | `internal/tools/mcpauthtool/` + `internal/commands/mcp.go` | ✅ | Per-server pseudo-tool registered for needs-auth servers (mcp__<name>__authenticate) + manual /mcp auth <name> |
 | MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
 | NotebookEditTool | `tools/NotebookEditTool/` | — | `internal/tools/notebookedittool/` | ✅ | |
@@ -325,7 +325,7 @@
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
 | MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | `internal/mcp/client_ws.go` | ✅ | nhooyr.io/websocket; type="ws"\|"websocket" in server config |
 | MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | `internal/mcp/manager.go` + `cmd/conduit/main.go` | ✅ | Server instructions from initialize response injected into system prompt |
-| LSP integration | `services/lsp/` (7 files) | — | ❌ | ❌ | |
+| LSP integration | `services/lsp/` (7 files) | — | `internal/lsp/` | ✅ | Client, Manager, language→server auto-detect; client/manager/types; 6 tests with in-process mock server |
 
 ---
 
@@ -505,7 +505,7 @@
 | ANSI to PNG | `utils/ansiToPng.ts` (334 LOC) | — | `internal/attach/ansipng.go` | ✅ | `ANSIToPNG(text) string` → base64 PNG; parses SGR (8-color, 256-color, truecolor); basicfont rendering; dark terminal theme |
 | ANSI to SVG | `utils/ansiToSvg.ts` | — | ❌ | ⬛ | No current use case; PNG covers screenshot sharing |
 | Screenshot clipboard | `utils/screenshotClipboard.ts` | — | `internal/attach/clipboard.go` | ✅ | Covered by image paste (TIFF fallback handles macOS screenshots) |
-| Asciinema recording | `utils/asciicast.ts` | — | ❌ | ❌ | M13 |
+| Asciinema recording | `utils/asciicast.ts` | — | `internal/recorder/` | ✅ | /record start/stop; asciicast v2 header + "o"/"r" events; os.Pipe() tee; SIGWINCH resize; ~/.claude/recordings/<ts>.cast |
 | @file mention parsing | `utils/attachments.ts` | — | `internal/attach/atmention.go` | ✅ | @path @"path" #L10-20 line ranges; dirs listed; injected as file_content blocks; 7 tests |
 | IDE inbound attachments | `bridge/inboundAttachments.ts` | — | ❌ | ❌ | M13+bridge |
 
@@ -624,28 +624,19 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 3 | 0 | 0 | 16 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **246** | **0** | **13** | **130** | **394** |
+| **TOTAL** | **249** | **0** | **10** | **130** | **394** |
 
-**Overall parity: 246/264 scoped features (93% complete)**
+**Overall parity: 249/264 scoped features (94% complete)**
 **Descoped: 130 features (intentionally excluded — bridge, remote, voice, team swarm, Anthropic-internal)**
 
 ### Remaining actionable ❌ items
 
 | Feature | Area | Effort | Plan |
 |---------|------|--------|------|
-| Multi-account support | Auth | Medium | `/login --switch`, accounts.json, keychain per-account |
-| LSPTool | Tools | Large | gopls/LSP client; deferred to M-LSP |
-| Drag-drop file attachments | Attachments | Small | OSC 52 / xterm file drop protocol |
-| PDF @ mention | Attachments | Small | Extend @file.pdf → type=document block |
-| ANSI to PNG | Attachments | Small | Render escape sequences to PNG via image/png |
-| ANSI to SVG | Attachments | Small | SVG terminal output |
-| Asciinema recording | Attachments | Medium | .cast v2 format session recording |
 | Release versioning + CI | Infra | Medium | goreleaser, GitHub Actions cross-platform builds |
 | `/vim` command | Commands | Large | Deferred with vim mode |
 | `/voice` command | Commands | Large | Deferred with local STT |
-| LSP integration (MCP Host) | MCP | Large | gopls via MCP stdio |
 | ScheduleCronTool | Tools | Medium | In-process cron for KAIROS-style scheduling (deferred) |
-| ANSI to PNG (tool output) | Attachments | Small | Same as above |
 | IDE inbound attachments | Bridge | — | ⬛ Descoped with bridge |
 
 ---

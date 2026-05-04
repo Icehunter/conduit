@@ -25,6 +25,10 @@ import (
 // applyTerminalSetup runs the automated write for the detected terminal.
 // Returns a result string (success, already-done, or error description).
 func applyTerminalSetup(term string) string {
+	// Native CSI-u terminals need no setup at all.
+	if name, ok := nativeCSIuTerminals[term]; ok {
+		return name + " supports the Kitty keyboard protocol natively — no setup needed.\nShift+Enter already inserts a newline."
+	}
 	switch term {
 	case "Apple_Terminal":
 		if runtime.GOOS != "darwin" {
@@ -42,7 +46,11 @@ func applyTerminalSetup(term string) string {
 	case "zed":
 		return applyZed()
 	default:
-		return "No automated setup available for this terminal. Run /terminalSetup for manual instructions."
+		hint := "your terminal"
+		if term != "" {
+			hint = term
+		}
+		return "No automated setup available for " + hint + ".\nRun /terminalsetup (without --apply) for manual instructions."
 	}
 }
 

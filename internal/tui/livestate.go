@@ -21,6 +21,7 @@ type LiveState struct {
 	fastMode       bool
 	effortLevel    string    // "low" | "normal" | "high" | "max" | ""
 	turnCosts      []float64 // per-turn cost deltas, most-recent last
+	sessionFile    string    // current session JSONL path (updated on resume)
 }
 
 func (s *LiveState) SetModelName(name string) {
@@ -107,6 +108,18 @@ func (s *LiveState) EffortLevel() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.effortLevel
+}
+
+func (s *LiveState) SetSessionFile(path string) {
+	s.mu.Lock()
+	s.sessionFile = path
+	s.mu.Unlock()
+}
+
+func (s *LiveState) SessionFile() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionFile
 }
 
 func (s *LiveState) AppendTurnCost(delta float64) {

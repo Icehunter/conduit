@@ -69,6 +69,10 @@ var rePasteToken = regexp.MustCompile(`\[Pasted text #(\d+) \+\d+ lines\]`)
 // textarea.KeyMap.InsertNewline (shift+enter, alt+enter, ctrl+j) — kept
 // in sync manually because bubbles textarea doesn't expose the bound
 // key list as a string set.
+func isLetter(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
 func isNewlineInsertKey(k tea.KeyPressMsg) bool {
 	switch k.String() {
 	case "shift+enter", "alt+enter", "ctrl+j":
@@ -1472,6 +1476,40 @@ func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 	prefix := "[" + sc.Name + ": "
 	closingBracket := "]"
 
+	// Require the last user message to mention the companion name as a word.
+	// This prevents Claude from spontaneously including the marker when the
+	// user wasn't addressing the companion.
+	companionLower := strings.ToLower(sc.Name)
+	userAddressed := false
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == RoleUser {
+			lower := strings.ToLower(msg.Content)
+			// Word-boundary check: name must be preceded/followed by non-letter.
+			idx := strings.Index(lower, companionLower)
+			for idx >= 0 {
+				before := idx == 0 || !isLetter(rune(lower[idx-1]))
+				after := idx+len(companionLower) >= len(lower) || !isLetter(rune(lower[idx+len(companionLower)]))
+				if before && after {
+					userAddressed = true
+					break
+				}
+				next := strings.Index(lower[idx+1:], companionLower)
+				if next < 0 {
+					break
+				}
+				idx = idx + 1 + next
+			}
+			break
+		}
+		if msg.Role == RoleAssistant {
+			break
+		}
+	}
+	if !userAddressed {
+		return m, nil
+	}
+
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		msg := m.messages[i]
 		if msg.Role != RoleAssistant {
@@ -1506,6 +1544,26 @@ func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 
 // companionBubbleMsg is sent when the companion should speak.
 type companionBubbleMsg struct{ text string }
+
+// stripCompanionMarkerGlobal strips any [Name: text] companion tag from
+// a stored message (e.g., when loading history). Uses the live companion
+// name from buddy.Load(); falls back to a simple bracket-scan.
+func stripCompanionMarkerGlobal(s string) string {
+	sc, err := buddy.Load()
+	if err != nil || sc == nil || sc.Name == "" {
+		return s
+	}
+	prefix := "[" + sc.Name + ": "
+	start := strings.Index(s, prefix)
+	if start < 0 {
+		return s
+	}
+	end := strings.Index(s[start:], "]")
+	if end < 0 {
+		return strings.TrimSpace(s[:start])
+	}
+	return strings.TrimSpace(s[:start] + s[start+end+1:])
+}
 
 // stripCompanionMarker removes any [Name: ...] companion tag from s.
 // Used during streaming so the raw marker never reaches the viewport.
@@ -3109,7 +3167,10 @@ func historyToDisplayMessage(msg api.Message) Message {
 	if msg.Role == "user" {
 		return Message{Role: RoleUser, Content: text.String()}
 	}
-	return Message{Role: RoleAssistant, Content: text.String()}
+	// Strip companion markers ([Name: ...]) stored from previous sessions.
+	content := text.String()
+	content = stripCompanionMarkerGlobal(content)
+	return Message{Role: RoleAssistant, Content: content}
 }
 
 // exportConversation writes the conversation display messages to a markdown file.
@@ -3849,7 +3910,10 @@ func (m Model) applyLayout() Model {
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
 		m.vp.Style = lipgloss.NewStyle() // app bg behind viewport content
-		m.vp.MouseWheelEnabled = true   // allow trackpad/mouse scroll wheel
+		// Disable the viewport's built-in key bindings entirely — "j","k","u","b",
+		// space, etc. would fire for any non-consumed key. We handle scrolling
+		// explicitly via Shift+Up/Down/PgUp/PgDn in handleKey.
+		m.vp.KeyMap = viewport.KeyMap{}
 		m.ready = true
 	} else {
 		m.vp.SetWidth(m.width)
@@ -3925,11 +3989,11 @@ func (m Model) View() tea.View {
 		v.SetContent(content)
 		v.AltScreen = true
 		v.KeyboardEnhancements.ReportAlternateKeys = true
-		// MouseModeCellMotion: scroll wheel arrives as tea.MouseWheelMsg
-		// instead of UP/DOWN key sequences. This separates wheel scrolling
-		// from UP/DOWN history navigation. Text selection still works in
-		// most terminals by holding Shift while clicking/dragging.
-		v.MouseMode = tea.MouseModeCellMotion
+		// MouseMode left unset (MouseModeNone) to preserve native text
+		// selection. Terminals send scroll-wheel as UP/DOWN sequences in
+		// alt-screen; we consume those for input history (UP/DOWN). Viewport
+		// scroll is via Shift+Up/Down/PgUp/PgDn. Viewport keymap cleared
+		// so j/k/u/b etc. don't fire as scroll on non-consumed keys.
 		return v
 	}
 	if !m.ready {
@@ -4263,6 +4327,7 @@ func (m *Model) syncLive() {
 	m.cfg.Live.SetRateLimitWarning(m.rateLimitWarning)
 	if m.cfg.Session != nil {
 		m.cfg.Live.SetSessionID(m.cfg.Session.ID)
+		m.cfg.Live.SetSessionFile(m.cfg.Session.FilePath)
 	}
 }
 

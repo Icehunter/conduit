@@ -301,7 +301,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			loop.SetThinkingBudget(budget)
 		},
 		// /rename — persist a title to the session JSONL.
+		// Uses live.SessionFile() so it follows the active session after /resume.
 		RenameSession: func(title string) error {
+			if path := live.SessionFile(); path != "" {
+				return session.FromFile(path).SetTitle(title)
+			}
 			if runOpts.Session == nil {
 				return fmt.Errorf("no active session")
 			}
@@ -309,6 +313,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		},
 		// /tag — persist a tag to the session JSONL ("" clears).
 		TagSession: func(tag string) error {
+			if path := live.SessionFile(); path != "" {
+				return session.FromFile(path).AppendTag(tag)
+			}
 			if runOpts.Session == nil {
 				return fmt.Errorf("no active session")
 			}

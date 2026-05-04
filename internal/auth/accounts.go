@@ -92,25 +92,38 @@ func persistKeyForEmail(email string) string {
 }
 
 // SaveForEmail stores tokens under the email-scoped keychain key and registers
-// the account in accounts.json, making it the active account.
+// the account in accounts.json as the active account.
+// Also writes the legacy key for compatibility with single-account tooling.
+// The email-scoped key + accounts.json write are NOT gated on the legacy key
+// succeeding — a keychain update failure on the legacy key must not prevent
+// the scoped key from being written.
 func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
-	if err := Save(s, p); err != nil { // keep legacy key for compat
-		return err
-	}
-	if email == "" {
-		return nil
-	}
-	// Write under email-scoped key.
+	// Marshal once; reuse for both writes.
 	buf, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("accounts: marshal tokens: %w", err)
 	}
-	if err := s.Set(Service, persistKeyForEmail(email), buf); err != nil {
-		return err
+
+	// Legacy key — best-effort, don't gate the rest on this.
+	_ = s.Set(Service, PersistKey, buf)
+
+	if email == "" {
+		return nil
 	}
-	// Register in accounts.json.
+
+	// Email-scoped key — this is the authoritative one.
+	if err := s.Set(Service, persistKeyForEmail(email), buf); err != nil {
+		return fmt.Errorf("accounts: save token for %s: %w", email, err)
+	}
+
+	// Register in accounts.json. Preserve existing accounts — only update/add this one.
 	store, _ := LoadAccountStore()
-	store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
+	if store.Accounts == nil {
+		store.Accounts = map[string]AccountEntry{}
+	}
+	if _, exists := store.Accounts[email]; !exists {
+		store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
+	}
 	store.Active = email
 	return saveAccountStore(store)
 }

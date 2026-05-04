@@ -1067,7 +1067,18 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		// UP with no matches falls through to viewport (scroll up).
+		// History: navigate backwards (older).
+		if len(m.inputHistory) > 0 && !m.running {
+			if m.historyIdx == -1 {
+				m.historyDraft = m.input.Value()
+				m.historyIdx = len(m.inputHistory) - 1
+			} else if m.historyIdx > 0 {
+				m.historyIdx--
+			}
+			m.input.SetValue(m.inputHistory[m.historyIdx])
+			m.input.CursorEnd()
+			return m, nil, true
+		}
 
 	case "down":
 		if len(m.cmdMatches) > 0 {
@@ -1082,24 +1093,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		// DOWN with no matches falls through to viewport (scroll down).
-
-	// Ctrl+P / Ctrl+N — readline-style input history navigation.
-	// UP/DOWN are freed for viewport scrolling.
-	case "ctrl+p":
-		if len(m.inputHistory) > 0 && !m.running {
-			if m.historyIdx == -1 {
-				m.historyDraft = m.input.Value()
-				m.historyIdx = len(m.inputHistory) - 1
-			} else if m.historyIdx > 0 {
-				m.historyIdx--
-			}
-			m.input.SetValue(m.inputHistory[m.historyIdx])
-			m.input.CursorEnd()
-			return m, nil, true
-		}
-
-	case "ctrl+n":
+		// History: navigate forwards (newer / back to draft).
 		if m.historyIdx != -1 && !m.running {
 			if m.historyIdx < len(m.inputHistory)-1 {
 				m.historyIdx++

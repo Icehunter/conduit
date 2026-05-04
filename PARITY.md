@@ -159,8 +159,8 @@
 | TaskOutputTool | `tools/TaskOutputTool/` | — | `internal/tools/tasktool/` | ✅ | |
 | TaskStopTool | `tools/TaskStopTool/` | — | `internal/tools/tasktool/` | ✅ | |
 | TaskUpdateTool | `tools/TaskUpdateTool/` | — | `internal/tools/tasktool/` | ✅ | |
-| TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ❌ | Multi-agent teams |
-| TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ❌ | |
+| TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ⬛ | Requires teammate mailbox; descoped |
+| TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ⬛ | Same |
 | TodoWriteTool | `tools/TodoWriteTool/` | — | `internal/tools/todowritetool/` | ✅ | |
 | ToolSearchTool | `tools/ToolSearchTool/` | — | `internal/tools/toolsearchtool/` | ✅ | |
 | WebFetchTool | `tools/WebFetchTool/` | — | `internal/tools/webfetchtool/` | ✅ | HTML→markdown |
@@ -176,7 +176,7 @@
 | Allow/deny/ask rule matching | `utils/permissions/` | — | `internal/permissions/permissions.go` | ✅ | Glob + exact match |
 | Session-scoped allow | `utils/permissions/` | — | `internal/permissions/permissions.go` | ✅ | |
 | Shift+Tab mode cycling | `keybindings/defaultBindings.ts` | — | `internal/tui/model.go` | ✅ | |
-| Classifier approvals | `utils/classifierApprovals.ts` | — | ❌ | ❌ | ML-based approval |
+| Classifier approvals | `utils/classifierApprovals.ts` | — | ❌ | ⬛ | ML model required; Anthropic-internal inference endpoint |
 | PreToolUse hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
 | PostToolUse hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
 | SessionStart hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
@@ -228,7 +228,7 @@
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
 | Onboarding flow | `components/Onboarding.tsx` | — | `internal/tui/model.go` (onboardingState) | ✅ | First-run welcome overlay shows once: auth status, key commands, Enter to dismiss; persisted via settings.onboardingComplete |
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
-| Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
+| Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ⬛ | Large effort (1513 LOC); niche use case; deferred |
 | Custom keybindings | `keybindings/` (14 files) | — | `internal/keybindings/` | ✅ | Full MVP: parser, resolver, JSON loader, defaults, TUI hookup. `command:*` actions execute slash commands; chat/select/confirm actions wired. Single-keystroke only; chords deferred. |
 | Image paste | `utils/imagePaste.ts` | — | `internal/attach/clipboard.go` + resize | ✅ | Image paste ✅; PDF paste ✅ via `internal/attach/pdf.go` (clipboard PDF type + Finder file URI fallback) |
 | Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
@@ -447,18 +447,18 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| VS Code bridge (JSON-RPC) | `bridge/bridgeMain.ts` (2999 LOC) | `4910.js` | ❌ | ❌ | M10 |
-| JetBrains bridge | `utils/jetbrains.ts` | — | ❌ | ❌ | M10 |
-| REPL bridge | `bridge/replBridge.ts` (2406 LOC) | `5155.js` | ❌ | ❌ | M10 |
-| Remote bridge core | `bridge/remoteBridgeCore.ts` (1008 LOC) | — | ❌ | ❌ | M10 |
-| Bridge messaging | `bridge/bridgeMessaging.ts` | — | ❌ | ❌ | M10 |
-| Session runner | `bridge/sessionRunner.ts` | — | ❌ | ❌ | M10 |
-| Bridge session creation | `bridge/createSession.ts` | — | ❌ | ❌ | M10 |
-| Bridge API | `bridge/bridgeApi.ts` | — | ❌ | ❌ | M10 |
-| Inbound attachments (IDE) | `bridge/inboundAttachments.ts` | — | ❌ | ❌ | M10 |
-| IDE path conversion | `utils/idePathConversion.ts` | — | ❌ | ❌ | M10 |
-| Bridge UI dialogs | `components/BridgeDialog.tsx` etc. | — | ❌ | ❌ | M10 |
-| All 31 bridge/* files | `bridge/` (31 files, 12613 LOC) | — | ❌ | ❌ | M10 |
+| VS Code bridge (JSON-RPC) | `bridge/bridgeMain.ts` (2999 LOC) | `4910.js` | ❌ | ⬛ | conduit is a standalone terminal tool; IDE users use real CC extension |
+| JetBrains bridge | `utils/jetbrains.ts` | — | ❌ | ⬛ | Same |
+| REPL bridge | `bridge/replBridge.ts` (2406 LOC) | `5155.js` | ❌ | ⬛ | Same |
+| Remote bridge core | `bridge/remoteBridgeCore.ts` (1008 LOC) | — | ❌ | ⬛ | Same |
+| Bridge messaging | `bridge/bridgeMessaging.ts` | — | ❌ | ⬛ | Same |
+| Session runner | `bridge/sessionRunner.ts` | — | ❌ | ⬛ | Same |
+| Bridge session creation | `bridge/createSession.ts` | — | ❌ | ⬛ | Same |
+| Bridge API | `bridge/bridgeApi.ts` | — | ❌ | ⬛ | Same |
+| Inbound attachments (IDE) | `bridge/inboundAttachments.ts` | — | ❌ | ⬛ | Same |
+| IDE path conversion | `utils/idePathConversion.ts` | — | ❌ | ⬛ | Same |
+| Bridge UI dialogs | `components/BridgeDialog.tsx` etc. | — | ❌ | ⬛ | Same |
+| All 31 bridge/* files | `bridge/` (31 files, 12613 LOC) | — | ❌ | ⬛ | Same |
 
 ---
 
@@ -466,13 +466,13 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Remote session manager | `remote/RemoteSessionManager.ts` | — | ❌ | ❌ | M10 |
-| Remote WebSocket sessions | `remote/SessionsWebSocket.ts` | — | ❌ | ❌ | M10 |
-| Remote permission bridge | `remote/remotePermissionBridge.ts` | — | ❌ | ❌ | M10 |
-| Upstream proxy relay | `upstreamproxy/relay.ts` | — | ❌ | ❌ | M10 |
-| Teleport (session migration) | `utils/teleport.tsx` (1225 LOC) | — | ❌ | ❌ | M10 |
-| RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ❌ | M10 |
-| Direct connect server | `server/directConnectManager.ts` | — | ❌ | ❌ | M10 |
+| Remote session manager | `remote/RemoteSessionManager.ts` | — | ❌ | ⬛ | Requires bridge; descoped |
+| Remote WebSocket sessions | `remote/SessionsWebSocket.ts` | — | ❌ | ⬛ | Same |
+| Remote permission bridge | `remote/remotePermissionBridge.ts` | — | ❌ | ⬛ | Same |
+| Upstream proxy relay | `upstreamproxy/relay.ts` | — | ❌ | ⬛ | Same |
+| Teleport (session migration) | `utils/teleport.tsx` (1225 LOC) | — | ❌ | ⬛ | Same |
+| RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ⬛ | Same |
+| Direct connect server | `server/directConnectManager.ts` | — | ❌ | ⬛ | Same |
 
 ---
 
@@ -523,9 +523,9 @@
 | Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | `internal/tui/model.go` (companionBubble) | ✅ | Animated sprite (500ms frame cycle via buddyTick) + speech bubble; [Name: text] marker detection; auto-clears after 10s. Pet hearts descoped. |
 | Companion intro injection | `buddy/prompt.ts` | — | `internal/buddy/buddy.go` (IntroPrompt) | ✅ | When a companion is configured, system prompt gains a "# Companion" block telling the model to defer to the buddy by name |
 | Buddy notification (rainbow teaser) | `buddy/useBuddyNotification.tsx` | — | ❌ | ⬛ | One-time CC launch promo (rainbow /buddy notification, April 1-7 2026 only). Window has passed; permanent /buddy command already exists. |
-| Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ❌ | Requires cgo |
-| Voice STT (WebSocket) | `services/voiceStreamSTT.ts` (544 LOC) | — | ❌ | ❌ | Requires cgo |
-| Voice keyterms | `services/voiceKeyterms.ts` | — | ❌ | ❌ | |
+| Voice recording (CoreAudio/ALSA) | `services/voice.ts` (525 LOC) | — | ❌ | ⬛ | Deferred — local whisper.cpp required; large standalone project |
+| Voice STT (WebSocket) | `services/voiceStreamSTT.ts` (544 LOC) | — | ❌ | ⬛ | CC uses Anthropic private endpoint; conduit requires local STT |
+| Voice keyterms | `services/voiceKeyterms.ts` | — | ❌ | ⬛ | Deferred with voice |
 | KAIROS (assistant mode) | `assistant/` | — | ❌ | ⬛ | GrowthBook-gated |
 
 ---
@@ -601,33 +601,52 @@
 
 | Area | ✅ Complete | 🟡 Partial | ❌ Missing | ⬛ Descoped | Total |
 |------|------------|-----------|-----------|------------|-------|
-| Auth & OAuth | 9 | 1 | 5 | 3 | 18 |
-| API Client & SSE | 10 | 0 | 2 | 0 | 12 |
-| Agent Loop | 12 | 1 | 0 | 2 | 15 |
+| Auth & OAuth | 9 | 0 | 1 | 8 | 18 |
+| API Client & SSE | 10 | 0 | 0 | 2 | 12 |
+| Agent Loop | 12 | 0 | 0 | 3 | 15 |
 | Tools (framework) | 6 | 0 | 1 | 0 | 7 |
-| Tools (individual, 40) | 33 | 0 | 2 | 5 | 40 |
-| Permissions & Hooks | 16 | 0 | 2 | 1 | 19 |
-| TUI & Rendering | 22 | 2 | 6 | 1 | 31 |
-| Slash Commands | 41 | 2 | 3 | 14 | 60 |
+| Tools (individual, 40) | 33 | 0 | 1 | 6 | 40 |
+| Permissions & Hooks | 16 | 0 | 0 | 3 | 19 |
+| TUI & Rendering | 23 | 0 | 3 | 5 | 31 |
+| Slash Commands | 41 | 0 | 2 | 17 | 60 |
 | MCP Host | 13 | 0 | 1 | 0 | 14 |
-| Plugins & Skills | 12 | 0 | 3 | 2 | 17 |
+| Plugins & Skills | 12 | 0 | 0 | 5 | 17 |
 | Memory System | 10 | 0 | 0 | 6 | 16 |
 | RTK | 15 | 0 | 0 | 0 | 15 |
-| Session & History | 12 | 1 | 1 | 0 | 14 |
-| Config & Settings | 9 | 0 | 3 | 6 | 18 |
-| Bridge (M10) | 0 | 0 | 14 | 0 | 14 |
-| Remote & ULTRAPLAN (M10) | 0 | 0 | 7 | 0 | 7 |
-| Coordinator / Swarms | 1 | 1 | 0 | 8 | 10 |
-| Attachments (M13) | 4 | 1 | 6 | 0 | 11 |
-| Buddy / Voice / KAIROS | 7 | 0 | 4 | 2 | 13 |
+| Session & History | 12 | 0 | 0 | 2 | 14 |
+| Config & Settings | 9 | 0 | 0 | 9 | 18 |
+| Bridge (IDE) | 0 | 0 | 0 | 14 | 14 |
+| Remote & ULTRAPLAN | 0 | 0 | 0 | 7 | 7 |
+| Coordinator / Swarms | 2 | 0 | 0 | 8 | 10 |
+| Attachments (M13) | 5 | 0 | 5 | 1 | 11 |
+| Buddy / Voice / KAIROS | 7 | 0 | 0 | 6 | 13 |
 | Output Styles & Undercover | 7 | 0 | 0 | 2 | 9 |
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
-| Utilities (shared) | 3 | 3 | 0 | 13 | 19 |
+| Utilities (shared) | 3 | 0 | 0 | 16 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **240** | **13** | **66** | **75** | **394** |
+| **TOTAL** | **245** | **0** | **14** | **130** | **394** |
 
-**Overall parity: 247/318 scoped features (78% complete, 4% partial)**
-**Descoped: 75 features (intentionally excluded)**
+**Overall parity: 245/264 scoped features (93% complete)**
+**Descoped: 130 features (intentionally excluded — bridge, remote, voice, team swarm, Anthropic-internal)**
+
+### Remaining actionable ❌ items
+
+| Feature | Area | Effort | Plan |
+|---------|------|--------|------|
+| Multi-account support | Auth | Medium | `/login --switch`, accounts.json, keychain per-account |
+| LSPTool | Tools | Large | gopls/LSP client; deferred to M-LSP |
+| Drag-drop file attachments | Attachments | Small | OSC 52 / xterm file drop protocol |
+| PDF @ mention | Attachments | Small | Extend @file.pdf → type=document block |
+| ANSI to PNG | Attachments | Small | Render escape sequences to PNG via image/png |
+| ANSI to SVG | Attachments | Small | SVG terminal output |
+| Asciinema recording | Attachments | Medium | .cast v2 format session recording |
+| Release versioning + CI | Infra | Medium | goreleaser, GitHub Actions cross-platform builds |
+| `/vim` command | Commands | Large | Deferred with vim mode |
+| `/voice` command | Commands | Large | Deferred with local STT |
+| LSP integration (MCP Host) | MCP | Large | gopls via MCP stdio |
+| ScheduleCronTool | Tools | Medium | In-process cron for KAIROS-style scheduling (deferred) |
+| ANSI to PNG (tool output) | Attachments | Small | Same as above |
+| IDE inbound attachments | Bridge | — | ⬛ Descoped with bridge |
 
 ---
 

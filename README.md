@@ -12,7 +12,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
   <a href="https://github.com/icehunter/conduit/releases"><img src="https://img.shields.io/github/v/release/icehunter/conduit?style=flat-square&color=5e6ad2" alt="Release" /></a>
   <a href="https://github.com/icehunter/conduit/actions"><img src="https://img.shields.io/github/actions/workflow/status/icehunter/conduit/ci.yml?style=flat-square" alt="CI" /></a>
   <a href="https://goreportcard.com/report/github.com/icehunter/conduit"><img src="https://goreportcard.com/badge/github.com/icehunter/conduit?style=flat-square" alt="Go Report" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/icehunter/conduit?style=flat-square" alt="License" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/icehunter/conduit" alt="License" /></a>
 </p>
 
 <p align="center">

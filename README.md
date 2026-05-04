@@ -115,7 +115,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 
 ### In-process RTK (token savings)
 
-Conduit ships with RTK (Rust Token Killer) ported to Go as a zero-overhead in-process filter. Every `BashTool` result is passed through the filter before being sent to the model.
+Conduit ships with [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk) ported to Go as a zero-overhead in-process filter. Every `BashTool` result is passed through the filter before being sent to the model.
 
 Typical savings:
 
@@ -366,7 +366,7 @@ Custom themes can be defined under `"themes"` in `settings.json`:
 
 ## RTK — in-process token compression
 
-Conduit ships with RTK (originally a Rust CLI) ported to Go and fused directly into the process. It intercepts `BashTool` results before they reach the model and applies command-aware compression rules.
+Conduit ships with [RTK (Rust Token Killer)](https://github.com/rtk-ai/rtk) — originally a Rust CLI by [rtk-ai](https://www.rtk-ai.app/) — ported to Go and fused directly into the process. It intercepts `BashTool` results before they reach the model and applies command-aware compression rules.
 
 Inside the TUI:
 

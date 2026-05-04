@@ -17,19 +17,19 @@ func RegisterSkillsCommand(r *Registry, ps []*plugins.Plugin) {
 				return Result{Type: "text", Text: "No plugins installed. Use /plugin to browse and install plugins."}
 			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Available skills (%d installed plugins):\n\n", len(ps)))
+			fmt.Fprintf(&sb, "Available skills (%d installed plugins):\n\n", len(ps))
 			total := 0
 			for _, p := range ps {
 				if len(p.Commands) == 0 {
 					continue
 				}
-				sb.WriteString(fmt.Sprintf("**%s** (%d skill%s):\n", p.Manifest.Name, len(p.Commands), pluralS(len(p.Commands))))
+				fmt.Fprintf(&sb, "**%s** (%d skill%s):\n", p.Manifest.Name, len(p.Commands), pluralS(len(p.Commands)))
 				for _, cmd := range p.Commands {
 					desc := cmd.Description
 					if len([]rune(desc)) > 70 {
 						desc = string([]rune(desc)[:69]) + "…"
 					}
-					sb.WriteString(fmt.Sprintf("  /%s", cmd.QualifiedName))
+					fmt.Fprintf(&sb, "  /%s", cmd.QualifiedName)
 					if desc != "" {
 						sb.WriteString(" — " + desc)
 					}
@@ -38,7 +38,7 @@ func RegisterSkillsCommand(r *Registry, ps []*plugins.Plugin) {
 				}
 				sb.WriteByte('\n')
 			}
-			sb.WriteString(fmt.Sprintf("Total: %d skills. The model will use these automatically when relevant.", total))
+			fmt.Fprintf(&sb, "Total: %d skills. The model will use these automatically when relevant.", total)
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},
 	})

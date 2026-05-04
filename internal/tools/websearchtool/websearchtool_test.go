@@ -1,6 +1,7 @@
 package websearchtool
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -44,7 +45,7 @@ func TestWebSearch_InputSchema_RequiresQuery(t *testing.T) {
 
 func TestWebSearch_InvalidJSON(t *testing.T) {
 	tt := New(nil)
-	res, err := tt.Execute(nil, json.RawMessage(`{bad`))
+	res, err := tt.Execute(context.TODO(), json.RawMessage(`{bad`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestWebSearch_InvalidJSON(t *testing.T) {
 func TestWebSearch_EmptyQuery(t *testing.T) {
 	tt := New(nil)
 	b, _ := json.Marshal(map[string]any{"query": "  "})
-	res, err := tt.Execute(nil, b)
+	res, err := tt.Execute(context.TODO(), b)
 	if err != nil {
 		t.Fatal(err)
 	}

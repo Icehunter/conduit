@@ -51,9 +51,9 @@ const (
 
 // dark terminal palette — matches most dark themes
 var (
-	bgColor  = color.RGBA{R: 30, G: 30, B: 30, A: 255}
-	fgColor  = color.RGBA{R: 204, G: 204, B: 204, A: 255}
-	ansi16   = [16]color.RGBA{
+	bgColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
+	fgColor = color.RGBA{R: 204, G: 204, B: 204, A: 255}
+	ansi16  = [16]color.RGBA{
 		{R: 0, G: 0, B: 0, A: 255},       // 0 black
 		{R: 187, G: 0, B: 0, A: 255},     // 1 red
 		{R: 0, G: 187, B: 0, A: 255},     // 2 green
@@ -167,7 +167,7 @@ func parseANSI(text string) []styledLine {
 		rawLines = rawLines[:len(rawLines)-1]
 	}
 
-	var result []styledLine
+	result := make([]styledLine, 0, len(rawLines))
 	curFG := fgColor
 	curBG := bgColor
 

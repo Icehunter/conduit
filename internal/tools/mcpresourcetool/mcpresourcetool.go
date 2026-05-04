@@ -34,7 +34,7 @@ func (t *ListMcpResources) InputSchema() json.RawMessage {
 	"additionalProperties": false
 }`)
 }
-func (t *ListMcpResources) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (t *ListMcpResources) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (t *ListMcpResources) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 type listInput struct {
@@ -64,11 +64,11 @@ func (t *ListMcpResources) Execute(ctx context.Context, raw json.RawMessage) (to
 		}
 		resources, err := t.Manager.ListResources(ctx, srv.Name)
 		if err != nil {
-			sb.WriteString(fmt.Sprintf("[%s] error: %v\n", srv.Name, err))
+			fmt.Fprintf(&sb, "[%s] error: %v\n", srv.Name, err)
 			continue
 		}
 		for _, r := range resources {
-			sb.WriteString(fmt.Sprintf("[%s] %s", srv.Name, r.URI))
+			fmt.Fprintf(&sb, "[%s] %s", srv.Name, r.URI)
 			if r.Name != "" {
 				sb.WriteString(" — " + r.Name)
 			}
@@ -109,7 +109,7 @@ func (t *ReadMcpResource) InputSchema() json.RawMessage {
 	"additionalProperties": false
 }`)
 }
-func (t *ReadMcpResource) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (t *ReadMcpResource) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (t *ReadMcpResource) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 type readInput struct {
@@ -142,7 +142,7 @@ func (t *ReadMcpResource) Execute(ctx context.Context, raw json.RawMessage) (too
 		if c.Text != "" {
 			sb.WriteString(c.Text)
 		} else if c.Blob != "" {
-			sb.WriteString(fmt.Sprintf("[binary data, base64, %d bytes]", len(c.Blob)*3/4))
+			fmt.Fprintf(&sb, "[binary data, base64, %d bytes]", len(c.Blob)*3/4)
 		}
 	}
 	return tool.TextResult(sb.String()), nil

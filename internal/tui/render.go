@@ -245,7 +245,7 @@ func renderWelcomeCard(content string, width int) string {
 	// (which are bare " " concatenations, not lipgloss-styled) inherit
 	// the theme bg instead of exposing terminal default.
 	bgWrap := lipgloss.NewStyle()
-	var fullRows []string
+	fullRows := make([]string, 0, 2+len(bodyRows)+2)
 	fullRows = append(fullRows, bgWrap.Render(topBorder))
 	blankInner := strings.Repeat(" ", innerW)
 	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│")))
@@ -518,13 +518,27 @@ func isLightTheme() bool {
 }
 
 // Token style accessors — call at render time so theme switches apply.
-func cKeywordStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) color.Color { return s.keyword }) }
-func cStringStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) color.Color { return s.str }) }
-func cCommentStyle() lipgloss.Style  { return codeStyle(func(s codePaletteSet) color.Color { return s.comment }).Italic(true) }
-func cNumberStyle() lipgloss.Style   { return codeStyle(func(s codePaletteSet) color.Color { return s.number }) }
-func cOperatorStyle() lipgloss.Style { return codeStyle(func(s codePaletteSet) color.Color { return s.operator }) }
-func cTypeStyle() lipgloss.Style     { return codeStyle(func(s codePaletteSet) color.Color { return s.typ }) }
-func cPlainStyle() lipgloss.Style    { return codeStyle(func(s codePaletteSet) color.Color { return s.plain }) }
+func cKeywordStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.keyword })
+}
+func cStringStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.str })
+}
+func cCommentStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.comment }).Italic(true)
+}
+func cNumberStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.number })
+}
+func cOperatorStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.operator })
+}
+func cTypeStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.typ })
+}
+func cPlainStyle() lipgloss.Style {
+	return codeStyle(func(s codePaletteSet) color.Color { return s.plain })
+}
 
 var langKeywords = map[string][]string{
 	"go": {
@@ -746,13 +760,13 @@ func isOperator(r rune) bool {
 
 // styleHeading1/2/3 are styles for GFM headings.
 var (
-	styleHeading1 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Underline(true)
-	styleHeading2 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA"))
-	styleHeading3 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF"))
-	styleItalic   = lipgloss.NewStyle().Italic(true)
-	styleStrike   = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A"))
-	styleBQ       = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
-	styleChecked  = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
+	styleHeading1  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Underline(true)
+	styleHeading2  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA"))
+	styleHeading3  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF"))
+	styleItalic    = lipgloss.NewStyle().Italic(true)
+	styleStrike    = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A"))
+	styleBQ        = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
+	styleChecked   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
 	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A"))
 )
 

@@ -13,7 +13,8 @@ import (
 )
 
 // Retry parameters mirroring withRetry.ts:
-//   base=1s, multiplier=2, max=32s, jitter=25%, maxRetries=5
+//
+//	base=1s, multiplier=2, max=32s, jitter=25%, maxRetries=5
 const (
 	retryBase       = 1 * time.Second
 	retryMultiplier = 2.0

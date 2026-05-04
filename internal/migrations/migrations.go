@@ -55,8 +55,8 @@ var modelNormalize = Migration{
 			"sonnet-4-5-20250929":            "claude-sonnet-4-6",
 			"sonnet-4-5":                     "claude-sonnet-4-6",
 			// Sonnet 3.5 variants → current Sonnet
-			"claude-3-5-sonnet-20241022":     "claude-sonnet-4-6",
-			"claude-3-5-sonnet-20240620":     "claude-sonnet-4-6",
+			"claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
+			"claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
 			// Opus 3 → Opus 4
 			"claude-3-opus-20240229": "claude-opus-4-7",
 			// Haiku 3.5 → Haiku 4.5
@@ -131,7 +131,7 @@ func saveCompleted(claudeDir string, completed map[string]bool) {
 		raw = map[string]json.RawMessage{}
 	}
 
-	var ids []string
+	ids := make([]string, 0, len(completed))
 	for id := range completed {
 		ids = append(ids, id)
 	}

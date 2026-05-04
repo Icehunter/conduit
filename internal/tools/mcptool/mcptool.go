@@ -36,7 +36,7 @@ func (t *MCPTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 
-func (t *MCPTool) IsReadOnly(_ json.RawMessage) bool       { return false }
+func (t *MCPTool) IsReadOnly(_ json.RawMessage) bool        { return false }
 func (t *MCPTool) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
 func (t *MCPTool) Execute(ctx context.Context, input json.RawMessage) (tool.Result, error) {

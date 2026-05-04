@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,10 +24,10 @@ type PluginInstallationEntry struct {
 	GitCommitSHA string `json:"gitCommitSha,omitempty"`
 }
 
-// installedPluginsV2 is the full installed_plugins.json V2 file shape.
-type installedPluginsV2 struct {
-	Version int                                   `json:"version"`
-	Plugins map[string][]PluginInstallationEntry  `json:"plugins"`
+// InstalledPluginsV2 is the installed_plugins.json V2 file shape.
+type InstalledPluginsV2 struct {
+	Version int                                  `json:"version"`
+	Plugins map[string][]PluginInstallationEntry `json:"plugins"`
 }
 
 // installedPluginsPath returns the path to installed_plugins.json.
@@ -35,15 +36,15 @@ func installedPluginsPath() string {
 }
 
 // LoadInstalledPlugins reads installed_plugins.json and returns the V2 data.
-func LoadInstalledPlugins() (*installedPluginsV2, error) {
+func LoadInstalledPlugins() (*InstalledPluginsV2, error) {
 	data, err := os.ReadFile(installedPluginsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &installedPluginsV2{Version: 2, Plugins: make(map[string][]PluginInstallationEntry)}, nil
+			return &InstalledPluginsV2{Version: 2, Plugins: make(map[string][]PluginInstallationEntry)}, nil
 		}
 		return nil, err
 	}
-	var f installedPluginsV2
+	var f InstalledPluginsV2
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func LoadInstalledPlugins() (*installedPluginsV2, error) {
 }
 
 // saveInstalledPlugins writes the V2 file atomically.
-func saveInstalledPlugins(f *installedPluginsV2) error {
+func saveInstalledPlugins(f *InstalledPluginsV2) error {
 	path := installedPluginsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -71,7 +72,7 @@ func saveInstalledPlugins(f *installedPluginsV2) error {
 // pluginSpec is "pluginName" or "pluginName@marketplaceName".
 // scope is "user" (default), "project", or "local".
 // cwd is used for project/local scope.
-func Install(pluginSpec, scope, cwd string) (*PluginInstallationEntry, error) {
+func Install(ctx context.Context, pluginSpec, scope, cwd string) (*PluginInstallationEntry, error) {
 	if scope == "" {
 		scope = "user"
 	}
@@ -96,7 +97,7 @@ func Install(pluginSpec, scope, cwd string) (*PluginInstallationEntry, error) {
 		if srcDir == "" {
 			// Plugin may be "external" — defined in marketplace.json with its own source URL.
 			// Try to clone it from the marketplace manifest's source field.
-			srcDir, err = cloneExternalPlugin(marketplaceName, pluginName, pluginsDir())
+			srcDir, err = cloneExternalPlugin(ctx, marketplaceName, pluginName, pluginsDir())
 			if err != nil {
 				return nil, fmt.Errorf("install: plugin %q not found in marketplace %q: %w", pluginName, marketplaceName, err)
 			}
@@ -256,11 +257,11 @@ func sanitizePathComponent(s string) string {
 
 // gitCloneOrPull clones a git repo to dst, or pulls if it already exists.
 // Uses sparse checkout if sparsePaths is non-empty.
-func gitCloneOrPull(url, ref string, sparsePaths []string, dst string) error {
+func gitCloneOrPull(ctx context.Context, url, ref string, sparsePaths []string, dst string) error {
 	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
 		// Already cloned — pull.
 		args := []string{"-C", dst, "pull", "--ff-only"}
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git pull: %w\n%s", err, out)
 		}
 		return nil
@@ -274,16 +275,16 @@ func gitCloneOrPull(url, ref string, sparsePaths []string, dst string) error {
 		args = append(args, "--filter=tree:0", "--no-checkout")
 	}
 	args = append(args, url, dst)
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, out)
 	}
 
 	if len(sparsePaths) > 0 {
 		sparseArgs := append([]string{"-C", dst, "sparse-checkout", "set", "--cone", "--"}, sparsePaths...)
-		if out, err := exec.Command("git", sparseArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, "git", sparseArgs...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git sparse-checkout: %w\n%s", err, out)
 		}
-		if out, err := exec.Command("git", "-C", dst, "checkout").CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, "git", "-C", dst, "checkout").CombinedOutput(); err != nil {
 			return fmt.Errorf("git checkout: %w\n%s", err, out)
 		}
 	}
@@ -295,7 +296,7 @@ func gitHead(dir string) (string, error) {
 	// Walk up to find the git root.
 	for d := dir; d != filepath.Dir(d); d = filepath.Dir(d) {
 		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
-			out, err := exec.Command("git", "-C", d, "rev-parse", "HEAD").Output()
+			out, err := exec.CommandContext(context.Background(), "git", "-C", d, "rev-parse", "HEAD").Output()
 			if err != nil {
 				return "", err
 			}

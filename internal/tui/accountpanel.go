@@ -63,8 +63,8 @@ type accountPanelState struct {
 // accountSwitchedMsg drives the live credential reload after switching.
 type accountSwitchedMsg struct{ email string }
 
-// commands_loginMsg opens the login picker from "+ Add account".
-type commands_loginMsg struct{}
+// commandsLoginMsg opens the login picker from "+ Add account".
+type commandsLoginMsg struct{}
 
 // ── Constructor ──────────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 		case "enter":
 			if a.selected == len(a.accounts) {
 				m.settingsPanel = nil
-				return m, func() tea.Msg { return commands_loginMsg{} }
+				return m, func() tea.Msg { return commandsLoginMsg{} }
 			}
 			a.openDetail(a.accounts[a.selected].email)
 		}
@@ -176,7 +176,7 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 				return m, func() tea.Msg { return accountSwitchedMsg{email: email} }
 			case "login":
 				m.settingsPanel = nil
-				return m, func() tea.Msg { return commands_loginMsg{} }
+				return m, func() tea.Msg { return commandsLoginMsg{} }
 			case "remove":
 				store, err := auth.LoadAccountStore()
 				if err == nil {
@@ -204,7 +204,7 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 
 // ── Renderer (called by settingspanel for the Accounts tab body) ─────────────
 
-func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState, innerW, _ int) {
+func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState, _, _ int) {
 	if p.accts == nil {
 		p.accts = newAccountPanel()
 	}

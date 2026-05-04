@@ -129,7 +129,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 }
 
 // hover performs textDocument/hover and returns formatted markdown.
-func (t *Tool) hover(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) {
+func (t *Tool) hover(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) { //nolint:unparam
 	params := lspclient.TextDocumentPositionParams{
 		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
 		Position:     lspclient.Position{Line: line, Character: char},
@@ -161,7 +161,7 @@ func (t *Tool) hover(ctx context.Context, cl *lspclient.Client, uri string, line
 }
 
 // definition performs textDocument/definition.
-func (t *Tool) definition(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) {
+func (t *Tool) definition(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) { //nolint:unparam
 	params := lspclient.TextDocumentPositionParams{
 		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
 		Position:     lspclient.Position{Line: line, Character: char},
@@ -192,7 +192,7 @@ func (t *Tool) definition(ctx context.Context, cl *lspclient.Client, uri string,
 }
 
 // references performs textDocument/references.
-func (t *Tool) references(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) {
+func (t *Tool) references(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) { //nolint:unparam
 	params := lspclient.ReferenceParams{
 		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
 		Position:     lspclient.Position{Line: line, Character: char},
@@ -224,7 +224,7 @@ func (t *Tool) references(ctx context.Context, cl *lspclient.Client, uri string,
 }
 
 // diagnostics returns cached diagnostics pushed by the server.
-func (t *Tool) diagnostics(cl *lspclient.Client, uri string) (tool.Result, error) {
+func (t *Tool) diagnostics(cl *lspclient.Client, uri string) (tool.Result, error) { //nolint:unparam
 	diags := cl.Diagnostics(uri)
 	if len(diags) == 0 {
 		return tool.TextResult("No diagnostics for this file."), nil
@@ -250,7 +250,7 @@ func (t *Tool) diagnostics(cl *lspclient.Client, uri string) (tool.Result, error
 
 // --- helpers ---
 
-func didOpen(ctx context.Context, cl *lspclient.Client, uri, langID, absPath string) error {
+func didOpen(_ context.Context, cl *lspclient.Client, uri, langID, absPath string) error {
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		return err
@@ -270,7 +270,7 @@ func didOpen(ctx context.Context, cl *lspclient.Client, uri, langID, absPath str
 	return cl.Notify("textDocument/didOpen", raw)
 }
 
-func didClose(ctx context.Context, cl *lspclient.Client, uri string) error {
+func didClose(_ context.Context, cl *lspclient.Client, uri string) error {
 	params := lspclient.DidCloseTextDocumentParams{
 		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
 	}

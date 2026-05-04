@@ -36,7 +36,7 @@ func rtkGain() Result {
 	if err != nil {
 		return Result{Type: "error", Text: fmt.Sprintf("RTK: could not open history: %v", err)}
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	totalOrig, totalFiltered, rows, err := db.Gain()
 	if err != nil {
@@ -167,10 +167,10 @@ func rtkDiscover() Result {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("RTK discover — scanned %d sessions\n\n", scanned))
+	fmt.Fprintf(&sb, "RTK discover — scanned %d sessions\n\n", scanned)
 	sb.WriteString("Unclassified commands (potential RTK savings):\n\n")
 	for _, p := range ranked {
-		sb.WriteString(fmt.Sprintf("  %-20s  %d calls\n", p.cmd, p.count))
+		fmt.Fprintf(&sb, "  %-20s  %d calls\n", p.cmd, p.count)
 	}
 	sb.WriteString("\nThese commands have no RTK filter rule. Adding rules would save tokens on future runs.")
 	return Result{Type: "text", Text: sb.String()}

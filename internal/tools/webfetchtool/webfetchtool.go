@@ -71,7 +71,7 @@ func (*Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
-func (*Tool) IsReadOnly(json.RawMessage) bool      { return true }
+func (*Tool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 // Input is the typed view of the JSON input.
@@ -149,10 +149,10 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// Build result: include the prompt context so the model can use it.
 	var sb strings.Builder
 	if in.Prompt != "" {
-		sb.WriteString(fmt.Sprintf("URL: %s\nPrompt: %s\n\n", in.URL, in.Prompt))
+		fmt.Fprintf(&sb, "URL: %s\nPrompt: %s\n\n", in.URL, in.Prompt)
 	}
-	sb.WriteString(fmt.Sprintf("HTTP %d — fetched %d bytes in %dms\n\n",
-		resp.StatusCode, len(body), elapsed.Milliseconds()))
+	fmt.Fprintf(&sb, "HTTP %d — fetched %d bytes in %dms\n\n",
+		resp.StatusCode, len(body), elapsed.Milliseconds())
 	sb.WriteString(text)
 
 	return tool.TextResult(sb.String()), nil

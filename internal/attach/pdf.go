@@ -45,10 +45,10 @@ func readPDFDarwin() (*PDF, error) {
 	if err != nil {
 		return nil, fmt.Errorf("temp file: %w", err)
 	}
-	defer os.Remove(tmp.Name())
-	tmp.Close()
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	_ = tmp.Close()
 
-	save := exec.Command("osascript",
+	save := exec.Command("osascript", //nolint:noctx
 		"-e", "try",
 		"-e", "  set pdfData to (the clipboard as «class PDF »)",
 		"-e", fmt.Sprintf("  set fp to open for access POSIX file %q with write permission", tmp.Name()),
@@ -68,7 +68,7 @@ func readPDFDarwin() (*PDF, error) {
 	}
 
 	// Fall back to reading file path from clipboard (Finder copy).
-	out, err := exec.Command("osascript",
+	out, err := exec.Command("osascript", //nolint:noctx
 		"-e", "try",
 		"-e", "  POSIX path of (the clipboard as «class furl»)",
 		"-e", "on error",
@@ -99,13 +99,13 @@ func readPDFLinux() (*PDF, error) {
 
 	if _, err := exec.LookPath("xclip"); err == nil {
 		// Try raw PDF bytes first.
-		out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "application/pdf", "-o").Output()
+		out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "application/pdf", "-o").Output() //nolint:noctx
 		if err == nil && len(out) > 4 && string(out[:4]) == "%PDF" {
 			raw = out
 		}
 		if raw == nil {
 			// Try file URI.
-			uriOut, err := exec.Command("xclip", "-selection", "clipboard", "-t", "text/uri-list", "-o").Output()
+			uriOut, err := exec.Command("xclip", "-selection", "clipboard", "-t", "text/uri-list", "-o").Output() //nolint:noctx
 			if err == nil {
 				raw = pdfFromURIList(string(uriOut))
 			}
@@ -114,15 +114,15 @@ func readPDFLinux() (*PDF, error) {
 
 	if raw == nil {
 		if _, err := exec.LookPath("wl-paste"); err == nil {
-			types, _ := exec.Command("wl-paste", "-l").Output()
+			types, _ := exec.Command("wl-paste", "-l").Output() //nolint:noctx
 			if strings.Contains(string(types), "application/pdf") {
-				out, err := exec.Command("wl-paste", "--type", "application/pdf").Output()
+				out, err := exec.Command("wl-paste", "--type", "application/pdf").Output() //nolint:noctx
 				if err == nil {
 					raw = out
 				}
 			}
 			if raw == nil && strings.Contains(string(types), "text/uri-list") {
-				uriOut, err := exec.Command("wl-paste", "--type", "text/uri-list").Output()
+				uriOut, err := exec.Command("wl-paste", "--type", "text/uri-list").Output() //nolint:noctx
 				if err == nil {
 					raw = pdfFromURIList(string(uriOut))
 				}

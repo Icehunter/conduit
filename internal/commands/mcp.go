@@ -53,14 +53,14 @@ func RegisterMCPCommand(r *Registry, manager *mcp.Manager) {
 					if srv.Status != mcp.StatusConnected {
 						continue
 					}
-					sb.WriteString(fmt.Sprintf("  %s (%d tools):\n", srv.Name, len(srv.Tools)))
+					fmt.Fprintf(&sb, "  %s (%d tools):\n", srv.Name, len(srv.Tools))
 					for _, t := range srv.Tools {
 						desc := t.Description
 						if len([]rune(desc)) > 60 {
 							desc = string([]rune(desc)[:59]) + "…"
 						}
-						sb.WriteString(fmt.Sprintf("    • %s%s — %s\n",
-							mcp.NormalizeServerName(srv.Name), t.Name, desc))
+						fmt.Fprintf(&sb, "    • %s%s — %s\n",
+							mcp.NormalizeServerName(srv.Name), t.Name, desc)
 					}
 				}
 				return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
@@ -170,9 +170,10 @@ func RegisterMCPApproveCommand(r *Registry, manager *mcp.Manager, cwd string) {
 				_ = manager.Reconnect(context.Background(), name, cwd)
 			}
 			verb := "Approved"
-			if choice == "no" {
+			switch choice {
+			case "no":
 				verb = "Denied"
-			} else if choice == "yes_all" {
+			case "yes_all":
 				verb = "Approved (all project servers)"
 			}
 			return Result{Type: "flash", Text: fmt.Sprintf("%s MCP server: %s", verb, name)}

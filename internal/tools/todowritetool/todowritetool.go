@@ -78,7 +78,7 @@ func (*Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
-func (*Tool) IsReadOnly(json.RawMessage) bool      { return false }
+func (*Tool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 
 // Input is the typed view of the JSON input.
@@ -143,7 +143,7 @@ func FormatTodos(todos []Todo) string {
 		case StatusCompleted:
 			icon = "✓"
 		}
-		sb.WriteString(fmt.Sprintf("%s %s\n", icon, td.Content))
+		fmt.Fprintf(&sb, "%s %s\n", icon, td.Content)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

@@ -8,11 +8,11 @@ import (
 
 type fakeTool struct{ name string }
 
-func (f fakeTool) Name() string                                 { return f.name }
-func (f fakeTool) Description() string                          { return "fake" }
-func (f fakeTool) InputSchema() json.RawMessage                 { return json.RawMessage(`{"type":"object"}`) }
-func (f fakeTool) IsReadOnly(json.RawMessage) bool              { return true }
-func (f fakeTool) IsConcurrencySafe(json.RawMessage) bool       { return true }
+func (f fakeTool) Name() string                           { return f.name }
+func (f fakeTool) Description() string                    { return "fake" }
+func (f fakeTool) InputSchema() json.RawMessage           { return json.RawMessage(`{"type":"object"}`) }
+func (f fakeTool) IsReadOnly(json.RawMessage) bool        { return true }
+func (f fakeTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 func (f fakeTool) Execute(context.Context, json.RawMessage) (Result, error) {
 	return TextResult("ok"), nil
 }

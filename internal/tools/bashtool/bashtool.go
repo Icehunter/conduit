@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -118,7 +119,7 @@ var readOnlyPrefixes = map[string]bool{
 	"sort": true, "uniq": true, "cut": true, "awk": true, "sed": true,
 	"jq": true, "yq": true, "xmllint": true,
 	"python": true, "python3": true, "node": true, // read-only when just -c or --version
-	"go": true,   // covered by subcommand check below
+	"go":   true, // covered by subcommand check below
 	"make": true, // covered by subcommand check below
 }
 
@@ -135,8 +136,8 @@ var readOnlySubcommands = map[string]map[string]bool{
 }
 
 func isReadOnlyCommand(cmd string) bool {
-	// Strip leading env-var assignments (FOO=bar cmd ...)
-	for len(cmd) > 0 && cmd[0] != ' ' {
+	// Strip one leading env-var assignment (FOO=bar cmd ...).
+	if len(cmd) > 0 && cmd[0] != ' ' {
 		eq := false
 		for i, c := range cmd {
 			if c == '=' {
@@ -150,7 +151,6 @@ func isReadOnlyCommand(cmd string) bool {
 				break
 			}
 		}
-		break
 	}
 
 	// Get first token (the binary).
@@ -192,7 +192,7 @@ func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 // Input is the typed view of the JSON input.
 type Input struct {
 	Command     string `json:"command"`
-	Timeout     int    `json:"timeout,omitempty"`     // milliseconds
+	Timeout     int    `json:"timeout,omitempty"` // milliseconds
 	Description string `json:"description,omitempty"`
 }
 
@@ -249,12 +249,12 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		}
 	}
 	if truncated {
-		sb.WriteString(fmt.Sprintf("[truncated to first %d bytes]\n", MaxOutputBytes))
+		fmt.Fprintf(&sb, "[truncated to first %d bytes]\n", MaxOutputBytes)
 	}
 
 	switch {
 	case cctx.Err() == context.DeadlineExceeded:
-		sb.WriteString(fmt.Sprintf("Command timed out after %s.\n", timeout))
+		fmt.Fprintf(&sb, "Command timed out after %s.\n", timeout)
 		return tool.ErrorResult(strings.TrimRight(sb.String(), "\n")), nil
 	case ctx.Err() == context.Canceled:
 		return tool.ErrorResult("Command cancelled."), nil
@@ -262,10 +262,11 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		// Non-zero exit: surface to the model as an in-band error so it
 		// can correct course.
 		exitCode := -1
-		if ee, ok := runErr.(*exec.ExitError); ok {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		}
-		sb.WriteString(fmt.Sprintf("Exit code: %d\n", exitCode))
+		fmt.Fprintf(&sb, "Exit code: %d\n", exitCode)
 		return tool.ErrorResult(strings.TrimRight(sb.String(), "\n")), nil
 	}
 

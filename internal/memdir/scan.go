@@ -11,11 +11,11 @@ import (
 
 // MemoryFile is one memory file's metadata.
 type MemoryFile struct {
-	Path        string
-	Name        string    // filename without directory
-	ModTime     time.Time
-	Size        int64
-	Type        string // "user" | "feedback" | "project" | "reference" | "unknown"
+	Path    string
+	Name    string // filename without directory
+	ModTime time.Time
+	Size    int64
+	Type    string // "user" | "feedback" | "project" | "reference" | "unknown"
 }
 
 // ScanMemories lists all memory files in the memory directory for cwd.
@@ -83,11 +83,11 @@ func FormatMemoryList(files []MemoryFile) string {
 		return "No memory files found."
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Memory files (%d):\n\n", len(files)))
+	fmt.Fprintf(&sb, "Memory files (%d):\n\n", len(files))
 	for _, f := range files {
 		age := formatAge(time.Since(f.ModTime))
-		sb.WriteString(fmt.Sprintf("  [%s] %s — %s (%d bytes)\n",
-			f.Type, f.Name, age, f.Size))
+		fmt.Fprintf(&sb, "  [%s] %s — %s (%d bytes)\n",
+			f.Type, f.Name, age, f.Size)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

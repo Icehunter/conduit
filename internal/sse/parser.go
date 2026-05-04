@@ -125,9 +125,7 @@ func parseLine(line string, typ *string, data *strings.Builder, hasData, hasFiel
 	default:
 		field = line[:idx]
 		value = line[idx+1:]
-		if strings.HasPrefix(value, " ") {
-			value = value[1:]
-		}
+		value = strings.TrimPrefix(value, " ")
 	}
 	*hasField = true
 	switch field {

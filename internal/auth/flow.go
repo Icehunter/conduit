@@ -58,12 +58,12 @@ type LoginOptions struct {
 // Login runs the full PKCE OAuth flow against the configured endpoints.
 //
 // Steps:
-//   1. Generate verifier + challenge + state.
-//   2. Spin up a localhost callback listener on an OS-assigned port.
-//   3. Build manual + automatic auth URLs and present them.
-//   4. Open the automatic URL in the browser (unless suppressed).
-//   5. Wait for the redirect (or manual paste) and exchange the code.
-//   6. Send the success redirect to close out the user's browser tab.
+//  1. Generate verifier + challenge + state.
+//  2. Spin up a localhost callback listener on an OS-assigned port.
+//  3. Build manual + automatic auth URLs and present them.
+//  4. Open the automatic URL in the browser (unless suppressed).
+//  5. Wait for the redirect (or manual paste) and exchange the code.
+//  6. Send the success redirect to close out the user's browser tab.
 //
 // Returns the issued Tokens. The caller is responsible for persisting them.
 func (f *LoginFlow) Login(ctx context.Context, opt LoginOptions) (Tokens, error) {
@@ -87,7 +87,7 @@ func (f *LoginFlow) Login(ctx context.Context, opt LoginOptions) (Tokens, error)
 	if err != nil {
 		return Tokens{}, err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	port := listener.Port()
 	if err := listener.Register(state); err != nil {
 		return Tokens{}, err

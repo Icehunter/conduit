@@ -17,11 +17,11 @@ import (
 
 // Permissions is the permissions section of a settings file.
 type Permissions struct {
-	Allow              []string `json:"allow"`
-	Deny               []string `json:"deny"`
-	Ask                []string `json:"ask"`
-	DefaultMode        string   `json:"defaultMode"`
-	AdditionalDirs     []string `json:"additionalDirectories"`
+	Allow          []string `json:"allow"`
+	Deny           []string `json:"deny"`
+	Ask            []string `json:"ask"`
+	DefaultMode    string   `json:"defaultMode"`
+	AdditionalDirs []string `json:"additionalDirectories"`
 }
 
 // Hook is one hook entry. Type determines which fields are used.
@@ -57,10 +57,10 @@ type HookMatcher struct {
 
 // HooksSettings is the hooks section.
 type HooksSettings struct {
-	PreToolUse  []HookMatcher `json:"PreToolUse"`
-	PostToolUse []HookMatcher `json:"PostToolUse"`
+	PreToolUse   []HookMatcher `json:"PreToolUse"`
+	PostToolUse  []HookMatcher `json:"PostToolUse"`
 	SessionStart []HookMatcher `json:"SessionStart"`
-	Stop        []HookMatcher `json:"Stop"`
+	Stop         []HookMatcher `json:"Stop"`
 }
 
 // Settings is the parsed content of one settings file.

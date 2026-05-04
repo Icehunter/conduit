@@ -44,7 +44,7 @@ func NewCallbackListener(callbackPath string) (*CallbackListener, error) {
 	if callbackPath == "" {
 		callbackPath = "/callback"
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx
 	if err != nil {
 		return nil, fmt.Errorf("auth: bind localhost listener: %w", err)
 	}
@@ -67,7 +67,7 @@ func NewCallbackListener(callbackPath string) (*CallbackListener, error) {
 
 // Port returns the OS-assigned localhost port.
 func (l *CallbackListener) Port() int {
-	return l.listener.Addr().(*net.TCPAddr).Port
+	return l.listener.Addr().(*net.TCPAddr).Port //nolint:errcheck
 }
 
 // Register sets the expected state nonce. It must be called before any

@@ -49,12 +49,12 @@ var ProdConfig = Config{
 
 // Scope literals (decoded/0532.js:119-121).
 const (
-	ScopeUserInference        = "user:inference"
-	ScopeUserProfile          = "user:profile"
-	ScopeOrgCreateAPIKey      = "org:create_api_key"
-	ScopeUserSessionsCC       = "user:sessions:claude_code"
-	ScopeUserMCPServers       = "user:mcp_servers"
-	ScopeUserFileUpload       = "user:file_upload"
+	ScopeUserInference   = "user:inference"
+	ScopeUserProfile     = "user:profile"
+	ScopeOrgCreateAPIKey = "org:create_api_key"
+	ScopeUserSessionsCC  = "user:sessions:claude_code"
+	ScopeUserMCPServers  = "user:mcp_servers"
+	ScopeUserFileUpload  = "user:file_upload"
 )
 
 // ScopesInferenceOnly is requested for long-lived inference-only tokens

@@ -135,4 +135,3 @@ func (s *LiveState) TurnCosts() []float64 {
 	s.mu.RUnlock()
 	return out
 }
-

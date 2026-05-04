@@ -38,9 +38,9 @@ type Entry struct {
 
 // Session manages the JSONL transcript for one conversation.
 type Session struct {
-	ID        string
+	ID         string
 	ProjectDir string
-	FilePath  string
+	FilePath   string
 }
 
 // New creates a new session rooted at cwd, using sessionID as the file name.
@@ -305,7 +305,7 @@ func sanitizePath(s string) string {
 func djb2Hash(s string) int32 {
 	var hash int32
 	for _, c := range s {
-		hash = ((hash << 5) - hash + int32(c))
+		hash = ((hash << 5) - hash + c)
 	}
 	return hash
 }

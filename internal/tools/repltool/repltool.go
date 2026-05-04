@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,7 +26,7 @@ const maxOutput = 10000
 // Tool implements the REPL tool.
 type Tool struct{}
 
-func New() *Tool { return &Tool{} }
+func New() *Tool           { return &Tool{} }
 func (*Tool) Name() string { return "REPL" }
 func (*Tool) Description() string {
 	return `Execute code in a REPL environment. Supports JavaScript (node) and Python (python3).
@@ -47,7 +48,7 @@ func (*Tool) InputSchema() json.RawMessage {
 		"required": ["code"]
 	}`)
 }
-func (*Tool) IsReadOnly(json.RawMessage) bool       { return false }
+func (*Tool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -120,7 +121,8 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	if runErr != nil {
 		exitCode := -1
-		if ee, ok := runErr.(*exec.ExitError); ok {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		}
 		if result == "" {

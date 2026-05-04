@@ -59,7 +59,7 @@ type Diagnostic struct {
 
 // MarkupContent holds a marked-up string (plaintext or markdown).
 type MarkupContent struct {
-	Kind  string `json:"kind"`  // "plaintext" | "markdown"
+	Kind  string `json:"kind"` // "plaintext" | "markdown"
 	Value string `json:"value"`
 }
 
@@ -125,7 +125,7 @@ type ReferenceContext struct {
 type ReferenceParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Position     Position               `json:"position"`
-	Context      ReferenceContext        `json:"context"`
+	Context      ReferenceContext       `json:"context"`
 }
 
 // rpcRequest is a JSON-RPC 2.0 request.

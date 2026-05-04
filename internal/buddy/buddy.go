@@ -401,13 +401,13 @@ func Summary(b Bones, name string) string {
 	if badge == "" {
 		badge = b.Rarity
 	}
-	sb.WriteString(fmt.Sprintf("\n%s the %s  %s%s\n", name, b.Species, badge, shinyMark))
+	fmt.Fprintf(&sb, "\n%s the %s  %s%s\n", name, b.Species, badge, shinyMark)
 	sb.WriteString("\nStats:\n")
 	for _, stat := range statNames {
 		val := b.Stats[stat]
 		filled := val / 10
 		bar := strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
-		sb.WriteString(fmt.Sprintf("  %-12s %s %3d\n", stat, bar, val))
+		fmt.Fprintf(&sb, "  %-12s %s %3d\n", stat, bar, val)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

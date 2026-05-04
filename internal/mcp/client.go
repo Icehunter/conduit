@@ -54,7 +54,7 @@ type stdioClient struct {
 // NewStdioClient creates a Client that runs cmd with the given args and env,
 // communicating over stdio.
 func NewStdioClient(command string, args []string, env map[string]string) (Client, error) {
-	cmd := exec.Command(command, args...)
+	cmd := exec.CommandContext(context.Background(), command, args...) //nolint:noctx
 	if len(env) > 0 {
 		pairs := make([]string, 0, len(env))
 		for k, v := range env {
@@ -484,4 +484,3 @@ func (c *httpClient) ReadResource(ctx context.Context, uri string) ([]ResourceCo
 }
 
 func (c *httpClient) Close() error { return nil }
-

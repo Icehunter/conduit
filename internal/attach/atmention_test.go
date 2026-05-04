@@ -17,7 +17,7 @@ func TestExtractAtMentions_Basic(t *testing.T) {
 		{"@src/main.go#L10-20", []string{"@src/main.go#L10-20"}},
 		{"@file.go#L5", []string{"@file.go#L5"}},
 		{"a @foo @bar", []string{"@foo", "@bar"}},
-		{"@foo @foo", []string{"@foo"}},             // dedup
+		{"@foo @foo", []string{"@foo"}}, // dedup
 		{`no mentions here`, nil},
 		{`@"agent (agent)"`, nil},                   // agent mention excluded
 		{`@"agent (agent)" @foo`, []string{"@foo"}}, // mixed

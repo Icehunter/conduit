@@ -64,13 +64,13 @@ func readDarwinType(appleType string) (*Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("temp file: %w", err)
 	}
-	defer os.Remove(tmp.Name())
-	tmp.Close()
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	_ = tmp.Close()
 
 	// Write clipboard → file. Each -e is one statement.
 	// The 'try' block converts AppleScript errors (e.g. wrong type, no
 	// image on clipboard) into a non-zero exit instead of hanging.
-	save := exec.Command("osascript",
+	save := exec.Command("osascript", //nolint:noctx
 		"-e", "try",
 		"-e", "  set img_data to (the clipboard as "+appleType+")",
 		"-e", fmt.Sprintf("  set fp to open for access POSIX file %q with write permission", tmp.Name()),
@@ -100,7 +100,7 @@ func readDarwinType(appleType string) (*Image, error) {
 func readLinux() (*Image, error) {
 	// Try xclip first.
 	if _, err := exec.LookPath("xclip"); err == nil {
-		out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output()
+		out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output() //nolint:noctx
 		if err == nil && len(out) > 0 {
 			return &Image{
 				Data:      base64.StdEncoding.EncodeToString(out),
@@ -111,9 +111,9 @@ func readLinux() (*Image, error) {
 	// Try wl-paste (Wayland).
 	if _, err := exec.LookPath("wl-paste"); err == nil {
 		// Check available types first.
-		types, err := exec.Command("wl-paste", "-l").Output()
+		types, err := exec.Command("wl-paste", "-l").Output() //nolint:noctx
 		if err == nil && strings.Contains(string(types), "image/png") {
-			out, err := exec.Command("wl-paste", "--type", "image/png").Output()
+			out, err := exec.Command("wl-paste", "--type", "image/png").Output() //nolint:noctx
 			if err == nil && len(out) > 0 {
 				return &Image{
 					Data:      base64.StdEncoding.EncodeToString(out),

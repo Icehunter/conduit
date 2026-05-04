@@ -81,7 +81,7 @@ func TestGenerateState(t *testing.T) {
 	}
 	for _, r := range s {
 		// base64url alphabet
-		if !((r >= 'A' && r <= 'Z') ||
+		if !((r >= 'A' && r <= 'Z') || //nolint:staticcheck
 			(r >= 'a' && r <= 'z') ||
 			(r >= '0' && r <= '9') ||
 			r == '-' || r == '_') {

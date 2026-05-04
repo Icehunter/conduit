@@ -130,11 +130,11 @@ func (t *ConfigTool) saveSettings(path string, s rawSettings) error {
 
 // Supported settings and their dot-path keys.
 var supportedSettings = map[string]bool{
-	"model":                    true,
-	"permissions.defaultMode":  true,
-	"permissions.allow":        true,
-	"permissions.deny":         true,
-	"env":                      true,
+	"model":                   true,
+	"permissions.defaultMode": true,
+	"permissions.allow":       true,
+	"permissions.deny":        true,
+	"env":                     true,
 }
 
 func getField(s rawSettings, key string) any {

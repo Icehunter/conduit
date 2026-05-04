@@ -71,7 +71,7 @@ func (*Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
-func (*Tool) IsReadOnly(json.RawMessage) bool      { return true }
+func (*Tool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 // Input is the typed view of the JSON input.
@@ -131,7 +131,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("search request failed: %v", err)), nil
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	result, err := drainSearchStream(ctx, stream, in.Query)
 	if err != nil {
@@ -205,7 +205,7 @@ func drainSearchStream(ctx context.Context, stream *api.Stream, query string) (s
 
 	// Assemble output: collect text blocks; skip server_tool_use and web_search_tool_result.
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Web search results for: %q\n\n", query))
+	fmt.Fprintf(&sb, "Web search results for: %q\n\n", query)
 
 	seenIdx := make(map[int]bool)
 	for _, idx := range orderedIndexes {

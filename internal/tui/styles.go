@@ -12,14 +12,15 @@ import (
 // when the theme changes — wired via theme.OnChange in init().
 //
 // Color name aliases kept for back-compat with existing render code:
-//   colorAccent → palette.Accent
-//   colorMuted  → palette.Secondary
-//   colorDim    → palette.Tertiary
-//   colorFg     → palette.Primary
-//   colorError  → palette.Danger
-//   colorTool   → palette.Info
-//   colorBorder → palette.Border
-//   colorCodeBg → palette.CodeBg
+//
+//	colorAccent → palette.Accent
+//	colorMuted  → palette.Secondary
+//	colorDim    → palette.Tertiary
+//	colorFg     → palette.Primary
+//	colorError  → palette.Danger
+//	colorTool   → palette.Info
+//	colorBorder → palette.Border
+//	colorCodeBg → palette.CodeBg
 var (
 	colorAccent  color.Color
 	colorMuted   color.Color
@@ -28,9 +29,7 @@ var (
 	colorTool    color.Color
 	colorFg      color.Color
 	colorBg      color.Color
-	colorModalBg color.Color
-	colorCodeBg  color.Color
-	colorBorder  color.Color
+	colorCodeBg color.Color
 )
 
 // styleAppSurface paints the entire TUI region with the theme background.
@@ -38,36 +37,33 @@ var (
 // gaps fill with bg color instead of showing through to the terminal.
 var styleAppSurface lipgloss.Style
 
-// styleModalSurface paints panel interiors with a slightly distinct bg.
-var styleModalSurface lipgloss.Style
-
 var (
-	styleYouPrefix         lipgloss.Style
-	styleClaudePrefix      lipgloss.Style
-	styleUserText          lipgloss.Style
-	styleAssistantText     lipgloss.Style
-	styleToolBadge         lipgloss.Style
-	styleToolContent       lipgloss.Style
-	styleErrorText         lipgloss.Style
-	styleSystemText        lipgloss.Style
-	styleInlineCode        lipgloss.Style
-	styleCodeBorder        lipgloss.Style
-	styleCodeLang          lipgloss.Style
-	styleInputBorder       lipgloss.Style
-	styleInputBorderActive lipgloss.Style
-	styleStatus            lipgloss.Style
-	styleStatusModel       lipgloss.Style
-	styleStatusAccent      lipgloss.Style
-	styleModePurple        lipgloss.Style
-	styleModeCyan          lipgloss.Style
-	styleModeYellow        lipgloss.Style
-	styleSpinner           lipgloss.Style
-	styleSep               lipgloss.Style
-	stylePickerBorder      lipgloss.Style
-	stylePickerItem        lipgloss.Style
+	styleYouPrefix          lipgloss.Style
+	styleClaudePrefix       lipgloss.Style
+	styleUserText           lipgloss.Style
+	styleAssistantText      lipgloss.Style
+	styleToolBadge          lipgloss.Style
+	styleToolContent        lipgloss.Style
+	styleErrorText          lipgloss.Style
+	styleSystemText         lipgloss.Style
+	styleInlineCode         lipgloss.Style
+	styleCodeBorder         lipgloss.Style
+	styleCodeLang           lipgloss.Style
+	styleInputBorder        lipgloss.Style
+	styleInputBorderActive  lipgloss.Style
+	styleStatus             lipgloss.Style
+	styleStatusModel        lipgloss.Style
+	styleStatusAccent       lipgloss.Style
+	styleModePurple         lipgloss.Style
+	styleModeCyan           lipgloss.Style
+	styleModeYellow         lipgloss.Style
+	styleSpinner            lipgloss.Style
+	styleSep                lipgloss.Style
+	stylePickerBorder       lipgloss.Style
+	stylePickerItem         lipgloss.Style
 	stylePickerItemSelected lipgloss.Style
-	stylePickerDesc        lipgloss.Style
-	stylePickerHighlight   lipgloss.Style
+	stylePickerDesc         lipgloss.Style
+	stylePickerHighlight    lipgloss.Style
 )
 
 // RebuildStyles regenerates every package-level style from theme.Active().
@@ -82,9 +78,7 @@ func RebuildStyles() {
 	colorTool = lipgloss.Color(p.Info)
 	colorFg = lipgloss.Color(p.Primary)
 	colorBg = lipgloss.Color(p.Background)
-	colorModalBg = lipgloss.Color(p.ModalBg)
 	colorCodeBg = lipgloss.Color(p.CodeBg)
-	colorBorder = lipgloss.Color(p.Border)
 
 	// styleAppSurface is used by paintApp's outer wrap. Background is set
 	// only when the active palette has a Background value (light themes).
@@ -95,7 +89,6 @@ func RebuildStyles() {
 	} else {
 		styleAppSurface = lipgloss.NewStyle().Foreground(colorFg)
 	}
-	styleModalSurface = lipgloss.NewStyle().Foreground(colorFg)
 
 	// Foreground-only theming. Terminal bg shows through everywhere except
 	// code blocks (which keep their own bg for visual differentiation).
@@ -171,12 +164,6 @@ func fgOnBg(c color.Color) lipgloss.Style {
 		s = s.Background(colorBg)
 	}
 	return s
-}
-
-// fgOnCode is the same but uses CodeBg — for tokens inside code blocks.
-// Code blocks no longer paint bg in the new approach, but kept for callers.
-func fgOnCode(c color.Color) lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(c)
 }
 
 // Widget theme refresh is handled in Model.View() (re-applies styles every

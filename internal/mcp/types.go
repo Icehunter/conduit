@@ -122,7 +122,7 @@ type ConnectedServer struct {
 	Name         string
 	Config       ServerConfig
 	Status       ServerStatus
-	Disabled     bool   // true when the server is in disabledMcpServers
+	Disabled     bool // true when the server is in disabledMcpServers
 	Tools        []ToolDef
 	Instructions string // server-provided instructions from initialize response
 	Error        string // set when Status == StatusFailed

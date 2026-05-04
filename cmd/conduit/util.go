@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"runtime"
 )
 
 // newSessionID returns a fresh UUIDv4-ish 32-hex-char session id.
@@ -22,5 +21,3 @@ func newSessionID() string {
 		hex.EncodeToString(b[10:])
 }
 
-func runtimeOS() string   { return runtime.GOOS }
-func runtimeArch() string { return runtime.GOARCH }

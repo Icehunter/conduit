@@ -62,7 +62,7 @@ func (*Tool) InputSchema() json.RawMessage {
 	}`)
 }
 
-func (*Tool) IsReadOnly(json.RawMessage) bool      { return false }
+func (*Tool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 
 // Input is the typed view of the JSON input.

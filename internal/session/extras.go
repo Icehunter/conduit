@@ -115,13 +115,13 @@ func ExtractTitle(path string) string {
 // titleFromText derives a display title from a user message.
 // Slash commands get descriptive names; long messages are truncated.
 var slashTitles = map[string]string{
-	"/init":       "Initialize CLAUDE.md",
-	"/review":     "Code review",
-	"/commit":     "Create commit",
-	"/fix":        "Fix issue",
+	"/init":        "Initialize CLAUDE.md",
+	"/review":      "Code review",
+	"/commit":      "Create commit",
+	"/fix":         "Fix issue",
 	"/pr-comments": "Address PR comments",
-	"/compact":    "Compact session",
-	"/diff":       "View diff",
+	"/compact":     "Compact session",
+	"/diff":        "View diff",
 }
 
 // promptPrefixTitles maps the opening words of known injected prompts to display names.
@@ -311,7 +311,7 @@ func LoadActivity(path string) (Activity, error) {
 
 // FileAccessEntry records a file read or write.
 type FileAccessEntry struct {
-	Op   string `json:"op"`   // "read" | "write"
+	Op   string `json:"op"` // "read" | "write"
 	Path string `json:"path"`
 }
 

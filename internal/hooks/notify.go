@@ -24,7 +24,7 @@ func notifyMacOS(title, body string) {
 	// macOS versions. Custom app icon requires a .app bundle which we don't
 	// have, so the icon is always the calling app's icon (Terminal/iTerm/etc).
 	script := `display notification "` + escapeAppleScript(body) + `" with title "` + escapeAppleScript(title) + `"`
-	_ = exec.Command("osascript", "-e", script).Run()
+	_ = exec.Command("osascript", "-e", script).Run() //nolint:noctx
 }
 
 func notifyLinux(title, body string) {
@@ -32,7 +32,7 @@ func notifyLinux(title, body string) {
 	if icon := assets.IconPath(); icon != "" {
 		args = append([]string{"--icon", icon}, args...)
 	}
-	_ = exec.Command("notify-send", args...).Run()
+	_ = exec.Command("notify-send", args...).Run() //nolint:noctx
 }
 
 // escapeAppleScript escapes double quotes and backslashes for AppleScript string literals.

@@ -11,19 +11,19 @@ import (
 
 // MessageStartEvent is the first event in every stream.
 type MessageStartEvent struct {
-	Type    string         `json:"type"`
-	Message MessageMeta    `json:"message"`
+	Type    string      `json:"type"`
+	Message MessageMeta `json:"message"`
 }
 
 // MessageMeta is the message envelope inside message_start.
 type MessageMeta struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
-	Role       string         `json:"role"`
-	Model      string         `json:"model"`
+	ID         string            `json:"id"`
+	Type       string            `json:"type"`
+	Role       string            `json:"role"`
+	Model      string            `json:"model"`
 	Content    []json.RawMessage `json:"content"`
-	StopReason string         `json:"stop_reason"`
-	Usage      Usage          `json:"usage"`
+	StopReason string            `json:"stop_reason"`
+	Usage      Usage             `json:"usage"`
 }
 
 // Usage tracks input/output tokens. cache_* fields are present when prompt
@@ -66,9 +66,9 @@ type ContentBlockStopEvent struct {
 
 // MessageDeltaEvent — final usage / stop info.
 type MessageDeltaEvent struct {
-	Type  string         `json:"type"`
-	Delta MessageDelta   `json:"delta"`
-	Usage Usage          `json:"usage"`
+	Type  string       `json:"type"`
+	Delta MessageDelta `json:"delta"`
+	Usage Usage        `json:"usage"`
 }
 
 // MessageDelta carries the stop reason at message close.

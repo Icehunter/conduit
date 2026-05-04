@@ -88,9 +88,9 @@ func SkillsReminder(skills []SkillEntry) string {
 			desc = string([]rune(desc)[:199]) + "…"
 		}
 		if desc != "" {
-			sb.WriteString(fmt.Sprintf("- %s: %s\n", s.Name, desc))
+			fmt.Fprintf(&sb, "- %s: %s\n", s.Name, desc)
 		} else {
-			sb.WriteString(fmt.Sprintf("- %s\n", s.Name))
+			fmt.Fprintf(&sb, "- %s\n", s.Name)
 		}
 	}
 	return sb.String()

@@ -26,7 +26,7 @@ type Task struct {
 	Subject     string
 	Description string
 	Status      Status
-	ActiveForm  string            // present-continuous form e.g. "Running tests"
+	ActiveForm  string // present-continuous form e.g. "Running tests"
 	Metadata    map[string]any
 	Output      string
 	CreatedAt   time.Time

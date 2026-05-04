@@ -130,4 +130,3 @@ func ReadPDFFile(p string) (*PDF, error) {
 		MediaType: "application/pdf",
 	}, nil
 }
-

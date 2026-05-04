@@ -28,7 +28,7 @@ func (t *SyntheticOutput) InputSchema() json.RawMessage {
 	// Accepts any object.
 	return json.RawMessage(`{"type":"object","additionalProperties":true}`)
 }
-func (t *SyntheticOutput) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (t *SyntheticOutput) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (t *SyntheticOutput) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *SyntheticOutput) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {

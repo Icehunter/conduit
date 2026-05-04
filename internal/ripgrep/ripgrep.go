@@ -6,6 +6,8 @@ package ripgrep
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 )
@@ -64,12 +66,13 @@ func Search(pattern, dir string, maxResults int, extraArgs ...string) ([]Result,
 	}
 
 	var out bytes.Buffer
-	cmd := exec.Command(rg, args...)
+	cmd := exec.CommandContext(context.Background(), rg, args...)
 	cmd.Stdout = &out
 	cmd.Stderr = &bytes.Buffer{}
 	err := cmd.Run()
 	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
 			return nil, nil // no matches
 		}
 		return nil, err

@@ -32,11 +32,6 @@ func MaybeResize(img *Image) error {
 		return err
 	}
 
-	// Fast path: within size limit and no decode needed.
-	if len(raw) <= apiImageTargetRawBytes {
-		// Still need to check pixel dimensions.
-	}
-
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		// Unknown format — leave untouched; API will reject if over limit.

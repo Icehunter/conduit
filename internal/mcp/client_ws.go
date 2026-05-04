@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 )
 
 // wsClient speaks JSON-RPC over a WebSocket connection.
@@ -19,7 +19,7 @@ type wsClient struct {
 	headers map[string]string
 
 	mu      sync.Mutex
-	conn    *websocket.Conn // set after dial
+	conn    *websocket.Conn
 	nextID  atomic.Int64
 	pending map[int64]chan *jsonrpcResponse
 	done    chan struct{}
@@ -40,7 +40,7 @@ func (c *wsClient) dial(ctx context.Context) error {
 	for k, v := range c.headers {
 		opts.HTTPHeader.Set(k, v)
 	}
-	conn, _, err := websocket.Dial(ctx, c.url, opts)
+	conn, _, err := websocket.Dial(ctx, c.url, opts) //nolint:bodyclose
 	if err != nil {
 		return fmt.Errorf("mcp ws dial %s: %w", c.url, err)
 	}

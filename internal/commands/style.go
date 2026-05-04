@@ -17,13 +17,10 @@ import (
 )
 
 var (
-	styleMu       sync.RWMutex
-	ansiLabel     string // bold + Secondary color (label text)
-	ansiSuccess   string // Success color
-	ansiDanger    string // Danger color
-	ansiAccent    string // Accent color
-	ansiInfo      string // Info color
-	ansiSecondary string // Secondary color (no bold)
+	styleMu     sync.RWMutex
+	ansiLabel   string // bold + Secondary color (label text)
+	ansiSuccess string // Success color
+	ansiDanger  string // Danger color
 )
 
 // Stable references to theme constants — these don't change with palette swap.
@@ -45,9 +42,6 @@ func rebuildStyles() {
 	ansiLabel = ansiBold + theme.AnsiFG(p.Secondary)
 	ansiSuccess = theme.AnsiFG(p.Success)
 	ansiDanger = theme.AnsiFG(p.Danger)
-	ansiAccent = theme.AnsiFG(p.Accent)
-	ansiInfo = theme.AnsiFG(p.Info)
-	ansiSecondary = theme.AnsiFG(p.Secondary)
 }
 
 func init() {
@@ -83,9 +77,3 @@ func statusCheck(ok bool) string {
 	return ansiDanger + "✗" + ansiReset
 }
 
-// statusValue accents a value with theme.Info (used for IDs, paths, counts).
-func statusValue(s string) string {
-	styleMu.RLock()
-	defer styleMu.RUnlock()
-	return ansiInfo + s + ansiReset
-}

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,7 +15,7 @@ import (
 
 // PluginPanelInstalledEntry is one installed plugin entry for the panel.
 type PluginPanelInstalledEntry struct {
-	ID          string `json:"id"`          // "name@marketplace"
+	ID          string `json:"id"` // "name@marketplace"
 	Name        string `json:"name"`
 	Marketplace string `json:"marketplace"`
 	Version     string `json:"version"`
@@ -26,7 +27,7 @@ type PluginPanelInstalledEntry struct {
 // PluginPanelMarketplaceRow is one marketplace row for the panel.
 type PluginPanelMarketplaceRow struct {
 	Name        string `json:"name"`
-	Source      string `json:"source"`      // human-readable source string
+	Source      string `json:"source"` // human-readable source string
 	LastUpdated string `json:"lastUpdated"`
 	PluginCount int    `json:"pluginCount"` // from marketplace.json, 0 if unavailable
 }
@@ -226,21 +227,21 @@ func pluginDetail(ps []*plugins.Plugin, name string) Result {
 	for _, p := range ps {
 		if strings.EqualFold(p.Manifest.Name, name) {
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Plugin: %s", p.Manifest.Name))
+			fmt.Fprintf(&sb, "Plugin: %s", p.Manifest.Name)
 			if p.Manifest.Version != "" {
-				sb.WriteString(fmt.Sprintf(" v%s", p.Manifest.Version))
+				fmt.Fprintf(&sb, " v%s", p.Manifest.Version)
 			}
 			sb.WriteByte('\n')
 			if p.Manifest.Description != "" {
 				sb.WriteString(p.Manifest.Description + "\n")
 			}
-			sb.WriteString(fmt.Sprintf("\nCommands (%d):\n", len(p.Commands)))
+			fmt.Fprintf(&sb, "\nCommands (%d):\n", len(p.Commands))
 			for _, cmd := range p.Commands {
 				desc := cmd.Description
 				if len([]rune(desc)) > 60 {
 					desc = string([]rune(desc)[:59]) + "…"
 				}
-				sb.WriteString(fmt.Sprintf("  /%s\n    %s\n", cmd.QualifiedName, desc))
+				fmt.Fprintf(&sb, "  /%s\n    %s\n", cmd.QualifiedName, desc)
 			}
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		}
@@ -256,7 +257,7 @@ func pluginInstall(args string) Result {
 	spec := parts[0]
 
 	cwd, _ := os.Getwd()
-	entry, err := plugins.Install(spec, "user", cwd)
+	entry, err := plugins.Install(context.Background(), spec, "user", cwd)
 	if err != nil {
 		return Result{Type: "error", Text: fmt.Sprintf("Install failed: %v", err)}
 	}
@@ -284,7 +285,7 @@ func pluginList(ps []*plugins.Plugin) Result {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Installed plugins (%d registered, %d loaded):\n\n", len(installed.Plugins), len(ps)))
+	fmt.Fprintf(&sb, "Installed plugins (%d registered, %d loaded):\n\n", len(installed.Plugins), len(ps))
 
 	// Show registered (from installed_plugins.json).
 	ids := make([]string, 0, len(installed.Plugins))
@@ -295,7 +296,7 @@ func pluginList(ps []*plugins.Plugin) Result {
 	for _, id := range ids {
 		entries := installed.Plugins[id]
 		for _, e := range entries {
-			sb.WriteString(fmt.Sprintf("  %-40s %s (%s)\n", id, e.Version, e.Scope))
+			fmt.Fprintf(&sb, "  %-40s %s (%s)\n", id, e.Version, e.Scope)
 		}
 	}
 	if len(ids) == 0 {
@@ -342,7 +343,7 @@ func pluginMarketplaceAdd(args string) Result {
 		// Derive name from source.
 		name = deriveMarketplaceName(source)
 	}
-	if err := plugins.MarketplaceAdd(name, source, nil); err != nil {
+	if err := plugins.MarketplaceAdd(context.Background(), name, source, nil); err != nil {
 		return Result{Type: "error", Text: fmt.Sprintf("marketplace add failed: %v", err)}
 	}
 	return Result{Type: "text", Text: fmt.Sprintf("Added marketplace %q from %s\nUse /plugin install <name>@%s to install plugins.", name, source, name)}
@@ -357,7 +358,7 @@ func pluginMarketplaceList() Result {
 		return Result{Type: "text", Text: "No marketplaces configured.\nUse /plugin marketplace add <source> to add one."}
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Configured marketplaces (%d):\n\n", len(known)))
+	fmt.Fprintf(&sb, "Configured marketplaces (%d):\n\n", len(known))
 	names := make([]string, 0, len(known))
 	for n := range known {
 		names = append(names, n)
@@ -372,7 +373,7 @@ func pluginMarketplaceList() Result {
 		if src == "" {
 			src = e.Source.Path
 		}
-		sb.WriteString(fmt.Sprintf("  %-30s %s\n  Updated: %s\n\n", n, src, e.LastUpdated))
+		fmt.Fprintf(&sb, "  %-30s %s\n  Updated: %s\n\n", n, src, e.LastUpdated)
 	}
 	return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 }
@@ -388,7 +389,7 @@ func pluginMarketplaceRemove(name string) Result {
 }
 
 func pluginMarketplaceUpdate(name string) Result {
-	if err := plugins.MarketplaceUpdate(name); err != nil {
+	if err := plugins.MarketplaceUpdate(context.Background(), name); err != nil {
 		return Result{Type: "error", Text: fmt.Sprintf("marketplace update: %v", err)}
 	}
 	if name == "" {

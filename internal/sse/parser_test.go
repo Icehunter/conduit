@@ -140,10 +140,8 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"server is ov
 // event; concat with newline. Anthropic doesn't currently emit these, but
 // the spec allows them and our parser must not regress.
 func TestParse_TolerateMultilineData(t *testing.T) {
-	body := "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":\ndata: {\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null}}\n\n"
-	// Note: that's not parseable JSON; we're really testing the concat
-	// behavior, so use a syntactically valid case instead.
-	body = `event: ping
+	// Note: multiline data lines are concated. Use syntactically valid JSON.
+	body := `event: ping
 data: {"type":
 data: "ping"}
 

@@ -28,11 +28,11 @@ const SDKPackageVersion = "0.81.0"
 type Config struct {
 	// BaseURL is the API origin, e.g. https://api.anthropic.com. No trailing slash.
 	BaseURL string
-	// AuthToken is the OAuth bearer token. Required when ApiKey is empty.
-	// Mutually exclusive with ApiKey at runtime — set exactly one.
+	// AuthToken is the OAuth bearer token. Required when APIKey is empty.
+	// Mutually exclusive with APIKey at runtime — set exactly one.
 	AuthToken string
-	// ApiKey is the legacy x-api-key. Set this xor AuthToken.
-	ApiKey string
+	// APIKey is the legacy x-api-key. Set this xor AuthToken.
+	APIKey string
 	// BetaHeaders are joined into the `anthropic-beta` header.
 	// For OAuth-Max users include "oauth-2025-04-20".
 	BetaHeaders []string
@@ -101,7 +101,7 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
 	// Single 401 retry after refresh.
 	if resp.StatusCode == http.StatusUnauthorized && c.cfg.OnAuth401 != nil {
@@ -167,7 +167,7 @@ func (c *Client) do(ctx context.Context, body []byte) (*http.Response, error) {
 func (c *Client) applyHeaders(h http.Header) {
 	c.mu.Lock()
 	tok := c.cfg.AuthToken
-	apiKey := c.cfg.ApiKey
+	apiKey := c.cfg.APIKey
 	c.mu.Unlock()
 
 	h.Set("Accept", "application/json")

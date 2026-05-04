@@ -57,9 +57,9 @@ func IsActive() bool {
 // SetActive enables or disables coordinator mode by setting/unsetting the env var.
 func SetActive(active bool) {
 	if active {
-		os.Setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
+		_ = os.Setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
 	} else {
-		os.Unsetenv("CLAUDE_CODE_COORDINATOR_MODE")
+		_ = os.Unsetenv("CLAUDE_CODE_COORDINATOR_MODE")
 	}
 }
 
@@ -219,22 +219,22 @@ You:
 func TaskNotification(agentID, status, summary, result string, totalTokens, toolUses int, durationMs int64) string {
 	var sb strings.Builder
 	sb.WriteString("<task-notification>\n")
-	sb.WriteString(fmt.Sprintf("<task-id>%s</task-id>\n", escapeXML(agentID)))
-	sb.WriteString(fmt.Sprintf("<status>%s</status>\n", escapeXML(status)))
-	sb.WriteString(fmt.Sprintf("<summary>%s</summary>\n", escapeXML(summary)))
+	fmt.Fprintf(&sb, "<task-id>%s</task-id>\n", escapeXML(agentID))
+	fmt.Fprintf(&sb, "<status>%s</status>\n", escapeXML(status))
+	fmt.Fprintf(&sb, "<summary>%s</summary>\n", escapeXML(summary))
 	if result != "" {
-		sb.WriteString(fmt.Sprintf("<result>%s</result>\n", escapeXML(result)))
+		fmt.Fprintf(&sb, "<result>%s</result>\n", escapeXML(result))
 	}
 	if totalTokens > 0 || toolUses > 0 || durationMs > 0 {
 		sb.WriteString("<usage>\n")
 		if totalTokens > 0 {
-			sb.WriteString(fmt.Sprintf("  <total_tokens>%d</total_tokens>\n", totalTokens))
+			fmt.Fprintf(&sb, "  <total_tokens>%d</total_tokens>\n", totalTokens)
 		}
 		if toolUses > 0 {
-			sb.WriteString(fmt.Sprintf("  <tool_uses>%d</tool_uses>\n", toolUses))
+			fmt.Fprintf(&sb, "  <tool_uses>%d</tool_uses>\n", toolUses)
 		}
 		if durationMs > 0 {
-			sb.WriteString(fmt.Sprintf("  <duration_ms>%d</duration_ms>\n", durationMs))
+			fmt.Fprintf(&sb, "  <duration_ms>%d</duration_ms>\n", durationMs)
 		}
 		sb.WriteString("</usage>\n")
 	}

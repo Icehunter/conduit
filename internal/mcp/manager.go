@@ -69,11 +69,6 @@ func (m *Manager) ConnectAll(ctx context.Context, cwd string) error {
 	return nil
 }
 
-// connect is a convenience wrapper using empty cwd (for Reconnect).
-func (m *Manager) connect(ctx context.Context, name string, cfg ServerConfig) {
-	m.connectWithCwd(ctx, name, cfg, "")
-}
-
 // connectWithCwd establishes a connection to one MCP server.
 // If the server is in disabledMcpServers for cwd it is stored as disabled without connecting.
 func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerConfig, cwd string) {
@@ -392,9 +387,9 @@ func (m *Manager) AllTools() []NamedTool {
 		prefix := NormalizeServerName(srvName)
 		for _, t := range srv.Tools {
 			tools = append(tools, NamedTool{
-				ServerName:  srvName,
-				Prefix:      prefix,
-				Def:         t,
+				ServerName:    srvName,
+				Prefix:        prefix,
+				Def:           t,
 				QualifiedName: prefix + t.Name,
 			})
 		}

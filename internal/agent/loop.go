@@ -39,7 +39,6 @@ import (
 	"github.com/icehunter/conduit/internal/tool"
 )
 
-
 // maxConcurrentTools is the worker pool size for parallel tool execution.
 // Mirrors the coordinator's concurrency limit in src/coordinator/coordinatorMode.ts.
 const maxConcurrentTools = 4
@@ -48,11 +47,11 @@ const maxConcurrentTools = 4
 type EventType int
 
 const (
-	EventText        EventType = iota // a text delta streamed from the model
-	EventToolUse                      // a tool_use block completed; tool is about to run
-	EventToolResult                   // tool execution finished
-	EventRateLimit                    // rate-limit headers received; RateLimitWarning may be non-empty
-	EventPartial                      // stream errored mid-turn; PartialBlocks holds what was received
+	EventText       EventType = iota // a text delta streamed from the model
+	EventToolUse                     // a tool_use block completed; tool is about to run
+	EventToolResult                  // tool execution finished
+	EventRateLimit                   // rate-limit headers received; RateLimitWarning may be non-empty
+	EventPartial                     // stream errored mid-turn; PartialBlocks holds what was received
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -72,7 +71,7 @@ type LoopEvent struct {
 	IsError    bool
 
 	// EventRateLimit
-	RateLimitWarning string         // non-empty when quota is running low
+	RateLimitWarning string // non-empty when quota is running low
 	RateLimitInfo    ratelimit.Info
 
 	// EventPartial — fired before a stream error bubbles up so callers
@@ -147,9 +146,9 @@ type LoopConfig struct {
 	// older tool_results are replaced with a placeholder. The cache is
 	// expired anyway past that gap, so this shrinks what gets re-cached
 	// without changing functional context.
-	MicroCompact         bool
-	MicroCompactGap      time.Duration // default 60m if zero
-	MicroCompactKeep     int           // default 5 if zero
+	MicroCompact     bool
+	MicroCompactGap  time.Duration // default 60m if zero
+	MicroCompactKeep int           // default 5 if zero
 	// LastAssistantTime seeds the gap calculation on resume. If zero, the
 	// loop initializes from the first assistant response.
 	LastAssistantTime time.Time
@@ -368,7 +367,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		assistantBlocks, stopReason, inputTokens, err := l.drainStream(ctx, stream, handler)
-		stream.Close()
+		_ = stream.Close()
 		if err != nil {
 			// Conversation recovery: emit any partial assistant content the
 			// caller can persist to the session JSONL before the error
@@ -615,6 +614,7 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 //  2. PreToolUse hooks (if configured).
 //  3. Tool execution.
 //  4. PostToolUse hooks (if configured).
+//
 // toolTask holds the pre-checked state for one tool ready to execute.
 type toolTask struct {
 	block    api.ContentBlock
@@ -631,7 +631,7 @@ type toolResult struct {
 	isError bool
 }
 
-func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, error) {
+func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, error) { //nolint:unparam
 	// Phase 1: collect tool_use blocks and run interactive checks serially
 	// (hooks + permission gate may prompt the user — must be sequential).
 	var tasks []toolTask
@@ -730,7 +730,10 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 	taskResults := make([]toolResult, len(tasks))
 
 	// Separate into parallel-eligible and must-be-serial.
-	type workItem struct{ idx int; task toolTask }
+	type workItem struct {
+		idx  int
+		task toolTask
+	}
 	var parallel, serial []workItem
 	for i, task := range tasks {
 		if task.denied || task.tool == nil {
@@ -749,7 +752,6 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		sem := make(chan struct{}, maxConcurrentTools)
 		var wg sync.WaitGroup
 		for _, wi := range parallel {
-			wi := wi
 			wg.Add(1)
 			sem <- struct{}{}
 			go func() {

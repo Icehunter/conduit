@@ -50,7 +50,7 @@ func (t *EnterWorktree) InputSchema() json.RawMessage {
 	"additionalProperties": false
 }`)
 }
-func (t *EnterWorktree) IsReadOnly(_ json.RawMessage) bool      { return false }
+func (t *EnterWorktree) IsReadOnly(_ json.RawMessage) bool        { return false }
 func (t *EnterWorktree) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
 func (t *EnterWorktree) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -133,7 +133,7 @@ func (t *ExitWorktree) InputSchema() json.RawMessage {
 	"additionalProperties": false
 }`)
 }
-func (t *ExitWorktree) IsReadOnly(_ json.RawMessage) bool      { return false }
+func (t *ExitWorktree) IsReadOnly(_ json.RawMessage) bool        { return false }
 func (t *ExitWorktree) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
 func (t *ExitWorktree) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -179,19 +179,19 @@ func (t *ExitWorktree) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 		}
 		args = append(args, wtPath)
 		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
-			sb.WriteString(fmt.Sprintf("Warning: git worktree remove failed: %v\n%s\n", err, out))
+			fmt.Fprintf(&sb, "Warning: git worktree remove failed: %v\n%s\n", err, out)
 		} else {
 			// Also delete the branch if it was auto-created.
 			if branch != "" {
 				_ = exec.CommandContext(ctx, "git", "-C", gitRoot, "branch", "-d", branch).Run()
 			}
-			sb.WriteString(fmt.Sprintf("Worktree %s removed.\n", wtPath))
+			fmt.Fprintf(&sb, "Worktree %s removed.\n", wtPath)
 		}
 	} else {
-		sb.WriteString(fmt.Sprintf("Worktree %s kept (branch: %s).\n", wtPath, branch))
+		fmt.Fprintf(&sb, "Worktree %s kept (branch: %s).\n", wtPath, branch)
 	}
 
-	sb.WriteString(fmt.Sprintf("Returned to %s.", restorePath))
+	fmt.Fprintf(&sb, "Returned to %s.", restorePath)
 	return tool.TextResult(sb.String()), nil
 }
 
@@ -225,7 +225,7 @@ func sanitizeSlug(s string) string {
 
 // IsInsideWorktree returns true if cwd is a git worktree (not the main checkout).
 func IsInsideWorktree(cwd string) bool {
-	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--is-inside-work-tree").Output()
+	out, err := exec.CommandContext(context.Background(), "git", "-C", cwd, "rev-parse", "--is-inside-work-tree").Output()
 	if err != nil {
 		return false
 	}
@@ -233,7 +233,7 @@ func IsInsideWorktree(cwd string) bool {
 		return false
 	}
 	// Check if it's a linked worktree (not main).
-	gitDir, err := exec.Command("git", "-C", cwd, "rev-parse", "--git-dir").Output()
+	gitDir, err := exec.CommandContext(context.Background(), "git", "-C", cwd, "rev-parse", "--git-dir").Output()
 	if err != nil {
 		return false
 	}

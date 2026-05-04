@@ -13,7 +13,6 @@ package recorder
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -34,34 +33,16 @@ type castHeader struct {
 	Env       map[string]string `json:"env"`
 }
 
-// teeWriter is an io.Writer that writes to both the original writer and the
-// recorder's file, encoding each write as an asciicast event.
-type teeWriter struct {
-	orig io.Writer
-	rec  *Recorder
-}
-
-func (t *teeWriter) Write(p []byte) (int, error) {
-	n, err := t.orig.Write(p)
-	if err != nil {
-		return n, err
-	}
-	// Best-effort: capture what was successfully written.
-	if n > 0 {
-		_ = t.rec.writeEvent("o", string(p[:n]))
-	}
-	return n, nil
-}
 
 // Recorder captures terminal output into an asciicast v2 file.
 type Recorder struct {
-	mu          sync.Mutex
-	file        *os.File
-	origStdout  *os.File
-	startTime   time.Time
-	winchChan   chan os.Signal
-	winchDone   chan struct{}
-	recording   bool
+	mu         sync.Mutex
+	file       *os.File
+	origStdout *os.File
+	startTime  time.Time
+	winchChan  chan os.Signal
+	winchDone  chan struct{}
+	recording  bool
 }
 
 // DefaultRecorder is the package-level recorder instance used by /record.
@@ -145,7 +126,7 @@ func (r *Recorder) Start(path string) error {
 				data := make([]byte, n)
 				copy(data, buf[:n])
 				// Write to real terminal.
-				r.origStdout.Write(data)
+				_, _ = r.origStdout.Write(data)
 				// Write event to .cast file (best-effort, under lock).
 				r.mu.Lock()
 				if r.recording {
@@ -226,14 +207,6 @@ func (r *Recorder) FilePath() string {
 		return ""
 	}
 	return r.file.Name()
-}
-
-// writeEvent writes an asciicast event line (must be called with mu held).
-// Exported-safe variant for tests and internal use.
-func (r *Recorder) writeEvent(eventType, data string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.writeEventLocked(eventType, data)
 }
 
 // writeEventLocked writes an asciicast event — caller must hold r.mu.

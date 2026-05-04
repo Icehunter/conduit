@@ -13,7 +13,7 @@ import (
 
 type TaskCreateTool struct{ store *Store }
 
-func NewCreate() *TaskCreateTool { return &TaskCreateTool{store: globalStore} }
+func NewCreate() *TaskCreateTool     { return &TaskCreateTool{store: globalStore} }
 func (*TaskCreateTool) Name() string { return "TaskCreate" }
 func (*TaskCreateTool) Description() string {
 	return `Create a new task in the task list to track progress on complex multi-step work.
@@ -38,7 +38,7 @@ func (*TaskCreateTool) InputSchema() json.RawMessage {
 		"required": ["subject", "description"]
 	}`)
 }
-func (*TaskCreateTool) IsReadOnly(json.RawMessage) bool       { return false }
+func (*TaskCreateTool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*TaskCreateTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *TaskCreateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -60,7 +60,7 @@ func (t *TaskCreateTool) Execute(_ context.Context, raw json.RawMessage) (tool.R
 
 type TaskGetTool struct{ store *Store }
 
-func NewGet() *TaskGetTool { return &TaskGetTool{store: globalStore} }
+func NewGet() *TaskGetTool        { return &TaskGetTool{store: globalStore} }
 func (*TaskGetTool) Name() string { return "TaskGet" }
 func (*TaskGetTool) Description() string {
 	return "Retrieve a task by ID to check its status, description, and output."
@@ -68,11 +68,13 @@ func (*TaskGetTool) Description() string {
 func (*TaskGetTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}`)
 }
-func (*TaskGetTool) IsReadOnly(json.RawMessage) bool       { return true }
+func (*TaskGetTool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*TaskGetTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *TaskGetTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
-	var in struct{ TaskID string `json:"taskId"` }
+	var in struct {
+		TaskID string `json:"taskId"`
+	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return tool.ErrorResult("invalid input"), nil
 	}
@@ -95,7 +97,7 @@ func (t *TaskGetTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resu
 
 type TaskListTool struct{ store *Store }
 
-func NewList() *TaskListTool { return &TaskListTool{store: globalStore} }
+func NewList() *TaskListTool       { return &TaskListTool{store: globalStore} }
 func (*TaskListTool) Name() string { return "TaskList" }
 func (*TaskListTool) Description() string {
 	return "List all tasks in the current session with their statuses."
@@ -103,11 +105,13 @@ func (*TaskListTool) Description() string {
 func (*TaskListTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"status":{"type":"string","description":"Filter by status: pending, in_progress, completed, cancelled"}}}`)
 }
-func (*TaskListTool) IsReadOnly(json.RawMessage) bool       { return true }
+func (*TaskListTool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*TaskListTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *TaskListTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
-	var in struct{ Status string `json:"status,omitempty"` }
+	var in struct {
+		Status string `json:"status,omitempty"`
+	}
 	_ = json.Unmarshal(raw, &in)
 
 	tasks := t.store.List()
@@ -133,7 +137,7 @@ func (t *TaskListTool) Execute(_ context.Context, raw json.RawMessage) (tool.Res
 
 type TaskUpdateTool struct{ store *Store }
 
-func NewUpdate() *TaskUpdateTool { return &TaskUpdateTool{store: globalStore} }
+func NewUpdate() *TaskUpdateTool     { return &TaskUpdateTool{store: globalStore} }
 func (*TaskUpdateTool) Name() string { return "TaskUpdate" }
 func (*TaskUpdateTool) Description() string {
 	return `Update a task's status, subject, description, or output.
@@ -156,7 +160,7 @@ func (*TaskUpdateTool) InputSchema() json.RawMessage {
 		"required": ["taskId"]
 	}`)
 }
-func (*TaskUpdateTool) IsReadOnly(json.RawMessage) bool       { return false }
+func (*TaskUpdateTool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*TaskUpdateTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *TaskUpdateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -201,7 +205,7 @@ func (t *TaskUpdateTool) Execute(_ context.Context, raw json.RawMessage) (tool.R
 
 type TaskOutputTool struct{ store *Store }
 
-func NewOutput() *TaskOutputTool { return &TaskOutputTool{store: globalStore} }
+func NewOutput() *TaskOutputTool     { return &TaskOutputTool{store: globalStore} }
 func (*TaskOutputTool) Name() string { return "TaskOutput" }
 func (*TaskOutputTool) Description() string {
 	return "Append output or notes to a task without changing its status."
@@ -209,7 +213,7 @@ func (*TaskOutputTool) Description() string {
 func (*TaskOutputTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"},"output":{"type":"string"}},"required":["taskId","output"]}`)
 }
-func (*TaskOutputTool) IsReadOnly(json.RawMessage) bool       { return false }
+func (*TaskOutputTool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*TaskOutputTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *TaskOutputTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -236,7 +240,7 @@ func (t *TaskOutputTool) Execute(_ context.Context, raw json.RawMessage) (tool.R
 
 type TaskStopTool struct{ store *Store }
 
-func NewStop() *TaskStopTool { return &TaskStopTool{store: globalStore} }
+func NewStop() *TaskStopTool       { return &TaskStopTool{store: globalStore} }
 func (*TaskStopTool) Name() string { return "TaskStop" }
 func (*TaskStopTool) Description() string {
 	return "Cancel a running task and mark it as cancelled."
@@ -244,7 +248,7 @@ func (*TaskStopTool) Description() string {
 func (*TaskStopTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"},"reason":{"type":"string"}},"required":["taskId"]}`)
 }
-func (*TaskStopTool) IsReadOnly(json.RawMessage) bool       { return false }
+func (*TaskStopTool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*TaskStopTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *TaskStopTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -288,7 +292,7 @@ func RenderTaskList(store *Store) string {
 		if icon == "" {
 			icon = "?"
 		}
-		sb.WriteString(fmt.Sprintf("%s [%s] %s\n", icon, t.ID, t.Subject))
+		fmt.Fprintf(&sb, "%s [%s] %s\n", icon, t.ID, t.Subject)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

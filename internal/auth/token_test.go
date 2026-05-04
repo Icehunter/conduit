@@ -14,16 +14,16 @@ import (
 // TestExchangeCodeForTokens_RequestShape asserts our token-exchange request
 // matches decoded/1220.js function rm6 byte-for-byte:
 //
-//   POST <TOKEN_URL>
-//   Content-Type: application/json
-//   {
-//     "grant_type": "authorization_code",
-//     "code": "<auth code>",
-//     "redirect_uri": "http://localhost:<port>/callback" or MANUAL_REDIRECT_URL,
-//     "client_id": "<client_id>",
-//     "code_verifier": "<verifier>",
-//     "state": "<state>"
-//   }
+//	POST <TOKEN_URL>
+//	Content-Type: application/json
+//	{
+//	  "grant_type": "authorization_code",
+//	  "code": "<auth code>",
+//	  "redirect_uri": "http://localhost:<port>/callback" or MANUAL_REDIRECT_URL,
+//	  "client_id": "<client_id>",
+//	  "code_verifier": "<verifier>",
+//	  "state": "<state>"
+//	}
 func TestExchangeCodeForTokens_RequestShape(t *testing.T) {
 	type wantBody struct {
 		GrantType    string `json:"grant_type"`
@@ -143,7 +143,8 @@ func TestExchangeCodeForTokens_ManualRedirect(t *testing.T) {
 }
 
 // TestExchangeCodeForTokens_Rejects401 maps to decoded/1220.js:79-84:
-//   $.status === 401 -> "Authentication failed: Invalid authorization code"
+//
+//	$.status === 401 -> "Authentication failed: Invalid authorization code"
 func TestExchangeCodeForTokens_Rejects401(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/oauth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +169,8 @@ func TestExchangeCodeForTokens_Rejects401(t *testing.T) {
 }
 
 // TestExchangeCodeForTokens_RejectsNonBearer enforces decoded/1390.js:38:
-//   token_type && token_type.toLowerCase() !== "bearer" -> error
+//
+//	token_type && token_type.toLowerCase() !== "bearer" -> error
 func TestExchangeCodeForTokens_RejectsNonBearer(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/oauth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -200,13 +202,13 @@ func TestExchangeCodeForTokens_RejectsNonBearer(t *testing.T) {
 
 // TestRefreshOAuthToken_RequestShape mirrors decoded/1220.js:87-100 (function r__).
 //
-//   POST <TOKEN_URL>
-//   {
-//     "grant_type": "refresh_token",
-//     "refresh_token": "<rt>",
-//     "client_id": "<cid>",
-//     "scope": "<space-joined claude_ai scopes>"
-//   }
+//	POST <TOKEN_URL>
+//	{
+//	  "grant_type": "refresh_token",
+//	  "refresh_token": "<rt>",
+//	  "client_id": "<cid>",
+//	  "scope": "<space-joined claude_ai scopes>"
+//	}
 func TestRefreshOAuthToken_RequestShape(t *testing.T) {
 	type wantBody struct {
 		GrantType    string `json:"grant_type"`

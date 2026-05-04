@@ -80,13 +80,13 @@ const (
 )
 
 type settingItem struct {
-	id      string
-	label   string
-	kind    string // "bool" | "enum" | "info"
-	value   string
-	options []string // display names, parallel to optionVals
+	id         string
+	label      string
+	kind       string // "bool" | "enum" | "info"
+	value      string
+	options    []string // display names, parallel to optionVals
 	optionVals []string // stored values (if different from display)
-	on      bool
+	on         bool
 }
 
 // settingsStatsMsg carries async-loaded stats back to Bubble Tea.
@@ -99,8 +99,8 @@ type settingsPanelState struct {
 	tab      settingsPanelTab
 	selected int
 
-	search   string
-	cfgFocus configFocus
+	search      string
+	cfgFocus    configFocus
 	configItems []settingItem
 	filteredIdx []int
 
@@ -268,10 +268,10 @@ func (p *settingsPanelState) rebuildConfigItems() {
 		{id: "showTurnDuration", label: "Show turn duration", kind: "bool",
 			on: getBool("showTurnDuration", true)},
 		{
-			id:    "defaultPermissionMode",
-			label: "Default permission mode",
-			kind:  "enum",
-			value: permDisplay,
+			id:         "defaultPermissionMode",
+			label:      "Default permission mode",
+			kind:       "enum",
+			value:      permDisplay,
 			options:    []string{"Default", "Plan Mode", "Accept Edits", "Auto Mode", "Don't Ask"},
 			optionVals: []string{"default", "plan", "acceptEdits", "auto", "bypassPermissions"},
 		},
@@ -280,10 +280,10 @@ func (p *settingsPanelState) rebuildConfigItems() {
 		{id: "copyFullResponse", label: "Skip the /copy picker", kind: "bool",
 			on: getBool("copyFullResponse", false)},
 		{
-			id:    "autoUpdatesChannel",
-			label: "Auto-update channel",
-			kind:  "enum",
-			value: getStr("autoUpdatesChannel", "latest"),
+			id:      "autoUpdatesChannel",
+			label:   "Auto-update channel",
+			kind:    "enum",
+			value:   getStr("autoUpdatesChannel", "latest"),
 			options: []string{"latest", "beta", "disabled"},
 		},
 		func() settingItem {
@@ -309,11 +309,11 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			}
 		}(),
 		{
-			id:    "notifChannel",
-			label: "Local notifications",
-			kind:  "enum",
-			value: getStr("preferredNotifChannel", "auto"),
-			options: []string{"auto", "iterm2", "terminal_bell", "disabled"},
+			id:         "notifChannel",
+			label:      "Local notifications",
+			kind:       "enum",
+			value:      getStr("preferredNotifChannel", "auto"),
+			options:    []string{"auto", "iterm2", "terminal_bell", "disabled"},
 			optionVals: []string{"auto", "iterm2", "terminal_bell", "notifications_disabled"},
 		},
 		{id: "agentPushNotifEnabled", label: "Push when Claude decides", kind: "bool",
@@ -331,18 +331,18 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			optionVals: []string{"default", "Explanatory", "Learning"},
 		},
 		{
-			id:    "model",
-			label: "Model",
-			kind:  "enum",
-			value: modelDisplayName(model),
+			id:         "model",
+			label:      "Model",
+			kind:       "enum",
+			value:      modelDisplayName(model),
 			options:    []string{"Default (recommended)", "Opus", "Haiku"},
 			optionVals: []string{"claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"},
 		},
 		{
-			id:    "effort",
-			label: "Thinking effort",
-			kind:  "enum",
-			value: effort,
+			id:      "effort",
+			label:   "Thinking effort",
+			kind:    "enum",
+			value:   effort,
 			options: []string{"low", "normal", "high", "max"},
 		},
 	}
@@ -777,7 +777,7 @@ func (m Model) renderSettingsPanel() string {
 
 // ── Status tab ────────────────────────────────────────────────────────────────
 
-func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, innerW, contentH int) {
+func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, innerW, _ int) {
 	snap := statusSnapshot{}
 	if p.getStatus != nil {
 		snap = p.getStatus()
@@ -867,7 +867,7 @@ func modelDescription(model string) string {
 
 // ── Config tab ────────────────────────────────────────────────────────────────
 
-func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, innerW, contentH int) {
+func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, _, contentH int) {
 	// Show focus state in header hint.
 	if p.cfgFocus == configFocusHeader {
 		sb.WriteString(stylePickerDesc.Render("  ↓/Enter to navigate settings") + "\n\n")
@@ -926,11 +926,6 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 			} else {
 				val = valueStyle.Render(item.value)
 			}
-			// Right-align the value.
-			labelW := innerW - 4
-			if labelW < 10 {
-				labelW = 10
-			}
 			line = cursor + label + "  " + val
 		case "info":
 			label := labelStyle.Render(item.label)
@@ -965,8 +960,8 @@ type sessionStats struct {
 	totalOutputTok   int
 	totalCostUSD     float64
 	modelUsage       map[string]modelUsageStats
-	dailyCounts      map[string]int   // day → message count
-	dailyTokens      map[string]int   // day → total tokens (all models)
+	dailyCounts      map[string]int    // day → message count
+	dailyTokens      map[string]int    // day → total tokens (all models)
 	dailyModelTokens []dailyModelEntry // ordered by date — for per-model chart
 	longestStreak    int
 	currentStreak    int
@@ -988,7 +983,7 @@ type modelRow struct {
 	u    modelUsageStats
 }
 
-func (m Model) renderSettingsStats(sb *strings.Builder, p *settingsPanelState, innerW, contentH int) {
+func (m Model) renderSettingsStats(sb *strings.Builder, p *settingsPanelState, innerW, _ int) {
 	// Sub-tab header — same style as main tabs.
 	var subTabs []string
 	for i, name := range statsSubTabNames {
@@ -1167,7 +1162,7 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 
 // ── Usage tab ─────────────────────────────────────────────────────────────────
 
-func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, innerW, contentH int) {
+func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, innerW, _ int) {
 	snap := statusSnapshot{}
 	if p.getStatus != nil {
 		snap = p.getStatus()
@@ -1222,7 +1217,7 @@ func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, i
 			filled := barW * pct / 100
 			bar := styleStatusAccent.Render(strings.Repeat("█", filled)) +
 				dim.Render(strings.Repeat("░", barW-filled))
-			sb.WriteString(fmt.Sprintf("\n  %-22s %s %d%%\n", "Context:", bar, pct))
+			fmt.Fprintf(sb, "\n  %-22s %s %d%%\n", "Context:", bar, pct)
 		}
 	}
 
@@ -1268,12 +1263,12 @@ func renderLimitBar(label string, pctUsed, remaining, limit, innerW int) string 
 
 // statsCacheFile is the shape of ~/.claude/stats-cache.json written by Claude Code.
 type statsCacheFile struct {
-	Version        int    `json:"version"`
+	Version          int    `json:"version"`
 	LastComputedDate string `json:"lastComputedDate"`
-	TotalSessions  int    `json:"totalSessions"`
-	TotalMessages  int    `json:"totalMessages"`
+	TotalSessions    int    `json:"totalSessions"`
+	TotalMessages    int    `json:"totalMessages"`
 	FirstSessionDate string `json:"firstSessionDate"`
-	LongestSession struct {
+	LongestSession   struct {
 		Duration int64 `json:"duration"` // milliseconds
 	} `json:"longestSession"`
 	DailyActivity []struct {
@@ -1972,7 +1967,6 @@ func generateChartXLabels(data []dailyModelEntry, yAxisOffset int) string {
 	}
 	return result
 }
-
 
 // literaryTokenCounts maps famous books to approximate word/token counts.
 // Claude Code uses these for the "~Nx more tokens than <book>" factoid.

@@ -121,15 +121,15 @@ type stubTool struct {
 	name string
 }
 
-func (s *stubTool) Name() string             { return s.name }
-func (s *stubTool) Description() string      { return "stub" }
+func (s *stubTool) Name() string        { return s.name }
+func (s *stubTool) Description() string { return "stub" }
 func (s *stubTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 func (s *stubTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
 	return tool.Result{Content: []tool.ResultBlock{{Type: "text", Text: "stub output"}}}, nil
 }
-func (s *stubTool) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (s *stubTool) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (s *stubTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func itoa(n int) string {

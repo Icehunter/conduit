@@ -86,7 +86,7 @@ func Compact(ctx context.Context, client *api.Client, messages []api.Message, cu
 	if err != nil {
 		return nil, fmt.Errorf("compact: stream: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Drain text from the stream.
 	var sb strings.Builder

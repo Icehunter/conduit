@@ -5,6 +5,7 @@
 package track
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -62,8 +63,8 @@ func OpenPath(path string) (*DB, error) {
 		return nil, fmt.Errorf("track: open %s: %w", path, err)
 	}
 	conn.SetMaxOpenConns(1) // SQLite is single-writer
-	if _, err := conn.Exec(schema); err != nil {
-		conn.Close()
+	if _, err := conn.ExecContext(context.Background(), schema); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("track: schema: %w", err)
 	}
 	return &DB{conn: conn}, nil
@@ -75,7 +76,7 @@ func (d *DB) Record(r Row) error {
 	if ts == 0 {
 		ts = time.Now().UnixMilli()
 	}
-	_, err := d.conn.Exec(
+	_, err := d.conn.ExecContext(context.Background(),
 		`INSERT INTO rtk_history (command, original_bytes, filtered_bytes, saved_bytes, saved_pct, recorded_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		r.Command, r.OriginalBytes, r.FilteredBytes, r.SavedBytes, r.SavedPct, ts,
 	)
@@ -87,7 +88,7 @@ func (d *DB) Record(r Row) error {
 
 // Gain returns aggregate savings statistics across all recorded filter applications.
 func (d *DB) Gain() (totalOrig, totalFiltered, rows int, err error) {
-	row := d.conn.QueryRow(
+	row := d.conn.QueryRowContext(context.Background(),
 		`SELECT COALESCE(SUM(original_bytes),0), COALESCE(SUM(filtered_bytes),0), COUNT(*) FROM rtk_history`,
 	)
 	if err = row.Scan(&totalOrig, &totalFiltered, &rows); err != nil {

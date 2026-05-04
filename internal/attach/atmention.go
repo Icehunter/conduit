@@ -220,7 +220,7 @@ func readDir(path string) string {
 	var sb strings.Builder
 	for i, e := range entries {
 		if i >= maxEntries {
-			sb.WriteString(fmt.Sprintf("… and %d more entries\n", len(entries)-maxEntries))
+			fmt.Fprintf(&sb, "… and %d more entries\n", len(entries)-maxEntries)
 			break
 		}
 		sb.WriteString(e.Name())

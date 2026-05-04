@@ -50,7 +50,7 @@ func TestStreamMessage_FixtureReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StreamMessage: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var types []string
 	for {
@@ -104,7 +104,7 @@ func TestStreamMessage_ContextCancelStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StreamMessage: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	cancel()
 
@@ -160,7 +160,7 @@ func TestStreamMessage_SetsStreamTrue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	for {
 		_, err := stream.Next()
 		if errors.Is(err, io.EOF) {

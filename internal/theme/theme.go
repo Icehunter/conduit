@@ -17,22 +17,22 @@ import (
 // Palette is the semantic color set. Maps to a subset of Claude Code's
 // Theme struct fields:
 //
-//   Primary   ← text
-//   Secondary ← inactive
-//   Tertiary  ← subtle
-//   Accent    ← claude
-//   Success   ← success
-//   Danger    ← error
-//   Warning   ← warning
-//   Info      ← suggestion / permission
-//   Background  ← (intentionally empty for terminal-bg passthrough)
-//   ModalBg     ← userMessageBackground
-//   CodeBg      ← bashMessageBackgroundColor
-//   Border      ← promptBorder
-//   BorderActive ← claude
-//   ModeAcceptEdits ← autoAccept
-//   ModePlan        ← planMode
-//   ModeAuto        ← warning
+//	Primary   ← text
+//	Secondary ← inactive
+//	Tertiary  ← subtle
+//	Accent    ← claude
+//	Success   ← success
+//	Danger    ← error
+//	Warning   ← warning
+//	Info      ← suggestion / permission
+//	Background  ← (intentionally empty for terminal-bg passthrough)
+//	ModalBg     ← userMessageBackground
+//	CodeBg      ← bashMessageBackgroundColor
+//	Border      ← promptBorder
+//	BorderActive ← claude
+//	ModeAcceptEdits ← autoAccept
+//	ModePlan        ← planMode
+//	ModeAuto        ← warning
 type Palette struct {
 	Name string
 
@@ -336,7 +336,7 @@ func applyOverrides(base Palette, o map[string]string) Palette {
 func AvailableThemes() []string {
 	mu.RLock()
 	defer mu.RUnlock()
-	var out []string
+	out := make([]string, 0, len(userThemes)+6)
 	for name := range userThemes {
 		out = append(out, name)
 	}

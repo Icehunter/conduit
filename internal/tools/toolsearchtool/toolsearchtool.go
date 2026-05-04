@@ -17,7 +17,7 @@ type Tool struct {
 }
 
 func New(reg *tool.Registry) *Tool { return &Tool{registry: reg} }
-func (*Tool) Name() string          { return "ToolSearch" }
+func (*Tool) Name() string         { return "ToolSearch" }
 func (*Tool) Description() string {
 	return `Search the tool registry by name or keyword.
 
@@ -36,7 +36,7 @@ func (*Tool) InputSchema() json.RawMessage {
 		"required": ["query"]
 	}`)
 }
-func (*Tool) IsReadOnly(json.RawMessage) bool       { return true }
+func (*Tool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {

@@ -65,8 +65,8 @@ type captureDisplay struct {
 	openErr      error
 }
 
-func (d *captureDisplay) Show(a, m string)              { d.auto, d.manual = a, m }
-func (d *captureDisplay) BrowserOpenFailed(err error)   { d.openErr = err }
+func (d *captureDisplay) Show(a, m string)            { d.auto, d.manual = a, m }
+func (d *captureDisplay) BrowserOpenFailed(err error) { d.openErr = err }
 
 func TestLoginFlow_HappyPath(t *testing.T) {
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

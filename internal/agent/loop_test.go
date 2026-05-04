@@ -25,11 +25,11 @@ type fakeTool struct {
 	isErr  bool
 }
 
-func (f *fakeTool) Name() string                                          { return f.name }
-func (f *fakeTool) Description() string                                   { return "fake" }
-func (f *fakeTool) InputSchema() json.RawMessage                          { return json.RawMessage(`{"type":"object"}`) }
-func (f *fakeTool) IsReadOnly(_ json.RawMessage) bool                     { return true }
-func (f *fakeTool) IsConcurrencySafe(_ json.RawMessage) bool              { return true }
+func (f *fakeTool) Name() string                             { return f.name }
+func (f *fakeTool) Description() string                      { return "fake" }
+func (f *fakeTool) InputSchema() json.RawMessage             { return json.RawMessage(`{"type":"object"}`) }
+func (f *fakeTool) IsReadOnly(_ json.RawMessage) bool        { return true }
+func (f *fakeTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 func (f *fakeTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
 	if f.isErr {
 		return tool.ErrorResult(f.result), nil
@@ -335,11 +335,10 @@ func newTestLoopWithConfig(t *testing.T, sseBodies []string, reg *tool.Registry,
 
 // singleToolUseSSE builds an SSE stream for exactly one tool_use turn (stop_reason=tool_use).
 // The loop will execute tools then make a second HTTP call for the follow-up.
-func singleToolUseSSE(toolName, toolID, inputJSON string) string {
-	inputJSONEscaped := strings.ReplaceAll(inputJSON, `"`, `\"`)
+func singleToolUseSSE(toolID string) string {
 	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
-		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + toolID + "\",\"name\":\"" + toolName + "\",\"input\":{}}}\n\n" +
-		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"" + inputJSONEscaped + "\"}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + toolID + "\",\"name\":\"Bash\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
 		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
 		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
 		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
@@ -350,7 +349,7 @@ func TestLoop_PermissionDeny(t *testing.T) {
 	reg.Register(&fakeTool{name: "Bash", result: "should not run"})
 
 	// First call: tool_use turn. Second call: follow-up after tool result.
-	sse1 := singleToolUseSSE("Bash", "toolu_01", `{}`)
+	sse1 := singleToolUseSSE("toolu_01")
 	sse2 := textOnlySSE("understood")
 
 	gate := newDenyGate("Bash")
@@ -383,7 +382,7 @@ func TestLoop_PermissionAllow(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&fakeTool{name: "Bash", result: "allowed output"})
 
-	sse1 := singleToolUseSSE("Bash", "toolu_02", `{}`)
+	sse1 := singleToolUseSSE("toolu_02")
 	sse2 := textOnlySSE("done")
 
 	gate := newAllowGate()
@@ -416,7 +415,7 @@ func TestLoop_PreToolUseHookBlocks(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&fakeTool{name: "Bash", result: "should not run"})
 
-	sse1 := singleToolUseSSE("Bash", "toolu_03", `{}`)
+	sse1 := singleToolUseSSE("toolu_03")
 	sse2 := textOnlySSE("understood")
 
 	hooksConfig := newBlockingPreToolHooks("Bash")
@@ -579,8 +578,8 @@ type barrierTool struct {
 	barrier <-chan struct{}
 }
 
-func (b *barrierTool) Name() string             { return b.name }
-func (b *barrierTool) Description() string      { return "barrier" }
+func (b *barrierTool) Name() string        { return b.name }
+func (b *barrierTool) Description() string { return "barrier" }
 func (b *barrierTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object"}`)
 }
@@ -604,8 +603,8 @@ type callRecordingTool struct {
 	mu     *sync.Mutex
 }
 
-func (c *callRecordingTool) Name() string             { return c.name }
-func (c *callRecordingTool) Description() string      { return "records calls" }
+func (c *callRecordingTool) Name() string        { return c.name }
+func (c *callRecordingTool) Description() string { return "records calls" }
 func (c *callRecordingTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object"}`)
 }
@@ -622,7 +621,7 @@ func TestLoop_NoGateAllowsAll(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(&fakeTool{name: "Bash", result: "ran fine"})
 
-	sse1 := singleToolUseSSE("Bash", "toolu_04", `{}`)
+	sse1 := singleToolUseSSE("toolu_04")
 	sse2 := textOnlySSE("done")
 
 	// No gate configured — all tools should run.

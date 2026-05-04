@@ -11,7 +11,7 @@ func TestOpen_InMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenPath: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 }
 
 func TestRecord_And_Gain(t *testing.T) {
@@ -19,7 +19,7 @@ func TestRecord_And_Gain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenPath: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.Record(Row{
 		Command:       "git log",
@@ -66,7 +66,7 @@ func TestOpen_DefaultPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	db.Close()
+	_ = db.Close()
 	// Verify file was created.
 	if _, err := os.Stat(tmp + "/.local/share/rtk/history.db"); os.IsNotExist(err) {
 		t.Error("expected history.db to be created")
@@ -78,7 +78,7 @@ func TestGain_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenPath: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	totalOrig, totalFiltered, rows, err := db.Gain()
 	if err != nil {

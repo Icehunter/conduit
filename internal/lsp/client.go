@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,11 +21,11 @@ import (
 type Client struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
-	mu      sync.Mutex          // guards writes to stdin
+	mu      sync.Mutex // guards writes to stdin
 	nextID  atomic.Int32
-	pending sync.Map            // map[int]chan rpcResponse
-	diags   sync.Map            // map[string][]Diagnostic (URI → diagnostics cache)
-	done    chan struct{}        // closed when the read loop exits
+	pending sync.Map      // map[int]chan rpcResponse
+	diags   sync.Map      // map[string][]Diagnostic (URI → diagnostics cache)
+	done    chan struct{} // closed when the read loop exits
 }
 
 // NewClient spawns the language server at cmd+args, performs the LSP
@@ -205,7 +206,7 @@ func (c *Client) readLoop(r io.Reader) {
 	for {
 		msg, err := readMessage(br)
 		if err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				log.Printf("lsp: read error: %v", err)
 			}
 			return

@@ -35,7 +35,7 @@ func (t *EnterPlanMode) Description() string { return enterDescription }
 func (t *EnterPlanMode) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
 }
-func (t *EnterPlanMode) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (t *EnterPlanMode) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (t *EnterPlanMode) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *EnterPlanMode) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
@@ -85,7 +85,7 @@ func (t *ExitPlanMode) InputSchema() json.RawMessage {
 	"additionalProperties": false
 }`)
 }
-func (t *ExitPlanMode) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (t *ExitPlanMode) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (t *ExitPlanMode) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {

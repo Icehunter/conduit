@@ -3,11 +3,12 @@
 // Mirrors src/utils/permissions/permissions.ts and shellRuleMatching.ts.
 //
 // A permission rule is a string like:
-//   "Bash"              — allow/deny all Bash calls
-//   "Bash(git log)"     — exact command match
-//   "Bash(git log *)"   — prefix match (trailing space + * = prefix)
-//   "Edit"              — all Edit calls
-//   "Edit(/path/*)"     — path prefix match
+//
+//	"Bash"              — allow/deny all Bash calls
+//	"Bash(git log)"     — exact command match
+//	"Bash(git log *)"   — prefix match (trailing space + * = prefix)
+//	"Edit"              — all Edit calls
+//	"Edit(/path/*)"     — path prefix match
 package permissions
 
 import (
@@ -153,10 +154,11 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 // matchRule returns true if the rule matches toolName(toolInput).
 //
 // Rule forms:
-//   "ToolName"              — matches any call to ToolName
-//   "ToolName(exact)"       — exact input match
-//   "ToolName(prefix *)"    — input starts with "prefix " (space before *)
-//   "ToolName(glob*)"       — input starts with "glob" (wildcard anywhere)
+//
+//	"ToolName"              — matches any call to ToolName
+//	"ToolName(exact)"       — exact input match
+//	"ToolName(prefix *)"    — input starts with "prefix " (space before *)
+//	"ToolName(glob*)"       — input starts with "glob" (wildcard anywhere)
 func matchRule(rule, toolName, toolInput string) bool {
 	// Split "ToolName(content)" — no parens means tool-only match.
 	paren := strings.IndexByte(rule, '(')
@@ -331,7 +333,7 @@ func PersistAllow(rule, cwd string) error {
 		perms = make(map[string]json.RawMessage)
 	}
 
-	var allow []string
+	allow := make([]string, 0, 1)
 	if a, ok := perms["allow"]; ok {
 		_ = json.Unmarshal(a, &allow)
 	}

@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -63,12 +64,12 @@ func saveKnownMarketplaces(m map[string]MarketplaceEntry) error {
 
 // MarketplaceAdd adds a new marketplace from a source string.
 // source can be: "owner/repo" (GitHub), "https://..." (git URL), or local path.
-func MarketplaceAdd(name, source string, sparsePaths []string) error {
+func MarketplaceAdd(ctx context.Context, name, source string, sparsePaths []string) error {
 	ms := parseMarketplaceSource(source, sparsePaths)
 
 	// Clone/materialize the marketplace to get its manifest.
 	installLoc := filepath.Join(pluginsDir(), "marketplaces", name)
-	if err := materializeMarketplace(ms, installLoc); err != nil {
+	if err := materializeMarketplace(ctx, ms, installLoc); err != nil {
 		return fmt.Errorf("marketplace add: %w", err)
 	}
 
@@ -98,13 +99,13 @@ func MarketplaceRemove(name string) error {
 }
 
 // MarketplaceUpdate refreshes one or all marketplaces from their source.
-func MarketplaceUpdate(name string) error {
+func MarketplaceUpdate(ctx context.Context, name string) error {
 	known, err := LoadKnownMarketplaces()
 	if err != nil {
 		return err
 	}
 	update := func(n string, entry MarketplaceEntry) error {
-		if err := materializeMarketplace(entry.Source, entry.InstallLocation); err != nil {
+		if err := materializeMarketplace(ctx, entry.Source, entry.InstallLocation); err != nil {
 			return fmt.Errorf("update %s: %w", n, err)
 		}
 		entry.LastUpdated = time.Now().UTC().Format(time.RFC3339)
@@ -161,16 +162,16 @@ func isGitHubShorthand(s string) bool {
 }
 
 // materializeMarketplace clones/copies a marketplace to installLoc.
-func materializeMarketplace(ms MarketplaceSource, installLoc string) error {
+func materializeMarketplace(ctx context.Context, ms MarketplaceSource, installLoc string) error {
 	if err := os.MkdirAll(installLoc, 0o755); err != nil {
 		return err
 	}
 	switch ms.Source {
 	case "github":
 		url := "https://github.com/" + ms.Repo + ".git"
-		return gitCloneOrPull(url, ms.Ref, ms.SparsePaths, installLoc)
+		return gitCloneOrPull(ctx, url, ms.Ref, ms.SparsePaths, installLoc)
 	case "git":
-		return gitCloneOrPull(ms.URL, ms.Ref, ms.SparsePaths, installLoc)
+		return gitCloneOrPull(ctx, ms.URL, ms.Ref, ms.SparsePaths, installLoc)
 	case "file", "directory":
 		// Local path — just use it in-place (no copy needed for marketplace).
 		return nil
@@ -213,7 +214,7 @@ func MarketplacePluginDir(marketplaceName, pluginName string) string {
 // a subdirectory of the marketplace clone). It reads the plugin's source URL
 // from the marketplace manifest and clones it to a local cache directory.
 // Returns the cloned directory path, or an error if the plugin has no git source.
-func cloneExternalPlugin(marketplaceName, pluginName, pluginsCacheDir string) (string, error) {
+func cloneExternalPlugin(ctx context.Context, marketplaceName, pluginName, pluginsCacheDir string) (string, error) {
 	manifest, err := LoadMarketplaceManifest(marketplaceName)
 	if err != nil {
 		return "", fmt.Errorf("read marketplace manifest: %w", err)
@@ -241,7 +242,7 @@ func cloneExternalPlugin(marketplaceName, pluginName, pluginsCacheDir string) (s
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
 	}
-	if err := gitCloneOrPull(pluginURL, pluginRef, nil, dst); err != nil {
+	if err := gitCloneOrPull(ctx, pluginURL, pluginRef, nil, dst); err != nil {
 		return "", fmt.Errorf("clone %s: %w", pluginURL, err)
 	}
 	return dst, nil

@@ -77,8 +77,8 @@ type OAuthTokens struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 	Scope        string    `json:"scope,omitempty"`
 	// Embedded so token refresh can re-auth without another DCR roundtrip.
-	Client     ClientRegistration `json:"client"`
-	TokenEndpoint string          `json:"token_endpoint"`
+	Client        ClientRegistration `json:"client"`
+	TokenEndpoint string             `json:"token_endpoint"`
 }
 
 // Redact prevents accidental logging of bearer tokens.
@@ -386,7 +386,7 @@ func PerformOAuthFlow(ctx context.Context, serverName, serverURL string, scopes 
 	if err != nil {
 		return nil, err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", listener.Port())
 
 	// Dynamic Client Registration if no client_id was pre-configured.
@@ -447,7 +447,7 @@ func PerformOAuthFlow(ctx context.Context, serverName, serverURL string, scopes 
 // This is a lower-level alternative to PerformOAuthFlow. The full flow is:
 //
 //	url, listener, state, verifier, client, md, _ := AuthorizeURLForFlow(...)
-//	defer listener.Close()
+//	defer func() { _ = listener.Close() }()
 //	// surface url to the user/LLM
 //	code, _ := listener.Wait(ctx, state)
 //	tokens, _ := ExchangeCode(ctx, md.TokenEndpoint, code, redirectURI, client.ClientID, verifier)

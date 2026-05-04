@@ -29,6 +29,7 @@ import (
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/claudemd"
+	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/migrations"
@@ -42,11 +43,9 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tool"
-	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
-	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
 	"github.com/icehunter/conduit/internal/tools/configtool"
 	"github.com/icehunter/conduit/internal/tools/fileedittool"
 	"github.com/icehunter/conduit/internal/tools/filereadtool"
@@ -54,6 +53,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/globtool"
 	"github.com/icehunter/conduit/internal/tools/greptool"
 	lsptool "github.com/icehunter/conduit/internal/tools/lsp"
+	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
 	"github.com/icehunter/conduit/internal/tools/mcpresourcetool"
 	"github.com/icehunter/conduit/internal/tools/mcptool"
 	"github.com/icehunter/conduit/internal/tools/notebookedittool"
@@ -71,16 +71,16 @@ import (
 	"github.com/icehunter/conduit/internal/tui"
 )
 
-// AppVersion is the conduit release version shown to users (conduit version).
-// Set to 1.0.0 until the first tagged GitHub release.
-// Override at build time via -ldflags "-X main.AppVersion=1.2.3".
+// AppVersion is the conduit release version shown to users.
+// Populated at build time via -ldflags "-X main.AppVersion=$(VERSION)".
 var AppVersion = "1.0.0"
 
-// Version is the wire version sent in User-Agent/X-App headers.
-// Must match what official CC v2.1.126 sends — Anthropic rate-limits
-// clients whose UA doesn't look like the CLI.
-// Override at build time via -ldflags "-X main.Version=...".
+// Version is the CC wire version sent in User-Agent/X-App headers.
 var Version = "2.1.126"
+
+// GitCommit and BuildTime are stamped at build time.
+var GitCommit = "unknown"
+var BuildTime = "unknown"
 
 func main() {
 	if err := run(); err != nil {
@@ -116,7 +116,7 @@ func run() error {
 
 	switch args[0] {
 	case "version":
-		fmt.Printf("conduit %s (cc-wire/%s)\n", AppVersion, Version)
+		fmt.Printf("conduit %s (cc-wire/%s, commit %s, built %s)\n", AppVersion, Version, GitCommit, BuildTime)
 		return nil
 	default:
 		flag.Usage()
@@ -292,7 +292,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		if err == nil {
 			resp, err := http.DefaultClient.Do(req)
 			if err == nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 			}
 		}
 	}()

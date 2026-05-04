@@ -20,7 +20,7 @@ func TestCallbackListener_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCallbackListener: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	const state = "state-xyz"
 	port := l.Port()
@@ -52,7 +52,7 @@ func TestCallbackListener_Success(t *testing.T) {
 	}
 	httpCh := make(chan httpResult, 1)
 	go func() {
-		resp, err := client.Get(url) //nolint:noctx
+		resp, err := client.Get(url) //nolint:noctx,bodyclose
 		httpCh <- httpResult{resp, err}
 	}()
 
@@ -102,7 +102,7 @@ func TestCallbackListener_RejectsBadState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -138,7 +138,7 @@ func TestCallbackListener_RejectsMissingCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -171,7 +171,7 @@ func TestCallbackListener_404OnOtherPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	go func() {
 		// Wait will not return for this case — we'll cancel via Close.
@@ -194,7 +194,7 @@ func TestCallbackListener_ContextCancelStopsWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -223,7 +223,7 @@ func TestCallbackListener_DoubleWaitErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	// First Wait blocks; cancel quickly.
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -246,7 +246,7 @@ func TestCallbackListener_ManualPaste(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	// Register synchronously so SubmitManualCode can validate state without
 	// racing the Wait goroutine.

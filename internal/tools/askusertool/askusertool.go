@@ -71,7 +71,7 @@ func (t *AskUserQuestion) InputSchema() json.RawMessage {
 	"additionalProperties": false
 }`)
 }
-func (t *AskUserQuestion) IsReadOnly(_ json.RawMessage) bool      { return true }
+func (t *AskUserQuestion) IsReadOnly(_ json.RawMessage) bool        { return true }
 func (t *AskUserQuestion) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
 func (t *AskUserQuestion) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {

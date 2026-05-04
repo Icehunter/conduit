@@ -14,8 +14,8 @@ import (
 
 // Stream is an open SSE connection. Call Next() until io.EOF; always Close().
 type Stream struct {
-	body        io.ReadCloser
-	parser      *sse.Parser
+	body   io.ReadCloser
+	parser *sse.Parser
 	// ResponseHeader holds the HTTP response headers from the initial connection.
 	// Use this to read rate-limit headers (anthropic-ratelimit-*).
 	ResponseHeader http.Header

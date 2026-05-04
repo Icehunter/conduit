@@ -130,7 +130,7 @@ func TestStdoutWritesCapturedAsOutputEvents(t *testing.T) {
 
 	// Write to os.Stdout — this now goes through the pipe.
 	testMsg := "hello recorder"
-	os.Stdout.WriteString(testMsg)
+	_, _ = os.Stdout.WriteString(testMsg)
 
 	// Give the drain goroutine time to process.
 	time.Sleep(50 * time.Millisecond)

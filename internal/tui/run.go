@@ -19,11 +19,11 @@ import (
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/outputstyles"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/secure"
-	"github.com/icehunter/conduit/internal/outputstyles"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
@@ -53,7 +53,7 @@ func SummarizeMessages(history []api.Message, n int) string {
 				sb.WriteString(b.Text)
 				sb.WriteString("\n")
 			case "tool_use":
-				sb.WriteString(fmt.Sprintf("[tool_use %s]\n", b.Name))
+				fmt.Fprintf(&sb, "[tool_use %s]\n", b.Name)
 			case "tool_result":
 				txt := b.Text
 				if len(txt) > 500 {
@@ -247,9 +247,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			sb.WriteString("Model:   " + modelDisplay + "\n")
 			sb.WriteString("Mode:    " + mode + "\n")
 			sb.WriteString("Effort:  " + effort + "\n")
-			sb.WriteString(fmt.Sprintf("Context: %d%% (%d tokens)\n", pct, tokens))
+			fmt.Fprintf(&sb, "Context: %d%% (%d tokens)\n", pct, tokens)
 			if cost > 0 {
-				sb.WriteString(fmt.Sprintf("Cost:    $%.4f\n", cost))
+				fmt.Fprintf(&sb, "Cost:    $%.4f\n", cost)
 			}
 			if id := live.SessionID(); id != "" {
 				sb.WriteString("Session: " + id + "\n")
@@ -427,7 +427,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	}
 	commands.RegisterSessionCommands(reg, state)
 
-	var apiClient *api.Client = opts.apiClient
+	apiClient := opts.apiClient
 
 	cfg := Config{
 		Version:        version,
@@ -617,10 +617,7 @@ func itoa(n int) string {
 // logoutCredentials removes the active account's token from the keychain
 // and clears it from accounts.json.
 func logoutCredentials() error {
-	store, err := defaultSecureStorage()
-	if err != nil {
-		return err
-	}
+	store := defaultSecureStorage()
 	email := auth.ActiveEmail()
 	if email == "" {
 		return fmt.Errorf("not logged in")
@@ -629,6 +626,6 @@ func logoutCredentials() error {
 }
 
 // defaultSecureStorage returns the platform keychain storage.
-func defaultSecureStorage() (secure.Storage, error) {
-	return secure.NewDefault(), nil
+func defaultSecureStorage() secure.Storage {
+	return secure.NewDefault()
 }

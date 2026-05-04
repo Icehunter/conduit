@@ -40,13 +40,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-func padToWidth(s string, w int) string {
-	if len(s) < w {
-		return s + strings.Repeat(" ", w-len(s))
-	}
-	return s
-}
-
 // keepMatching returns only lines where any predicate returns true.
 func keepMatching(output string, tests ...func(string) bool) string {
 	var out []string
@@ -80,13 +73,6 @@ func hasPrefix(line string, prefixes ...string) bool {
 	return false
 }
 
-// summarize appends a count line when lines were dropped.
-func summarize(kept, total int, category string) string {
-	if kept < total {
-		return "\n[RTK: " + itoa(total-kept) + " " + category + " lines omitted]"
-	}
-	return ""
-}
 
 // ── Git ───────────────────────────────────────────────────────────────────────
 
@@ -263,10 +249,6 @@ func filterCargoTest(output string) string {
 	return strings.Join(out, "\n")
 }
 
-func filterCargoBuild(_ string, output string) string {
-	return filterCargoBuildOutput(output)
-}
-
 func filterCargoBuildOutput(output string) string {
 	var out []string
 	for _, line := range strings.Split(output, "\n") {
@@ -279,8 +261,6 @@ func filterCargoBuildOutput(output string) string {
 	}
 	return strings.Join(out, "\n")
 }
-
-func filterCargoClippy(_ string, output string) string { return filterCargoBuildOutput(output) }
 
 // ── Python ────────────────────────────────────────────────────────────────────
 
@@ -541,11 +521,3 @@ func filterBuildOutput(_ string, output string) string { return truncateLines(ou
 
 func filterSystemctl(_ string, output string) string { return truncateLines(output, 50) }
 
-// ── min helper ────────────────────────────────────────────────────────────────
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

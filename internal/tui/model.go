@@ -27,9 +27,9 @@ import (
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/keybindings"
-	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
@@ -47,10 +47,10 @@ import (
 // except the viewport, given the current input row count and terminal
 // height. Dynamic so multi-line input doesn't permanently squeeze chat.
 //
-//   spinner row:   1
-//   input border:  1 (top) + 1 (bottom) = 2
-//   input text:    inputRows (1..inputMaxRows)
-//   status bar:    1
+//	spinner row:   1
+//	input border:  1 (top) + 1 (bottom) = 2
+//	input text:    inputRows (1..inputMaxRows)
+//	status bar:    1
 //
 // The input is capped at inputMaxRows visible rows (~30% of the screen,
 // floor 1, ceiling 12) so the chat viewport always keeps at least 70% of
@@ -230,12 +230,11 @@ type Model struct {
 	width  int
 	height int
 
-	running     bool
-	cancelled   bool // true after Ctrl+C; cleared when next turn starts
-	cancelTurn  context.CancelFunc
-	streaming   string
-	turnID      int // incremented each turn; agentDoneMsg with stale ID is ignored
-
+	running    bool
+	cancelled  bool // true after Ctrl+C; cleared when next turn starts
+	cancelTurn context.CancelFunc
+	streaming  string
+	turnID     int // incremented each turn; agentDoneMsg with stale ID is ignored
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands
@@ -501,7 +500,6 @@ type mcpApprovalMsg struct {
 // so the coordinator footer panel re-renders with updated elapsed times.
 type coordTickMsg struct{}
 
-
 // coordTick schedules the next coordinator tick — only resubscribes when
 // there's still at least one in_progress task to display.
 func coordTick() tea.Cmd {
@@ -613,9 +611,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.InsertString(placeholder)
 				m.flashMsg = fmt.Sprintf("Pasted %d lines  (Esc to clear)", lineCount)
 				return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
-			} else {
-				m.input.InsertString(content)
 			}
+			m.input.InsertString(content)
 		}
 		return m, nil
 
@@ -806,7 +803,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
-	case commands_loginMsg:
+	case commandsLoginMsg:
 		// Trigger login flow from account panel "+ Add account" action.
 		m.loginPrompt = &loginPromptState{selected: 0}
 		m.refreshViewport()
@@ -1911,22 +1908,6 @@ func (m Model) computeCommandMatches() ([]commands.Command, int) {
 
 // --- @ file completion ---
 
-// atFragment returns the partial @query at the end of the current input
-// (i.e. the last whitespace-delimited token if it starts with "@").
-// Returns "" if no @ fragment is present.
-func atFragment(val string) string {
-	// Get the last non-space token.
-	idx := strings.LastIndexAny(val, " \t\n")
-	token := val
-	if idx >= 0 {
-		token = val[idx+1:]
-	}
-	if strings.HasPrefix(token, "@") {
-		return token[1:] // strip the @
-	}
-	return ""
-}
-
 // computeAtMatches returns file/dir paths matching the current @fragment.
 // Returns (nil,0) when no @ fragment is active or the input starts with "/".
 func (m Model) computeAtMatches() ([]string, int) {
@@ -1993,7 +1974,7 @@ func searchFiles(dir, query string, max int) []string {
 		if query != "" {
 			args = append(args, query)
 		}
-		out, err := exec.Command("fd", append(args, ".", dir)...).Output()
+		out, err := exec.CommandContext(context.Background(), "fd", append(args, ".", dir)...).Output()
 		if err == nil {
 			var paths []string
 			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -2123,7 +2104,6 @@ func (m Model) tabComplete(input string) string {
 
 // resumeSession is one entry in the /resume picker.
 type resumeSession struct {
-	id       string
 	filePath string
 	age      string
 	preview  string // session title / first user message
@@ -2243,7 +2223,7 @@ func (m Model) renderResumePicker() string {
 		label := s.age + "  " + s.preview
 		var line string
 		if vi == p.selected {
-			line = stylePickerItemSelected.Render("▶ "+label)
+			line = stylePickerItemSelected.Render("▶ " + label)
 		} else {
 			line = stylePickerItem.Render("  " + label)
 		}
@@ -2275,7 +2255,6 @@ func (m Model) renderResumePicker() string {
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
 	return style.Width(m.width - 4).Render(sb.String())
 }
-
 
 // ---- Search results panel --------------------------------------------------
 
@@ -2383,7 +2362,7 @@ type doctorPanelState struct {
 	platform string   // binary path + OS/arch
 }
 
-func (m Model) handleDoctorPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+func (m Model) handleDoctorPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:unparam
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.doctorPanel = nil
@@ -2597,21 +2576,6 @@ type panelToolItem struct {
 	name        string
 	fullName    string // e.g. mcp__plugin_context7_context7__resolve-library-id
 	description string
-	schema      string // raw JSON schema for params display
-}
-
-// panelPluginItem is one plugin row.
-type panelPluginItem struct {
-	name        string
-	description string
-	cmdCount    int
-}
-
-// panelMarketplaceItem is one marketplace row.
-type panelMarketplaceItem struct {
-	name        string
-	source      string
-	lastUpdated string
 }
 
 // panelView is the navigation depth.
@@ -2634,13 +2598,10 @@ type panelState struct {
 	serverIdx int
 
 	// raw encoded data
-	mcpRaw    string
-	pluginRaw string
+	mcpRaw string
 
 	// parsed lists
-	mcpItems         []panelMCPItem
-	pluginItems      []panelPluginItem
-	marketplaceItems []panelMarketplaceItem
+	mcpItems []panelMCPItem
 }
 
 func newPanel(tab panelTab) *panelState {
@@ -2668,7 +2629,7 @@ func (p *panelState) parseMCPItems() {
 		item.status = get(3)
 		item.command = get(4)
 		item.args = get(5)
-		fmt.Sscanf(get(6), "%d", &item.toolCount)
+		_, _ = fmt.Sscanf(get(6), "%d", &item.toolCount)
 		item.err = get(7)
 		item.disabled = get(8) == "1"
 		p.mcpItems = append(p.mcpItems, item)
@@ -2692,27 +2653,6 @@ func (p *panelState) parseMCPItems() {
 	}
 }
 
-func (p *panelState) parsePluginItems() {
-	p.pluginItems = nil
-	for _, line := range strings.Split(p.pluginRaw, "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 3)
-		item := panelPluginItem{}
-		if len(parts) > 0 {
-			item.name = parts[0]
-		}
-		if len(parts) > 1 {
-			item.description = parts[1]
-		}
-		if len(parts) > 2 {
-			fmt.Sscanf(parts[2], "%d", &item.cmdCount)
-		}
-		p.pluginItems = append(p.pluginItems, item)
-	}
-}
-
 // loadTabData is a no-op for the MCP-only panel (reserved for future tabs).
 func (p *panelState) loadTabData() {}
 
@@ -2728,7 +2668,7 @@ func (p *panelState) selectedMCPItem() *panelMCPItem {
 }
 
 // handlePanelKey routes keyboard input through the panel navigation stack.
-func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:unparam
 	p := m.panel
 	key := msg.String()
 
@@ -2936,12 +2876,12 @@ func (m Model) renderPanel() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
-		Width(w - 2). // -2 for border
+		Width(w - 2).      // -2 for border
 		Height(panelH - 2) // -2 for border
 	return style.Render(sb.String())
 }
 
-func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
+func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {
 	switch p.tab {
 	case panelTabMCP:
 		if len(p.mcpItems) == 0 {
@@ -2949,7 +2889,7 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
 			return
 		}
 		sb.WriteString(styleStatusAccent.Render("Manage MCP servers") + "\n")
-		sb.WriteString(fmt.Sprintf("%d server%s", len(p.mcpItems), pluralS(len(p.mcpItems))))
+		fmt.Fprintf(sb, "%d server%s", len(p.mcpItems), pluralS(len(p.mcpItems)))
 
 		// Items are pre-sorted by scope (User → Project → Built-in).
 		// Insert a section header whenever scope changes.
@@ -2958,8 +2898,8 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
 			if item.scope != lastScope {
 				lastScope = item.scope
 				src := item.source
-				sb.WriteString(fmt.Sprintf("\n  %s (%s)\n",
-					fgOnBg(colorFg).Bold(true).Render(item.scope+" MCPs"), src))
+				fmt.Fprintf(sb, "\n  %s (%s)\n",
+					fgOnBg(colorFg).Bold(true).Render(item.scope+" MCPs"), src)
 			}
 			cursor := "  "
 			nameStyle := stylePickerItem
@@ -2967,7 +2907,7 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
 				cursor = stylePickerItemSelected.Render("❯") + " "
 				nameStyle = stylePickerItemSelected
 			}
-			sb.WriteString(fmt.Sprintf("%s%s · %s\n", cursor, nameStyle.Render(item.name), renderMCPStatus(item.status)))
+			fmt.Fprintf(sb, "%s%s · %s\n", cursor, nameStyle.Render(item.name), renderMCPStatus(item.status))
 		}
 		sb.WriteString("\n" + stylePickerDesc.Render("https://code.claude.com/docs/en/mcp for help"))
 
@@ -2983,7 +2923,7 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 	sb.WriteString(styleStatusAccent.Render(item.name) + " MCP Server\n\n")
 	// Info grid
 	writeField := func(label, value string) {
-		sb.WriteString(fmt.Sprintf("%-18s%s\n", label+":", value))
+		fmt.Fprintf(sb, "%-18s%s\n", label+":", value)
 	}
 	writeField("Status", renderMCPStatus(item.status))
 	if item.command != "" {
@@ -3020,7 +2960,7 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 			cursor = stylePickerItemSelected.Render("❯") + " "
 			style = stylePickerItemSelected
 		}
-		sb.WriteString(fmt.Sprintf("%s%d. %s\n", cursor, i+1, style.Render(action)))
+		fmt.Fprintf(sb, "%s%d. %s\n", cursor, i+1, style.Render(action))
 	}
 }
 
@@ -3047,8 +2987,8 @@ func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
 	if item == nil {
 		return
 	}
-	sb.WriteString(fmt.Sprintf("Tools for %s\n", styleStatusAccent.Render(item.name)))
-	sb.WriteString(fmt.Sprintf("%d tool%s\n\n", len(item.tools), pluralS(len(item.tools))))
+	fmt.Fprintf(sb, "Tools for %s\n", styleStatusAccent.Render(item.name))
+	fmt.Fprintf(sb, "%d tool%s\n\n", len(item.tools), pluralS(len(item.tools)))
 
 	if len(item.tools) == 0 {
 		sb.WriteString(stylePickerDesc.Render("No tools loaded (server may not be connected)."))
@@ -3070,7 +3010,7 @@ func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
 			paddedName += strings.Repeat(" ", pad)
 		}
 		attrs := stylePickerDesc.Render("read-only, open-world")
-		sb.WriteString(fmt.Sprintf("%s%d. %s%s\n", cursor, i+1, nameStyle.Render(paddedName), attrs))
+		fmt.Fprintf(sb, "%s%d. %s%s\n", cursor, i+1, nameStyle.Render(paddedName), attrs)
 	}
 }
 
@@ -3087,9 +3027,9 @@ func (m Model) renderPanelToolDetail(sb *strings.Builder, p *panelState, innerW 
 	// Title bar
 	sb.WriteString(styleStatusAccent.Render(tool.name) + " [read-only] [open-world]\n")
 	sb.WriteString(stylePickerDesc.Render(item.name) + "\n\n")
-	sb.WriteString(fmt.Sprintf("Tool name: %s\n", tool.name))
+	fmt.Fprintf(sb, "Tool name: %s\n", tool.name)
 	if tool.fullName != "" {
-		sb.WriteString(fmt.Sprintf("Full name: %s\n", tool.fullName))
+		fmt.Fprintf(sb, "Full name: %s\n", tool.fullName)
 	}
 	if tool.description != "" {
 		sb.WriteString("\nDescription:\n")
@@ -3562,7 +3502,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 				if e == store.Active {
 					active = "  ← active"
 				}
-				sb.WriteString(fmt.Sprintf("  %s  (added %s)%s\n", entry.Email, entry.AddedAt.Format("2006-01-02"), active))
+				fmt.Fprintf(&sb, "  %s  (added %s)%s\n", entry.Email, entry.AddedAt.Format("2006-01-02"), active)
 			}
 			if len(store.Accounts) == 0 {
 				sb.WriteString("  (none — run /login to add an account)\n")
@@ -3654,7 +3594,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		if m.cfg.MCPManager != nil {
 			getMCPInfo = func() []mcpInfoRow {
 				servers := m.cfg.MCPManager.Servers()
-				var rows []mcpInfoRow
+				rows := make([]mcpInfoRow, 0, len(servers))
 				for _, srv := range servers {
 					rows = append(rows, mcpInfoRow{
 						name:   srv.Name,
@@ -3693,10 +3633,6 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			return snap
 		}
 		rlInfo := ratelimit.Info{}
-		if live != nil && live.RateLimitWarning() != "" {
-			// Rate limit data isn't directly exposed yet — Info will be empty.
-			// TODO: expose from LiveState once full header parsing lands.
-		}
 		saveConfigFn := func(id string, value interface{}) {
 			// Map config item IDs to settings keys where they differ.
 			key := id
@@ -3781,7 +3717,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 				preview:  parts[2],
 			}
 			if len(parts) == 4 {
-				fmt.Sscanf(parts[3], "%d", &rs.msgCount)
+				_, _ = fmt.Sscanf(parts[3], "%d", &rs.msgCount)
 			}
 			sessions = append(sessions, rs)
 		}
@@ -3864,7 +3800,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		// res.Text is the number of turns removed (as string from the command).
 		// Trim from m.history: each "turn" is one user+assistant message pair.
 		n := 1
-		fmt.Sscanf(res.Text, "%d", &n)
+		_, _ = fmt.Sscanf(res.Text, "%d", &n)
 		removed := 0
 		for i := 0; i < n && len(m.history) >= 2; i++ {
 			// Remove the last user+assistant pair from the API history.
@@ -3933,10 +3869,10 @@ func (m *Model) CostSummary() string {
 		return "No API calls made yet in this session."
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Input tokens:  %d\n", m.totalInputTokens))
-	sb.WriteString(fmt.Sprintf("Output tokens: %d\n", m.totalOutputTokens))
+	fmt.Fprintf(&sb, "Input tokens:  %d\n", m.totalInputTokens)
+	fmt.Fprintf(&sb, "Output tokens: %d\n", m.totalOutputTokens)
 	if m.costUSD > 0 {
-		sb.WriteString(fmt.Sprintf("Estimated cost: $%.4f", m.costUSD))
+		fmt.Fprintf(&sb, "Estimated cost: $%.4f", m.costUSD)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
@@ -4092,8 +4028,8 @@ func (m Model) applyLayout() Model {
 		// Disable the viewport's built-in key bindings entirely — "j","k","u","b",
 		// space, etc. would fire for any non-consumed key. We handle scrolling
 		// explicitly via Shift+Up/Down/PgUp/PgDn in handleKey.
-		m.vp.KeyMap = viewport.KeyMap{}      // disable built-in key bindings
-		m.vp.MouseWheelEnabled = true        // handle tea.MouseWheelMsg for trackpad/wheel
+		m.vp.KeyMap = viewport.KeyMap{} // disable built-in key bindings
+		m.vp.MouseWheelEnabled = true   // handle tea.MouseWheelMsg for trackpad/wheel
 		m.ready = true
 	} else {
 		m.vp.SetWidth(m.width)
@@ -4646,7 +4582,7 @@ func (m Model) activeContexts() []string {
 //
 // "command:*" actions dispatch a slash command as if the user had typed it.
 // Other IDs mirror the built-in switch in handleKey.
-func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+func (m Model) dispatchKeybindingAction(action string, _ tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// "command:help" → run /help, "command:compact" → run /compact, etc.
 	if strings.HasPrefix(action, "command:") {
 		cmdName := strings.TrimPrefix(action, "command:")

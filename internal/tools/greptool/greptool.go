@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -94,20 +95,20 @@ func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
 // rawInput is the raw JSON view — we need *int and *bool to detect omitted fields.
 type rawInput struct {
-	Pattern    string  `json:"pattern"`
-	Path       string  `json:"path,omitempty"`
-	Glob       string  `json:"glob,omitempty"`
-	OutputMode string  `json:"output_mode,omitempty"`
-	Before     *int    `json:"-B,omitempty"`
-	After      *int    `json:"-A,omitempty"`
-	ContextC   *int    `json:"-C,omitempty"`
-	Context    *int    `json:"context,omitempty"`
-	LineNums   *bool   `json:"-n,omitempty"`
+	Pattern     string `json:"pattern"`
+	Path        string `json:"path,omitempty"`
+	Glob        string `json:"glob,omitempty"`
+	OutputMode  string `json:"output_mode,omitempty"`
+	Before      *int   `json:"-B,omitempty"`
+	After       *int   `json:"-A,omitempty"`
+	ContextC    *int   `json:"-C,omitempty"`
+	Context     *int   `json:"context,omitempty"`
+	LineNums    *bool  `json:"-n,omitempty"`
 	Insensitive bool   `json:"-i,omitempty"`
-	Type       string  `json:"type,omitempty"`
-	HeadLimit  *int    `json:"head_limit,omitempty"`
-	Offset     int     `json:"offset,omitempty"`
-	Multiline  bool    `json:"multiline,omitempty"`
+	Type        string `json:"type,omitempty"`
+	HeadLimit   *int   `json:"head_limit,omitempty"`
+	Offset      int    `json:"offset,omitempty"`
+	Multiline   bool   `json:"multiline,omitempty"`
 }
 
 // Execute searches files matching the input and returns results.
@@ -215,12 +216,12 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	runErr := cmd.Run()
 	// rg exit code 1 = no matches (not an error for us); 2+ = real error.
 	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			// No matches.
-			runErr = nil
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 1 {
+			// Exit code 1 = no matches; not an error.
 		} else if ctx.Err() != nil {
 			return tool.ErrorResult("cancelled"), nil
-		} else if runErr != nil {
+		} else {
 			return tool.ErrorResult(fmt.Sprintf("rg error: %v\n%s", runErr, out.String())), nil
 		}
 	}
@@ -244,7 +245,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		for i, line := range lines {
 			lines[i] = relativizeLine(line, baseDir)
 		}
-		limited, _ := applyLimit(lines, offset, headLimit)
+		limited := applyLimit(lines, offset, headLimit)
 		if len(limited) == 0 {
 			return tool.TextResult("No matches found"), nil
 		}
@@ -254,7 +255,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		for i, line := range lines {
 			lines[i] = relativizePath(line, baseDir)
 		}
-		limited, _ := applyLimit(lines, offset, headLimit)
+		limited := applyLimit(lines, offset, headLimit)
 		totalMatches := 0
 		fileCount := 0
 		for _, line := range limited {
@@ -305,7 +306,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		for i, e := range entries {
 			paths[i] = relativizePath(e.path, baseDir)
 		}
-		limited, _ := applyLimit(paths, offset, headLimit)
+		limited := applyLimit(paths, offset, headLimit)
 		if len(limited) == 0 {
 			return tool.TextResult("No files found"), nil
 		}
@@ -322,18 +323,18 @@ func splitLines(s string) []string {
 	return strings.Split(s, "\n")
 }
 
-func applyLimit(items []string, offset, limit int) ([]string, bool) {
+func applyLimit(items []string, offset, limit int) []string {
 	if offset > len(items) {
-		return nil, false
+		return nil
 	}
 	items = items[offset:]
 	if limit == 0 {
-		return items, false
+		return items
 	}
 	if len(items) > limit {
-		return items[:limit], true
+		return items[:limit]
 	}
-	return items, false
+	return items
 }
 
 // relativizeLine handles lines with format "path:rest" from content mode.
@@ -388,4 +389,3 @@ func plural(n int, word string) string {
 	}
 	return word + "s"
 }
-

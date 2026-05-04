@@ -15,6 +15,16 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
   <a href="LICENSE"><img src="https://img.shields.io/github/license/icehunter/conduit?style=flat-square" alt="License" /></a>
 </p>
 
+<p align="center">
+  <a href="https://star-history.com/#icehunter/conduit&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=icehunter/conduit&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=icehunter/conduit&type=Date" />
+      <img alt="Star history for icehunter/conduit" src="https://api.star-history.com/svg?repos=icehunter/conduit&type=Date" width="600" />
+    </picture>
+  </a>
+</p>
+
 ---
 
 ## Why conduit?

@@ -83,7 +83,7 @@ func helpHandler(r *Registry) Handler {
 			if cmd.Name == "quit" {
 				continue // deduplicate exit/quit
 			}
-			sb.WriteString(fmt.Sprintf("  %-12s %s\n", "/"+cmd.Name, cmd.Description))
+			fmt.Fprintf(&sb, "  %-12s %s\n", "/"+cmd.Name, cmd.Description)
 		}
 		return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 	}
@@ -99,7 +99,7 @@ func RegisterPermissionsCommand(r *Registry, gate *permissions.Gate) {
 				return Result{Type: "text", Text: "Permissions: no gate configured (all tools allowed)"}
 			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Permission mode: %s\n", gate.Mode()))
+			fmt.Fprintf(&sb, "Permission mode: %s\n", gate.Mode())
 
 			allow, deny, ask := gate.Lists()
 
@@ -108,7 +108,7 @@ func RegisterPermissionsCommand(r *Registry, gate *permissions.Gate) {
 			} else {
 				sb.WriteString("\nAllow list:\n")
 				for _, r := range allow {
-					sb.WriteString(fmt.Sprintf("  %s\n", r))
+					fmt.Fprintf(&sb, "  %s\n", r)
 				}
 			}
 
@@ -117,7 +117,7 @@ func RegisterPermissionsCommand(r *Registry, gate *permissions.Gate) {
 			} else {
 				sb.WriteString("\nDeny list:\n")
 				for _, r := range deny {
-					sb.WriteString(fmt.Sprintf("  %s\n", r))
+					fmt.Fprintf(&sb, "  %s\n", r)
 				}
 			}
 
@@ -126,7 +126,7 @@ func RegisterPermissionsCommand(r *Registry, gate *permissions.Gate) {
 			} else {
 				sb.WriteString("\nAsk list:\n")
 				for _, r := range ask {
-					sb.WriteString(fmt.Sprintf("  %s\n", r))
+					fmt.Fprintf(&sb, "  %s\n", r)
 				}
 			}
 
@@ -148,17 +148,17 @@ func RegisterHooksCommand(r *Registry, hooksConfig *settings.HooksSettings) {
 			var sb strings.Builder
 			printMatchers := func(label string, matchers []settings.HookMatcher) {
 				if len(matchers) == 0 {
-					sb.WriteString(fmt.Sprintf("%s: (none)\n", label))
+					fmt.Fprintf(&sb, "%s: (none)\n", label)
 					return
 				}
-				sb.WriteString(fmt.Sprintf("%s:\n", label))
+				fmt.Fprintf(&sb, "%s:\n", label)
 				for _, m := range matchers {
 					matcher := m.Matcher
 					if matcher == "" {
 						matcher = "(all tools)"
 					}
 					for _, h := range m.Hooks {
-						sb.WriteString(fmt.Sprintf("  [%s] %s\n", matcher, h.Command))
+						fmt.Fprintf(&sb, "  [%s] %s\n", matcher, h.Command)
 					}
 				}
 			}

@@ -24,14 +24,14 @@ type pluginsSettingsJSON struct {
 // claudeJSON is the shape of ~/.claude.json used by real Claude Code.
 // We only decode the fields we need for MCP server discovery.
 type claudeJSON struct {
-	McpServers map[string]ServerConfig            `json:"mcpServers"`
-	Projects   map[string]claudeJSONProject       `json:"projects"`
+	McpServers map[string]ServerConfig      `json:"mcpServers"`
+	Projects   map[string]claudeJSONProject `json:"projects"`
 }
 
 type claudeJSONProject struct {
-	McpServers          map[string]ServerConfig `json:"mcpServers"`
-	DisabledMcpServers  []string                `json:"disabledMcpServers,omitempty"`
-	EnabledMcpServers   []string                `json:"enabledMcpServers,omitempty"`
+	McpServers         map[string]ServerConfig `json:"mcpServers"`
+	DisabledMcpServers []string                `json:"disabledMcpServers,omitempty"`
+	EnabledMcpServers  []string                `json:"enabledMcpServers,omitempty"`
 }
 
 // globalClaudeFile returns the path to the global Claude config file.

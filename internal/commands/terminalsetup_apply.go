@@ -160,7 +160,7 @@ func applyVSCode(name, dirName string) string {
 	}
 
 	// Parse JSON array and append entry.
-	var bindings []json.RawMessage
+	bindings := make([]json.RawMessage, 0, 1)
 	if err := json.Unmarshal(stripJSONCComments(content), &bindings); err != nil {
 		// If unparseable (e.g. JSONC with inline comments), inject before closing bracket.
 		trimmed := strings.TrimRight(strings.TrimSpace(string(content)), "]")
@@ -268,7 +268,7 @@ func applyZed() string {
     }
   }`
 
-	var keymap []json.RawMessage
+	keymap := make([]json.RawMessage, 0, 1)
 	if err := json.Unmarshal(content, &keymap); err != nil {
 		// Fallback: inject before closing bracket.
 		trimmed := strings.TrimRight(strings.TrimSpace(string(content)), "]")
@@ -297,12 +297,12 @@ func applyZed() string {
 // --- helpers ---
 
 func runCmd(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).CombinedOutput()
+	out, err := exec.Command(name, args...).CombinedOutput() //nolint:noctx
 	return string(out), err
 }
 
-func randHex(n int) string {
-	b := make([]byte, n)
+func randHex(_ int) string {
+	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

@@ -18,19 +18,19 @@ import (
 
 // SessionState holds mutable session state that slash commands can read/modify.
 type SessionState struct {
-	GetCost     func() string
-	GetVimMode  func() bool
-	SetVimMode  func(bool)
-	GetEffort   func() string
-	SetEffort   func(string)
-	GetFast     func() bool
-	SetFast     func(bool)
-	Logout      func() error
-	GetHistory  func() []string // message contents for /files, /context
-	GetCwd      func() string
+	GetCost    func() string
+	GetVimMode func() bool
+	SetVimMode func(bool)
+	GetEffort  func() string
+	SetEffort  func(string)
+	GetFast    func() bool
+	SetFast    func(bool)
+	Logout     func() error
+	GetHistory func() []string // message contents for /files, /context
+	GetCwd     func() string
 	// Rewind removes the last n conversation turns from in-memory history.
 	// Returns the number of turns actually removed.
-	Rewind      func(n int) int
+	Rewind func(n int) int
 	// SearchTranscript searches all session transcripts for cwd and returns results.
 	SearchTranscript func(term string) string
 	// GetTokens returns current (inputTokens, outputTokens, costUSD) from LiveState.
@@ -38,20 +38,20 @@ type SessionState struct {
 	// GetTurnCosts returns the per-turn cost deltas for the current session.
 	GetTurnCosts func() []float64
 	// GetStatus returns a one-line status string (model, mode, session ID, cost, context %).
-	GetStatus   func() string
+	GetStatus func() string
 	// GetTasks returns a formatted list of active TaskTool tasks.
-	GetTasks    func() string
+	GetTasks func() string
 	// GetAgents returns a formatted list of active sub-agents.
-	GetAgents   func() string
+	GetAgents func() string
 	// GetLastThinking returns the last assistant thinking blocks as text.
 	GetLastThinking func() string
 	// GetColor returns the current ANSI color toggle state.
-	GetColor    func() bool
+	GetColor func() bool
 	// SetColor sets the ANSI color toggle.
-	SetColor    func(bool)
+	SetColor func(bool)
 	// CopyLastResponse copies the last assistant response to clipboard.
 	// Returns "" on success, error message otherwise.
-	CopyLast    func() string
+	CopyLast func() string
 	// RenameSession sets the title of the current session.
 	RenameSession func(title string) error
 	// TagSession assigns a tag label to the current session. Empty clears.
@@ -109,7 +109,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if len(turns) > 0 {
 					sb.WriteString("\nPer-turn breakdown:\n")
 					for i, c := range turns {
-						sb.WriteString(fmt.Sprintf("  Turn %-3d  $%.4f\n", i+1, c))
+						fmt.Fprintf(&sb, "  Turn %-3d  $%.4f\n", i+1, c)
 					}
 				}
 			}
@@ -167,13 +167,13 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 					current = state.GetEffort()
 				}
 				var sb strings.Builder
-				sb.WriteString(fmt.Sprintf("Current effort: %s\n\nAvailable levels:\n", current))
+				fmt.Fprintf(&sb, "Current effort: %s\n\nAvailable levels:\n", current)
 				for _, level := range []string{"low", "normal", "high", "max"} {
 					marker := "  "
 					if level == current {
 						marker = "▶ "
 					}
-					sb.WriteString(fmt.Sprintf("%s%s — %s\n", marker, level, valid[level]))
+					fmt.Fprintf(&sb, "%s%s — %s\n", marker, level, valid[level])
 				}
 				return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 			}
@@ -229,7 +229,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				}
 			}
 
-			out, err := exec.Command("git", gitArgs...).Output()
+			out, err := exec.Command("git", gitArgs...).Output() //nolint:noctx
 			if err != nil {
 				// git diff exits non-zero when there are differences on some versions;
 				// treat non-empty output as success.
@@ -294,11 +294,13 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			}
 			imgHint := ""
 			if !imagePasteOK {
-				imgHint = "install xclip or wl-paste"
-				if runtime.GOOS == "darwin" {
+				switch runtime.GOOS {
+				case "darwin":
 					imgHint = "osascript not found (unexpected)"
-				} else if runtime.GOOS == "windows" {
+				case "windows":
 					imgHint = "not supported on Windows"
+				default:
+					imgHint = "install xclip or wl-paste"
 				}
 			}
 			sb.WriteString(statusRow("img paste:", statusCheck(imagePasteOK), imgHint, labelW))
@@ -318,7 +320,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				{"claude.json", claudeErr == nil, ""},
 				{"img paste", imagePasteOK, imgHint},
 			}
-			var rows []string
+			rows := make([]string, 0, len(checks))
 			for _, c := range checks {
 				icon := "✅"
 				if !c.OK {
@@ -556,7 +558,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				}
 				// Summarize stale or very old files.
 				var sb strings.Builder
-				sb.WriteString(fmt.Sprintf("Memory scan (%d files):\n\n", len(files)))
+				fmt.Fprintf(&sb, "Memory scan (%d files):\n\n", len(files))
 				for _, f := range files {
 					age := time.Since(f.ModTime)
 					status := "✓"
@@ -565,7 +567,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 					} else if age > 7*24*time.Hour {
 						status = "~ aging (>7d)"
 					}
-					sb.WriteString(fmt.Sprintf("  %s [%s] %s\n", status, f.Type, f.Name))
+					fmt.Fprintf(&sb, "  %s [%s] %s\n", status, f.Type, f.Name)
 				}
 				return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 
@@ -619,19 +621,19 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			bar := makeBar(pct, 40)
 			var sb strings.Builder
 			sb.WriteString("Context window usage\n\n")
-			sb.WriteString(fmt.Sprintf("  Input tokens:  %d / %d (%d%%)\n", inputTokens, maxCtx, pct))
-			sb.WriteString(fmt.Sprintf("  %s\n\n", bar))
+			fmt.Fprintf(&sb, "  Input tokens:  %d / %d (%d%%)\n", inputTokens, maxCtx, pct)
+			fmt.Fprintf(&sb, "  %s\n\n", bar)
 			if outputTokens > 0 {
-				sb.WriteString(fmt.Sprintf("  Output tokens: %d\n", outputTokens))
+				fmt.Fprintf(&sb, "  Output tokens: %d\n", outputTokens)
 			}
 			if costUSD > 0 {
-				sb.WriteString(fmt.Sprintf("  Estimated cost: $%.4f\n", costUSD))
+				fmt.Fprintf(&sb, "  Estimated cost: $%.4f\n", costUSD)
 			}
 			remaining := maxCtx - inputTokens
 			if remaining < 0 {
 				remaining = 0
 			}
-			sb.WriteString(fmt.Sprintf("  Remaining: ~%d tokens", remaining))
+			fmt.Fprintf(&sb, "  Remaining: ~%d tokens", remaining)
 			return Result{Type: "text", Text: sb.String()}
 		},
 	})
@@ -861,9 +863,9 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 					for _, b := range bs {
 						key := b.Keystroke.String()
 						if b.Unbind {
-							sb.WriteString(fmt.Sprintf("    %-20s  (unbound)\n", key))
+							fmt.Fprintf(&sb, "    %-20s  (unbound)\n", key)
 						} else {
-							sb.WriteString(fmt.Sprintf("    %-20s  %s\n", key, b.Action))
+							fmt.Fprintf(&sb, "    %-20s  %s\n", key, b.Action)
 						}
 					}
 					sb.WriteByte('\n')
@@ -1106,7 +1108,7 @@ func openBrowser(url string) {
 	default:
 		return
 	}
-	_ = exec.Command(cmd, url).Start()
+	_ = exec.Command(cmd, url).Start() //nolint:noctx
 }
 
 // countJSONLLines counts the number of non-empty lines in a JSONL file —

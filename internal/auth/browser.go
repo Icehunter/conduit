@@ -29,11 +29,11 @@ func (SystemBrowser) Open(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("/usr/bin/open", url)
+		cmd = exec.Command("/usr/bin/open", url) //nolint:noctx
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) //nolint:noctx
 	default:
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", url) //nolint:noctx
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("auth: open browser: %w", err)

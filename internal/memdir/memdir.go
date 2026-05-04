@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	MaxLines      = 200
-	MaxBytes      = 25_000
+	MaxLines       = 200
+	MaxBytes       = 25_000
 	EntrypointName = "MEMORY.md"
 )
 
@@ -121,7 +121,7 @@ func BuildPrompt(cwd string) string {
 
 	// Header.
 	sb.WriteString("# auto memory\n\n")
-	sb.WriteString(fmt.Sprintf("You have a persistent, file-based memory system at `%s/`. This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).\n\n", memDir))
+	fmt.Fprintf(&sb, "You have a persistent, file-based memory system at `%s/`. This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).\n\n", memDir)
 	sb.WriteString("You should build up this memory system over time so that future conversations can have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.\n\n")
 	sb.WriteString("If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.\n\n")
 
@@ -134,7 +134,7 @@ func BuildPrompt(cwd string) string {
 	sb.WriteByte('\n')
 
 	// How to save (2-step: write file + update MEMORY.md index).
-	sb.WriteString(fmt.Sprintf(howToSaveSection, EntrypointName, EntrypointName, EntrypointName, MaxLines))
+	fmt.Fprintf(&sb, howToSaveSection, EntrypointName, EntrypointName, EntrypointName, MaxLines)
 	sb.WriteByte('\n')
 
 	// When to access.
@@ -151,11 +151,11 @@ func BuildPrompt(cwd string) string {
 
 	// MEMORY.md content.
 	truncated := truncateEntrypoint(content)
-	sb.WriteString(fmt.Sprintf("## %s\n\n", EntrypointName))
+	fmt.Fprintf(&sb, "## %s\n\n", EntrypointName)
 	if truncated != "" {
 		sb.WriteString(truncated)
 	} else {
-		sb.WriteString(fmt.Sprintf("Your %s is currently empty. When you save new memories, they will appear here.\n", EntrypointName))
+		fmt.Fprintf(&sb, "Your %s is currently empty. When you save new memories, they will appear here.\n", EntrypointName)
 	}
 
 	_ = entrypoint // used for doc clarity

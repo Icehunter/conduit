@@ -118,8 +118,8 @@ type pluginInstallMsg struct {
 type pluginPanelReloadMsg struct {
 	mcpMgr *mcp.Manager
 	// preserve state across the reload
-	tab      pluginPanelTab
-	errors   []string // errors to carry forward (install failures etc.)
+	tab    pluginPanelTab
+	errors []string // errors to carry forward (install failures etc.)
 }
 
 // reloadPluginPanelCmd returns a tea.Cmd that reloads panel data from disk.
@@ -454,7 +454,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 			for _, pluginID := range toInstall {
 				pid := pluginID
 				cmds = append(cmds, func() tea.Msg {
-					_, err := plugins.Install(pid, "user", cwd)
+					_, err := plugins.Install(context.Background(), pid, "user", cwd)
 					if err == nil && mgr != nil {
 						mgr.SyncPluginServers(context.Background(), cwd)
 					}
@@ -569,7 +569,7 @@ func (m Model) handlePluginAddMktKey(p *pluginPanelState, key string) (Model, te
 		if p.addMktInput != "" {
 			src := p.addMktInput
 			name := deriveMarketplaceNameFromSource(src)
-			go func() { _ = plugins.MarketplaceAdd(name, src, nil) }()
+			go func() { _ = plugins.MarketplaceAdd(context.Background(), name, src, nil) }()
 			p.addMktInput = ""
 			p.addMktMode = false
 			// Reload marketplaces.
@@ -689,7 +689,7 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 			pluginID := p.discoverItems[p.itemIdx].pluginID
 			mgr := m.cfg.MCPManager
 			return m, func() tea.Msg {
-				_, err := plugins.Install(pluginID, "user", cwd)
+				_, err := plugins.Install(context.Background(), pluginID, "user", cwd)
 				if err == nil && mgr != nil {
 					mgr.SyncPluginServers(context.Background(), cwd)
 				}
@@ -748,7 +748,7 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 				_ = plugins.MarketplaceRemove(mktName)
 				p.marketplaceItems = append(p.marketplaceItems[:p.itemIdx], p.marketplaceItems[p.itemIdx+1:]...)
 			} else {
-				_ = plugins.MarketplaceUpdate(mktName)
+				_ = plugins.MarketplaceUpdate(context.Background(), mktName)
 			}
 		}
 		p.view = pluginViewList
@@ -988,9 +988,9 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 		if maxDesc > 0 && len([]rune(desc)) > maxDesc {
 			desc = string([]rune(desc)[:maxDesc-1]) + "…"
 		}
-		sb.WriteString(fmt.Sprintf("%s%s %s%s%s\n    %s\n",
+		fmt.Fprintf(sb, "%s%s %s%s%s\n    %s\n",
 			cursor, toggle, nameStyle.Render(item.name), installed, installs,
-			stylePickerDesc.Render(desc)))
+			stylePickerDesc.Render(desc))
 	}
 
 	// Count toggled items.
@@ -1029,20 +1029,20 @@ func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState) {
 			// item.name is the display name (e.g. "context7"), mcpServerName is the full key.
 			displayLabel := item.name + " MCP"
 			if i == p.selected {
-				sb.WriteString(fmt.Sprintf("  %s └ %s · %s\n",
+				fmt.Fprintf(sb, "  %s └ %s · %s\n",
 					stylePickerItemSelected.Render("❯"),
-					nameStyle.Render(displayLabel), status))
+					nameStyle.Render(displayLabel), status)
 			} else {
-				sb.WriteString(fmt.Sprintf("    └ %s · %s\n",
-					stylePickerItem.Render(displayLabel), status))
+				fmt.Fprintf(sb, "    └ %s · %s\n",
+					stylePickerItem.Render(displayLabel), status)
 			}
 		} else {
 			enabled := ""
 			if !item.enabled {
 				enabled = " " + stylePickerDesc.Render("[disabled]")
 			}
-			sb.WriteString(fmt.Sprintf("%s%s v%s%s\n",
-				cursor, nameStyle.Render(item.name), item.version, enabled))
+			fmt.Fprintf(sb, "%s%s v%s%s\n",
+				cursor, nameStyle.Render(item.name), item.version, enabled)
 		}
 	}
 	sb.WriteString("\n" + stylePickerDesc.Render("Enter detail/MCP opts · ←→ tabs · Esc close"))
@@ -1056,7 +1056,7 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState) {
 		addCursor = stylePickerItemSelected.Render("❯") + " "
 		addStyle = stylePickerItemSelected
 	}
-	sb.WriteString(fmt.Sprintf("%s%s\n\n", addCursor, addStyle.Render("+ Add Marketplace")))
+	fmt.Fprintf(sb, "%s%s\n\n", addCursor, addStyle.Render("+ Add Marketplace"))
 
 	for i, item := range p.marketplaceItems {
 		row := i + 1 // +1 for Add row
@@ -1067,10 +1067,10 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState) {
 			nameStyle = stylePickerItemSelected
 		}
 		pluginStr := fmt.Sprintf("%d plugin%s", item.pluginCount, pluralS(item.pluginCount))
-		sb.WriteString(fmt.Sprintf("%s%s · %s\n    %s · %s\n",
+		fmt.Fprintf(sb, "%s%s · %s\n    %s · %s\n",
 			cursor, nameStyle.Render(item.name), pluginStr,
 			stylePickerDesc.Render(item.source),
-			stylePickerDesc.Render("updated "+item.lastUpdated)))
+			stylePickerDesc.Render("updated "+item.lastUpdated))
 	}
 
 	if len(p.marketplaceItems) == 0 {
@@ -1097,31 +1097,31 @@ func (m Model) renderPluginDetail(sb *strings.Builder, p *pluginPanelState, _ in
 			sb.WriteString(styleStatusAccent.Render(item.pluginID) + "\n\n")
 			sb.WriteString(item.description + "\n")
 			if item.installs > 0 {
-				sb.WriteString(fmt.Sprintf("\nInstalls: %s\n", formatInstalls(item.installs)))
+				fmt.Fprintf(sb, "\nInstalls: %s\n", formatInstalls(item.installs))
 			}
 			if item.category != "" {
-				sb.WriteString(fmt.Sprintf("Category: %s\n", item.category))
+				fmt.Fprintf(sb, "Category: %s\n", item.category)
 			}
 		}
 	case pluginTabInstalled:
 		if p.itemIdx < len(p.installedItems) {
 			item := p.installedItems[p.itemIdx]
 			sb.WriteString(styleStatusAccent.Render(item.pluginID) + "\n\n")
-			sb.WriteString(fmt.Sprintf("Version:     %s\n", item.version))
-			sb.WriteString(fmt.Sprintf("Scope:       %s\n", item.scope))
+			fmt.Fprintf(sb, "Version:     %s\n", item.version)
+			fmt.Fprintf(sb, "Scope:       %s\n", item.scope)
 			enabledStr := "enabled"
 			if !item.enabled {
 				enabledStr = stylePickerDesc.Render("disabled")
 			}
-			sb.WriteString(fmt.Sprintf("Status:      %s\n", enabledStr))
+			fmt.Fprintf(sb, "Status:      %s\n", enabledStr)
 		}
 	case pluginTabMarketplaces:
 		if p.itemIdx < len(p.marketplaceItems) {
 			item := p.marketplaceItems[p.itemIdx]
 			sb.WriteString(styleStatusAccent.Render(item.name) + "\n\n")
-			sb.WriteString(fmt.Sprintf("Source:      %s\n", item.source))
-			sb.WriteString(fmt.Sprintf("Plugins:     %d\n", item.pluginCount))
-			sb.WriteString(fmt.Sprintf("Updated:     %s\n", item.lastUpdated))
+			fmt.Fprintf(sb, "Source:      %s\n", item.source)
+			fmt.Fprintf(sb, "Plugins:     %d\n", item.pluginCount)
+			fmt.Fprintf(sb, "Updated:     %s\n", item.lastUpdated)
 		}
 	}
 
@@ -1134,7 +1134,7 @@ func (m Model) renderPluginDetail(sb *strings.Builder, p *pluginPanelState, _ in
 			cursor = stylePickerItemSelected.Render("❯") + " "
 			style = stylePickerItemSelected
 		}
-		sb.WriteString(fmt.Sprintf("%s%d. %s\n", cursor, i+1, style.Render(action)))
+		fmt.Fprintf(sb, "%s%d. %s\n", cursor, i+1, style.Render(action))
 	}
 }
 
@@ -1145,7 +1145,7 @@ func (m Model) renderPluginMCPOpts(sb *strings.Builder, p *pluginPanelState) {
 	if m.cfg.MCPManager != nil {
 		for _, srv := range m.cfg.MCPManager.Servers() {
 			if srv.Name == p.mcpActionTarget {
-				sb.WriteString(fmt.Sprintf("Status:  %s\n\n", renderMCPStatus(string(srv.Status))))
+				fmt.Fprintf(sb, "Status:  %s\n\n", renderMCPStatus(string(srv.Status)))
 				break
 			}
 		}
@@ -1159,7 +1159,7 @@ func (m Model) renderPluginMCPOpts(sb *strings.Builder, p *pluginPanelState) {
 			cursor = stylePickerItemSelected.Render("❯") + " "
 			style = stylePickerItemSelected
 		}
-		sb.WriteString(fmt.Sprintf("%s%d. %s\n", cursor, i+1, style.Render(action)))
+		fmt.Fprintf(sb, "%s%d. %s\n", cursor, i+1, style.Render(action))
 	}
 }
 

@@ -2,6 +2,7 @@ package memdir
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func TestRunExtract_ReturnsRunnerError(t *testing.T) {
 		return "", context.DeadlineExceeded
 	}
 	err := RunExtract(context.Background(), dir, "USER: hi", runner)
-	if err != context.DeadlineExceeded {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("expected DeadlineExceeded; got %v", err)
 	}
 }

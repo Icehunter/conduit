@@ -7,9 +7,10 @@
 //
 // Hook input is written as JSON to the hook's stdin.
 // stdout is parsed for optional JSON directives:
-//   {"decision": "block", "reason": "..."}  — blocks the tool call
-//   {"decision": "approve"}                  — approves without further prompting
-//   (anything else / no JSON)                — no effect, hook is advisory
+//
+//	{"decision": "block", "reason": "..."}  — blocks the tool call
+//	{"decision": "approve"}                  — approves without further prompting
+//	(anything else / no JSON)                — no effect, hook is advisory
 package hooks
 
 import (
@@ -28,10 +29,10 @@ import (
 type HookEvent string
 
 const (
-	EventPreToolUse  HookEvent = "PreToolUse"
-	EventPostToolUse HookEvent = "PostToolUse"
+	EventPreToolUse   HookEvent = "PreToolUse"
+	EventPostToolUse  HookEvent = "PostToolUse"
 	EventSessionStart HookEvent = "SessionStart"
-	EventStop        HookEvent = "Stop"
+	EventStop         HookEvent = "Stop"
 )
 
 // HookInput is the JSON payload sent to hook stdin.

@@ -4,8 +4,8 @@
 // Load order (mirrors utils/claudemd.ts):
 //  1. User global:   ~/.claude/CLAUDE.md  and ~/.claude/rules/*.md
 //  2. Project:       CLAUDE.md, .claude/CLAUDE.md, .claude/rules/*.md
-//                    discovered by walking from cwd up to filesystem root
-//                    (closer to cwd = higher priority = loaded later)
+//     discovered by walking from cwd up to filesystem root
+//     (closer to cwd = higher priority = loaded later)
 //  3. Local private: CLAUDE.local.md (gitignored, per-directory)
 //
 // Within each directory, files closer to cwd override files from parents.

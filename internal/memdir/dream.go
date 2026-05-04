@@ -123,7 +123,7 @@ Focus on:
 
 ## Phase 4 — Prune and index
 
-Update %[3]s so it stays under %[4]d lines AND under ~25KB. It's an **index**, not a dump — each entry should be one line under ~150 characters: ` + "`- [Title](file.md) — one-line hook`" + `. Never write memory content directly into it.
+Update %[3]s so it stays under %[4]d lines AND under ~25KB. It's an **index**, not a dump — each entry should be one line under ~150 characters: `+"`- [Title](file.md) — one-line hook`"+`. Never write memory content directly into it.
 
 - Remove pointers to memories that are now stale, wrong, or superseded
 - Add pointers to newly important memories

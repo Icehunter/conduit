@@ -12,10 +12,10 @@ import (
 // already parses. No setup needed for these. Mirrors the table in
 // src/commands/terminalSetup/terminalSetup.tsx NATIVE_CSIU_TERMINALS.
 var nativeCSIuTerminals = map[string]string{
-	"ghostty":     "Ghostty",
-	"kitty":       "Kitty",
-	"iTerm.app":   "iTerm2",
-	"WezTerm":     "WezTerm",
+	"ghostty":      "Ghostty",
+	"kitty":        "Kitty",
+	"iTerm.app":    "iTerm2",
+	"WezTerm":      "WezTerm",
 	"WarpTerminal": "Warp",
 }
 
@@ -122,7 +122,7 @@ func vscodeRecipe(name, relPath string) string {
 		"      \"key\": \"shift+enter\",",
 		"      \"command\": \"workbench.action.terminal.sendSequence\",",
 		"      \"args\": { \"text\": \"\\u001b\\r\" },",
-		fmt.Sprintf("      \"when\": \"terminalFocus && terminalProcessSupported\""),
+		"      \"when\": \"terminalFocus && terminalProcessSupported\"",
 		"    }",
 		"  ]",
 		"",

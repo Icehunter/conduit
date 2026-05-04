@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -71,7 +72,7 @@ type MarketplaceManifest struct {
 
 // InstallCountEntry is one entry in the GitHub stats JSON
 type InstallCountEntry struct {
-	Plugin         string `json:"plugin"`          // "name@marketplace"
+	Plugin         string `json:"plugin"` // "name@marketplace"
 	UniqueInstalls int    `json:"unique_installs"`
 }
 
@@ -153,8 +154,13 @@ func LoadInstallCounts() (map[string]int, error) {
 
 // fetchInstallCounts fetches the install stats JSON from GitHub.
 func fetchInstallCounts() ([]InstallCountEntry, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(installCountsURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, installCountsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

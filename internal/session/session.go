@@ -46,6 +46,17 @@ func ProjectDir(cwd, home string) string {
 	return filepath.Join(home, ".claude", "projects", sanitizePath(cwd))
 }
 
+// FromFile wraps an existing JSONL file as a Session so new turns can be appended to it.
+func FromFile(filePath string) *Session {
+	base := filepath.Base(filePath)
+	id := strings.TrimSuffix(base, ".jsonl")
+	return &Session{
+		ID:         id,
+		ProjectDir: filepath.Dir(filePath),
+		FilePath:   filePath,
+	}
+}
+
 func New(cwd, sessionID string) (*Session, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

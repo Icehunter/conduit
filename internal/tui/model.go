@@ -150,8 +150,9 @@ type (
 	}
 	// resumeLoadMsg carries a loaded session's history after the user picks one.
 	resumeLoadMsg struct {
-		msgs []api.Message
-		err  error
+		msgs     []api.Message
+		filePath string // source file — used to repoint cfg.Session so new turns append there
+		err      error
 	}
 
 	// permissionAskMsg is sent by the agent goroutine when a tool needs
@@ -811,6 +812,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Replace current history and rebuild display.
 		m.history = msg.msgs
 		m.persistedCount = len(msg.msgs)
+		// Repoint cfg.Session so new turns append to the resumed file.
+		if msg.filePath != "" {
+			m.cfg.Session = session.FromFile(msg.filePath)
+		}
 		m.messages = append(m.messages, Message{
 			Role:    RoleSystem,
 			Content: fmt.Sprintf("Resumed previous conversation (%d messages). ↑ scroll to see history.", len(msg.msgs)),
@@ -1067,16 +1072,20 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		// History: navigate backwards (older).
-		if len(m.inputHistory) > 0 && !m.running {
-			if m.historyIdx == -1 {
-				m.historyDraft = m.input.Value()
-				m.historyIdx = len(m.inputHistory) - 1
-			} else if m.historyIdx > 0 {
-				m.historyIdx--
+		// History navigation — always consume UP so it never falls through
+		// to the viewport keymap. Scroll via trackpad/wheel (MouseWheelMsg)
+		// or Shift+Up/Down.
+		if !m.running {
+			if len(m.inputHistory) > 0 {
+				if m.historyIdx == -1 {
+					m.historyDraft = m.input.Value()
+					m.historyIdx = len(m.inputHistory) - 1
+				} else if m.historyIdx > 0 {
+					m.historyIdx--
+				}
+				m.input.SetValue(m.inputHistory[m.historyIdx])
+				m.input.CursorEnd()
 			}
-			m.input.SetValue(m.inputHistory[m.historyIdx])
-			m.input.CursorEnd()
 			return m, nil, true
 		}
 
@@ -1093,16 +1102,18 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		// History: navigate forwards (newer / back to draft).
-		if m.historyIdx != -1 && !m.running {
-			if m.historyIdx < len(m.inputHistory)-1 {
-				m.historyIdx++
-				m.input.SetValue(m.inputHistory[m.historyIdx])
-			} else {
-				m.historyIdx = -1
-				m.input.SetValue(m.historyDraft)
+		// History forward — always consume DOWN too.
+		if !m.running {
+			if m.historyIdx != -1 {
+				if m.historyIdx < len(m.inputHistory)-1 {
+					m.historyIdx++
+					m.input.SetValue(m.inputHistory[m.historyIdx])
+				} else {
+					m.historyIdx = -1
+					m.input.SetValue(m.historyDraft)
+				}
+				m.input.CursorEnd()
 			}
-			m.input.CursorEnd()
 			return m, nil, true
 		}
 
@@ -1995,7 +2006,7 @@ func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		filePath := picked.filePath
 		return m, func() tea.Msg {
 			msgs, err := session.LoadMessages(filePath)
-			return resumeLoadMsg{msgs: msgs, err: err}
+			return resumeLoadMsg{msgs: msgs, filePath: filePath, err: err}
 		}
 	case "esc", "ctrl+c":
 		if p.filter != "" {
@@ -2135,7 +2146,7 @@ func (m Model) handleSearchPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		filePath := picked.filePath
 		return m, func() tea.Msg {
 			msgs, err := session.LoadMessages(filePath)
-			return resumeLoadMsg{msgs: msgs, err: err}
+			return resumeLoadMsg{msgs: msgs, filePath: filePath, err: err}
 		}
 	case "q", "esc", "ctrl+c":
 		m.searchPanel = nil

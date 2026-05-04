@@ -501,7 +501,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 				p.selected = 0
 			}
 		}
-	case "esc", "q", "ctrl+c":
+	case "esc", "ctrl+c":
 		m.pluginPanel = nil
 		m.refreshViewport()
 		return m, nil
@@ -526,7 +526,7 @@ func (m Model) handlePluginDetailKey(p *pluginPanelState, key string) (Model, te
 		if p.selected < len(actions) {
 			return m.execPluginDetailAction(p, actions[p.selected])
 		}
-	case "esc", "q":
+	case "esc":
 		p.view = pluginViewList
 		p.selected = 0
 	case "ctrl+c":
@@ -553,7 +553,7 @@ func (m Model) handlePluginMCPOptsKey(p *pluginPanelState, key string) (Model, t
 		if p.mcpActionIdx < len(actions) {
 			return m.execMCPOptAction(p, actions[p.mcpActionIdx])
 		}
-	case "esc", "q":
+	case "esc":
 		p.view = pluginViewList
 		p.selected = 0
 	case "ctrl+c":

@@ -142,6 +142,18 @@ func (m Model) handleAccountPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if p == nil {
 		return m, nil
 	}
+
+	close := func() (Model, tea.Cmd) {
+		m.accountPanel = nil
+		m.refreshViewport()
+		return m, nil
+	}
+	done := func() (Model, tea.Cmd) {
+		m.accountPanel = p
+		m.refreshViewport()
+		return m, nil
+	}
+
 	key := msg.String()
 
 	switch p.view {
@@ -158,8 +170,8 @@ func (m Model) handleAccountPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				return m, func() tea.Msg { return commands_loginMsg{} }
 			}
 			p.openDetail(p.accounts[p.selected].email)
-		case "esc", "q", "ctrl+c":
-			m.accountPanel = nil
+		case "esc":
+			return close()
 		}
 
 	case accountViewDetail:
@@ -196,16 +208,12 @@ func (m Model) handleAccountPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			case "back":
 				p.view = accountViewList
 			}
-		case "esc", "backspace":
+		case "esc":
 			p.view = accountViewList
-		case "q", "ctrl+c":
-			m.accountPanel = nil
 		}
 	}
 
-	m.accountPanel = p
-	m.refreshViewport()
-	return m, nil
+	return done()
 }
 
 // ── Renderer ─────────────────────────────────────────────────────────────────

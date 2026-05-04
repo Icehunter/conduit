@@ -2327,7 +2327,7 @@ func (m Model) handleSearchPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			msgs, err := session.LoadMessages(filePath)
 			return resumeLoadMsg{msgs: msgs, filePath: filePath, err: err}
 		}
-	case "q", "esc", "ctrl+c":
+	case "esc", "ctrl+c":
 		m.searchPanel = nil
 		m.refreshViewport()
 	}
@@ -2395,7 +2395,7 @@ type doctorPanelState struct {
 
 func (m Model) handleDoctorPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "esc", "ctrl+c":
+	case "esc", "ctrl+c":
 		m.doctorPanel = nil
 		m.refreshViewport()
 	}
@@ -2767,7 +2767,7 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				p.view = panelViewDetail
 				p.selected = 0 // reset to first action in detail
 			}
-		case "esc", "q", "ctrl+c":
+		case "esc", "ctrl+c":
 			m.panel = nil
 			m.refreshViewport()
 			return m, nil
@@ -2853,7 +2853,7 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 					p.selected = 0
 				}
 			}
-		case "esc", "q":
+		case "esc":
 			p.view = panelViewList
 			p.selected = 0 // cursor resets to top of list
 		case "ctrl+c":
@@ -2886,7 +2886,7 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	case panelViewToolDetail:
 		switch key {
-		case "esc", "q", "enter":
+		case "esc", "enter":
 			p.view = panelViewTools
 		case "ctrl+c":
 			m.panel = nil

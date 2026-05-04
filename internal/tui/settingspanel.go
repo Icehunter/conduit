@@ -472,7 +472,7 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 	switch key {
 	case "ctrl+c":
 		return closePanel()
-	case "esc", "q":
+	case "esc":
 		if p.tab == settingsTabConfig && p.search != "" {
 			p.search = ""
 			p.applyFilter()

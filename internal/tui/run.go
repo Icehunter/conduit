@@ -201,10 +201,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		// applyCommandResult when it receives the "rewind" result type.
 		Rewind: func(n int) int { return n },
 		GetTurnCosts: func() []float64 {
-			if modelPtr == nil {
-				return nil
-			}
-			return modelPtr.TurnCosts()
+			return live.TurnCosts()
 		},
 		GetStatus: func() string {
 			tokens, cost := live.Tokens()

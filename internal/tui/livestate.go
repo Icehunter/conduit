@@ -18,7 +18,8 @@ type LiveState struct {
 	sessionID      string
 	rateLimitWarn  string
 	fastMode       bool
-	effortLevel    string // "low" | "normal" | "high" | "max" | ""
+	effortLevel    string    // "low" | "normal" | "high" | "max" | ""
+	turnCosts      []float64 // per-turn cost deltas, most-recent last
 }
 
 func (s *LiveState) SetModelName(name string) {
@@ -104,5 +105,19 @@ func (s *LiveState) EffortLevel() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.effortLevel
+}
+
+func (s *LiveState) AppendTurnCost(delta float64) {
+	s.mu.Lock()
+	s.turnCosts = append(s.turnCosts, delta)
+	s.mu.Unlock()
+}
+
+func (s *LiveState) TurnCosts() []float64 {
+	s.mu.RLock()
+	out := make([]float64, len(s.turnCosts))
+	copy(out, s.turnCosts)
+	s.mu.RUnlock()
+	return out
 }
 

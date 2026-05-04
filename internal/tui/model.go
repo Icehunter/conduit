@@ -617,9 +617,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.history = msg.history
 			m.tallyTokens()
-			// Record per-turn cost delta.
+			// Record per-turn cost delta in both model and LiveState (LiveState
+			// is read by GetTurnCosts from outside the Bubble Tea event loop).
 			if delta := m.costUSD - m.prevCostUSD; delta > 0 {
 				m.turnCosts = append(m.turnCosts, delta)
+				if m.cfg.Live != nil {
+					m.cfg.Live.AppendTurnCost(delta)
+				}
 			}
 			m.prevCostUSD = m.costUSD
 			m.persistNewMessages(msg.history)

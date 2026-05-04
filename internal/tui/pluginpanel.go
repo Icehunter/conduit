@@ -391,10 +391,8 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 			key == "tab" || len(key) > 1 // multi-char = special key
 		// "i" installs when search is empty; goes to search when search is non-empty.
 		isInstall := key == "i" && p.discoverSearch == ""
-		// h/j/k/l/q are nav only when search is empty.
-		isNavLetter := p.discoverSearch == "" && (key == "h" || key == "j" || key == "k" || key == "l" || key == "q")
 
-		if !isStructural && !isInstall && !isNavLetter && len(key) == 1 {
+		if !isStructural && !isInstall && len(key) == 1 {
 			p.discoverSearch += key
 			p.applyDiscoverFilter()
 			if p.selected >= len(p.discoverFiltered) {
@@ -415,21 +413,21 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 				p.selected = 0
 			}
 		}
-	case "left", "h":
+	case "left":
 		p.tab = pluginPanelTab((int(p.tab) + len(pluginTabNames) - 1) % len(pluginTabNames))
 		p.selected = 0
 		p.discoverSearch = ""
 		p.applyDiscoverFilter()
-	case "right", "l":
+	case "right":
 		p.tab = pluginPanelTab((int(p.tab) + 1) % len(pluginTabNames))
 		p.selected = 0
 		p.discoverSearch = ""
 		p.applyDiscoverFilter()
-	case "up", "k":
+	case "up":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "j":
+	case "down":
 		if p.selected < p.currentListLen()-1 {
 			p.selected++
 		}
@@ -514,11 +512,11 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 func (m Model) handlePluginDetailKey(p *pluginPanelState, key string) (Model, tea.Cmd) {
 	actions := pluginDetailActions(p)
 	switch key {
-	case "up", "k":
+	case "up":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "j":
+	case "down":
 		if p.selected < len(actions)-1 {
 			p.selected++
 		}
@@ -541,11 +539,11 @@ func (m Model) handlePluginDetailKey(p *pluginPanelState, key string) (Model, te
 func (m Model) handlePluginMCPOptsKey(p *pluginPanelState, key string) (Model, tea.Cmd) {
 	actions := mcpOptsActions(p, m.cfg.MCPManager)
 	switch key {
-	case "up", "k":
+	case "up":
 		if p.mcpActionIdx > 0 {
 			p.mcpActionIdx--
 		}
-	case "down", "j":
+	case "down":
 		if p.mcpActionIdx < len(actions)-1 {
 			p.mcpActionIdx++
 		}

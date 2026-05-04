@@ -150,9 +150,9 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 	case accountViewList:
 		total := len(a.accounts) + 1
 		switch key {
-		case "up", "k":
+		case "up":
 			a.selected = (a.selected - 1 + total) % total
-		case "down", "j":
+		case "down":
 			a.selected = (a.selected + 1) % total
 		case "enter":
 			if a.selected == len(a.accounts) {
@@ -164,9 +164,9 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 
 	case accountViewDetail:
 		switch key {
-		case "up", "k":
+		case "up":
 			a.actionIdx = (a.actionIdx - 1 + len(a.actions)) % len(a.actions)
-		case "down", "j":
+		case "down":
 			a.actionIdx = (a.actionIdx + 1) % len(a.actions)
 		case "enter":
 			switch a.actions[a.actionIdx].id {
@@ -259,7 +259,7 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 		}
 		sb.WriteString(addCursor + addLabel.Render("+ Add account") + "\n")
 		sb.WriteString("\n")
-		sb.WriteString(dim.Render("  ↑↓/jk navigate · Enter select · Esc close · ←/→ tabs"))
+		sb.WriteString(dim.Render("  ↑↓ navigate · Enter select · Esc close · ←/→ tabs"))
 
 	case accountViewDetail:
 		sb.WriteString(accent.Render("  "+a.detailEmail) + "\n\n")
@@ -285,6 +285,6 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 			sb.WriteString(cursor + label + "\n")
 		}
 		sb.WriteString("\n")
-		sb.WriteString(dim.Render("  ↑↓/jk navigate · Enter confirm · Esc back"))
+		sb.WriteString(dim.Render("  ↑↓ navigate · Enter confirm · Esc back"))
 	}
 }

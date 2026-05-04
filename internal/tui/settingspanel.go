@@ -487,10 +487,10 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 				return done()
 			}
 			return closePanel()
-		case "left", "h":
+		case "left":
 			switchMainTab(-1)
 			return done()
-		case "right", "l":
+		case "right":
 			switchMainTab(1)
 			return done()
 		default:
@@ -523,7 +523,7 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 
 	// left/right: main tab switch from header; subtab/enum cycle from content.
 	switch key {
-	case "left", "h":
+	case "left":
 		switch p.tab {
 		case settingsTabStats:
 			if p.cfgFocus == configFocusList {
@@ -542,7 +542,7 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 		}
 		return done()
 
-	case "right", "l":
+	case "right":
 		switch p.tab {
 		case settingsTabStats:
 			if p.cfgFocus == configFocusList {
@@ -571,19 +571,19 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 		switch p.cfgFocus {
 		case configFocusHeader:
 			switch key {
-			case "down", "j", "tab", "enter":
+			case "down", "tab", "enter":
 				p.cfgFocus = configFocusList
 				p.selected = 0
 			}
 		case configFocusList:
 			switch key {
-			case "up", "k":
+			case "up":
 				if p.selected > 0 {
 					p.selected--
 				} else {
 					p.cfgFocus = configFocusHeader
 				}
-			case "down", "j":
+			case "down":
 				if p.selected < len(p.filteredIdx)-1 {
 					p.selected++
 				}
@@ -605,9 +605,9 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 
 	case settingsTabStats:
 		switch key {
-		case "up", "k":
+		case "up":
 			p.cfgFocus = configFocusHeader
-		case "down", "j":
+		case "down":
 			p.cfgFocus = configFocusList
 		case "tab":
 			p.statsSubTab = statsSubTab((int(p.statsSubTab) + 1) % len(statsSubTabNames))

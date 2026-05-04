@@ -2156,11 +2156,11 @@ func (p *resumePromptState) applyFilter() {
 func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.resumePrompt
 	switch msg.String() {
-	case "up", "k":
+	case "up":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "j":
+	case "down":
 		if p.selected < len(p.filtered)-1 {
 			p.selected++
 		}
@@ -2249,7 +2249,7 @@ func (m Model) renderResumePicker() string {
 		}
 		sb.WriteString(line + "\n")
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter load · Esc clear search · Ctrl+C cancel"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter load · Esc clear search · Ctrl+C cancel"))
 
 	// Preview panel: show selected session detail below the list.
 	if len(p.filtered) > 0 {
@@ -2296,11 +2296,11 @@ type searchPanelState struct {
 func (m Model) handleSearchPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.searchPanel
 	switch msg.String() {
-	case "up", "k":
+	case "up":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "j":
+	case "down":
 		if p.selected < len(p.results)-1 {
 			p.selected++
 		}
@@ -2368,7 +2368,7 @@ func (m Model) renderSearchPanel() string {
 			sb.WriteString("  " + label + "\n")
 		}
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter load session · q/Esc close"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter load session · q/Esc close"))
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
@@ -2503,11 +2503,11 @@ type pickerState struct {
 func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.picker
 	switch msg.String() {
-	case "up", "k":
+	case "up":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "j":
+	case "down":
 		if p.selected < len(p.items)-1 {
 			p.selected++
 		}
@@ -2558,7 +2558,7 @@ func (m Model) renderPicker() string {
 			sb.WriteString(stylePickerItem.Render("  "+label) + "\n")
 		}
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓/jk navigate · Enter select · Escape cancel"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · Escape cancel"))
 
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
@@ -2735,19 +2735,19 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch p.view {
 	case panelViewList:
 		switch key {
-		case "left", "h":
+		case "left":
 			p.tab = panelTab((int(p.tab) + len(panelTabNames) - 1) % len(panelTabNames))
 			p.selected = 0
 			p.loadTabData()
-		case "right", "l":
+		case "right":
 			p.tab = panelTab((int(p.tab) + 1) % len(panelTabNames))
 			p.selected = 0
 			p.loadTabData()
-		case "up", "k":
+		case "up":
 			if p.selected > 0 {
 				p.selected--
 			}
-		case "down", "j":
+		case "down":
 			if p.selected < p.currentLen()-1 {
 				p.selected++
 			}
@@ -2765,11 +2765,11 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	case panelViewDetail:
 		switch key {
-		case "up", "k":
+		case "up":
 			if p.selected > 0 {
 				p.selected--
 			}
-		case "down", "j":
+		case "down":
 			item2 := p.selectedMCPItem()
 			if item2 != nil && p.selected < len(mcpActions(item2))-1 {
 				p.selected++
@@ -2854,11 +2854,11 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	case panelViewTools:
 		switch key {
-		case "up", "k":
+		case "up":
 			if p.selected > 0 {
 				p.selected--
 			}
-		case "down", "j":
+		case "down":
 			item := p.selectedMCPItem() // uses serverIdx
 			if item != nil && p.selected < len(item.tools)-1 {
 				p.selected++

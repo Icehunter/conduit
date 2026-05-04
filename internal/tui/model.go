@@ -339,10 +339,6 @@ type Model struct {
 	// Non-nil when active.
 	settingsPanel *settingsPanelState
 
-	// accountPanel is the full-screen account manager overlay.
-	// Non-nil when active.
-	accountPanel *accountPanelState
-
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
 	permissionMode permissions.Mode
@@ -558,7 +554,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Normalize line endings: terminals may send \r\n or bare \r.
 		hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 			m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
-			m.accountPanel != nil ||
 			m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
 			m.doctorPanel != nil || m.searchPanel != nil
 		if !hasOverlay {
@@ -1007,7 +1002,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Skip textarea/viewport when an overlay is active — they must not
 	// consume keys (especially Escape) that belong to the overlay.
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
-		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.accountPanel != nil ||
+		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
@@ -1099,11 +1094,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if m.settingsPanel != nil {
 		m2, cmd, consumed := m.handleSettingsPanelKey(msg)
 		return m2, cmd, consumed
-	}
-	// Account panel intercepts all keys when active.
-	if m.accountPanel != nil {
-		m2, cmd := m.handleAccountPanelKey(msg)
-		return m2, cmd, true
 	}
 	// Permission prompt intercepts all keys when active.
 	if m.permPrompt != nil {
@@ -3611,11 +3601,6 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Added directory: " + res.Text})
 		m.refreshViewport()
 		return m, nil
-	case "account-panel":
-		m.accountPanel = newAccountPanel()
-		m.refreshViewport()
-		return m, nil
-
 	case "mcp-dialog":
 		p := newPanel(panelTabMCP)
 		p.mcpRaw = res.Text
@@ -3657,6 +3642,8 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			defaultTab = settingsTabStats
 		case "usage":
 			defaultTab = settingsTabUsage
+		case "accounts":
+			defaultTab = settingsTabAccounts
 		}
 		cwd, _ := os.Getwd()
 		sessPath := ""
@@ -4400,12 +4387,6 @@ func (m Model) View() tea.View {
 	if m.settingsPanel != nil {
 		sp := m.renderSettingsPanel()
 		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)))
-	}
-
-	// Account panel is a full-screen takeover.
-	if m.accountPanel != nil {
-		ap := m.renderAccountPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, ap, statusBar)))
 	}
 
 	// (Overlay was computed earlier so we could shrink the viewport.)

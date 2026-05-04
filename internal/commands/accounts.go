@@ -6,7 +6,7 @@ func RegisterAccountCommand(r *Registry) {
 		Name:        "account",
 		Description: "Manage accounts — switch, add, logout, delete",
 		Handler: func(string) Result {
-			return Result{Type: "account-panel"}
+			return Result{Type: "settings-panel", Text: "accounts"}
 		},
 	})
 }

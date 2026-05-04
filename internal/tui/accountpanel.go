@@ -1,18 +1,17 @@
 package tui
 
-// Account panel — full-screen takeover for multi-account management.
-// Matches the settings/plugin panel visual style: rounded border, accent tabs
-// with | separator, ❯ cursor for list items.
+// Accounts tab — embedded inside the settings panel (Status·Config·Stats·Usage·Accounts).
+// /account opens the settings panel on this tab directly.
 //
 // Views:
 //   List   — all saved accounts; "● active", "✗ no token"; + Add account
 //   Detail — per-account action menu (Switch / Re-login / Remove / Delete / Back)
 //
 // Navigation:
-//   ↑↓/jk    navigate list / actions
-//   Enter     select
-//   Esc       back (detail → list → close)
-//   q         close from anywhere
+//   ↑↓/jk   navigate list / actions
+//   Enter    select
+//   Esc      detail → list; list → close panel
+//   ←/→      switch to adjacent tab (handled by settings panel)
 
 import (
 	"sort"
@@ -43,9 +42,9 @@ type accountItem struct {
 }
 
 type accountAction struct {
-	label    string
-	id       string
-	danger   bool
+	label  string
+	id     string
+	danger bool
 }
 
 type accountPanelState struct {
@@ -135,185 +134,137 @@ func (p *accountPanelState) openDetail(email string) {
 	p.view = accountViewDetail
 }
 
-// ── Key handler ──────────────────────────────────────────────────────────────
+// ── Key handler (called by settingspanel when tab == Accounts) ───────────────
 
-func (m Model) handleAccountPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	p := m.accountPanel
-	if p == nil {
+// handleAccountsTabKey handles keys for the Accounts tab embedded in the
+// settings panel. Esc and left/right are handled by the caller before this
+// is invoked.
+func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
+	p := m.settingsPanel
+	if p == nil || p.accts == nil {
 		return m, nil
 	}
+	a := p.accts
 
-	close := func() (Model, tea.Cmd) {
-		m.accountPanel = nil
-		m.refreshViewport()
-		return m, nil
-	}
-	done := func() (Model, tea.Cmd) {
-		m.accountPanel = p
-		m.refreshViewport()
-		return m, nil
-	}
-
-	key := msg.String()
-
-	switch p.view {
+	switch a.view {
 	case accountViewList:
-		total := len(p.accounts) + 1 // last slot = "+ Add account"
+		total := len(a.accounts) + 1
 		switch key {
 		case "up", "k":
-			p.selected = (p.selected - 1 + total) % total
+			a.selected = (a.selected - 1 + total) % total
 		case "down", "j":
-			p.selected = (p.selected + 1) % total
+			a.selected = (a.selected + 1) % total
 		case "enter":
-			if p.selected == len(p.accounts) {
-				m.accountPanel = nil
+			if a.selected == len(a.accounts) {
+				m.settingsPanel = nil
 				return m, func() tea.Msg { return commands_loginMsg{} }
 			}
-			p.openDetail(p.accounts[p.selected].email)
-		case "esc":
-			return close()
+			a.openDetail(a.accounts[a.selected].email)
 		}
 
 	case accountViewDetail:
 		switch key {
 		case "up", "k":
-			p.actionIdx = (p.actionIdx - 1 + len(p.actions)) % len(p.actions)
+			a.actionIdx = (a.actionIdx - 1 + len(a.actions)) % len(a.actions)
 		case "down", "j":
-			p.actionIdx = (p.actionIdx + 1) % len(p.actions)
+			a.actionIdx = (a.actionIdx + 1) % len(a.actions)
 		case "enter":
-			switch p.actions[p.actionIdx].id {
+			switch a.actions[a.actionIdx].id {
 			case "switch":
-				email := p.detailEmail
-				m.accountPanel = nil
+				email := a.detailEmail
+				m.settingsPanel = nil
 				return m, func() tea.Msg { return accountSwitchedMsg{email: email} }
 			case "login":
-				m.accountPanel = nil
+				m.settingsPanel = nil
 				return m, func() tea.Msg { return commands_loginMsg{} }
 			case "remove":
 				store, err := auth.LoadAccountStore()
 				if err == nil {
-					delete(store.Accounts, p.detailEmail)
-					if store.Active == p.detailEmail {
+					delete(store.Accounts, a.detailEmail)
+					if store.Active == a.detailEmail {
 						store.Active = ""
 					}
 					_ = auth.SaveAccountStore(store)
 				}
-				p.view = accountViewList
-				p.refresh()
+				a.view = accountViewList
+				a.refresh()
 			case "delete":
 				s := secure.NewDefault()
-				_ = auth.DeleteForEmail(s, p.detailEmail)
-				p.view = accountViewList
-				p.refresh()
+				_ = auth.DeleteForEmail(s, a.detailEmail)
+				a.view = accountViewList
+				a.refresh()
 			case "back":
-				p.view = accountViewList
+				a.view = accountViewList
 			}
-		case "esc":
-			p.view = accountViewList
 		}
 	}
 
-	return done()
+	return m, nil
 }
 
-// ── Renderer ─────────────────────────────────────────────────────────────────
+// ── Renderer (called by settingspanel for the Accounts tab body) ─────────────
 
-func (m *Model) renderAccountPanel() string {
-	p := m.accountPanel
-	if p == nil {
-		return ""
+func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState, innerW, _ int) {
+	if p.accts == nil {
+		p.accts = newAccountPanel()
 	}
+	a := p.accts
 
-	w := m.width
-	if w < 20 {
-		w = 20
-	}
-	panelH := m.height - 1
-	if panelH < 6 {
-		panelH = 6
-	}
-	// innerW mirrors settingspanel.go: outer Width(w-2), border 1+1, padding 2+2
-	innerW := w - 8
-
-	// Reusable styles (shared from package-level vars).
-	accent := styleStatusAccent  // bright accent, bold
-	dim := stylePickerDesc       // muted/secondary text
+	accent := styleStatusAccent
+	dim := stylePickerDesc
 	fg := lipgloss.NewStyle().Foreground(colorFg)
-	err := lipgloss.NewStyle().Foreground(colorError)
+	errStyle := lipgloss.NewStyle().Foreground(colorError)
 	danger := lipgloss.NewStyle().Foreground(colorError)
 
-	var sb strings.Builder
-
-	// ── Tab header ─────────────────────────────────────────────────────────
-	sb.WriteString(accent.Render("Accounts"))
-	sb.WriteByte('\n')
-	sb.WriteString(dim.Render(strings.Repeat("─", innerW)))
-	sb.WriteString("\n\n")
-
-	if p.loadErr != "" {
-		sb.WriteString(err.Render("  Error: " + p.loadErr))
+	if a.loadErr != "" {
+		sb.WriteString(errStyle.Render("  Error: " + a.loadErr))
 		sb.WriteString("\n\n")
 		sb.WriteString(dim.Render("  [Esc] close"))
-		return wrapAccountPanel(sb.String(), w, panelH)
+		return
 	}
 
-	switch p.view {
-
-	// ── List view ───────────────────────────────────────────────────────────
+	switch a.view {
 	case accountViewList:
-		if len(p.accounts) == 0 {
+		if len(a.accounts) == 0 {
 			sb.WriteString(dim.Render("  No accounts saved."))
 			sb.WriteByte('\n')
 		}
-
-		for i, acc := range p.accounts {
-			isSel := i == p.selected
-
+		for i, acc := range a.accounts {
+			isSel := i == a.selected
 			cursor := "  "
 			if isSel {
 				cursor = accent.Render("❯ ")
 			}
-
-			// Email label
 			emailStyle := fg
 			if isSel {
 				emailStyle = accent
 			}
 			line := cursor + emailStyle.Render(acc.email)
-
-			// Status badge
 			if acc.isActive {
 				line += "  " + accent.Render("● active")
 			} else if !acc.hasToken {
-				line += "  " + err.Render("✗ no token")
+				line += "  " + errStyle.Render("✗ no token")
 			}
 			sb.WriteString(line + "\n")
-
-			// Secondary: added date
-			addedLine := "    " + dim.Render("added "+acc.addedAt.Format("2006-01-02"))
-			sb.WriteString(addedLine + "\n")
+			sb.WriteString("    " + dim.Render("added "+acc.addedAt.Format("2006-01-02")) + "\n")
 		}
-
-		// "+ Add account" row
-		isSel := p.selected == len(p.accounts)
+		isSel := a.selected == len(a.accounts)
 		addCursor := "  "
 		if isSel {
 			addCursor = accent.Render("❯ ")
 		}
-		addStyle := lipgloss.NewStyle().Foreground(colorAccent)
+		addLabel := lipgloss.NewStyle().Foreground(colorAccent)
 		if isSel {
-			addStyle = accent
+			addLabel = accent
 		}
-		sb.WriteString(addCursor + addStyle.Render("+ Add account") + "\n")
+		sb.WriteString(addCursor + addLabel.Render("+ Add account") + "\n")
 		sb.WriteString("\n")
-		sb.WriteString(dim.Render("  ↑↓/jk navigate · Enter select · Esc/q close"))
+		sb.WriteString(dim.Render("  ↑↓/jk navigate · Enter select · Esc close · ←/→ tabs"))
 
-	// ── Detail view ─────────────────────────────────────────────────────────
 	case accountViewDetail:
-		sb.WriteString(accent.Render("  "+p.detailEmail) + "\n\n")
-
-		for i, act := range p.actions {
-			isSel := i == p.actionIdx
+		sb.WriteString(accent.Render("  "+a.detailEmail) + "\n\n")
+		for i, act := range a.actions {
+			isSel := i == a.actionIdx
 			cursor := "  "
 			if isSel {
 				cursor = accent.Render("❯ ")
@@ -333,21 +284,7 @@ func (m *Model) renderAccountPanel() string {
 			}
 			sb.WriteString(cursor + label + "\n")
 		}
-
 		sb.WriteString("\n")
-		sb.WriteString(dim.Render("  ↑↓/jk navigate · Enter confirm · Esc back · q close"))
+		sb.WriteString(dim.Render("  ↑↓/jk navigate · Enter confirm · Esc back"))
 	}
-
-	return wrapAccountPanel(sb.String(), w, panelH)
 }
-
-func wrapAccountPanel(content string, w, panelH int) string {
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
-		Width(w - 2).
-		Height(panelH - 2)
-	return style.Render(content)
-}
-

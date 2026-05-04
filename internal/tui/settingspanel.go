@@ -47,9 +47,10 @@ const (
 	settingsTabConfig
 	settingsTabStats
 	settingsTabUsage
+	settingsTabAccounts
 )
 
-var settingsTabNames = []string{"Status", "Config", "Stats", "Usage"}
+var settingsTabNames = []string{"Status", "Config", "Stats", "Usage", "Accounts"}
 
 type statsDateRange int
 
@@ -121,6 +122,9 @@ type settingsPanelState struct {
 	mcpManager *mcp.Manager
 	sessPath   string
 	cwd        string
+
+	// accounts tab state (embedded from former standalone account panel)
+	accts *accountPanelState
 }
 
 type statusSnapshot struct {
@@ -468,6 +472,38 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 		p.applyFilter()
 	}
 
+	// Accounts tab: delegate to embedded account panel key handler.
+	// Esc inside detail view goes back to list; esc at list level closes panel.
+	if p.tab == settingsTabAccounts {
+		if p.accts == nil {
+			p.accts = newAccountPanel()
+		}
+		switch key {
+		case "ctrl+c":
+			return closePanel()
+		case "esc":
+			if p.accts.view == accountViewDetail {
+				p.accts.view = accountViewList
+				return done()
+			}
+			return closePanel()
+		case "left", "h":
+			switchMainTab(-1)
+			return done()
+		case "right", "l":
+			switchMainTab(1)
+			return done()
+		default:
+			m.settingsPanel = p
+			m2, cmd := m.handleAccountsTabKey(key)
+			if m2.settingsPanel != nil {
+				m2.settingsPanel = p // p was mutated in place; keep it
+			}
+			m2.refreshViewport()
+			return m2, cmd, true
+		}
+	}
+
 	// Global close.
 	switch key {
 	case "ctrl+c":
@@ -726,6 +762,8 @@ func (m Model) renderSettingsPanel() string {
 		m.renderSettingsStats(&sb, p, innerW, contentH)
 	case settingsTabUsage:
 		m.renderSettingsUsage(&sb, p, innerW, contentH)
+	case settingsTabAccounts:
+		m.renderSettingsAccounts(&sb, p, innerW, contentH)
 	}
 
 	style := lipgloss.NewStyle().

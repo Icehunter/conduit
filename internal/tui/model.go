@@ -1067,25 +1067,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		// History: navigate backwards (older).
-		// Only enter history mode when already navigating (historyIdx >= 0)
-		// or when the input is non-empty. Empty input + first UP falls through
-		// to the viewport so the user can scroll back through the conversation.
-		if len(m.inputHistory) > 0 && !m.running {
-			alreadyInHistory := m.historyIdx >= 0
-			hasInput := m.input.Value() != ""
-			if alreadyInHistory || hasInput {
-				if m.historyIdx == -1 {
-					m.historyDraft = m.input.Value()
-					m.historyIdx = len(m.inputHistory) - 1
-				} else if m.historyIdx > 0 {
-					m.historyIdx--
-				}
-				m.input.SetValue(m.inputHistory[m.historyIdx])
-				m.input.CursorEnd()
-				return m, nil, true
-			}
-		}
+		// UP with no matches falls through to viewport (scroll up).
 
 	case "down":
 		if len(m.cmdMatches) > 0 {
@@ -1100,7 +1082,24 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		// History: navigate forwards (newer / back to draft).
+		// DOWN with no matches falls through to viewport (scroll down).
+
+	// Ctrl+P / Ctrl+N — readline-style input history navigation.
+	// UP/DOWN are freed for viewport scrolling.
+	case "ctrl+p":
+		if len(m.inputHistory) > 0 && !m.running {
+			if m.historyIdx == -1 {
+				m.historyDraft = m.input.Value()
+				m.historyIdx = len(m.inputHistory) - 1
+			} else if m.historyIdx > 0 {
+				m.historyIdx--
+			}
+			m.input.SetValue(m.inputHistory[m.historyIdx])
+			m.input.CursorEnd()
+			return m, nil, true
+		}
+
+	case "ctrl+n":
 		if m.historyIdx != -1 && !m.running {
 			if m.historyIdx < len(m.inputHistory)-1 {
 				m.historyIdx++
@@ -3845,6 +3844,7 @@ func (m Model) applyLayout() Model {
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
 		m.vp.Style = lipgloss.NewStyle() // app bg behind viewport content
+		m.vp.MouseWheelEnabled = true   // allow trackpad/mouse scroll wheel
 		m.ready = true
 	} else {
 		m.vp.SetWidth(m.width)

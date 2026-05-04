@@ -93,30 +93,27 @@ func persistKeyForEmail(email string) string {
 
 // SaveForEmail stores tokens under the email-scoped keychain key and registers
 // the account in accounts.json as the active account.
-// Also writes the legacy key for compatibility with single-account tooling.
-// The email-scoped key + accounts.json write are NOT gated on the legacy key
-// succeeding — a keychain update failure on the legacy key must not prevent
-// the scoped key from being written.
+//
+// accounts.json is ALWAYS updated regardless of keychain write results.
+// Token writes are best-effort — a permissions or I/O error on the credential
+// file must not prevent account tracking from working.
 func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
-	// Marshal once; reuse for both writes.
 	buf, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("accounts: marshal tokens: %w", err)
 	}
 
-	// Legacy key — best-effort, don't gate the rest on this.
+	// Write token to keychain (both legacy and email-scoped). Best-effort.
 	_ = s.Set(Service, PersistKey, buf)
+	if email != "" {
+		_ = s.Set(Service, persistKeyForEmail(email), buf)
+	}
 
 	if email == "" {
 		return nil
 	}
 
-	// Email-scoped key — this is the authoritative one.
-	if err := s.Set(Service, persistKeyForEmail(email), buf); err != nil {
-		return fmt.Errorf("accounts: save token for %s: %w", email, err)
-	}
-
-	// Register in accounts.json. Preserve existing accounts — only update/add this one.
+	// Always register the account in accounts.json — this must succeed.
 	store, _ := LoadAccountStore()
 	if store.Accounts == nil {
 		store.Accounts = map[string]AccountEntry{}
@@ -130,19 +127,30 @@ func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
 
 // LoadForEmail loads tokens for the given email.
 // When email is empty, loads the legacy single-account key.
-// When email is non-empty, loads ONLY the email-scoped key — no fallback to
-// the legacy key, so switching accounts never silently uses the wrong token.
+// When email is non-empty: tries the email-scoped key first. If not found,
+// falls back to the legacy key and immediately writes the scoped key so
+// future loads find it directly. This auto-heal covers the case where
+// SaveForEmail ran but the scoped write silently failed.
 func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 	if email == "" {
 		return Load(s)
 	}
+	// Email-scoped key — the authoritative path.
 	raw, err := s.Get(Service, persistKeyForEmail(email))
-	if err != nil {
-		return PersistedTokens{}, err // caller sees secure.ErrNotFound → ErrNotLoggedIn
+	if err == nil {
+		var p PersistedTokens
+		if err := json.Unmarshal(raw, &p); err == nil {
+			return p, nil
+		}
 	}
-	var p PersistedTokens
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return PersistedTokens{}, fmt.Errorf("auth: decode tokens for %s: %w", email, err)
+	// Scoped key absent — try the legacy key and heal.
+	p, lerr := Load(s)
+	if lerr != nil {
+		return PersistedTokens{}, lerr
+	}
+	// Write the scoped key now so next load is fast.
+	if buf, err := json.Marshal(p); err == nil {
+		_ = s.Set(Service, persistKeyForEmail(email), buf)
 	}
 	return p, nil
 }

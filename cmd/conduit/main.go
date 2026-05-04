@@ -156,28 +156,43 @@ func newAPIClient(bearer string) *api.Client {
 }
 
 // loadAuth loads and refreshes tokens for the active account.
-// Returns an empty PersistedTokens and non-nil error when no credentials exist.
-// Auto-migrates single-account installs: if accounts.json is empty but a legacy
-// token exists, we register it under its profile email and set it active.
+//
+// Resolution order:
+//  1. Email-scoped keychain key ("oauth-tokens-<email>") when accounts.json has an active email.
+//  2. Legacy key ("oauth-tokens") as fallback — covers first-run migration, cases where
+//     the profile fetch failed during login so the email-scoped key was never written,
+//     and any other mismatch where the legacy token is present but the scoped key isn't.
+//     On success, auto-migrates by writing the email-scoped key so future loads hit path 1.
 func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	store := secure.NewDefault()
 	cfg := auth.ProdConfig
 	tc := auth.NewTokenClient(cfg, nil)
 
 	email := auth.ActiveEmail()
-	if email == "" {
-		// No active account yet — try legacy key and auto-migrate.
-		tok, err := auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
-		if err != nil {
-			return tok, err
-		}
-		// Fetch profile to learn the email, then register.
-		if p, perr := profile.Fetch(ctx, tok.AccessToken); perr == nil && p.Email != "" {
-			_ = auth.SaveForEmail(store, tok, p.Email)
-		}
+
+	// Try the email-scoped key first.
+	tok, err := auth.EnsureFreshForEmail(ctx, store, tc, email, time.Now(), 5*time.Minute)
+	if err == nil {
 		return tok, nil
 	}
-	return auth.EnsureFreshForEmail(ctx, store, tc, email, time.Now(), 5*time.Minute)
+
+	// Email-scoped key missing or invalid — try the legacy key.
+	if !errors.Is(err, auth.ErrNotLoggedIn) {
+		return tok, err // real error (network, decode), not just "key missing"
+	}
+	tok, legacyErr := auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
+	if legacyErr != nil {
+		return tok, legacyErr // nothing found anywhere
+	}
+
+	// Legacy token works — auto-migrate: fetch profile and write email-scoped key.
+	if p, perr := profile.Fetch(ctx, tok.AccessToken); perr == nil && p.Email != "" {
+		_ = auth.SaveForEmail(store, tok, p.Email)
+	} else if email != "" {
+		// Profile fetch failed but we know the active email — write the scoped key anyway.
+		_ = auth.SaveForEmail(store, tok, email)
+	}
+	return tok, nil
 }
 
 // buildSkillEntries converts loaded plugin commands + bundled skills into

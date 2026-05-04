@@ -23,6 +23,9 @@ type Tokens struct {
 	ExpiresIn    int
 	TokenType    string
 	Scopes       []string
+	// Email is populated from account.email_address in the token response,
+	// when the server includes it. Used for multi-account keychain key scoping.
+	Email string
 }
 
 // String redacts tokens to keep them out of logs by accident.
@@ -71,15 +74,19 @@ func NewTokenClient(cfg Config, httpClient *http.Client) *TokenClient {
 	return &TokenClient{cfg: cfg, http: httpClient}
 }
 
-// tokenResponse mirrors the JSON returned from /v1/oauth/token. We accept
-// `account` and `organization` for forward compatibility (the reference
-// uses them to populate UI, but they're not load-bearing for refresh).
+// tokenResponse mirrors the JSON returned from /v1/oauth/token.
+// The `account` field carries email_address directly in the token response,
+// which is the authoritative source for multi-account key scoping.
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+	Account      *struct {
+		UUID         string `json:"uuid"`
+		EmailAddress string `json:"email_address"`
+	} `json:"account,omitempty"`
 }
 
 // ExchangeCodeForTokens trades an OAuth authorization code for tokens.
@@ -218,12 +225,17 @@ func finalizeTokens(tr tokenResponse, fallbackRefresh string) (Tokens, error) {
 	if rt == "" {
 		rt = fallbackRefresh
 	}
+	email := ""
+	if tr.Account != nil {
+		email = tr.Account.EmailAddress
+	}
 	return Tokens{
 		AccessToken:  tr.AccessToken,
 		RefreshToken: rt,
 		ExpiresIn:    tr.ExpiresIn,
 		TokenType:    tr.TokenType,
 		Scopes:       parseScopes(tr.Scope),
+		Email:        email,
 	}, nil
 }
 

@@ -39,9 +39,14 @@ func runLoginFlow(claudeAI bool, display auth.LoginDisplay) error {
 	persisted := auth.FromTokens(tok, time.Now())
 	persisted.APIKey = apiKey
 
-	// Fetch profile to learn the email — needed for multi-account registration.
-	prof, _ := profile.Fetch(ctx, tok.AccessToken)
-	if err := auth.SaveForEmail(store, persisted, prof.Email); err != nil {
+	// Prefer email from the token response (account.email_address); fall back
+	// to the /api/oauth/profile endpoint when the token omits it.
+	email := tok.Email
+	if email == "" {
+		prof, _ := profile.Fetch(ctx, tok.AccessToken)
+		email = prof.Email
+	}
+	if err := auth.SaveForEmail(store, persisted, email); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 	return nil

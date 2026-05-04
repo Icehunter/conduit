@@ -287,6 +287,79 @@ func TestRefreshOAuthToken_KeepsOldRefreshTokenIfOmitted(t *testing.T) {
 	}
 }
 
+// TestExchangeCodeForTokens_EmailFromAccount verifies that account.email_address
+// in the token response is surfaced as Tokens.Email, avoiding the extra profile
+// round-trip for accounts that include it (e.g. Teams).
+func TestExchangeCodeForTokens_EmailFromAccount(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"access_token": "at-1",
+			"refresh_token": "rt-1",
+			"expires_in": 3600,
+			"token_type": "bearer",
+			"scope": "user:profile user:inference",
+			"account": {
+				"uuid": "acct-uuid-123",
+				"email_address": "user@example.com"
+			}
+		}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := ProdConfig
+	cfg.TokenURL = srv.URL + "/v1/oauth/token"
+	c := NewTokenClient(cfg, srv.Client())
+
+	tok, err := c.ExchangeCodeForTokens(context.Background(), ExchangeParams{
+		Code:         "code",
+		State:        "state",
+		CodeVerifier: "verifier",
+		Port:         12345,
+	})
+	if err != nil {
+		t.Fatalf("ExchangeCodeForTokens: %v", err)
+	}
+	if tok.Email != "user@example.com" {
+		t.Errorf("Email = %q; want user@example.com", tok.Email)
+	}
+}
+
+// TestExchangeCodeForTokens_EmailAbsent verifies that Tokens.Email is empty
+// when the token response omits the account field (e.g. Max subscribers).
+func TestExchangeCodeForTokens_EmailAbsent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"access_token": "at-1",
+			"refresh_token": "rt-1",
+			"expires_in": 3600,
+			"token_type": "bearer",
+			"scope": "user:profile user:inference"
+		}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := ProdConfig
+	cfg.TokenURL = srv.URL + "/v1/oauth/token"
+	c := NewTokenClient(cfg, srv.Client())
+
+	tok, err := c.ExchangeCodeForTokens(context.Background(), ExchangeParams{
+		Code:         "code",
+		State:        "state",
+		CodeVerifier: "verifier",
+		Port:         12345,
+	})
+	if err != nil {
+		t.Fatalf("ExchangeCodeForTokens: %v", err)
+	}
+	if tok.Email != "" {
+		t.Errorf("Email = %q; want empty", tok.Email)
+	}
+}
+
 // TestRefreshOAuthToken_ContextCancel ensures we honor the caller's context.
 func TestRefreshOAuthToken_ContextCancel(t *testing.T) {
 	mux := http.NewServeMux()

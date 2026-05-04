@@ -168,13 +168,33 @@ func SetActive(store *AccountStore, email string) error {
 	return saveAccountStore(*store)
 }
 
-// ActiveEmail returns the currently active account email, or "" if none.
+// ActiveEmail returns the currently active account email.
+// If active is unset but exactly one account exists, that account is
+// auto-selected and persisted so subsequent calls are consistent.
+// Returns "" only when no accounts are registered.
 func ActiveEmail() string {
 	store, err := LoadAccountStore()
 	if err != nil {
 		return ""
 	}
-	return store.Active
+	if store.Active != "" {
+		return store.Active
+	}
+	// Auto-select: pick the most-recently-added account when active is blank.
+	if len(store.Accounts) == 0 {
+		return ""
+	}
+	var best string
+	var bestTime time.Time
+	for email, entry := range store.Accounts {
+		if best == "" || entry.AddedAt.After(bestTime) {
+			best = email
+			bestTime = entry.AddedAt
+		}
+	}
+	store.Active = best
+	_ = saveAccountStore(store)
+	return best
 }
 
 // ListAccounts returns all registered accounts.

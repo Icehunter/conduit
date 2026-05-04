@@ -15,16 +15,18 @@ const endpoint = "https://api.anthropic.com/api/oauth/profile"
 // Info holds the fields we surface in the welcome card.
 type Info struct {
 	DisplayName      string // account.display_name
-	Email            string // account.email_address
+	Email            string // account.email
 	OrganizationName string // organization.organization_name
 	SubscriptionType string // derived from organization.organization_type
 }
 
 // oauthProfileResponse is the raw JSON shape returned by the endpoint.
+// Field names match the live API: account.email (not email_address) and
+// account.display_name — confirmed against decoded/1220.js:277.
 type oauthProfileResponse struct {
 	Account *struct {
-		DisplayName  string `json:"display_name"`
-		EmailAddress string `json:"email_address"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
 	} `json:"account"`
 	Organization *struct {
 		OrganizationName string `json:"organization_name"`
@@ -72,7 +74,7 @@ func Fetch(ctx context.Context, accessToken string) (Info, error) {
 	info := Info{}
 	if raw.Account != nil {
 		info.DisplayName = raw.Account.DisplayName
-		info.Email = raw.Account.EmailAddress
+		info.Email = raw.Account.Email
 	}
 	if raw.Organization != nil {
 		info.OrganizationName = raw.Organization.OrganizationName

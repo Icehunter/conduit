@@ -40,11 +40,15 @@ func runLoginFlow(claudeAI bool, display auth.LoginDisplay) error {
 	persisted.APIKey = apiKey
 
 	// Prefer email from the token response (account.email_address); fall back
-	// to the /api/oauth/profile endpoint when the token omits it.
+	// to the /api/oauth/profile endpoint (account.email) when the token omits it;
+	// use a stable placeholder as last resort so login never hard-fails on email.
 	email := tok.Email
 	if email == "" {
 		prof, _ := profile.Fetch(ctx, tok.AccessToken)
 		email = prof.Email
+	}
+	if email == "" {
+		email = "default"
 	}
 	if err := auth.SaveForEmail(store, persisted, email); err != nil {
 		return fmt.Errorf("save credentials: %w", err)

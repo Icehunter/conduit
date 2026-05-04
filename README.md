@@ -34,7 +34,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 
 ### Core agent
 
-- **Full Claude Code parity** — 246/264 scoped features implemented (93%)
+- **Full Claude Code parity** — 249/264 scoped features implemented (94%)
 - **Streaming SSE** — real-time token-by-token output with cost tracking
 - **Auto-compact** — context window managed automatically; manual `/compact`
 - **Thinking mode** — extended reasoning via `/effort low|medium|high|max`
@@ -42,7 +42,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Coordinator mode** — Claude as orchestrator managing parallel sub-agents
 - **Exponential backoff** — automatic retry on 429 with jitter
 
-### Tools (22 built-in)
+### Tools (24 built-in)
 
 | Tool | What it does |
 |------|-------------|
@@ -67,6 +67,9 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 | `ListMcpResources` / `ReadMcpResource` | MCP resource access |
 | `SkillTool` | Execute installed skills |
 | `SleepTool` | Pause between actions |
+| `LSPTool` | Language server queries: hover, definition, references, diagnostics |
+| `ToolSearchTool` | Search available tools by name or description |
+| `SyntheticOutputTool` | Inject synthetic tool results (coordinator signalling) |
 
 ### MCP (Model Context Protocol)
 
@@ -88,8 +91,8 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 
 - **Bubble Tea v2** — native Shift+Enter via Kitty keyboard protocol
 - **Full GFM markdown** — tables, task lists, strikethrough, blockquotes, code blocks with syntax
-- **Light and dark themes** — `/theme` picker with 8 built-in palettes, custom theme support
-- **Output styles** — `/output-style` for different formatting modes (default, concise, verbose…)
+- **Light and dark themes** — `/theme` picker with 6 built-in palettes (dark, light, daltonized variants, ANSI variants), custom theme support
+- **Output styles** — `/output-style` for different response modes (`default`, `Explanatory`, `Learning`; plugins can add more)
 - **Custom keybindings** — `~/.claude/keybindings.json` remaps any action
 - **Status bar** — model, mode, context %, cost, rate-limit indicator
 - **Coordinator footer** — live sub-agent progress during multi-agent runs
@@ -167,11 +170,11 @@ make build
 ## Quick start
 
 ```sh
-# Sign in with your Claude Max / Teams subscription
-conduit login
-
 # Start an interactive session
 conduit
+
+# Sign in with your Claude Max / Teams subscription (inside the TUI)
+/login
 
 # One-shot prompt (no TUI)
 conduit --print "explain this codebase"
@@ -316,11 +319,20 @@ Hook types: `command` (shell), `http` (POST JSON to URL), `prompt` (inject resul
 
 ## Themes
 
-Built-in themes: `dark` (default), `light`, `dark-accessible`, `light-accessible`, `nord`, `solarized-dark`, `solarized-light`, `dracula`.
+Built-in themes (matching Claude Code's palette set):
 
-Switch with `/theme`, or set `"theme": "nord"` in `settings.json`.
+| Name | Description |
+|------|-------------|
+| `dark` | Default dark theme |
+| `light` | Light theme |
+| `dark-daltonized` | Dark with colour-blindness-friendly palette (alias: `dark-accessible`) |
+| `light-daltonized` | Light with colour-blindness-friendly palette (alias: `light-accessible`) |
+| `dark-ansi` | Dark using terminal's 16 ANSI colours |
+| `light-ansi` | Light using terminal's 16 ANSI colours |
 
-Custom themes can be added under `"themes"` in `settings.json`:
+Switch with `/theme`, or set `"theme": "dark-ansi"` in `settings.json`.
+
+Custom themes can be defined under `"themes"` in `settings.json`:
 
 ```json
 {
@@ -381,7 +393,7 @@ make release    # cross-compile for darwin/linux/windows
 
 ## Parity
 
-Conduit implements 246/264 scoped Claude Code features (93%). The 18 descoped features are Claude-internal or require the VS Code/JetBrains bridge:
+Conduit implements 249/264 scoped Claude Code features (94%). The remaining features are Claude-internal or require the VS Code/JetBrains bridge:
 
 - Bridge (VS Code / JetBrains JSON-RPC) — use real Claude Code for IDE integration
 - Remote agents / ULTRAPLAN — Anthropic-hosted, bridge-dependent

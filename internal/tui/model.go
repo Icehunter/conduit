@@ -559,6 +559,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !hasOverlay {
 			content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "\n")
+
+			// File drag-drop detection: terminals (iTerm2, Ghostty, etc.) paste
+			// dragged files as "file:///path/to/file" or space-separated URIs.
+			// Convert each file:// URI to an @mention so the attach pipeline handles it.
+			if converted, ok := attach.ConvertDroppedFiles(strings.TrimSpace(content)); ok {
+				m.input.InsertString(converted)
+				m.flashMsg = "File dropped — use @path or send to attach"
+				return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+			}
+
 			lineCount := strings.Count(content, "\n") + 1
 			isLarge := lineCount > 1 || len(content) > 300
 			if isLarge {
@@ -1420,13 +1430,25 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		m.pendingPDFs = nil
 		// Process @file mentions: inject referenced file/dir contents as
-		// additional text blocks before the user's message text.
+		// additional blocks before the user's message text. PDFs become
+		// type=document blocks; everything else becomes type=text.
 		if cwd, err := os.Getwd(); err == nil {
 			for _, ref := range attach.ProcessAtMentions(apiText, cwd) {
-				userContent = append(userContent, api.ContentBlock{
-					Type: "text",
-					Text: attach.FormatAtResult(ref),
-				})
+				if ref.IsPDF {
+					userContent = append(userContent, api.ContentBlock{
+						Type: "document",
+						Source: &api.ImageSource{
+							Type:      "base64",
+							MediaType: "application/pdf",
+							Data:      ref.PDFData,
+						},
+					})
+				} else {
+					userContent = append(userContent, api.ContentBlock{
+						Type: "text",
+						Text: attach.FormatAtResult(ref),
+					})
+				}
 			}
 		}
 		userContent = append(userContent, api.ContentBlock{Type: "text", Text: apiText})

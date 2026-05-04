@@ -1,6 +1,7 @@
 package attach
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +31,10 @@ type AtMention struct {
 // AtResult is the resolved content for one @mention.
 type AtResult struct {
 	DisplayPath string // path relative to cwd for display in the system block
-	Content     string // file or directory listing content
+	Content     string // file or directory listing content (empty for PDFs)
+	// PDF fields — set when the @mention points to a .pdf file.
+	IsPDF   bool
+	PDFData string // base64-encoded PDF bytes (non-empty when IsPDF)
 }
 
 // ExtractAtMentions parses @path tokens from user text. Tokens like
@@ -128,6 +132,25 @@ func ProcessAtMentions(text, cwd string) []AtResult {
 			continue // silently skip missing paths
 		}
 
+		display := p
+		if rel, err := filepath.Rel(cwd, p); err == nil {
+			display = rel
+		}
+
+		// PDF files: send as type=document base64 block.
+		if !info.IsDir() && strings.ToLower(filepath.Ext(p)) == ".pdf" {
+			data, err := os.ReadFile(p)
+			if err != nil || len(data) == 0 {
+				continue
+			}
+			results = append(results, AtResult{
+				DisplayPath: display,
+				IsPDF:       true,
+				PDFData:     base64.StdEncoding.EncodeToString(data),
+			})
+			continue
+		}
+
 		var content string
 		if info.IsDir() {
 			content = readDir(p)
@@ -138,10 +161,6 @@ func ProcessAtMentions(text, cwd string) []AtResult {
 			continue
 		}
 
-		display := p
-		if rel, err := filepath.Rel(cwd, p); err == nil {
-			display = rel
-		}
 		// Add line range annotation to display path.
 		if m.LineStart > 0 {
 			if m.LineEnd > 0 {

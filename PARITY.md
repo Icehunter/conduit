@@ -500,10 +500,10 @@
 | Image paste from clipboard | `utils/imagePaste.ts` (416 LOC) | — | `internal/attach/clipboard.go` | ✅ | ctrl+v; macOS osascript PNG+TIFF; Linux xclip/wl-paste |
 | Image resize | `utils/imageResizer.ts` (880 LOC) | — | `internal/attach/resize.go` | ✅ | Resize if >2000px or >3.75MB; CatmullRom downsampling; re-encode JPEG; TIFF decode via x/image/tiff |
 | Image storage | `utils/imageStore.ts` | — | `internal/tui/model.go` (pendingImages) | ✅ | Multiple images accumulated per turn |
-| PDF handling | `utils/pdf.ts` (300 LOC) | — | ❌ | ❌ | M13 |
-| File drag-drop | `utils/attachments.ts` (3997 LOC) | — | ❌ | ❌ | M13 |
-| ANSI to PNG | `utils/ansiToPng.ts` (334 LOC) | — | ❌ | ❌ | M13 |
-| ANSI to SVG | `utils/ansiToSvg.ts` | — | ❌ | ❌ | M13 |
+| PDF handling | `utils/pdf.ts` (300 LOC) | — | `internal/attach/atmention.go` + `pdf.go` | ✅ | @file.pdf → type=document base64 block; clipboard PDF paste (ctrl+v) → type=document block |
+| File drag-drop | `utils/attachments.ts` (3997 LOC) | — | `internal/attach/dragdrop.go` | ✅ | Detects file:// URIs in bracketed-paste; converts to @mention tokens; handles space-separated multi-file drops; verifies path exists |
+| ANSI to PNG | `utils/ansiToPng.ts` (334 LOC) | — | `internal/attach/ansipng.go` | ✅ | `ANSIToPNG(text) string` → base64 PNG; parses SGR (8-color, 256-color, truecolor); basicfont rendering; dark terminal theme |
+| ANSI to SVG | `utils/ansiToSvg.ts` | — | ❌ | ⬛ | No current use case; PNG covers screenshot sharing |
 | Screenshot clipboard | `utils/screenshotClipboard.ts` | — | `internal/attach/clipboard.go` | ✅ | Covered by image paste (TIFF fallback handles macOS screenshots) |
 | Asciinema recording | `utils/asciicast.ts` | — | ❌ | ❌ | M13 |
 | @file mention parsing | `utils/attachments.ts` | — | `internal/attach/atmention.go` | ✅ | @path @"path" #L10-20 line ranges; dirs listed; injected as file_content blocks; 7 tests |

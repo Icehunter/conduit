@@ -3423,7 +3423,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 				snap.fastMode = live.FastMode()
 				snap.effort = live.EffortLevel()
 				snap.rateLimitWarn = live.RateLimitWarning()
-				in, cost := live.Tokens()
+				in, _, cost := live.Tokens()
 				snap.inputTokens = in
 				snap.costUSD = cost
 				switch live.PermissionMode() {
@@ -4222,15 +4222,22 @@ func paintApp(w, h int, content string) string {
 // cl100k_base — the tokenizer Claude approximates for billing. Falls
 // back to chars/4 if the encoder fails to initialize (offline first run).
 func (m *Model) tallyTokens() {
-	total := 0
+	var inputTok, outputTok int
 	for _, msg := range m.history {
+		t := 0
 		for _, b := range msg.Content {
-			total += tokens.Estimate(b.Text)
+			t += tokens.Estimate(b.Text)
+		}
+		if msg.Role == "assistant" {
+			outputTok += t
+		} else {
+			inputTok += t
 		}
 	}
-	m.totalInputTokens = total
-	// Opus 4.7: ~$15/$75 per M in/out, blended ~$45/M estimate.
-	m.costUSD = float64(total) * 45.0 / 1_000_000
+	m.totalInputTokens = inputTok + outputTok // billing input = full context
+	m.totalOutputTokens = outputTok
+	// Opus 4.7: $15/M input + $75/M output.
+	m.costUSD = float64(inputTok)*15.0/1_000_000 + float64(outputTok)*75.0/1_000_000
 	m.syncLive()
 }
 
@@ -4243,7 +4250,7 @@ func (m *Model) syncLive() {
 	}
 	m.cfg.Live.SetModelName(m.modelName)
 	m.cfg.Live.SetPermissionMode(m.permissionMode)
-	m.cfg.Live.SetTokens(m.totalInputTokens, m.costUSD)
+	m.cfg.Live.SetTokens(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
 	m.cfg.Live.SetRateLimitWarning(m.rateLimitWarning)
 	if m.cfg.Session != nil {
 		m.cfg.Live.SetSessionID(m.cfg.Session.ID)

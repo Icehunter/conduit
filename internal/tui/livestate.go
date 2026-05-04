@@ -14,6 +14,7 @@ type LiveState struct {
 	modelName      string
 	permissionMode permissions.Mode
 	inputTokens    int
+	outputTokens   int
 	costUSD        float64
 	sessionID      string
 	rateLimitWarn  string
@@ -46,17 +47,18 @@ func (s *LiveState) PermissionMode() permissions.Mode {
 	return s.permissionMode
 }
 
-func (s *LiveState) SetTokens(input int, costUSD float64) {
+func (s *LiveState) SetTokens(input, output int, costUSD float64) {
 	s.mu.Lock()
 	s.inputTokens = input
+	s.outputTokens = output
 	s.costUSD = costUSD
 	s.mu.Unlock()
 }
 
-func (s *LiveState) Tokens() (input int, costUSD float64) {
+func (s *LiveState) Tokens() (input, output int, costUSD float64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.inputTokens, s.costUSD
+	return s.inputTokens, s.outputTokens, s.costUSD
 }
 
 func (s *LiveState) SetSessionID(id string) {

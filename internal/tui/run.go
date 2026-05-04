@@ -204,7 +204,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return live.TurnCosts()
 		},
 		GetStatus: func() string {
-			tokens, cost := live.Tokens()
+			tokens, _, cost := live.Tokens()
 			mode := "default"
 			switch live.PermissionMode() {
 			case permissions.ModeAcceptEdits:
@@ -261,9 +261,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return modelPtr.LastThinking()
 		},
 		GetTokens: func() (int, int, float64) {
-			tokens, cost := live.Tokens()
-			// Output tokens not tracked separately in LiveState yet — return 0.
-			return tokens, 0, cost
+			input, output, cost := live.Tokens()
+			return input, output, cost
 		},
 		GetColor: func() bool { return true },
 		SetColor: func(bool) {},

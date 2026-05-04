@@ -76,4 +76,3 @@ func statusCheck(ok bool) string {
 	}
 	return ansiDanger + "✗" + ansiReset
 }
-

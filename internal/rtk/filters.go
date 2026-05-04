@@ -73,7 +73,6 @@ func hasPrefix(line string, prefixes ...string) bool {
 	return false
 }
 
-
 // ── Git ───────────────────────────────────────────────────────────────────────
 
 func filterGit(cmd, output string) string {
@@ -520,4 +519,3 @@ func filterBuildOutput(_ string, output string) string { return truncateLines(ou
 // ── System utilities ──────────────────────────────────────────────────────────
 
 func filterSystemctl(_ string, output string) string { return truncateLines(output, 50) }
-

@@ -33,7 +33,6 @@ type castHeader struct {
 	Env       map[string]string `json:"env"`
 }
 
-
 // Recorder captures terminal output into an asciicast v2 file.
 type Recorder struct {
 	mu         sync.Mutex

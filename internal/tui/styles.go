@@ -22,13 +22,13 @@ import (
 //	colorBorder → palette.Border
 //	colorCodeBg → palette.CodeBg
 var (
-	colorAccent  color.Color
-	colorMuted   color.Color
-	colorDim     color.Color
-	colorError   color.Color
-	colorTool    color.Color
-	colorFg      color.Color
-	colorBg      color.Color
+	colorAccent color.Color
+	colorMuted  color.Color
+	colorDim    color.Color
+	colorError  color.Color
+	colorTool   color.Color
+	colorFg     color.Color
+	colorBg     color.Color
 	colorCodeBg color.Color
 )
 

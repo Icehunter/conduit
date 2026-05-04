@@ -1,50 +1,106 @@
 // Package secure abstracts platform-specific secret storage.
 //
-// On macOS we use the Keychain, on Linux libsecret (Secret Service), and on
-// Windows the Credential Manager — all wrapped through a single Storage
-// interface so call sites in internal/auth and internal/api don't depend on
-// the platform layer at compile time.
+// Uses github.com/zalando/go-keyring which provides:
+//   - macOS: Keychain Services
+//   - Linux: libsecret / Secret Service (D-Bus)
+//   - Windows: Windows Credential Manager
 //
-// This file ships the interface and an in-memory implementation suitable
-// for tests. The real OS-backed Storage is bound in OS-specific files
-// (storage_keychain.go etc.) added in a follow-up commit so we don't
-// require a network fetch of the keyring dependency in this milestone's
-// initial check-in.
+// Service name: "conduit-credentials" — separate from CC's entries on all platforms.
+// File fallback (~/.claude/.conduit-credentials.json) used when the platform
+// keychain is unavailable (headless CI, no libsecret, etc.).
 package secure
 
 import (
 	"errors"
+	"fmt"
 	"sync"
+
+	gokeyring "github.com/zalando/go-keyring"
 )
 
 // ErrNotFound is returned by Storage.Get when no value exists for the key.
 var ErrNotFound = errors.New("secure: not found")
 
-// Storage is a per-key blob store. Implementations must scrub secrets from
-// any stringification path: Storage values are SECRETS by definition.
+// Storage is a per-key blob store.
 type Storage interface {
-	// Get returns the secret for the given service+key pair. ErrNotFound
-	// when no secret exists; other errors are platform problems.
 	Get(service, key string) ([]byte, error)
-	// Set creates or replaces the secret.
 	Set(service, key string, value []byte) error
-	// Delete removes the secret. Idempotent — deleting a missing key is
-	// not an error.
 	Delete(service, key string) error
 }
 
-// MemoryStorage is an in-process map-backed Storage useful for tests and
-// for environments where no platform keychain is available (e.g. headless
-// CI with no D-Bus). It does not persist across processes.
+// conduitService is the keychain service name for all conduit credentials.
+// Deliberately different from CC's "Claude Code-credentials" on macOS.
+const conduitService = "conduit-credentials"
+
+// keyringStorage wraps go-keyring with the Storage interface.
+type keyringStorage struct{}
+
+func (k *keyringStorage) Get(_, key string) ([]byte, error) {
+	val, err := gokeyring.Get(conduitService, key)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	return []byte(val), nil
+}
+
+func (k *keyringStorage) Set(_, key string, value []byte) error {
+	if err := gokeyring.Set(conduitService, key, string(value)); err != nil {
+		return fmt.Errorf("secure: keyring set %s: %w", key, err)
+	}
+	return nil
+}
+
+func (k *keyringStorage) Delete(_, key string) error {
+	_ = gokeyring.Delete(conduitService, key)
+	return nil
+}
+
+// NewDefault returns the platform keychain with a file fallback.
+// The file fallback handles headless CI and systems without a secret service.
+func NewDefault() Storage {
+	return &fallbackStorage{
+		primary:  &keyringStorage{},
+		fallback: newFileStorage(),
+	}
+}
+
+// fallbackStorage tries primary first; on error falls back to secondary.
+// Set writes to primary only (not secondary) — the secondary is read-only
+// fallback for environments where the primary is unavailable at read time.
+type fallbackStorage struct {
+	primary  Storage
+	fallback Storage
+}
+
+func (f *fallbackStorage) Get(service, key string) ([]byte, error) {
+	v, err := f.primary.Get(service, key)
+	if err == nil {
+		return v, nil
+	}
+	return f.fallback.Get(service, key)
+}
+
+func (f *fallbackStorage) Set(service, key string, value []byte) error {
+	if err := f.primary.Set(service, key, value); err != nil {
+		// Primary unavailable (e.g. no libsecret on Linux) — fall back to file.
+		return f.fallback.Set(service, key, value)
+	}
+	return nil
+}
+
+func (f *fallbackStorage) Delete(service, key string) error {
+	_ = f.primary.Delete(service, key)
+	_ = f.fallback.Delete(service, key)
+	return nil
+}
+
+// MemoryStorage is an in-process map-backed Storage for tests.
 type MemoryStorage struct {
 	mu sync.Mutex
 	m  map[string][]byte
 }
 
-// NewMemoryStorage returns an empty in-memory Storage.
-func NewMemoryStorage() *MemoryStorage {
-	return &MemoryStorage{m: map[string][]byte{}}
-}
+func NewMemoryStorage() *MemoryStorage { return &MemoryStorage{m: map[string][]byte{}} }
 
 func memKey(service, key string) string { return service + "\x00" + key }
 
@@ -76,5 +132,4 @@ func (s *MemoryStorage) Delete(service, key string) error {
 	return nil
 }
 
-// String never reveals the contents of MemoryStorage.
 func (*MemoryStorage) String() string { return "<secure.MemoryStorage>" }

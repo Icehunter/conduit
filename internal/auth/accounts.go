@@ -2,11 +2,9 @@ package auth
 
 // Multi-account support.
 //
-// Accounts are stored in ~/.claude/accounts.json as a map of email → entry.
-// The active account is tracked by the "active" field.
-// Token bundles live in the keychain under "oauth-tokens-<email>".
-// The legacy key "oauth-tokens" (no email suffix) maps to whichever account
-// was active before multi-account was introduced.
+// Each account's token is stored in the platform keychain under the key
+// "oauth-tokens-<email>". ~/.claude/accounts.json tracks which accounts
+// exist and which is currently active.
 
 import (
 	"encoding/json"
@@ -20,17 +18,15 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 )
 
-func newDefaultStorage() secure.Storage { return secure.NewDefault() }
-
 // AccountEntry holds metadata for one stored account.
 type AccountEntry struct {
-	Email    string    `json:"email"`
-	AddedAt  time.Time `json:"added_at"`
+	Email   string    `json:"email"`
+	AddedAt time.Time `json:"added_at"`
 }
 
 // AccountStore is the shape of ~/.claude/accounts.json.
 type AccountStore struct {
-	Active   string                  `json:"active"` // email of active account
+	Active   string                  `json:"active"`
 	Accounts map[string]AccountEntry `json:"accounts"`
 }
 
@@ -42,8 +38,8 @@ func accountsPath() (string, error) {
 	return filepath.Join(dir, "accounts.json"), nil
 }
 
-// LoadAccountStore reads ~/.claude/accounts.json. Returns an empty store if the
-// file does not exist yet.
+// LoadAccountStore reads ~/.claude/accounts.json. Returns an empty store if
+// the file doesn't exist yet.
 func LoadAccountStore() (AccountStore, error) {
 	p, err := accountsPath()
 	if err != nil {
@@ -66,7 +62,6 @@ func LoadAccountStore() (AccountStore, error) {
 	return s, nil
 }
 
-// saveAccountStore writes the store to disk.
 func saveAccountStore(s AccountStore) error {
 	p, err := accountsPath()
 	if err != nil {
@@ -82,38 +77,38 @@ func saveAccountStore(s AccountStore) error {
 	return os.WriteFile(p, data, 0o600)
 }
 
-// persistKeyForEmail returns the keychain item name for the given email.
-// Empty email returns the legacy key so old single-account installs still work.
-func persistKeyForEmail(email string) string {
-	if email == "" {
-		return PersistKey
-	}
+// keyForEmail returns the keychain key name for an email.
+func keyForEmail(email string) string {
 	return PersistKey + "-" + email
 }
 
-// SaveForEmail stores tokens under the email-scoped keychain key and registers
-// the account in accounts.json as the active account.
-//
-// accounts.json is ALWAYS updated regardless of keychain write results.
-// Token writes are best-effort — a permissions or I/O error on the credential
-// file must not prevent account tracking from working.
+// SaveForEmail writes the token to the platform keychain under the email-
+// scoped key and registers the account in accounts.json as active.
 func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
+	if email == "" {
+		return fmt.Errorf("accounts: email required")
+	}
+	if err := saveToken(s, p, email); err != nil {
+		return err
+	}
+	return registerAccount(email)
+}
+
+// saveToken writes the token to the keychain only (no accounts.json).
+// Used internally by EnsureFresh to persist refreshed tokens.
+func saveToken(s secure.Storage, p PersistedTokens, email string) error {
 	buf, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("accounts: marshal tokens: %w", err)
 	}
-
-	// Write token to keychain (both legacy and email-scoped). Best-effort.
-	_ = s.Set(Service, PersistKey, buf)
-	if email != "" {
-		_ = s.Set(Service, persistKeyForEmail(email), buf)
+	if err := s.Set(Service, keyForEmail(email), buf); err != nil {
+		return fmt.Errorf("accounts: save token for %s: %w", email, err)
 	}
+	return nil
+}
 
-	if email == "" {
-		return nil
-	}
-
-	// Always register the account in accounts.json — this must succeed.
+// registerAccount adds the email to accounts.json and sets it as active.
+func registerAccount(email string) error {
 	store, _ := LoadAccountStore()
 	if store.Accounts == nil {
 		store.Accounts = map[string]AccountEntry{}
@@ -125,42 +120,25 @@ func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
 	return saveAccountStore(store)
 }
 
-// LoadForEmail loads tokens for the given email.
-// When email is empty, loads the legacy single-account key.
-// When email is non-empty: tries the email-scoped key first. If not found,
-// falls back to the legacy key and immediately writes the scoped key so
-// future loads find it directly. This auto-heal covers the case where
-// SaveForEmail ran but the scoped write silently failed.
+// LoadForEmail loads and decodes the token for the given email.
 func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 	if email == "" {
-		return Load(s)
+		return PersistedTokens{}, secure.ErrNotFound
 	}
-	// Email-scoped key — the authoritative path.
-	raw, err := s.Get(Service, persistKeyForEmail(email))
-	if err == nil {
-		var p PersistedTokens
-		if err := json.Unmarshal(raw, &p); err == nil {
-			return p, nil
-		}
+	raw, err := s.Get(Service, keyForEmail(email))
+	if err != nil {
+		return PersistedTokens{}, err
 	}
-	// Scoped key absent — try the legacy key and heal.
-	p, lerr := Load(s)
-	if lerr != nil {
-		return PersistedTokens{}, lerr
-	}
-	// Write the scoped key now so next load is fast.
-	if buf, err := json.Marshal(p); err == nil {
-		_ = s.Set(Service, persistKeyForEmail(email), buf)
+	var p PersistedTokens
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return PersistedTokens{}, fmt.Errorf("accounts: decode token for %s: %w", email, err)
 	}
 	return p, nil
 }
 
-// DeleteForEmail removes tokens for the given email from keychain and
-// accounts.json. If this was the active account, active is cleared.
+// DeleteForEmail removes an account's token and accounts.json entry.
 func DeleteForEmail(s secure.Storage, email string) error {
-	if email != "" {
-		_ = s.Delete(Service, persistKeyForEmail(email))
-	}
+	_ = s.Delete(Service, keyForEmail(email))
 	store, err := LoadAccountStore()
 	if err != nil {
 		return err
@@ -172,16 +150,13 @@ func DeleteForEmail(s secure.Storage, email string) error {
 	return saveAccountStore(store)
 }
 
-// SetActive switches the active account to the given email.
-// The email must have a token stored under its email-scoped keychain key
-// (written by SaveForEmail during /login). Returns an error if no such
-// token exists — the user must /login for that account first.
+// SetActive switches the active account. Requires that the email already
+// has a saved token (from a prior /login).
 func SetActive(store *AccountStore, email string) error {
-	s := newDefaultStorage()
-	if _, err := s.Get(Service, persistKeyForEmail(email)); err != nil {
-		return fmt.Errorf("no saved credentials for %q — run /login to add this account", email)
+	s := secure.NewDefault()
+	if _, err := s.Get(Service, keyForEmail(email)); err != nil {
+		return fmt.Errorf("no saved credentials for %q — run /login first", email)
 	}
-	// Register in the store if first time seeing this email.
 	if _, ok := store.Accounts[email]; !ok {
 		store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
 	}
@@ -189,17 +164,16 @@ func SetActive(store *AccountStore, email string) error {
 	return saveAccountStore(*store)
 }
 
-// ListAccounts returns all registered accounts with the active one marked.
-func ListAccounts() (AccountStore, error) {
-	return LoadAccountStore()
-}
-
-// ActiveEmail returns the email of the currently active account, or "" if
-// only a legacy single-account token exists.
+// ActiveEmail returns the currently active account email, or "" if none.
 func ActiveEmail() string {
 	store, err := LoadAccountStore()
 	if err != nil {
 		return ""
 	}
 	return store.Active
+}
+
+// ListAccounts returns all registered accounts.
+func ListAccounts() (AccountStore, error) {
+	return LoadAccountStore()
 }

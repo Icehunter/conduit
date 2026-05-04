@@ -13,29 +13,31 @@ import (
 	"github.com/icehunter/conduit/internal/secure"
 )
 
-func TestDelete_RemovesTokens(t *testing.T) {
+const testEmail = "test@example.com"
+
+func TestDeleteForEmail_RemovesTokens(t *testing.T) {
 	s := secure.NewMemoryStorage()
 	in := PersistedTokens{AccessToken: "AT", RefreshToken: "RT"}
-	if err := Save(s, in); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := SaveForEmail(s, in, testEmail); err != nil {
+		t.Fatalf("SaveForEmail: %v", err)
 	}
-	if err := Delete(s); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := DeleteForEmail(s, testEmail); err != nil {
+		t.Fatalf("DeleteForEmail: %v", err)
 	}
-	if _, err := Load(s); !errors.Is(err, secure.ErrNotFound) {
-		t.Errorf("after Delete, Load should return ErrNotFound; got %v", err)
+	_, err := LoadForEmail(s, testEmail)
+	if !errors.Is(err, secure.ErrNotFound) {
+		t.Errorf("after Delete, LoadForEmail should return ErrNotFound; got %v", err)
 	}
 }
 
-func TestDelete_IdempotentWhenAbsent(t *testing.T) {
+func TestDeleteForEmail_IdempotentWhenAbsent(t *testing.T) {
 	s := secure.NewMemoryStorage()
-	// No Save first — Delete-when-already-empty should be a no-op success.
-	if err := Delete(s); err != nil {
+	if err := DeleteForEmail(s, testEmail); err != nil {
 		t.Errorf("Delete on empty store should succeed; got %v", err)
 	}
 }
 
-func TestSaveLoad_RoundTrip(t *testing.T) {
+func TestSaveLoadForEmail_RoundTrip(t *testing.T) {
 	s := secure.NewMemoryStorage()
 	in := PersistedTokens{
 		AccessToken:  "AT",
@@ -44,12 +46,12 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 		TokenType:    "bearer",
 		Scopes:       []string{"user:profile", "user:inference"},
 	}
-	if err := Save(s, in); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := SaveForEmail(s, in, testEmail); err != nil {
+		t.Fatalf("SaveForEmail: %v", err)
 	}
-	out, err := Load(s)
+	out, err := LoadForEmail(s, testEmail)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadForEmail: %v", err)
 	}
 	if out.AccessToken != in.AccessToken || out.RefreshToken != in.RefreshToken {
 		t.Errorf("tokens mismatch: %+v", out)
@@ -59,9 +61,9 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoad_NotFoundMaps(t *testing.T) {
+func TestLoadForEmail_NotFoundMaps(t *testing.T) {
 	s := secure.NewMemoryStorage()
-	_, err := Load(s)
+	_, err := LoadForEmail(s, testEmail)
 	if !errors.Is(err, secure.ErrNotFound) {
 		t.Fatalf("err = %v; want secure.ErrNotFound", err)
 	}
@@ -69,7 +71,7 @@ func TestLoad_NotFoundMaps(t *testing.T) {
 
 func TestEnsureFresh_NotLoggedIn(t *testing.T) {
 	s := secure.NewMemoryStorage()
-	_, err := EnsureFresh(context.Background(), s, nil, time.Now(), time.Minute)
+	_, err := EnsureFresh(context.Background(), s, nil, testEmail, time.Now(), time.Minute)
 	if !errors.Is(err, ErrNotLoggedIn) {
 		t.Fatalf("err = %v; want ErrNotLoggedIn", err)
 	}
@@ -78,12 +80,12 @@ func TestEnsureFresh_NotLoggedIn(t *testing.T) {
 func TestEnsureFresh_NoRefreshNeeded(t *testing.T) {
 	s := secure.NewMemoryStorage()
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
-	_ = Save(s, PersistedTokens{
+	_ = SaveForEmail(s, PersistedTokens{
 		AccessToken:  "still-good",
 		RefreshToken: "RT",
 		ExpiresAt:    now.Add(1 * time.Hour),
-	})
-	out, err := EnsureFresh(context.Background(), s, nil, now, 5*time.Minute)
+	}, testEmail)
+	out, err := EnsureFresh(context.Background(), s, nil, testEmail, now, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("EnsureFresh: %v", err)
 	}
@@ -119,14 +121,14 @@ func TestEnsureFresh_RefreshesAndPersists(t *testing.T) {
 	tc := NewTokenClient(cfg, tokenSrv.Client())
 
 	s := secure.NewMemoryStorage()
-	_ = Save(s, PersistedTokens{
+	_ = SaveForEmail(s, PersistedTokens{
 		AccessToken:  "OLD_AT",
 		RefreshToken: "OLD_RT",
-		ExpiresAt:    now.Add(-1 * time.Hour), // already expired
+		ExpiresAt:    now.Add(-1 * time.Hour),
 		Scopes:       []string{"user:profile", "user:inference"},
-	})
+	}, testEmail)
 
-	out, err := EnsureFresh(context.Background(), s, tc, now, 5*time.Minute)
+	out, err := EnsureFresh(context.Background(), s, tc, testEmail, now, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("EnsureFresh: %v", err)
 	}
@@ -140,8 +142,8 @@ func TestEnsureFresh_RefreshesAndPersists(t *testing.T) {
 		t.Errorf("ExpiresAt = %v; want %v", out.ExpiresAt, now.Add(2*time.Hour))
 	}
 
-	// Check persistence.
-	again, err := Load(s)
+	// Verify persistence.
+	again, err := LoadForEmail(s, testEmail)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}

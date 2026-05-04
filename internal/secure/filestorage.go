@@ -37,24 +37,14 @@ func NewFileStorage(path string) *FileStorage {
 	return &FileStorage{path: path, cache: map[string]string{}}
 }
 
-// DefaultFilePath returns ~/.claude/.conduit-credentials.json — conduit's
-// own file-based credential store, separate from the real Claude Code.
-func DefaultFilePath() (string, error) {
+// newFileStorage returns a FileStorage at ~/.claude/.conduit-credentials.json.
+// Used as the fallback when the platform keychain is unavailable.
+func newFileStorage() *FileStorage {
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("secure: locate home dir: %w", err)
-	}
-	return filepath.Join(home, ".claude", ".conduit-credentials.json"), nil
-}
-
-// newLinuxFileStorage returns a FileStorage at the default file path.
-// Used directly on Linux and as a fallback on macOS.
-func newLinuxFileStorage() *FileStorage {
-	path, err := DefaultFilePath()
 	if err != nil {
 		return NewFileStorage("")
 	}
-	return NewFileStorage(path)
+	return NewFileStorage(filepath.Join(home, ".claude", ".conduit-credentials.json"))
 }
 
 func (s *FileStorage) loadLocked() error {

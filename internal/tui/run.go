@@ -612,27 +612,21 @@ func itoa(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// logoutCredentials clears the active account's OAuth token bundle from
-// secure storage and removes it from accounts.json.
+// logoutCredentials removes the active account's token from the keychain
+// and clears it from accounts.json.
 func logoutCredentials() error {
 	store, err := defaultSecureStorage()
 	if err != nil {
 		return err
 	}
 	email := auth.ActiveEmail()
-	if email != "" {
-		return auth.DeleteForEmail(store, email)
+	if email == "" {
+		return fmt.Errorf("not logged in")
 	}
-	return auth.Delete(store) // legacy single-account logout
+	return auth.DeleteForEmail(store, email)
 }
 
-// defaultSecureStorage returns the file-backed store at the canonical
-// path. Mirrors the construction in cmd/conduit/main.go's loadAuth so
-// /logout writes to the same place login reads from.
+// defaultSecureStorage returns the platform keychain storage.
 func defaultSecureStorage() (secure.Storage, error) {
-	path, err := secure.DefaultFilePath()
-	if err != nil {
-		return nil, err
-	}
-	return secure.NewFileStorage(path), nil
+	return secure.NewDefault(), nil
 }

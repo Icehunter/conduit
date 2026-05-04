@@ -156,33 +156,11 @@ func newAPIClient(bearer string) *api.Client {
 }
 
 // loadAuth loads and refreshes tokens for the active account.
-//
-// When accounts.json has an active email, only the email-scoped keychain key
-// is used. No fallback to the legacy key — that would silently load the wrong
-// account's token after a switch.
-//
-// When no active email is set (first run / fresh install), the legacy
-// "oauth-tokens" key is tried and auto-migrated to an email-scoped key.
 func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	store := secure.NewDefault()
 	cfg := auth.ProdConfig
 	tc := auth.NewTokenClient(cfg, nil)
-
-	email := auth.ActiveEmail()
-	if email != "" {
-		// Specific account selected — use only its scoped key.
-		return auth.EnsureFreshForEmail(ctx, store, tc, email, time.Now(), 5*time.Minute)
-	}
-
-	// First run / no active account: try legacy key and auto-migrate.
-	tok, err := auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
-	if err != nil {
-		return tok, err
-	}
-	if p, perr := profile.Fetch(ctx, tok.AccessToken); perr == nil && p.Email != "" {
-		_ = auth.SaveForEmail(store, tok, p.Email)
-	}
-	return tok, nil
+	return auth.EnsureFresh(ctx, store, tc, auth.ActiveEmail(), time.Now(), 5*time.Minute)
 }
 
 // buildSkillEntries converts loaded plugin commands + bundled skills into
@@ -461,11 +439,8 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Connect MCP servers in the background; non-fatal if config missing or servers fail.
 	mcpManager := mcp.NewManager()
-	// Wire the same secure storage the Anthropic auth uses so per-server
-	// MCP OAuth tokens persist alongside (under a different service key).
-	if storePath, err := secure.DefaultFilePath(); err == nil {
-		mcpManager.SetSecureStore(secure.NewFileStorage(storePath))
-	}
+	// Wire the platform keychain so MCP OAuth tokens persist securely.
+	mcpManager.SetSecureStore(secure.NewDefault())
 	_ = mcpManager.ConnectAll(ctx, cwd)
 
 	// Load plugins (non-fatal — missing plugins don't block startup).

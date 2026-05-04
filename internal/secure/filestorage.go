@@ -37,16 +37,14 @@ func NewFileStorage(path string) *FileStorage {
 	return &FileStorage{path: path, cache: map[string]string{}}
 }
 
-// DefaultFilePath returns the platform-appropriate path under the user's
-// config directory: ~/.config/claude-code/credentials.json on Linux,
-// ~/Library/Application Support/claude-code/credentials.json on macOS,
-// %AppData%\claude-code\credentials.json on Windows.
+// DefaultFilePath returns ~/.claude/credentials.json — conduit's own
+// credential store, separate from the real Claude Code installation.
 func DefaultFilePath() (string, error) {
-	cfg, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("secure: locate user config dir: %w", err)
+		return "", fmt.Errorf("secure: locate home dir: %w", err)
 	}
-	return filepath.Join(cfg, "claude-code", "credentials.json"), nil
+	return filepath.Join(home, ".claude", "credentials.json"), nil
 }
 
 func (s *FileStorage) loadLocked() error {

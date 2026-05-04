@@ -339,6 +339,10 @@ type Model struct {
 	// Non-nil when active.
 	settingsPanel *settingsPanelState
 
+	// accountPanel is the full-screen account manager overlay.
+	// Non-nil when active.
+	accountPanel *accountPanelState
+
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
 	permissionMode permissions.Mode
@@ -554,6 +558,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Normalize line endings: terminals may send \r\n or bare \r.
 		hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 			m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
+			m.accountPanel != nil ||
 			m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
 			m.doctorPanel != nil || m.searchPanel != nil
 		if !hasOverlay {
@@ -775,6 +780,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoBottom()
 		return m, nil
 
+	case accountSwitchedMsg:
+		// Switch active account and reload credentials.
+		store, err := auth.ListAccounts()
+		if err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "account switch: " + err.Error()})
+			m.refreshViewport()
+			return m, nil
+		}
+		if err := auth.SetActive(&store, msg.email); err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: err.Error()})
+			m.refreshViewport()
+			return m, nil
+		}
+		if m.cfg.LoadAuth != nil && m.cfg.NewAPIClient != nil && m.cfg.Loop != nil {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switching to %s…", msg.email)})
+			m.refreshViewport()
+			return m, func() tea.Msg {
+				ctx := context.Background()
+				bearer, prof, err := m.cfg.LoadAuth(ctx)
+				if err != nil {
+					if errors.Is(err, auth.ErrNotLoggedIn) {
+						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to add this account", msg.email)}
+					}
+					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
+				}
+				return authReloadMsg{client: m.cfg.NewAPIClient(bearer), profile: prof}
+			}
+		}
+		m.refreshViewport()
+		return m, nil
+
+	case commands_loginMsg:
+		// Trigger login flow from account panel "+ Add account" action.
+		m.loginPrompt = &loginPromptState{selected: 0}
+		m.refreshViewport()
+		return m, nil
+
 	case permissionAskMsg:
 		m.permPrompt = &permissionPromptState{
 			toolName:  msg.toolName,
@@ -965,8 +1007,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Skip textarea/viewport when an overlay is active — they must not
 	// consume keys (especially Escape) that belong to the overlay.
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
-		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.permPrompt != nil ||
-		m.picker != nil || m.onboarding != nil
+		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil || m.accountPanel != nil ||
+		m.permPrompt != nil || m.picker != nil || m.onboarding != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		prevLines := m.input.LineCount()
@@ -1057,6 +1099,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if m.settingsPanel != nil {
 		m2, cmd, consumed := m.handleSettingsPanelKey(msg)
 		return m2, cmd, consumed
+	}
+	// Account panel intercepts all keys when active.
+	if m.accountPanel != nil {
+		m2, cmd := m.handleAccountPanelKey(msg)
+		return m2, cmd, true
 	}
 	// Permission prompt intercepts all keys when active.
 	if m.permPrompt != nil {
@@ -3564,6 +3611,11 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Added directory: " + res.Text})
 		m.refreshViewport()
 		return m, nil
+	case "account-panel":
+		m.accountPanel = newAccountPanel()
+		m.refreshViewport()
+		return m, nil
+
 	case "mcp-dialog":
 		p := newPanel(panelTabMCP)
 		p.mcpRaw = res.Text
@@ -4348,6 +4400,12 @@ func (m Model) View() tea.View {
 	if m.settingsPanel != nil {
 		sp := m.renderSettingsPanel()
 		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)))
+	}
+
+	// Account panel is a full-screen takeover.
+	if m.accountPanel != nil {
+		ap := m.renderAccountPanel()
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, ap, statusBar)))
 	}
 
 	// (Overlay was computed earlier so we could shrink the viewport.)

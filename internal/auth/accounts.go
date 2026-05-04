@@ -62,6 +62,10 @@ func LoadAccountStore() (AccountStore, error) {
 	return s, nil
 }
 
+// SaveAccountStore writes the account store to ~/.claude/accounts.json.
+// Exported so the TUI account panel can remove accounts without a full delete.
+func SaveAccountStore(s AccountStore) error { return saveAccountStore(s) }
+
 func saveAccountStore(s AccountStore) error {
 	p, err := accountsPath()
 	if err != nil {

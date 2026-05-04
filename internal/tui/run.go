@@ -161,6 +161,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPermissionsCommand(reg, opts.gate)
 	commands.RegisterHooksCommand(reg, opts.hooksConfig)
 	commands.RegisterCoordinatorCommand(reg)
+	commands.RegisterAccountCommand(reg)
 	commands.RegisterMiscCommands(reg)
 	commands.RegisterTerminalSetupCommand(reg)
 	commands.RegisterPromptCommands(reg)

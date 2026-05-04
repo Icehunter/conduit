@@ -1,11 +1,29 @@
-# claude-go
+# conduit
 
-A 1:1 Go port of Claude Code v2.1.126 with RTK token-savings folded in-process.
+<p align="center">
+  <a href="https://github.com/ultraworkers/claw-code">ultraworkers/claw-code</a>
+  ·
+  <a href="./USAGE.md">Usage</a>
+  ·
+  <a href="./rust/README.md">Rust workspace</a>
+  ·
+  <a href="./PARITY.md">Parity</a>
+  ·
+  <a href="./ROADMAP.md">Roadmap</a>
+  ·
+  <a href="https://discord.gg/5TUQKqFWd">UltraWorkers Discord</a>
+</p>
 
-Status: M1 in progress.
+<p align="center">
+  <a href="https://star-history.com/#ultraworkers/claw-code&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ultraworkers/claw-code&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ultraworkers/claw-code&type=Date" />
+      <img alt="Star history for ultraworkers/claw-code" src="https://api.star-history.com/svg?repos=ultraworkers/claw-code&type=Date" width="600" />
+    </picture>
+  </a>
+</p>
 
-References
-- Plan: `~/.claude/plans/yes-as-i-also-jaunty-pillow.md`
-- TS source: `/Volumes/Engineering/Icehunter/claude-code/`
-- Decoded shipping bundle: `/Volumes/Engineering/Icehunter/bun-demincer/decoded/` (v2.1.126)
-- RTK: `/Volumes/Engineering/Icehunter/rtk/`
+<p align="center">
+  <img src="assets/claw-hero.jpeg" alt="Claw Code" width="300" />
+</p>

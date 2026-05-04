@@ -89,15 +89,16 @@ type Message struct {
 }
 
 // ContentBlock is one block of content in a message.
-// Union of text | image | tool_use | tool_result. Fields are set according to Type.
+// Union of text | image | document | tool_use | tool_result. Fields are set according to Type.
 type ContentBlock struct {
 	// Common
-	Type string `json:"type"` // "text" | "image" | "tool_use" | "tool_result"
+	Type string `json:"type"` // "text" | "image" | "document" | "tool_use" | "tool_result"
 
 	// type=text
 	Text string `json:"text,omitempty"`
 
-	// type=image (user-sent images — clipboard paste, file attach)
+	// type=image or type=document (user-sent content — clipboard paste, file attach)
+	// For documents: source.media_type = "application/pdf"
 	Source *ImageSource `json:"source,omitempty"`
 
 	// type=tool_use (assistant → us)

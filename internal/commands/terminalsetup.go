@@ -36,9 +36,12 @@ func RegisterTerminalSetupCommand(r *Registry) {
 		// camelCase Name would never match. CC's /help shows it as
 		// "/terminalSetup"; we mirror that visually only via Description.
 		Name:        "terminalsetup",
-		Description: "Detect your terminal and show how to enable Shift+Enter for newlines",
-		Handler: func(string) Result {
+		Description: "Configure Shift+Enter for your terminal (/terminalSetup --apply to write config automatically)",
+		Handler: func(args string) Result {
 			term := os.Getenv("TERM_PROGRAM")
+			if strings.TrimSpace(args) == "--apply" {
+				return Result{Type: "text", Text: applyTerminalSetup(term)}
+			}
 			return Result{Type: "text", Text: terminalSetupAdvice(term)}
 		},
 	})

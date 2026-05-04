@@ -354,6 +354,8 @@ type Model struct {
 	// pendingImages holds clipboard images queued to send with the next
 	// message. Each ctrl+v appends one image. Cleared on submit or Esc.
 	pendingImages []*attach.Image
+	// pendingPDFs holds clipboard PDFs queued to send with the next message.
+	pendingPDFs []*attach.PDF
 
 	// pastedBlocks holds large text pastes that are displayed as
 	// "[Pasted text #N +X lines]" placeholders in the textarea. The
@@ -1158,13 +1160,14 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "tab", "esc":
 		// Clear pending images and paste placeholders on Esc.
 		if msg.String() == "esc" {
-			if len(m.pendingImages) > 0 || len(m.pastedBlocks) > 0 {
-				n := len(m.pendingImages)
+			if len(m.pendingImages) > 0 || len(m.pendingPDFs) > 0 || len(m.pastedBlocks) > 0 {
+				n := len(m.pendingImages) + len(m.pendingPDFs)
 				m.pendingImages = nil
+				m.pendingPDFs = nil
 				m.pastedBlocks = nil
 				m.input.SetValue(rePasteToken.ReplaceAllString(m.input.Value(), ""))
 				if n > 0 {
-					m.flashMsg = fmt.Sprintf("%d image(s) and paste(s) cleared.", n)
+					m.flashMsg = fmt.Sprintf("%d attachment(s) and paste(s) cleared.", n)
 				} else {
 					m.flashMsg = "Paste(s) cleared."
 				}
@@ -1229,25 +1232,27 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Quit, true
 
 	case "ctrl+v":
-		// Synchronous clipboard image check (~50ms on macOS via osascript).
-		// If clipboard has an image, attach it and consume the key.
-		// If clipboard has text (not an image), return consumed=false so
-		// the textarea handles normal text paste.
-		img, err := attach.ReadClipboardImage()
-		switch {
-		case err == nil && img != nil:
+		// Try image first, then PDF, then fall through to textarea text paste.
+		img, imgErr := attach.ReadClipboardImage()
+		if imgErr == nil && img != nil {
 			m.pendingImages = append(m.pendingImages, img)
-			n := len(m.pendingImages)
-			m.flashMsg = fmt.Sprintf("📎 %d image(s) attached  (ctrl+v for more · Enter to send · Esc to clear)", n)
+			n := len(m.pendingImages) + len(m.pendingPDFs)
+			m.flashMsg = fmt.Sprintf("📎 %d attachment(s)  (ctrl+v for more · Enter to send · Esc to clear)", n)
 			return m, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
-		case errors.Is(err, attach.ErrNotSupported):
-			// Platform doesn't support image paste — let textarea handle ctrl+v normally.
-			return m, nil, false
-		default:
-			// ErrNoImage or osascript error — clipboard likely has text.
-			// Fall through to textarea for normal text paste.
+		}
+		if errors.Is(imgErr, attach.ErrNotSupported) {
 			return m, nil, false
 		}
+		// No image — try PDF.
+		pdf, pdfErr := attach.ReadClipboardPDF()
+		if pdfErr == nil && pdf != nil {
+			m.pendingPDFs = append(m.pendingPDFs, pdf)
+			n := len(m.pendingImages) + len(m.pendingPDFs)
+			m.flashMsg = fmt.Sprintf("📎 %d attachment(s)  (ctrl+v for more · Enter to send · Esc to clear)", n)
+			return m, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		}
+		// Clipboard has text — fall through to textarea for normal paste.
+		return m, nil, false
 
 	case "backspace":
 		// If the cursor is immediately after a paste placeholder token, delete
@@ -1388,11 +1393,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		apiText := m.expandPastePlaceholders(text)
 		m.pastedBlocks = nil
 
-		// Build user message content. Prepend any queued images as image
-		// blocks so Claude sees screenshot(s) alongside the text. CC
-		// supports multiple images; we mirror that by accumulating on
-		// each ctrl+v and sending all at once on Enter.
-		userContent := make([]api.ContentBlock, 0, len(m.pendingImages)+1)
+		// Build user message content. Prepend any queued images/PDFs so Claude
+		// sees attachments alongside the text. Accumulate on ctrl+v, send all on Enter.
+		userContent := make([]api.ContentBlock, 0, len(m.pendingImages)+len(m.pendingPDFs)+1)
 		for _, img := range m.pendingImages {
 			userContent = append(userContent, api.ContentBlock{
 				Type: "image",
@@ -1404,6 +1407,17 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			})
 		}
 		m.pendingImages = nil
+		for _, pdf := range m.pendingPDFs {
+			userContent = append(userContent, api.ContentBlock{
+				Type: "document",
+				Source: &api.ImageSource{
+					Type:      "base64",
+					MediaType: pdf.MediaType,
+					Data:      pdf.Data,
+				},
+			})
+		}
+		m.pendingPDFs = nil
 		// Process @file mentions: inject referenced file/dir contents as
 		// additional text blocks before the user's message text.
 		if cwd, err := os.Getwd(); err == nil {
@@ -4124,9 +4138,16 @@ func (m Model) View() tea.View {
 		}
 		innerView = strings.Join(fixed, "\n")
 	}
-	// If clipboard images are queued, prepend an attachment badge.
-	if n := len(m.pendingImages); n > 0 {
-		label := fmt.Sprintf("📎 [%d image(s)]", n)
+	// If clipboard images or PDFs are queued, prepend an attachment badge.
+	if n := len(m.pendingImages) + len(m.pendingPDFs); n > 0 {
+		parts := []string{}
+		if ni := len(m.pendingImages); ni > 0 {
+			parts = append(parts, fmt.Sprintf("%d image(s)", ni))
+		}
+		if np := len(m.pendingPDFs); np > 0 {
+			parts = append(parts, fmt.Sprintf("%d PDF(s)", np))
+		}
+		label := "📎 [" + strings.Join(parts, ", ") + "]"
 		badge := styleStatusAccent.Render(label) + "  " + stylePickerDesc.Render("ctrl+v for more · Enter to send · Esc to clear")
 		innerView = badge + "\n" + innerView
 	}

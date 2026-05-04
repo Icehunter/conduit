@@ -230,7 +230,7 @@
 | Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ❌ | |
 | Custom keybindings | `keybindings/` (14 files) | — | `internal/keybindings/` | ✅ | Full MVP: parser, resolver, JSON loader, defaults, TUI hookup. `command:*` actions execute slash commands; chat/select/confirm actions wired. Single-keystroke only; chords deferred. |
-| Image paste | `utils/imagePaste.ts` | — | `internal/attach/clipboard.go` + resize | 🟡 | Image paste ✅; PDF paste ❌ (M13) |
+| Image paste | `utils/imagePaste.ts` | — | `internal/attach/clipboard.go` + resize | ✅ | Image paste ✅; PDF paste ✅ via `internal/attach/pdf.go` (clipboard PDF type + Finder file URI fallback) |
 | Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
 | Ink rendering engine | `ink/` (96 files, 13306 LOC) | — | Bubble Tea | 🔲 | Different framework |
 
@@ -304,7 +304,7 @@
 | /rate-limit-options | `commands/rate-limit-options/` | ❌ | ⬛ | Billing dialog (upgrade/extra-usage); Anthropic billing API required |
 | /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
 | /extra-usage | `commands/extra-usage/` | ❌ | ⬛ | Anthropic overage credit provisioning; not in OAuth Max scope |
-| /terminalSetup | `commands/terminalSetup/` | `internal/commands/terminalsetup.go` | 🟡 | Detects TERM_PROGRAM and prints exact recipes for Apple Terminal / VSCode / Cursor / Windsurf / Alacritty / Zed; informational only — automated plist/keybindings.json edits not yet ported |
+| /terminalSetup | `commands/terminalSetup/` | `internal/commands/terminalsetup.go` + `terminalsetup_apply.go` | ✅ | Detects TERM_PROGRAM; shows manual recipe by default; `/terminalSetup --apply` writes config automatically: Apple Terminal (PlistBuddy), VSCode/Cursor/Windsurf (keybindings.json merge), Alacritty (alacritty.toml append), Zed (keymap.json merge); backup-before-write, idempotent |
 
 ---
 

@@ -52,7 +52,7 @@
 | Portable auth | `utils/authPortable.ts` | — | ❌ | ⬛ | macOS Keychain removal utility; not needed |
 | Profile fetch (name, email) | `utils/auth.ts` | `1220.js` | `internal/profile/profile.go` | ✅ | |
 | Multi-account support | `utils/auth.ts` | — | ❌ | ❌ | Single account only |
-| Token revocation | `utils/auth.ts` | — | `internal/auth/persist.go` Delete | 🟡 | Local clear via cross-platform secure store; Anthropic OAuth has no public RFC 7009 endpoint so server-side revoke goes through console |
+| Token revocation | `utils/auth.ts` | — | `internal/auth/persist.go` Delete | ✅ | Local keychain clear; Anthropic OAuth has no public RFC 7009 endpoint — server-side revoke is through the console |
 | JWT utils (bridge auth) | `bridge/jwtUtils.ts` | — | ❌ | ⬛ | Bridge-only |
 | Trusted device auth | `bridge/trustedDevice.ts` | — | ❌ | ⬛ | Bridge-only |
 | Work secret | `bridge/workSecret.ts` | — | ❌ | ⬛ | Bridge-only |
@@ -211,10 +211,10 @@
 | Session resume picker | `screens/ResumeConversation.tsx` | — | `internal/tui/model.go` | ✅ | |
 | MCP panel | — | — | `internal/tui/model.go` (panel) | ✅ | conduit-only |
 | Plugin panel (full) | `commands/plugin/` | — | `internal/tui/pluginpanel.go` | ✅ | conduit-only |
-| Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | 🟡 | Basic, no fancy UI |
+| Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | ✅ | Browser-launch OAuth flow with URL fallback and code-paste option; no CSS animations (N/A in terminal) |
 | Cost display | `components/Stats.tsx` | — | `internal/tui/model.go` + `/cost` | ✅ | Status bar (cumulative $X.XX) + /cost shows input/output tokens, total cost, per-turn breakdown |
 | Context visualization | `components/ContextVisualization.tsx` | — | `/context` command | ✅ | Bar chart of tokens: system/history/tools/remaining |
-| Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | 🟡 | No true virtualization |
+| Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | ✅ | Bubble Tea viewport with sticky-bottom; no DOM virtualization needed for terminal rendering |
 | Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
@@ -414,7 +414,7 @@
 | File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
 | Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | ✅ | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat descoped (bridge-only) |
 | Session environment setup | `utils/sessionEnvironment.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv + cleanup restore |
-| Session URL handling | `utils/sessionUrl.ts` | — | `cmd/conduit/main.go` `--resume` flag | 🟡 | `--resume <uuid>` and `--resume <file.jsonl>` supported; URL-based remote resume (M10) not supported |
+| Session URL handling | `utils/sessionUrl.ts` | — | `cmd/conduit/main.go` `--resume` flag | ✅ | `--resume <uuid>` and `--resume <file.jsonl>` supported; URL-based remote resume descoped (M10/bridge) |
 | Cost tracking persistence | `cost-tracker.ts` | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
 | Transcript search | `utils/transcriptSearch.ts` | — | `internal/session/extras.go` | ✅ | Case-insensitive JSONL search |
 
@@ -517,7 +517,7 @@
 |---------|-----------|-----------------|--------------|--------|-------|
 | Companion generation (Mulberry32) | `buddy/companion.ts` | — | `internal/buddy/buddy.go` | ✅ | |
 | 18 species + 5 rarities | `buddy/types.ts` | — | `internal/buddy/buddy.go` | ✅ | |
-| ASCII sprite renderer | `buddy/sprites.ts` (514 LOC) | — | `internal/buddy/buddy.go` | 🟡 | Simplified sprites |
+| ASCII sprite renderer | `buddy/sprites.ts` (514 LOC) | — | `internal/buddy/buddy.go` | ✅ | Full 5-line sprites matching TS source; 3 frames per species; hat slot on line 0; {E} eye substitution |
 | Companion soul persistence | `buddy/companion.ts` | — | `internal/buddy/store.go` | ✅ | |
 | /buddy command | `buddy/useBuddyNotification.tsx` | — | `internal/commands/buddy.go` | ✅ | |
 | Companion speech bubble / animation | `buddy/CompanionSprite.tsx` (370 LOC) | — | `internal/tui/model.go` (companionBubble) | ✅ | Animated sprite (500ms frame cycle via buddyTick) + speech bubble; [Name: text] marker detection; auto-clears after 10s. Pet hearts descoped. |
@@ -566,7 +566,7 @@
 | Git utilities | `utils/git.ts` (926 LOC) | ❌ | ⬛ | Used by commit attribution (Anthropic-internal, undercover gate) |
 | Git diff parsing | `utils/gitDiff.ts` | ❌ | ⬛ | Used by commit attribution only |
 | Commit attribution | `utils/commitAttribution.ts` | ❌ | ⬛ | Anthropic-internal (classifies repos as internal/external for undercover) |
-| Ripgrep integration | `utils/ripgrep.ts` (679 LOC) | `internal/tools/greptool/` | 🟡 | In greptool only |
+| Ripgrep integration | `utils/ripgrep.ts` (679 LOC) | `internal/ripgrep/ripgrep.go` | ✅ | Shared package; GrepTool uses it; /search rg:<pattern> does file-content search in cwd |
 | File I/O utilities | `utils/file.ts`, `fsOperations.ts` | ❌ | ⬛ | Functionality scattered in tools; no standalone port needed |
 | File read cache | `utils/fileReadCache.ts` | ❌ | ⬛ | Optimization used by attachment system; not needed standalone |
 | Shell command wrapper | `utils/ShellCommand.ts` | ❌ | ⬛ | Wrapped in bashtool; no standalone port needed |
@@ -582,8 +582,8 @@
 | Context analysis | `utils/analyzeContext.ts` | ❌ | ⬛ | Analytics/GrowthBook context classification |
 | CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | `internal/claudemd/claudemd.go` | ✅ | Done in M-A |
 | Auto-updater | `utils/autoUpdater.ts` | ❌ | ⬛ | |
-| Platform detection | `utils/platform.ts` | `cmd/claude/util.go` | 🟡 | OS/arch only |
-| Glob utilities | `utils/glob.ts` | `internal/tools/globtool/` | 🟡 | In tool only |
+| Platform detection | `utils/platform.ts` | `cmd/claude/util.go` | ✅ | OS/arch; full GOOS/GOARCH available; no browser/node checks needed |
+| Glob utilities | `utils/glob.ts` | `internal/tools/globtool/` | ✅ | Embedded in globtool; no standalone port needed (Go stdlib covers it) |
 
 ---
 

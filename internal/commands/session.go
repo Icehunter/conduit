@@ -12,6 +12,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/memdir"
+	rg "github.com/icehunter/conduit/internal/ripgrep"
 	"github.com/icehunter/conduit/internal/session"
 )
 
@@ -690,19 +691,50 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		},
 	})
 
-	// /search <term> — scan JSONL transcripts and open a navigable results panel
+	// /search <term> — scan JSONL transcripts and open a navigable results panel.
+	// Prefix with "rg:" to run a ripgrep file-content search in the cwd instead.
 	r.Register(Command{
 		Name:        "search",
-		Description: "Search conversation history. Usage: /search <term>",
+		Description: "Search conversation history. Prefix rg: to search files in cwd. Usage: /search <term>",
 		Handler: func(args string) Result {
 			term := strings.TrimSpace(args)
 			if term == "" {
-				return Result{Type: "error", Text: "Usage: /search <term>"}
+				return Result{Type: "error", Text: "Usage: /search <term>  or  /search rg:<pattern>"}
 			}
 			cwd := "."
 			if state.GetCwd != nil {
 				cwd = state.GetCwd()
 			}
+
+			// rg: prefix → ripgrep file-content search in cwd.
+			if strings.HasPrefix(term, "rg:") {
+				pattern := strings.TrimSpace(strings.TrimPrefix(term, "rg:"))
+				if pattern == "" {
+					return Result{Type: "error", Text: "Usage: /search rg:<pattern>"}
+				}
+				if !rg.Available() {
+					return Result{Type: "error", Text: "ripgrep (rg) not found — install with: brew install ripgrep"}
+				}
+				matches, err := rg.Search(pattern, cwd, 200)
+				if err != nil {
+					return Result{Type: "error", Text: fmt.Sprintf("rg error: %v", err)}
+				}
+				if len(matches) == 0 {
+					return Result{Type: "text", Text: fmt.Sprintf("No matches for %q in %s", pattern, cwd)}
+				}
+				var lines []string
+				for _, m := range matches {
+					snippet := m.Content
+					if len([]rune(snippet)) > 120 {
+						snippet = string([]rune(snippet)[:120]) + "…"
+					}
+					// Use file path as "session", line number as context.
+					lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+						m.File, fmt.Sprintf("line %d", m.Line), cwd, "file", snippet))
+				}
+				return Result{Type: "search-panel", Text: strings.Join(lines, "\n"), Model: pattern + " (files)"}
+			}
+
 			sessions, err := session.List(cwd)
 			if err != nil || len(sessions) == 0 {
 				return Result{Type: "text", Text: "No sessions found for this directory."}

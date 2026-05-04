@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	rg "github.com/icehunter/conduit/internal/ripgrep"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
@@ -133,7 +134,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		outputMode = "files_with_matches"
 	}
 
-	rgBin := findRg()
+	rgBin := rg.Find()
 	if rgBin == "" {
 		return tool.ErrorResult("ripgrep (rg) not found on PATH — install with: brew install ripgrep"), nil
 	}
@@ -388,22 +389,3 @@ func plural(n int, word string) string {
 	return word + "s"
 }
 
-// findRg locates the ripgrep binary. It checks PATH first, then common
-// Homebrew locations (macOS) so tests work even when shell function aliases
-// shadow the real binary.
-func findRg() string {
-	if p, err := exec.LookPath("rg"); err == nil {
-		return p
-	}
-	candidates := []string{
-		"/opt/homebrew/bin/rg",
-		"/usr/local/bin/rg",
-		"/usr/bin/rg",
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-	return ""
-}

@@ -36,11 +36,16 @@ func RegisterMiscCommands(r *Registry) {
 		},
 	})
 
-	// /login
+	// /login [--switch <email>]
 	r.Register(Command{
 		Name:        "login",
-		Description: "Sign in or switch accounts",
-		Handler: func(string) Result {
+		Description: "Sign in or add an account (/login --switch <email> to switch active account)",
+		Handler: func(args string) Result {
+			args = strings.TrimSpace(args)
+			if strings.HasPrefix(args, "--switch") {
+				email := strings.TrimSpace(strings.TrimPrefix(args, "--switch"))
+				return Result{Type: "account-switch", Text: email}
+			}
 			return Result{Type: "login"}
 		},
 	})

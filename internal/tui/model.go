@@ -24,6 +24,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/attach"
+	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/coordinator"
@@ -3451,6 +3452,41 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		return m, nil
 	case "login":
 		m.loginPrompt = &loginPromptState{selected: 0}
+		m.refreshViewport()
+		return m, nil
+	case "account-switch":
+		email := res.Text
+		store, err := auth.ListAccounts()
+		if err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "account-switch: " + err.Error()})
+			m.refreshViewport()
+			return m, nil
+		}
+		if email == "" {
+			// No email given — list accounts.
+			var sb strings.Builder
+			sb.WriteString("Logged-in accounts:\n\n")
+			for e, entry := range store.Accounts {
+				active := ""
+				if e == store.Active {
+					active = "  ← active"
+				}
+				sb.WriteString(fmt.Sprintf("  %s  (added %s)%s\n", entry.Email, entry.AddedAt.Format("2006-01-02"), active))
+			}
+			if len(store.Accounts) == 0 {
+				sb.WriteString("  (none — run /login to add an account)\n")
+			}
+			sb.WriteString("\nUse /login --switch <email> to activate an account.")
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: sb.String()})
+			m.refreshViewport()
+			return m, nil
+		}
+		if err := auth.SetActive(&store, email); err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: err.Error()})
+			m.refreshViewport()
+			return m, nil
+		}
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switched to account: %s\n\nRestart conduit for the new account to take effect.", email)})
 		m.refreshViewport()
 		return m, nil
 	case "add-dir":

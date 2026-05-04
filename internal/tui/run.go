@@ -612,16 +612,18 @@ func itoa(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// logoutCredentials clears the OAuth token bundle from secure storage.
-// Cross-platform: uses the same secure store the auth flow writes to,
-// so it works on macOS (Keychain), Linux (libsecret/file fallback),
-// and Windows (WinCred/file fallback).
+// logoutCredentials clears the active account's OAuth token bundle from
+// secure storage and removes it from accounts.json.
 func logoutCredentials() error {
 	store, err := defaultSecureStorage()
 	if err != nil {
 		return err
 	}
-	return auth.Delete(store)
+	email := auth.ActiveEmail()
+	if email != "" {
+		return auth.DeleteForEmail(store, email)
+	}
+	return auth.Delete(store) // legacy single-account logout
 }
 
 // defaultSecureStorage returns the file-backed store at the canonical

@@ -155,13 +155,13 @@ func newAPIClient(bearer string) *api.Client {
 	return api.NewClientWithProxy(cfg)
 }
 
-// loadAuth loads and refreshes tokens from the credential store.
+// loadAuth loads and refreshes tokens for the active account.
 // Returns an empty PersistedTokens and non-nil error when no credentials exist.
 func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	store := secure.NewDefault()
 	cfg := auth.ProdConfig
 	tc := auth.NewTokenClient(cfg, nil)
-	return auth.EnsureFresh(ctx, store, tc, time.Now(), 5*time.Minute)
+	return auth.EnsureFreshForEmail(ctx, store, tc, auth.ActiveEmail(), time.Now(), 5*time.Minute)
 }
 
 // buildSkillEntries converts loaded plugin commands + bundled skills into

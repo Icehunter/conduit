@@ -51,7 +51,7 @@
 | Auth file descriptor tokens | `utils/authFileDescriptor.ts` | — | ❌ | ⬛ | CCR container only (FD pipe across tmux boundaries) |
 | Portable auth | `utils/authPortable.ts` | — | ❌ | ⬛ | macOS Keychain removal utility; not needed |
 | Profile fetch (name, email) | `utils/auth.ts` | `1220.js` | `internal/profile/profile.go` | ✅ | |
-| Multi-account support | `utils/auth.ts` | — | ❌ | ❌ | Single account only |
+| Multi-account support | `utils/auth.ts` | — | `internal/auth/accounts.go` | ✅ | `~/.claude/accounts.json` + per-email keychain keys; `/login` registers account; `/login --switch <email>` activates; `/logout` removes active; `loadAuth` uses active email; backwards-compatible with legacy single-account key |
 | Token revocation | `utils/auth.ts` | — | `internal/auth/persist.go` Delete | ✅ | Local keychain clear; Anthropic OAuth has no public RFC 7009 endpoint — server-side revoke is through the console |
 | JWT utils (bridge auth) | `bridge/jwtUtils.ts` | — | ❌ | ⬛ | Bridge-only |
 | Trusted device auth | `bridge/trustedDevice.ts` | — | ❌ | ⬛ | Bridge-only |

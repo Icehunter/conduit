@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/secure"
 )
 
@@ -37,7 +38,10 @@ func runLoginFlow(claudeAI bool, display auth.LoginDisplay) error {
 	store := secure.NewDefault()
 	persisted := auth.FromTokens(tok, time.Now())
 	persisted.APIKey = apiKey
-	if err := auth.Save(store, persisted); err != nil {
+
+	// Fetch profile to learn the email — needed for multi-account registration.
+	prof, _ := profile.Fetch(ctx, tok.AccessToken)
+	if err := auth.SaveForEmail(store, persisted, prof.Email); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 	return nil

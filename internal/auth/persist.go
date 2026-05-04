@@ -105,6 +105,38 @@ func EnsureFresh(ctx context.Context, s secure.Storage, c *TokenClient, now time
 // ErrNotLoggedIn is returned by EnsureFresh when no token bundle exists.
 var ErrNotLoggedIn = errors.New("auth: not logged in")
 
+// EnsureFreshForEmail loads and refreshes tokens for the given email-scoped key,
+// falling back to the legacy key when email is empty. This is the multi-account
+// aware version of EnsureFresh.
+func EnsureFreshForEmail(ctx context.Context, s secure.Storage, c *TokenClient, email string, now time.Time, skew time.Duration) (PersistedTokens, error) {
+	p, err := LoadForEmail(s, email)
+	if err != nil {
+		if errors.Is(err, secure.ErrNotFound) {
+			return PersistedTokens{}, ErrNotLoggedIn
+		}
+		return PersistedTokens{}, err
+	}
+	if p.RefreshToken == "" {
+		return p, nil
+	}
+	if now.Add(skew).Before(p.ExpiresAt) {
+		return p, nil
+	}
+	tok, err := c.RefreshOAuthToken(ctx, p.RefreshToken, RefreshOptions{Scopes: p.Scopes})
+	if err != nil {
+		return PersistedTokens{}, fmt.Errorf("auth: refresh tokens: %w", err)
+	}
+	fresh := FromTokens(tok, now)
+	if fresh.RefreshToken == "" {
+		fresh.RefreshToken = p.RefreshToken
+	}
+	// Persist under both keys to keep them in sync.
+	if err := SaveForEmail(s, fresh, email); err != nil {
+		return PersistedTokens{}, err
+	}
+	return fresh, nil
+}
+
 // Delete removes the token bundle from secure storage. Returns nil if no
 // bundle is present (treats logout-when-already-logged-out as success).
 // Used by /logout to clear all credentials cross-platform — replaces the

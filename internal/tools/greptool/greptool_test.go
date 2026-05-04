@@ -4,11 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+func requireRipgrep(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not found on PATH — install with: brew install ripgrep")
+	}
+}
 
 func input(t *testing.T, v any) json.RawMessage {
 	t.Helper()
@@ -38,6 +46,7 @@ func makeTree(t *testing.T) string {
 }
 
 func TestGrep_FilesWithMatches_Default(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	tt := New()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
@@ -62,6 +71,7 @@ func TestGrep_FilesWithMatches_Default(t *testing.T) {
 }
 
 func TestGrep_ContentMode(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	tt := New()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
@@ -83,6 +93,7 @@ func TestGrep_ContentMode(t *testing.T) {
 }
 
 func TestGrep_CaseInsensitive(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	tt := New()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
@@ -103,6 +114,7 @@ func TestGrep_CaseInsensitive(t *testing.T) {
 }
 
 func TestGrep_GlobFilter(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	tt := New()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
@@ -124,6 +136,7 @@ func TestGrep_GlobFilter(t *testing.T) {
 }
 
 func TestGrep_NoMatchReturnsEmpty(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	tt := New()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
@@ -143,6 +156,7 @@ func TestGrep_NoMatchReturnsEmpty(t *testing.T) {
 }
 
 func TestGrep_HeadLimit(t *testing.T) {
+	requireRipgrep(t)
 	root := t.TempDir()
 	// Create files all containing "needle"
 	for i := 0; i < 10; i++ {
@@ -172,6 +186,7 @@ func TestGrep_HeadLimit(t *testing.T) {
 }
 
 func TestGrep_CountMode(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	tt := New()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
@@ -193,6 +208,7 @@ func TestGrep_CountMode(t *testing.T) {
 }
 
 func TestGrep_VCSExcluded(t *testing.T) {
+	requireRipgrep(t)
 	root := makeTree(t)
 	// Put a matching file inside a .git dir
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0755); err != nil {

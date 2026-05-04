@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,9 @@ func TestTerminalSetupAdvice_NativeCSIu(t *testing.T) {
 }
 
 func TestTerminalSetupAdvice_AppleTerminal(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Apple Terminal recipe is macOS-only")
+	}
 	got := terminalSetupAdvice("Apple_Terminal")
 	for _, want := range []string{
 		"Option-as-Meta",

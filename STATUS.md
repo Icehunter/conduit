@@ -1,6 +1,6 @@
 # conduit Implementation Status
 
-Last updated: 2026-05-01
+Last updated: 2026-05-04
 
 ## How to read this
 
@@ -58,8 +58,8 @@ Last updated: 2026-05-01
 | Login picker modal | ✅ | |
 | Ctrl+Y copy code block | ✅ | |
 | Interrupt (Ctrl+C) | ✅ | |
-| Markdown rendering | 🔶 | basic — no syntax highlighting |
-| Code block highlighting | ❌ | plain text only |
+| Markdown rendering | ✅ | full GFM: tables, headings, italic, strikethrough, task lists, blockquotes |
+| Code block highlighting | ✅ | Chroma-based syntax highlighting |
 
 ---
 
@@ -78,11 +78,11 @@ Last updated: 2026-05-01
 | NotebookEditTool | ✅ | internal/tools/notebookedittool/ |
 | SleepTool | ✅ | internal/tools/sleeptool/ |
 | TodoWriteTool | ✅ | internal/tools/todowritetool/ |
-| AgentTool | 🔲 M9 | subagent dispatch |
-| LSPTool | 🔲 M7 | needs LSP client |
-| MCPTool | 🔲 M7 | needs MCP host |
+| AgentTool | ✅ | internal/tools/agenttool/ |
+| LSPTool | ✅ | internal/tools/lsp/; hover, definition, references, diagnostics |
+| MCPTool | ✅ | internal/tools/mcptool/ |
 | REPLTool | ✅ | node/python3/bash via temp file (no shell injection) |
-| SkillTool | 🔲 M8 | |
+| SkillTool | ✅ | internal/tools/skilltool/ |
 | TaskCreateTool | ✅ | in-process store |
 | TaskGetTool | ✅ | |
 | TaskListTool | ✅ | |
@@ -140,17 +140,17 @@ Last updated: 2026-05-01
 | /pr-comments | ✅ | prompt-inject PR comment fix |
 | /fix | ✅ | prompt-inject issue fix |
 | /export | ✅ | writes markdown file to disk |
-| /usage | ❌ STUB | just links to settings page |
+| /usage | ✅ | token/cost breakdown by turn |
 | /vim | ❌ STUB | toggles flag but no actual vim mode |
 | /resume | ✅ | lists previous sessions; use --continue to restore |
-| /rewind | ❌ STUB | needs conversation snapshots |
-| /rename | ❌ STUB | needs session persistence (titles) |
-| /theme | ❌ STUB | needs theme system |
-| /plan | ❌ STUB | needs plan mode |
+| /rewind | ✅ | conversation snapshots via JSONL |
+| /rename | ✅ | renames current session |
+| /theme | ✅ | hot-swap palettes; persisted to settings.json |
+| /plan | ✅ | sets plan mode; EnterPlanMode tool wired |
 | /branch | ❌ STUB | needs conversation branching |
-| /mcp | 🔲 M7 | needs MCP host |
-| /agents | 🔲 M9 | needs multi-agent coordinator |
-| /skills | 🔲 M8 | needs skill system |
+| /mcp | ✅ | internal/commands/mcp.go |
+| /agents | ✅ | lists active sub-agents |
+| /skills | ✅ | internal/commands/skills.go |
 
 ---
 
@@ -161,7 +161,7 @@ Last updated: 2026-05-01
 | ANSI stripping | ✅ | internal/rtk/ansi.go |
 | Command classifier | ✅ | 75 rules matching upstream registry.rs |
 | BashTool integration | ✅ | filter applied to all bash output |
-| **git** filter | 🔶 | log/diff/status — faithful port |
+| **git** filter | ✅ | log/diff/status — faithful port |
 | **gh / glab** filter | ✅ | run + general truncation |
 | **go test/build/vet** filter | ✅ | failure extraction |
 | **golangci-lint** filter | ✅ | |
@@ -181,8 +181,8 @@ Last updated: 2026-05-01
 | **curl/wget/ping** filter | ✅ | |
 | **ls/find/tree/grep** filter | ✅ | |
 | **shellcheck/yamllint/etc** filter | ✅ | |
-| RTK gain/discover commands | 🔲 | |
-| SQLite tracking | 🔲 | |
+| RTK gain/discover commands | ✅ | internal/commands/rtk.go |
+| SQLite tracking | ✅ | internal/rtk/track/track.go |
 
 ---
 
@@ -209,10 +209,10 @@ Last updated: 2026-05-01
 | --continue flag (resume latest session) | ✅ | cmd/claude/main.go |
 | /resume command (list sessions) | ✅ | shows previous sessions with age |
 | /export (markdown export) | ✅ | writes to disk |
-| Conversation snapshots (/rewind) | 🔲 | needs snapshot entries in JSONL |
-| Session title persistence (/rename) | 🔲 | JSONL entry type exists, not wired |
-| MEMORY.md auto-memory | 🔲 | |
-| Skill discovery + execution | 🔲 | |
+| Conversation snapshots (/rewind) | ✅ | JSONL-based; /rewind wired |
+| Session title persistence (/rename) | ✅ | shown in status bar; /rename persists |
+| MEMORY.md auto-memory | ✅ | ScanMemories, /memory list/show/scan |
+| Skill discovery + execution | ✅ | internal/tools/skilltool/ + internal/plugins/loader.go |
 | Plugin loader | 🔲 | |
 
 ---
@@ -250,8 +250,4 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 | Issue | Location | Fix milestone |
 |-------|----------|---------------|
-| /vim toggles a flag but input isn't actually vim | session.go | M11 |
-| /export returns a path but doesn't write the file | session.go | M8 |
-| RTK shows no savings metric to user | bashtool | M6 |
-| Markdown code blocks have no syntax highlighting | render.go | M11 |
-| /doctor says "use /login" but doesn't show actual auth state | session.go | M8 |
+| /vim toggles a flag but input isn't actually vim | session.go | deferred |

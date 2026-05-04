@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -587,12 +586,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	// Re-enter alt-screen after SIGWINCH (iTerm2 resize) so the terminal
 	// doesn't leave ghost frames in the main buffer's scrollback.
 	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	go func() {
-		for range winch {
-			fmt.Fprint(os.Stdout, clearScreen)
-		}
-	}()
+	initTUIWinch(winch)
 
 	// bubbletea v2 already registers its own SIGINT/SIGTERM handler that
 	// sends InterruptMsg to the event loop. Adding a second signal.Notify

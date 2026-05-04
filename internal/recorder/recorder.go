@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	term "github.com/charmbracelet/x/term"
@@ -141,19 +140,7 @@ func (r *Recorder) Start(path string) error {
 		pr.Close()
 	}()
 
-	// Goroutine: capture SIGWINCH and write resize events.
-	signal.Notify(r.winchChan, syscall.SIGWINCH)
-	go func() {
-		for range r.winchChan {
-			w, h := termSize()
-			r.mu.Lock()
-			if r.recording {
-				_ = r.writeEventLocked("r", fmt.Sprintf("%dx%d", w, h))
-			}
-			r.mu.Unlock()
-		}
-	}()
-
+	initWinch(r)
 	return nil
 }
 

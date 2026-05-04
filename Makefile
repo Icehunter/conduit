@@ -27,7 +27,7 @@ test-race:
 
 # Run tests with HTML coverage report.
 test-cover:
-	$(GO) test -coverprofile=coverage.out $(PKG)
+	$(GO) test -race -count=1 -coverprofile=coverage.out $(PKG)
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
@@ -48,12 +48,12 @@ fmt:
 fmt-check:
 	@test -z "$$(gofmt -l .)" || (echo "Unformatted files — run: make fmt" && exit 1)
 
-# Full verification: fmt + vet + lint + tests.
+# Full verification: fmt + vet + lint + race tests.
 verify:
 	@$(MAKE) fmt-check
 	@$(MAKE) vet
 	@$(MAKE) lint
-	@$(MAKE) test
+	@$(MAKE) test-race
 	@echo "All checks passed."
 
 # Pre-cache pinned dev tools (go tool caches on first use; this warms it).
@@ -82,7 +82,7 @@ help:
 	@echo "  lint         golangci-lint (pinned in go.mod via 'go tool')"
 	@echo "  vet          go vet"
 	@echo "  fmt          Format all Go files"
-	@echo "  verify       fmt-check + vet + lint + test"
+	@echo "  verify       fmt-check + vet + lint + test-race"
 	@echo "  tools        Pre-cache pinned dev tools"
 	@echo "  tidy         go mod tidy"
 	@echo "  fuzz         Print fuzz usage hint"

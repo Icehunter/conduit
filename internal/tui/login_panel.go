@@ -1,0 +1,136 @@
+package tui
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+)
+
+// loginPromptState holds the /login account picker state.
+type loginPromptState struct {
+	selected int
+}
+
+var loginOptions = []struct {
+	label       string
+	description string
+	claudeAI    bool
+}{
+	{"Claude.ai account", "Max, Pro, or Team subscription", true},
+	{"Anthropic Console", "Console / Platform / API account", false},
+}
+
+func (m Model) handleLoginKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	p := m.loginPrompt
+	switch msg.String() {
+	case "up", "left":
+		if p.selected > 0 {
+			p.selected--
+		}
+	case "down", "right", "tab":
+		if p.selected < len(loginOptions)-1 {
+			p.selected++
+		}
+	case "enter", "space":
+		opt := loginOptions[p.selected]
+		m.loginPrompt = nil
+		// Remove the "Not logged in" welcome message if present so the entire
+		// login flow (including that message) gets swept away on completion.
+		m.loginFlowMsgStart = m.findNoAuthMsgIdx()
+		if m.loginFlowMsgStart < 0 {
+			m.loginFlowMsgStart = len(m.messages)
+		}
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Opening browser to sign in…"})
+		m.refreshViewport()
+		useClaudeAI := opt.claudeAI
+		prog := *m.cfg.Program
+		return m, func() tea.Msg {
+			prog.Send(loginStartMsg{claudeAI: useClaudeAI})
+			return nil
+		}
+	case "esc", "ctrl+c":
+		m.loginPrompt = nil
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Login cancelled."})
+		m.refreshViewport()
+		return m, nil
+	case "1":
+		p.selected = 0
+		m.loginPrompt = p
+		return m.handleLoginKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	case "2":
+		p.selected = 1
+		m.loginPrompt = p
+		return m.handleLoginKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	}
+	m.loginPrompt = p
+	return m, nil
+}
+
+func (m Model) renderLoginPicker() string {
+	p := m.loginPrompt
+	if p == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Sign in to Claude") + "\n\n")
+	sb.WriteString(stylePickerDesc.Render("Choose your account type:") + "\n\n")
+
+	for i, opt := range loginOptions {
+		var line string
+		if i == p.selected {
+			line = stylePickerItemSelected.Render(fmt.Sprintf("▶ %d. %s", i+1, opt.label)) +
+				"  " + stylePickerDesc.Render(opt.description)
+		} else {
+			line = stylePickerItem.Render(fmt.Sprintf("  %d. %s", i+1, opt.label)) +
+				"  " + stylePickerDesc.Render(opt.description)
+		}
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1/2 quick pick · Escape cancel"))
+
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width - 4).Render(sb.String())
+}
+
+// welcomeCard returns the two-panel welcome banner shown on startup.
+// Content is tab-separated: version, modelName, cwd, displayName, email, orgName, subscriptionType.
+func (m Model) welcomeCard() Message {
+	cwd, _ := os.Getwd()
+	p := m.cfg.Profile
+	fields := []string{
+		m.cfg.Version,
+		m.modelName,
+		cwd,
+		p.DisplayName,
+		p.Email,
+		p.OrganizationName,
+		p.SubscriptionType,
+	}
+	return Message{
+		Role:        RoleSystem,
+		WelcomeCard: true,
+		Content:     strings.Join(fields, "\t"),
+	}
+}
+
+// dismissWelcome removes the welcome card from the message list the first time
+// the user sends a message or a slash command. Idempotent after first call.
+func (m *Model) dismissWelcome() {
+	if m.welcomeDismissed {
+		return
+	}
+	m.welcomeDismissed = true
+	for i, msg := range m.messages {
+		if msg.WelcomeCard {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			return
+		}
+	}
+}

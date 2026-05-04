@@ -1,3 +1,8 @@
+// Derived from RTK (https://github.com/rtk-ai/rtk).
+// Copyright 2024 rtk-ai and rtk-ai Labs
+// Licensed under the Apache License, Version 2.0; see LICENSE-APACHE.
+// This file has been modified from the original Rust source.
+
 // Package track records RTK filter statistics in a SQLite database.
 //
 // Schema mirrors RTK's Rust implementation at rtk/src/core/tracking.rs.

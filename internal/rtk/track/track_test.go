@@ -1,3 +1,7 @@
+// Derived from RTK (https://github.com/rtk-ai/rtk).
+// Copyright 2024 rtk-ai and rtk-ai Labs
+// Licensed under the Apache License, Version 2.0; see LICENSE-APACHE.
+
 package track
 
 import (

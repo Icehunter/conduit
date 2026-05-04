@@ -1,3 +1,8 @@
+// Derived from RTK (https://github.com/rtk-ai/rtk).
+// Copyright 2024 rtk-ai and rtk-ai Labs
+// Licensed under the Apache License, Version 2.0; see LICENSE-APACHE.
+// This file has been modified from the original Rust source.
+
 // Package rtk is an in-process port of RTK (Rust Token Killer).
 // It intercepts tool output from BashTool and compresses it before the agent
 // sees it, saving 60-90% of tokens on common dev operations.

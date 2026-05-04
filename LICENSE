@@ -2,6 +2,13 @@ MIT License
 
 Copyright (c) 2026 Ryan Wilson
 
+---
+
+This project includes code derived from RTK (https://github.com/rtk-ai/rtk),
+Copyright 2024 rtk-ai and rtk-ai Labs, which is licensed under the Apache
+License, Version 2.0. That code lives in internal/rtk/ and is governed by
+the terms in LICENSE-APACHE.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

@@ -1,4 +1,5 @@
-.PHONY: all build test test-race lint vet fuzz tidy clean tools fmt fmt-check verify help
+.PHONY: all build test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
+        version version-patch version-minor version-major help
 
 BIN    := bin/conduit
 PKG    := ./...
@@ -72,18 +73,59 @@ fuzz:
 clean:
 	rm -rf bin dist coverage.out coverage.html
 
+# Print current version.
+version:
+	@echo $(VERSION)
+
+# Bump patch version (1.0.0 → 1.0.1), commit, tag, and push — triggers release workflow.
+version-patch:
+	@V=$$(cat VERSION); \
+	MAJOR=$$(echo $$V | cut -d. -f1); \
+	MINOR=$$(echo $$V | cut -d. -f2); \
+	PATCH=$$(echo $$V | cut -d. -f3); \
+	NEW="$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+	echo $$NEW > VERSION; \
+	git add VERSION && git commit -m "chore: bump version to $$NEW" && git tag "v$$NEW"; \
+	git push && git push origin "v$$NEW"; \
+	echo "Bumped $$V -> $$NEW (tagged and pushed v$$NEW)"
+
+# Bump minor version (1.0.0 → 1.1.0), commit, tag, and push — triggers release workflow.
+version-minor:
+	@V=$$(cat VERSION); \
+	MAJOR=$$(echo $$V | cut -d. -f1); \
+	MINOR=$$(echo $$V | cut -d. -f2); \
+	NEW="$$MAJOR.$$((MINOR + 1)).0"; \
+	echo $$NEW > VERSION; \
+	git add VERSION && git commit -m "chore: bump version to $$NEW" && git tag "v$$NEW"; \
+	git push && git push origin "v$$NEW"; \
+	echo "Bumped $$V -> $$NEW (tagged and pushed v$$NEW)"
+
+# Bump major version (1.0.0 → 2.0.0), commit, tag, and push — triggers release workflow.
+version-major:
+	@V=$$(cat VERSION); \
+	MAJOR=$$(echo $$V | cut -d. -f1); \
+	NEW="$$((MAJOR + 1)).0.0"; \
+	echo $$NEW > VERSION; \
+	git add VERSION && git commit -m "chore: bump version to $$NEW" && git tag "v$$NEW"; \
+	git push && git push origin "v$$NEW"; \
+	echo "Bumped $$V -> $$NEW (tagged and pushed v$$NEW)"
+
 help:
 	@echo "Targets:"
-	@echo "  all          verify + build (default)"
-	@echo "  build        Build ./conduit binary"
-	@echo "  test         go test ./..."
-	@echo "  test-race    go test -race ./..."
-	@echo "  test-cover   Tests + HTML coverage report"
-	@echo "  lint         golangci-lint (pinned in go.mod via 'go tool')"
-	@echo "  vet          go vet"
-	@echo "  fmt          Format all Go files"
-	@echo "  verify       fmt-check + vet + lint + test-race"
-	@echo "  tools        Pre-cache pinned dev tools"
-	@echo "  tidy         go mod tidy"
-	@echo "  fuzz         Print fuzz usage hint"
-	@echo "  clean        Remove bin/ and coverage files"
+	@echo "  all              verify + build (default)"
+	@echo "  build            Build ./conduit binary"
+	@echo "  test             go test ./..."
+	@echo "  test-race        go test -race ./..."
+	@echo "  test-cover       Tests + HTML coverage report"
+	@echo "  lint             golangci-lint (pinned in go.mod via 'go tool')"
+	@echo "  vet              go vet"
+	@echo "  fmt              Format all Go files"
+	@echo "  verify           fmt-check + vet + lint + test-race"
+	@echo "  tools            Pre-cache pinned dev tools"
+	@echo "  tidy             go mod tidy"
+	@echo "  fuzz             Print fuzz usage hint"
+	@echo "  clean            Remove bin/ and coverage files"
+	@echo "  version          Print current version"
+	@echo "  version-patch    Bump patch (1.0.0 → 1.0.1), tag, push → triggers release"
+	@echo "  version-minor    Bump minor (1.0.0 → 1.1.0), tag, push → triggers release"
+	@echo "  version-major    Bump major (1.0.0 → 2.0.0), tag, push → triggers release"

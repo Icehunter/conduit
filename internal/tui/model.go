@@ -3913,7 +3913,8 @@ func (m Model) applyLayout() Model {
 		// Disable the viewport's built-in key bindings entirely — "j","k","u","b",
 		// space, etc. would fire for any non-consumed key. We handle scrolling
 		// explicitly via Shift+Up/Down/PgUp/PgDn in handleKey.
-		m.vp.KeyMap = viewport.KeyMap{}
+		m.vp.KeyMap = viewport.KeyMap{}      // disable built-in key bindings
+		m.vp.MouseWheelEnabled = true        // handle tea.MouseWheelMsg for trackpad/wheel
 		m.ready = true
 	} else {
 		m.vp.SetWidth(m.width)
@@ -3989,11 +3990,12 @@ func (m Model) View() tea.View {
 		v.SetContent(content)
 		v.AltScreen = true
 		v.KeyboardEnhancements.ReportAlternateKeys = true
-		// MouseMode left unset (MouseModeNone) to preserve native text
-		// selection. Terminals send scroll-wheel as UP/DOWN sequences in
-		// alt-screen; we consume those for input history (UP/DOWN). Viewport
-		// scroll is via Shift+Up/Down/PgUp/PgDn. Viewport keymap cleared
-		// so j/k/u/b etc. don't fire as scroll on non-consumed keys.
+		// MouseModeCellMotion: scroll wheel arrives as tea.MouseWheelMsg
+		// (separate from UP/DOWN key events) so trackpad/wheel scrolls the
+		// viewport while UP/DOWN navigates input history — matching CC's UX.
+		// Trade-off: text selection requires Shift+drag (standard for
+		// mouse-mode TUIs like vim/tmux). Text copy still works via ^Y.
+		v.MouseMode = tea.MouseModeCellMotion
 		return v
 	}
 	if !m.ready {

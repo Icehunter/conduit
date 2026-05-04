@@ -765,6 +765,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.profile != nil {
 				m.cfg.Profile = *msg.profile
 			}
+			// Clear conversation and show welcome card for the new account.
+			m.messages = nil
+			m.history = nil
+			m.welcomeDismissed = false
 			m.messages = append(m.messages, m.welcomeCard())
 		}
 		m.refreshViewport()
@@ -3536,7 +3540,19 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		}
-		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switched to account: %s\n\nRestart conduit for the new account to take effect.", email)})
+		// Reload credentials and API client live — same flow as after /login.
+		if m.cfg.LoadAuth != nil && m.cfg.NewAPIClient != nil && m.cfg.Loop != nil {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switching to %s…", email)})
+			m.refreshViewport()
+			return m, func() tea.Msg {
+				ctx := context.Background()
+				bearer, prof, err := m.cfg.LoadAuth(ctx)
+				if err != nil {
+					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
+				}
+				return authReloadMsg{client: m.cfg.NewAPIClient(bearer), profile: prof}
+			}
+		}
 		m.refreshViewport()
 		return m, nil
 	case "add-dir":

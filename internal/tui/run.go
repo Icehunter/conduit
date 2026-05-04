@@ -200,6 +200,12 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		// Rewind passes through n — the actual history mutation happens in
 		// applyCommandResult when it receives the "rewind" result type.
 		Rewind: func(n int) int { return n },
+		GetTurnCosts: func() []float64 {
+			if modelPtr == nil {
+				return nil
+			}
+			return modelPtr.TurnCosts()
+		},
 		GetStatus: func() string {
 			tokens, cost := live.Tokens()
 			mode := "default"

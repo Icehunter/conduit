@@ -243,6 +243,11 @@ type Model struct {
 	totalInputTokens  int
 	totalOutputTokens int
 	costUSD           float64
+	prevCostUSD       float64 // cost before the current turn started; used to compute per-turn delta
+
+	// turnCosts records the cost delta for each completed assistant turn,
+	// most-recent last. Used by /cost to show per-turn breakdown.
+	turnCosts []float64
 
 	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
 	flashMsg string
@@ -612,6 +617,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.history = msg.history
 			m.tallyTokens()
+			// Record per-turn cost delta.
+			if delta := m.costUSD - m.prevCostUSD; delta > 0 {
+				m.turnCosts = append(m.turnCosts, delta)
+			}
+			m.prevCostUSD = m.costUSD
 			m.persistNewMessages(msg.history)
 			if m.cfg.Session != nil && m.totalInputTokens > 0 {
 				_ = m.cfg.Session.AppendCost(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
@@ -3692,6 +3702,13 @@ func (m *Model) TasksSummary() string {
 }
 
 // LastThinking returns the last thinking block text from the assistant.
+// TurnCosts returns a copy of the per-turn cost deltas recorded this session.
+func (m *Model) TurnCosts() []float64 {
+	out := make([]float64, len(m.turnCosts))
+	copy(out, m.turnCosts)
+	return out
+}
+
 func (m *Model) LastThinking() string {
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		if m.messages[i].Role == RoleAssistant && strings.Contains(m.messages[i].Content, "<thinking>") {

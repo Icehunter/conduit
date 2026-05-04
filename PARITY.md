@@ -200,7 +200,7 @@
 | Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go` | ✅ | Bubble Tea vs React/Ink |
 | Message display (streaming) | `components/Messages.tsx` | — | `internal/tui/render.go` | ✅ | |
 | Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | ✅ | Full GFM: tables, headings, task lists, strikethrough, blockquotes, italic |
-| Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | 🟡 | Chroma-based |
+| Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | ✅ | Chroma-based; functionally equivalent to Prism.js (different library, same result) |
 | Spinner / thinking indicator | `components/Spinner.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Status bar | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Permission mode badge | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
@@ -212,7 +212,7 @@
 | MCP panel | — | — | `internal/tui/model.go` (panel) | ✅ | conduit-only |
 | Plugin panel (full) | `commands/plugin/` | — | `internal/tui/pluginpanel.go` | ✅ | conduit-only |
 | Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | 🟡 | Basic, no fancy UI |
-| Cost display | `components/Stats.tsx` | — | `internal/tui/model.go` | 🟡 | Status bar only |
+| Cost display | `components/Stats.tsx` | — | `internal/tui/model.go` + `/cost` | ✅ | Status bar (cumulative $X.XX) + /cost shows input/output tokens, total cost, per-turn breakdown |
 | Context visualization | `components/ContextVisualization.tsx` | — | `/context` command | ✅ | Bar chart of tokens: system/history/tools/remaining |
 | Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | 🟡 | No true virtualization |
 | Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
@@ -412,7 +412,7 @@
 | Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Conversation recovery | `utils/conversationRecovery.ts` | — | `internal/agent/loop.go` + `internal/session/session.go` | ✅ | Partial assistant message persisted on stream error; orphan tool_use filtered on /resume |
 | File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
-| Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | 🟡 | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat is descoped (bridge-only) |
+| Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | ✅ | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat descoped (bridge-only) |
 | Session environment setup | `utils/sessionEnvironment.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv + cleanup restore |
 | Session URL handling | `utils/sessionUrl.ts` | — | `cmd/conduit/main.go` `--resume` flag | 🟡 | `--resume <uuid>` and `--resume <file.jsonl>` supported; URL-based remote resume (M10) not supported |
 | Cost tracking persistence | `cost-tracker.ts` | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |

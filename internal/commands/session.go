@@ -34,6 +34,8 @@ type SessionState struct {
 	SearchTranscript func(term string) string
 	// GetTokens returns current (inputTokens, outputTokens, costUSD) from LiveState.
 	GetTokens func() (int, int, float64)
+	// GetTurnCosts returns the per-turn cost deltas for the current session.
+	GetTurnCosts func() []float64
 	// GetStatus returns a one-line status string (model, mode, session ID, cost, context %).
 	GetStatus   func() string
 	// GetTasks returns a formatted list of active TaskTool tasks.
@@ -83,7 +85,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 	// /cost
 	r.Register(Command{
 		Name:        "cost",
-		Description: "Show total cost and duration of the current session",
+		Description: "Show total cost and per-turn breakdown for this session",
 		Handler: func(string) Result {
 			if state.GetTokens == nil {
 				return Result{Type: "text", Text: "Cost tracking not available."}
@@ -99,6 +101,16 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			sb.WriteString(statusRow("Output tokens:", fmt.Sprintf("%d", outTok), "", labelW))
 			if cost > 0 {
 				sb.WriteString(statusRow("Estimated cost:", fmt.Sprintf("$%.4f", cost), "", labelW))
+			}
+			// Per-turn breakdown if available.
+			if state.GetTurnCosts != nil {
+				turns := state.GetTurnCosts()
+				if len(turns) > 0 {
+					sb.WriteString("\nPer-turn breakdown:\n")
+					for i, c := range turns {
+						sb.WriteString(fmt.Sprintf("  Turn %-3d  $%.4f\n", i+1, c))
+					}
+				}
 			}
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},

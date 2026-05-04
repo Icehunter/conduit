@@ -3914,14 +3914,11 @@ func (m Model) View() tea.View {
 		v.SetContent(content)
 		v.AltScreen = true
 		v.KeyboardEnhancements.ReportAlternateKeys = true
-		// MouseMode intentionally left unset (MouseModeNone). Enabling
-		// cell-motion captures every click — terminals can no longer
-		// drag-select text in the alt-screen. Most modern terminals
-		// (iTerm2, Ghostty, WezTerm, Kitty) translate scroll-wheel into
-		// cursor up/down sequences in alt-screen mode, which the
-		// viewport already binds. Explicit Shift+Up/Down/PgUp/PgDn
-		// handlers below cover keyboard scrollback. The combination
-		// preserves native text selection.
+		// MouseModeCellMotion: scroll wheel arrives as tea.MouseWheelMsg
+		// instead of UP/DOWN key sequences. This separates wheel scrolling
+		// from UP/DOWN history navigation. Text selection still works in
+		// most terminals by holding Shift while clicking/dragging.
+		v.MouseMode = tea.MouseModeCellMotion
 		return v
 	}
 	if !m.ready {

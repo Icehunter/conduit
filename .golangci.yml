@@ -74,27 +74,28 @@ linters:
         - name: time-naming
         - name: unexported-return
         - name: var-declaration
+  exclusions:
+    rules:
+      # websocket.Dial's second return is not a plain HTTP response body;
+      # coder/websocket manages its lifetime internally.
+      - path: "internal/mcp/client_ws.go"
+        linters: [bodyclose]
+      # Test helpers — errcheck/noctx/bodyclose are intentionally relaxed in tests.
+      - path: ".*_test\\.go"
+        linters: [errcheck, noctx, bodyclose]
+      # pkce_test De Morgan alternative is a style choice, not a correctness issue.
+      - path: "internal/auth/pkce_test.go"
+        linters: [staticcheck]
+      # LSP tool methods keep (tool.Result, error) signature for interface consistency.
+      - path: "internal/tools/lsp/lsp.go"
+        linters: [unparam]
+      # Agent executeTools keeps error return for future error propagation.
+      - path: "internal/agent/loop.go"
+        linters: [unparam]
+      # TUI key handlers return (Model, tea.Cmd) for API consistency; Cmd can become non-nil later.
+      - path: "internal/tui/model.go"
+        linters: [unparam]
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    # websocket.Dial's second return is not a plain HTTP response body;
-    # nhooyr.io/websocket manages its lifetime internally.
-    - path: "internal/mcp/client_ws.go"
-      linters: [bodyclose]
-    # Test helpers — errcheck/noctx/bodyclose are intentionally relaxed in tests.
-    - path: ".*_test\\.go"
-      linters: [errcheck, noctx, bodyclose]
-    # pkce_test De Morgan alternative is a style choice, not a correctness issue.
-    - path: "internal/auth/pkce_test.go"
-      linters: [staticcheck]
-    # LSP tool methods keep (tool.Result, error) signature for interface consistency.
-    - path: "internal/tools/lsp/lsp.go"
-      linters: [unparam]
-    # Agent executeTools keeps error return for future error propagation.
-    - path: "internal/agent/loop.go"
-      linters: [unparam]
-    # TUI key handlers return (Model, tea.Cmd) for API consistency; Cmd can become non-nil later.
-    - path: "internal/tui/model.go"
-      linters: [unparam]

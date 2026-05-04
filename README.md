@@ -217,10 +217,9 @@ conduit --resume <session-id>
 | `/diff` | Git diff of files edited this session |
 | `/context` | Current context window usage breakdown |
 | `/color` | Toggle ANSI colour output on/off |
-| `/rename` | Rename the current session |
-| `/rewind <n>` | Roll back the last n turns |
-| `/branch` | Create a git branch for this session's changes |
-| `/commit` | Commit files edited this session |
+| `/rename` | Set a title for the current session |
+| `/rewind <n>` | Roll back the last n turns (default 1) |
+| `/commit` | Create a git commit with a generated message |
 | `/cost` | Token and cost breakdown |
 | `/usage` | Rate limit quota and burn rate |
 | `/stats` | Per-tool usage counts |

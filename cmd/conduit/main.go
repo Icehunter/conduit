@@ -69,13 +69,15 @@ import (
 	"github.com/icehunter/conduit/internal/tui"
 )
 
-// Version is the wire version we identify as. We match the exact value the
-// official binary v2.1.126 sends in `User-Agent`/`X-App` fingerprints —
-// Anthropic's API rate-limits clients whose UA doesn't look like the CLI.
-//
-// Override at build time via -ldflags "-X main.Version=...". Override at
-// runtime via the CLAUDE_GO_REPORT_VERSION env var if you ever need to lie
-// in a different direction.
+// AppVersion is the conduit release version shown to users (conduit version).
+// Set to 1.0.0 until the first tagged GitHub release.
+// Override at build time via -ldflags "-X main.AppVersion=1.2.3".
+var AppVersion = "1.0.0"
+
+// Version is the wire version sent in User-Agent/X-App headers.
+// Must match what official CC v2.1.126 sends — Anthropic rate-limits
+// clients whose UA doesn't look like the CLI.
+// Override at build time via -ldflags "-X main.Version=...".
 var Version = "2.1.126"
 
 func main() {
@@ -112,7 +114,7 @@ func run() error {
 
 	switch args[0] {
 	case "version":
-		fmt.Println(Version)
+		fmt.Printf("conduit %s (cc-wire/%s)\n", AppVersion, Version)
 		return nil
 	default:
 		flag.Usage()

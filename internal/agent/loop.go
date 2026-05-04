@@ -30,6 +30,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/compact"
+	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/microcompact"
 	"github.com/icehunter/conduit/internal/permissions"
@@ -208,7 +209,12 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 // The sub-agent inherits the same tools, model, and system prompt but starts
 // with a fresh single-turn history. Returns the concatenated text from the
 // final assistant message.
+//
+// When coordinator mode is active, the result is wrapped in a
+// <task-notification> XML block so the coordinator model can identify and
+// process it correctly per its system prompt instructions.
 func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
+	start := time.Now()
 	msgs := []api.Message{
 		{
 			Role:    "user",
@@ -216,10 +222,38 @@ func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
 		},
 	}
 	history, err := l.Run(ctx, msgs, func(LoopEvent) {})
+
+	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
+
+	if coordinator.IsActive() {
+		var result string
+		if err != nil {
+			notif := coordinator.TaskNotification(
+				agentID, "failed",
+				fmt.Sprintf("Agent failed: %v", err),
+				"", 0, 0, time.Since(start).Milliseconds(),
+			)
+			return notif, nil
+		}
+		toolUses := countToolUses(history)
+		result = extractLastAssistantText(history)
+		notif := coordinator.TaskNotification(
+			agentID, "completed",
+			"Agent completed",
+			result, 0, toolUses, time.Since(start).Milliseconds(),
+		)
+		return notif, nil
+	}
+
 	if err != nil {
 		return "", err
 	}
-	// Extract the last assistant text from history.
+	return extractLastAssistantText(history), nil
+}
+
+// extractLastAssistantText returns the concatenated text from the final
+// assistant message in a history slice.
+func extractLastAssistantText(history []api.Message) string {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role == "assistant" {
 			var sb strings.Builder
@@ -231,10 +265,25 @@ func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
 					sb.WriteString(block.Text)
 				}
 			}
-			return sb.String(), nil
+			return sb.String()
 		}
 	}
-	return "", nil
+	return ""
+}
+
+// countToolUses counts tool_use blocks across all assistant messages.
+func countToolUses(history []api.Message) int {
+	n := 0
+	for _, msg := range history {
+		if msg.Role == "assistant" {
+			for _, block := range msg.Content {
+				if block.Type == "tool_use" {
+					n++
+				}
+			}
+		}
+	}
+	return n
 }
 
 // Run executes the agentic loop starting with the given messages. handler is

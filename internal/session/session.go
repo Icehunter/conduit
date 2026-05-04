@@ -31,6 +31,9 @@ type Entry struct {
 	Message   json.RawMessage `json:"message,omitempty"`
 	Summary   string          `json:"summary,omitempty"`
 	Title     string          `json:"customTitle,omitempty"`
+	// Mode is set on type="session_settings" entries to persist session-level
+	// settings (e.g. "coordinator" or "normal") across resume.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Session manages the JSONL transcript for one conversation.
@@ -92,6 +95,33 @@ func (s *Session) Append(entry Entry) error {
 	defer f.Close()
 	_, err = fmt.Fprintf(f, "%s\n", b)
 	return err
+}
+
+// SetMode persists a session-level mode setting (e.g. "coordinator" or "normal").
+func (s *Session) SetMode(mode string) error {
+	return s.Append(Entry{Type: "session_settings", Mode: mode})
+}
+
+// ReadMode scans the session JSONL and returns the most recent mode value
+// from a "session_settings" entry. Returns "" if no mode has been set.
+func (s *Session) ReadMode() string {
+	f, err := os.Open(s.FilePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	mode := ""
+	dec := json.NewDecoder(f)
+	for {
+		var e Entry
+		if err := dec.Decode(&e); err != nil {
+			break
+		}
+		if e.Type == "session_settings" && e.Mode != "" {
+			mode = e.Mode
+		}
+	}
+	return mode
 }
 
 // AppendMessage serializes an api.Message and appends it.

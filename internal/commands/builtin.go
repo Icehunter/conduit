@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/coordinator"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
@@ -168,6 +169,28 @@ func RegisterHooksCommand(r *Registry, hooksConfig *settings.HooksSettings) {
 			printMatchers("Stop", hooksConfig.Stop)
 
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
+		},
+	})
+}
+
+// RegisterCoordinatorCommand adds /coordinator that toggles coordinator mode on/off.
+// When active, the agent acts as an orchestrator managing sub-agent workers.
+func RegisterCoordinatorCommand(r *Registry) {
+	r.Register(Command{
+		Name:        "coordinator",
+		Description: "Toggle coordinator mode — orchestrate tasks across multiple sub-agent workers",
+		Handler: func(_ string) Result {
+			coordinator.SetActive(!coordinator.IsActive())
+			if coordinator.IsActive() {
+				return Result{
+					Type: "coordinator-toggle",
+					Text: "Coordinator mode enabled. You are now an orchestrator. Use the Task tool to spawn workers and manage parallel workstreams.\n\nType /coordinator again to disable.",
+				}
+			}
+			return Result{
+				Type: "coordinator-toggle",
+				Text: "Coordinator mode disabled. Back to standard agent mode.",
+			}
 		},
 	})
 }

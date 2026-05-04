@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/undercover"
 )
 
@@ -101,6 +102,11 @@ type SkillEntry struct {
 	Description string
 }
 
+// CoordinatorMCPNames can be set at startup to make BuildSystemBlocks inject
+// the connected MCP server names into the coordinator worker-context block.
+// Should be populated from the MCPManager before the first request.
+var CoordinatorMCPNames []string
+
 // BuildSystemBlocks returns the system field that mimics the real CLI's
 // request shape. Caller can override BillingHeader via the
 // CLAUDE_GO_BILLING_HEADER env var.
@@ -110,10 +116,11 @@ type SkillEntry struct {
 //  2. Identity
 //  3. Agent system prompt (cache_control: ephemeral, scope: global)
 //  4. Output guidance (cache_control: ephemeral)
-//  5. [optional] CLAUDE.md instructions (claudeMd != "")
-//  6. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
+//  5. [optional] Coordinator system prompt + worker-tools context (when coordinator mode active)
+//  6. [optional] CLAUDE.md instructions (claudeMd != "")
+//  7. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
 //     Includes type taxonomy, how-to-save instructions, and MEMORY.md content.
-//  7. [optional] Skills reminder (skills non-empty)
+//  8. [optional] Skills reminder (skills non-empty)
 func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
@@ -139,6 +146,12 @@ func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.Syst
 				TTL:  "1h",
 			},
 		},
+	}
+	if coordinator.IsActive() {
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: coordinator.SystemPrompt()})
+		if ctx := coordinator.UserContext(CoordinatorMCPNames); ctx != "" {
+			blocks = append(blocks, api.SystemBlock{Type: "text", Text: ctx})
+		}
 	}
 	if claudeMd != "" {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: claudeMd})

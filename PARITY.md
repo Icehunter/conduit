@@ -480,7 +480,7 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Coordinator mode | `coordinator/coordinatorMode.ts` (369 LOC) | — | `internal/agent/loop.go` (partial) | 🟡 | Parallel tools only, no full coordinator |
+| Coordinator mode | `coordinator/coordinatorMode.ts` (369 LOC) | — | `internal/coordinator/coordinator.go` + `internal/agent/loop.go` | ✅ | `/coordinator` toggle, system prompt injection, task-notification XML, session mode persistence, status bar badge, MCP context |
 | TeamCreateTool | `tools/TeamCreateTool/` | — | ❌ | ⬛ | Requires teammate mailbox (swarm) |
 | TeamDeleteTool | `tools/TeamDeleteTool/` | — | ❌ | ⬛ | Same |
 | SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ⬛ | Same |

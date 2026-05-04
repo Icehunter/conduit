@@ -140,6 +140,17 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 	}
 
+	// Populate coordinator MCP names from connected servers so the coordinator
+	// system prompt knows what workers can access.
+	if runOpts.MCPManager != nil {
+		servers := runOpts.MCPManager.Servers()
+		names := make([]string, 0, len(servers))
+		for _, srv := range servers {
+			names = append(names, srv.Name)
+		}
+		agent.CoordinatorMCPNames = names
+	}
+
 	reg := commands.New()
 	commands.RegisterBuiltins(reg)
 	commands.RegisterModelCommand(reg,
@@ -149,6 +160,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterCompactCommand(reg)
 	commands.RegisterPermissionsCommand(reg, opts.gate)
 	commands.RegisterHooksCommand(reg, opts.hooksConfig)
+	commands.RegisterCoordinatorCommand(reg)
 	commands.RegisterMiscCommands(reg)
 	commands.RegisterTerminalSetupCommand(reg)
 	commands.RegisterPromptCommands(reg)

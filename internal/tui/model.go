@@ -26,6 +26,7 @@ import (
 	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
@@ -819,6 +820,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Repoint cfg.Session so new turns append to the resumed file.
 		if msg.filePath != "" {
 			m.cfg.Session = session.FromFile(msg.filePath)
+			// Restore coordinator mode if the session was in coordinator mode.
+			if notice := coordinator.MatchSessionMode(m.cfg.Session.ReadMode()); notice != "" {
+				m.messages = append(m.messages, Message{Role: RoleSystem, Content: notice})
+			}
 		}
 		m.messages = append(m.messages, Message{
 			Role:    RoleSystem,
@@ -3412,6 +3417,20 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			})
 			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil}
 		}
+	case "coordinator-toggle":
+		// Persist the new mode to the session JSONL so /resume can restore it.
+		if m.cfg.Session != nil {
+			mode := "normal"
+			if coordinator.IsActive() {
+				mode = "coordinator"
+			}
+			_ = m.cfg.Session.SetMode(mode)
+		}
+		if res.Text != "" {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
+		}
+		m.refreshViewport()
+		return m, nil
 	case "error":
 		m.messages = append(m.messages, Message{Role: RoleError, Content: res.Text})
 		m.refreshViewport()
@@ -4137,6 +4156,9 @@ func (m Model) View() tea.View {
 
 	var leftParts []string
 	leftParts = append(leftParts, edgePad+appSeg)
+	if coordinator.IsActive() {
+		leftParts = append(leftParts, styleModePurple.Render("⬡ coordinator"))
+	}
 	if modeBadge != "" {
 		leftParts = append(leftParts, modeBadge)
 	}

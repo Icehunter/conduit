@@ -10,3 +10,6 @@ coverage.html
 # don't accidentally exclude cmd/conduit/ source files)
 /claude
 /conduit
+
+# Claude Code local settings (machine-specific permissions, not for repo)
+.claude/settings.local.json

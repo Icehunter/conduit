@@ -560,13 +560,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "\n")
 
-			// File drag-drop detection: terminals (iTerm2, Ghostty, etc.) paste
-			// dragged files as "file:///path/to/file" or space-separated URIs.
-			// Convert each file:// URI to an @mention so the attach pipeline handles it.
-			if converted, ok := attach.ConvertDroppedFiles(strings.TrimSpace(content)); ok {
-				m.input.InsertString(converted)
-				m.flashMsg = "File dropped — use @path or send to attach"
-				return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+			// File drag-drop detection: terminals paste dragged files as
+			// "file:///path/to/file" URIs or shell-escaped absolute paths.
+			// Images → pendingImages badge; PDFs → pendingPDFs badge; other files → @mention.
+			if paths, ok := attach.DetectDroppedPaths(strings.TrimSpace(content)); ok {
+				for _, p := range paths {
+					switch attach.DroppedFileType(p) {
+					case attach.DropImage:
+						if img, err := attach.ReadImageFile(p); err == nil {
+							m.pendingImages = append(m.pendingImages, img)
+						} else {
+							m.input.InsertString(attach.MentionPath(p))
+						}
+					case attach.DropPDF:
+						if pdf, err := attach.ReadPDFFile(p); err == nil {
+							m.pendingPDFs = append(m.pendingPDFs, pdf)
+						} else {
+							m.input.InsertString(attach.MentionPath(p))
+						}
+					default:
+						m.input.InsertString(attach.MentionPath(p))
+					}
+				}
+				n := len(m.pendingImages) + len(m.pendingPDFs)
+				if n > 0 {
+					parts := []string{}
+					if ni := len(m.pendingImages); ni > 0 {
+						parts = append(parts, fmt.Sprintf("%d image(s)", ni))
+					}
+					if np := len(m.pendingPDFs); np > 0 {
+						parts = append(parts, fmt.Sprintf("%d PDF(s)", np))
+					}
+					m.flashMsg = "📎 [" + strings.Join(parts, ", ") + "]  · Enter to send · Esc to clear"
+					return m, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+				}
+				return m, nil
 			}
 
 			lineCount := strings.Count(content, "\n") + 1

@@ -20,6 +20,8 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 )
 
+func newDefaultStorage() secure.Storage { return secure.NewDefault() }
+
 // AccountEntry holds metadata for one stored account.
 type AccountEntry struct {
 	Email    string    `json:"email"`
@@ -145,11 +147,22 @@ func DeleteForEmail(s secure.Storage, email string) error {
 	return saveAccountStore(store)
 }
 
-// SetActive switches the active account to the given email. Returns an error
-// if the email isn't in the store.
+// SetActive switches the active account to the given email. If the email isn't
+// in the store yet but exists in the keychain under the email-scoped key, it is
+// auto-registered. Returns an error only when no credentials are found at all.
 func SetActive(store *AccountStore, email string) error {
 	if _, ok := store.Accounts[email]; !ok {
-		return fmt.Errorf("account %q not found — run /login first to add it", email)
+		// Auto-register: check if a keychain entry exists for this email.
+		s := newDefaultStorage()
+		if _, err := s.Get(Service, persistKeyForEmail(email)); err != nil {
+			// Also check the legacy key — this lets people switch by email
+			// even if they've only ever logged in once on the legacy path.
+			if _, lerr := s.Get(Service, PersistKey); lerr != nil {
+				return fmt.Errorf("account %q not found — run /login first to add it", email)
+			}
+			// Legacy token exists but wasn't registered; register it now.
+		}
+		store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
 	}
 	store.Active = email
 	return saveAccountStore(*store)

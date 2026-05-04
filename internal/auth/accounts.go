@@ -115,19 +115,23 @@ func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
 	return saveAccountStore(store)
 }
 
-// LoadForEmail loads tokens for the given email. Falls back to legacy key if
-// email is empty or not found under the email-scoped key.
+// LoadForEmail loads tokens for the given email.
+// When email is empty, loads the legacy single-account key.
+// When email is non-empty, loads ONLY the email-scoped key — no fallback to
+// the legacy key, so switching accounts never silently uses the wrong token.
 func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
-	if email != "" {
-		raw, err := s.Get(Service, persistKeyForEmail(email))
-		if err == nil {
-			var p PersistedTokens
-			if err := json.Unmarshal(raw, &p); err == nil {
-				return p, nil
-			}
-		}
+	if email == "" {
+		return Load(s)
 	}
-	return Load(s) // fallback to legacy key
+	raw, err := s.Get(Service, persistKeyForEmail(email))
+	if err != nil {
+		return PersistedTokens{}, err // caller sees secure.ErrNotFound → ErrNotLoggedIn
+	}
+	var p PersistedTokens
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return PersistedTokens{}, fmt.Errorf("auth: decode tokens for %s: %w", email, err)
+	}
+	return p, nil
 }
 
 // DeleteForEmail removes tokens for the given email from keychain and
@@ -147,21 +151,17 @@ func DeleteForEmail(s secure.Storage, email string) error {
 	return saveAccountStore(store)
 }
 
-// SetActive switches the active account to the given email. If the email isn't
-// in the store yet but exists in the keychain under the email-scoped key, it is
-// auto-registered. Returns an error only when no credentials are found at all.
+// SetActive switches the active account to the given email.
+// The email must have a token stored under its email-scoped keychain key
+// (written by SaveForEmail during /login). Returns an error if no such
+// token exists — the user must /login for that account first.
 func SetActive(store *AccountStore, email string) error {
+	s := newDefaultStorage()
+	if _, err := s.Get(Service, persistKeyForEmail(email)); err != nil {
+		return fmt.Errorf("no saved credentials for %q — run /login to add this account", email)
+	}
+	// Register in the store if first time seeing this email.
 	if _, ok := store.Accounts[email]; !ok {
-		// Auto-register: check if a keychain entry exists for this email.
-		s := newDefaultStorage()
-		if _, err := s.Get(Service, persistKeyForEmail(email)); err != nil {
-			// Also check the legacy key — this lets people switch by email
-			// even if they've only ever logged in once on the legacy path.
-			if _, lerr := s.Get(Service, PersistKey); lerr != nil {
-				return fmt.Errorf("account %q not found — run /login first to add it", email)
-			}
-			// Legacy token exists but wasn't registered; register it now.
-		}
 		store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
 	}
 	store.Active = email

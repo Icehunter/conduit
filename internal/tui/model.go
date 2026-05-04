@@ -3548,6 +3548,11 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 				ctx := context.Background()
 				bearer, prof, err := m.cfg.LoadAuth(ctx)
 				if err != nil {
+					// ErrNotLoggedIn means we switched the active pointer but have
+					// no token for this account — guide the user to /login.
+					if errors.Is(err, auth.ErrNotLoggedIn) {
+						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to sign in to this account", email)}
+					}
 					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
 				}
 				return authReloadMsg{client: m.cfg.NewAPIClient(bearer), profile: prof}

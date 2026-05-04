@@ -37,12 +37,12 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Full Claude Code parity** — 249/264 scoped features implemented (94%)
 - **Streaming SSE** — real-time token-by-token output with cost tracking
 - **Auto-compact** — context window managed automatically; manual `/compact`
-- **Thinking mode** — extended reasoning via `/effort low|medium|high|max`
-- **Fast mode** — `/fast` toggles Opus 4 for cheaper/faster turns
+- **Thinking mode** — extended reasoning via `/effort low|normal|high|max`
+- **Fast mode** — `/fast` toggles Haiku for faster/cheaper turns
 - **Coordinator mode** — Claude as orchestrator managing parallel sub-agents
 - **Exponential backoff** — automatic retry on 429 with jitter
 
-### Tools (24 built-in)
+### Tools (30+ built-in)
 
 | Tool | What it does |
 |------|-------------|
@@ -54,7 +54,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 | `GlobTool` | File discovery by pattern |
 | `AgentTool` | Spawn sub-agents for parallel work |
 | `WebFetchTool` | Fetch URLs with content extraction |
-| `WebSearchTool` | DuckDuckGo search |
+| `WebSearchTool` | Web search via Anthropic's native search API |
 | `NotebookEditTool` | Edit Jupyter notebooks cell by cell |
 | `REPLTool` | Persistent REPL sessions (Python, Node, Ruby…) |
 | `TodoWriteTool` | Structured task tracking |
@@ -114,7 +114,7 @@ Typical savings:
 - `npm install` → 80%
 - `eslint` → 75%
 
-View your savings: `/rtk gain`
+View your savings: type `/rtk gain` inside the TUI.
 
 ### Hooks
 
@@ -195,7 +195,7 @@ conduit --resume <session-id>
 | `/help` | List all commands |
 | `/model` | Switch model (claude-opus-4-7, claude-sonnet-4-6, …) |
 | `/fast` | Toggle fast mode (⚡ badge in status bar) |
-| `/effort <level>` | Set thinking budget: low / medium / high / max |
+| `/effort <level>` | Set thinking budget: low / normal / high / max |
 | `/compact` | Summarise and compress conversation history |
 | `/clear` | Clear conversation and start fresh |
 | `/plan` | Enter plan mode — Claude proposes, doesn't edit |
@@ -215,6 +215,12 @@ conduit --resume <session-id>
 | `/record` | Start / stop session recording (asciicast v2) |
 | `/files` | Files read or written this session |
 | `/diff` | Git diff of files edited this session |
+| `/context` | Current context window usage breakdown |
+| `/color` | Toggle ANSI colour output on/off |
+| `/rename` | Rename the current session |
+| `/rewind <n>` | Roll back the last n turns |
+| `/branch` | Create a git branch for this session's changes |
+| `/commit` | Commit files edited this session |
 | `/cost` | Token and cost breakdown |
 | `/usage` | Rate limit quota and burn rate |
 | `/stats` | Per-tool usage counts |
@@ -353,15 +359,11 @@ Custom themes can be defined under `"themes"` in `settings.json`:
 
 Conduit ships with RTK (originally a Rust CLI) ported to Go and fused directly into the process. It intercepts `BashTool` results before they reach the model and applies command-aware compression rules.
 
-```sh
-# View cumulative savings across all sessions
-conduit rtk gain
+Inside the TUI:
 
-# View per-command breakdown
-conduit rtk gain --history
-
-# Run a command without RTK filtering (for debugging)
-conduit rtk proxy git diff
+```
+/rtk gain      # cumulative savings across all sessions
+/rtk discover  # scan transcripts for missed compression opportunities
 ```
 
 RTK covers 70 command patterns including: git, cargo, npm/yarn/pnpm, pytest, eslint, dotnet, aws CLI, ls, and structured log output.
@@ -380,13 +382,13 @@ Enables coordinator mode: Claude acts as an orchestrator that spawns sub-agents 
 
 ## Building from source
 
-Requirements: Go 1.23+
+Requirements: Go 1.26+
 
 ```sh
 make build      # builds to ./conduit
-make test       # go test -race ./...
+make test       # go test ./...
+make test-race  # go test -race ./...
 make lint       # golangci-lint run
-make release    # cross-compile for darwin/linux/windows
 ```
 
 ---

@@ -1068,16 +1068,23 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		// History: navigate backwards (older).
+		// Only enter history mode when already navigating (historyIdx >= 0)
+		// or when the input is non-empty. Empty input + first UP falls through
+		// to the viewport so the user can scroll back through the conversation.
 		if len(m.inputHistory) > 0 && !m.running {
-			if m.historyIdx == -1 {
-				m.historyDraft = m.input.Value()
-				m.historyIdx = len(m.inputHistory) - 1
-			} else if m.historyIdx > 0 {
-				m.historyIdx--
+			alreadyInHistory := m.historyIdx >= 0
+			hasInput := m.input.Value() != ""
+			if alreadyInHistory || hasInput {
+				if m.historyIdx == -1 {
+					m.historyDraft = m.input.Value()
+					m.historyIdx = len(m.inputHistory) - 1
+				} else if m.historyIdx > 0 {
+					m.historyIdx--
+				}
+				m.input.SetValue(m.inputHistory[m.historyIdx])
+				m.input.CursorEnd()
+				return m, nil, true
 			}
-			m.input.SetValue(m.inputHistory[m.historyIdx])
-			m.input.CursorEnd()
-			return m, nil, true
 		}
 
 	case "down":

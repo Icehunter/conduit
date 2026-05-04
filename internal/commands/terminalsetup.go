@@ -47,7 +47,11 @@ func RegisterTerminalSetupCommand(r *Registry) {
 func terminalSetupAdvice(term string) string {
 	if name, ok := nativeCSIuTerminals[term]; ok {
 		return fmt.Sprintf(
-			"%s supports the Kitty keyboard protocol natively, and conduit (bubbletea v2) decodes those sequences. Shift+Enter inserts a newline. No setup needed.",
+			"%s supports the Kitty keyboard protocol natively, and conduit (bubbletea v2) decodes those sequences. Shift+Enter inserts a newline. No setup needed.\n\n"+
+				"Mouse / scroll notes:\n"+
+				"  • Trackpad / scroll wheel scrolls the chat viewport\n"+
+				"  • UP/DOWN arrows navigate input history\n"+
+				"  • Text selection: conduit enables mouse mode for scroll — to select text hold Option (⌥) while dragging (macOS) or Shift+drag on Linux",
 			name,
 		)
 	}

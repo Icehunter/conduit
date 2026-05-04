@@ -38,7 +38,11 @@ func renderMessage(msg Message, width int) string {
 		return pad + prefixStr + body
 
 	case RoleAssistant:
-		body := renderMarkdown(msg.Content, inner)
+		content := stripCompanionMarkerGlobal(msg.Content)
+		if content == "" {
+			return "" // pure companion quip — bubble handles display, skip chat row
+		}
+		body := renderMarkdown(content, inner)
 		return pad + styleClaudePrefix.Render(prefixClaude) + "\n" + indentLines(body, pad)
 
 	case RoleTool:

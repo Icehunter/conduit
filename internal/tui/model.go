@@ -3949,16 +3949,22 @@ func (m *Model) refreshViewport() {
 	}
 	wasAtBottom := m.vp.AtBottom()
 	var sb strings.Builder
-	for i, msg := range m.messages {
-		if i > 0 {
+	first := true
+	for _, msg := range m.messages {
+		rendered := renderMessage(msg, w)
+		if rendered == "" {
+			continue // skip empty renders (e.g. pure companion quip messages)
+		}
+		if !first {
 			sb.WriteString(separator(w))
 			sb.WriteByte('\n')
 		}
-		sb.WriteString(renderMessage(msg, w))
+		first = false
+		sb.WriteString(rendered)
 		sb.WriteByte('\n')
 	}
 	if m.streaming != "" {
-		if len(m.messages) > 0 {
+		if !first {
 			sb.WriteString(separator(w))
 			sb.WriteByte('\n')
 		}

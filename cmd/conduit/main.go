@@ -42,6 +42,7 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
@@ -52,6 +53,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/filewritetool"
 	"github.com/icehunter/conduit/internal/tools/globtool"
 	"github.com/icehunter/conduit/internal/tools/greptool"
+	lsptool "github.com/icehunter/conduit/internal/tools/lsp"
 	"github.com/icehunter/conduit/internal/tools/mcpresourcetool"
 	"github.com/icehunter/conduit/internal/tools/mcptool"
 	"github.com/icehunter/conduit/internal/tools/notebookedittool"
@@ -199,7 +201,7 @@ type registryOpts struct {
 }
 
 // buildRegistry builds the tool registry, including MCP server tools.
-func buildRegistry(client *api.Client, mcpManager *mcp.Manager, rOpts *registryOpts) *tool.Registry {
+func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *registryOpts) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
 	reg.Register(fileedittool.New())
@@ -220,6 +222,7 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, rOpts *registryO
 	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
 	reg.Register(websearchtool.New(client))
+	reg.Register(lsptool.New(lspManager))
 	reg.Register(&configtool.ConfigTool{})
 	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
 	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
@@ -443,6 +446,9 @@ func runREPL(continueMode bool, resumeID string) error {
 	mcpManager.SetSecureStore(secure.NewDefault())
 	_ = mcpManager.ConnectAll(ctx, cwd)
 
+	// Create the LSP manager; servers are started on demand per file extension.
+	lspManager := lsp.NewManager()
+
 	// Load plugins (non-fatal — missing plugins don't block startup).
 	loadedPlugins, _ := plugins.LoadAll(cwd)
 
@@ -487,7 +493,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		}, OriginalCwd: cwd},
 	}
 
-	reg := buildRegistry(c, mcpManager, rOpts)
+	reg := buildRegistry(c, mcpManager, lspManager, rOpts)
 	modelName := internalmodel.Resolve()
 
 	// Build MCP server instructions block from connected servers that returned
@@ -713,7 +719,7 @@ func runPrint(args []string) error {
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 	c := newAPIClient(bearer)
-	reg := buildRegistry(c, nil, nil)
+	reg := buildRegistry(c, nil, lsp.NewManager(), nil)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{

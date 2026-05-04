@@ -5,7 +5,7 @@
 Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in Go with Bubble Tea. It runs on your existing Claude Max or Teams subscription, uses the same OAuth flow, the same API wire format, and the same tool set — but starts faster, uses less memory, and ships as a single static binary.
 
 <p align="center">
-  <img src="assets/conduit.png" alt="Conduit logo" width="200" />
+  <img src="internal/assets/conduit.png" alt="Conduit logo" width="200" />
 </p>
 
 <p align="center">
@@ -33,6 +33,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 ## Features
 
 ### Core agent
+
 - **Full Claude Code parity** — 246/264 scoped features implemented (93%)
 - **Streaming SSE** — real-time token-by-token output with cost tracking
 - **Auto-compact** — context window managed automatically; manual `/compact`
@@ -42,6 +43,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Exponential backoff** — automatic retry on 429 with jitter
 
 ### Tools (22 built-in)
+
 | Tool | What it does |
 |------|-------------|
 | `BashTool` | Run shell commands with RTK token compression |
@@ -67,6 +69,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 | `SleepTool` | Pause between actions |
 
 ### MCP (Model Context Protocol)
+
 - **stdio, HTTP, SSE transports** — connect any MCP server
 - **Plugin system** — install from marketplace (`claude-plugins-official`), enable/disable per-session
 - **Resource listing and reading** — `ListMcpResources`, `ReadMcpResource`
@@ -74,6 +77,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Plugin panel** — `/plugin` browses marketplace, manages installed plugins
 
 ### Memory & context
+
 - **CLAUDE.md loading** — walks from cwd to root, injects as system blocks
 - **`@include` directives** — compose CLAUDE.md files across directories
 - **Auto-memory** — summarises conversations to `MEMORY.md`; injected on next session
@@ -81,6 +85,7 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Relevant memory search** — surfaces related memories by keyword on session start
 
 ### TUI
+
 - **Bubble Tea v2** — native Shift+Enter via Kitty keyboard protocol
 - **Full GFM markdown** — tables, task lists, strikethrough, blockquotes, code blocks with syntax
 - **Light and dark themes** — `/theme` picker with 8 built-in palettes, custom theme support
@@ -90,14 +95,17 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Coordinator footer** — live sub-agent progress during multi-agent runs
 
 ### Multi-account
+
 - **Platform keychain storage** — macOS Keychain, Linux libsecret, Windows Credential Manager via `go-keyring`
 - **`/account` panel** — add, switch, remove, and delete accounts without restarting
 - **`accounts.json`** — tracks all registered accounts; auto-selects most-recently-added on first run
 
 ### In-process RTK (token savings)
+
 Conduit ships with RTK (Rust Token Killer) ported to Go as a zero-overhead in-process filter. Every `BashTool` result is passed through the filter before being sent to the model.
 
 Typical savings:
+
 - `git status` → 90% reduction
 - `cargo test` → 85% (test failures only)
 - `npm install` → 80%
@@ -106,11 +114,13 @@ Typical savings:
 View your savings: `/rtk gain`
 
 ### Hooks
+
 - **PreToolUse / PostToolUse / SessionStart / Stop** — shell, HTTP, prompt, and agent hooks
 - **Async hooks** — PostToolUse hooks run in background without blocking the next turn
 - **Desktop notifications** — notify on turn complete (macOS native + Linux `notify-send`)
 
 ### Session management
+
 - **JSONL transcripts** — every session saved to `~/.claude/projects/<path>/<id>.jsonl`
 - **`/resume`** — fuzzy-search all past sessions, load with full history
 - **`/search`** — search across all session transcripts for a term
@@ -122,17 +132,21 @@ View your savings: `/rtk gain`
 ## Installation
 
 ### Homebrew (macOS / Linux)
+
 ```sh
 brew install icehunter/tap/conduit
 ```
 
 ### Go install
+
 ```sh
 go install github.com/icehunter/conduit/cmd/conduit@latest
 ```
 
 ### Pre-built binary
+
 Download from [Releases](https://github.com/icehunter/conduit/releases) for your platform:
+
 ```sh
 curl -L https://github.com/icehunter/conduit/releases/latest/download/conduit-darwin-arm64 -o conduit
 chmod +x conduit
@@ -140,6 +154,7 @@ mv conduit /usr/local/bin/
 ```
 
 ### Build from source
+
 ```sh
 git clone https://github.com/icehunter/conduit
 cd conduit
@@ -220,9 +235,11 @@ conduit --resume <session-id>
 ## Configuration
 
 ### Settings file
+
 `~/.claude/settings.json` — all settings managed via `/config` panel or edited directly.
 
 Key settings:
+
 ```json
 {
   "model": "claude-sonnet-4-6",
@@ -238,10 +255,13 @@ Key settings:
 ```
 
 ### CLAUDE.md
+
 Place a `CLAUDE.md` in any directory — conduit reads from the file's directory up to the repo root and your home directory, injecting each as a system context block. Use `@path/to/file` inside to include another file inline.
 
 ### Custom keybindings
+
 `~/.claude/keybindings.json`:
+
 ```json
 {
   "compact": ["ctrl+k"],
@@ -251,6 +271,7 @@ Place a `CLAUDE.md` in any directory — conduit reads from the file's directory
 ```
 
 ### Hooks
+
 ```json
 // ~/.claude/settings.json
 {
@@ -274,6 +295,7 @@ Place a `CLAUDE.md` in any directory — conduit reads from the file's directory
 Hook types: `command` (shell), `http` (POST JSON to URL), `prompt` (inject result as context), `agent` (spawn sub-agent).
 
 ### MCP servers
+
 ```json
 // ~/.claude/settings.json
 {
@@ -299,6 +321,7 @@ Built-in themes: `dark` (default), `light`, `dark-accessible`, `light-accessible
 Switch with `/theme`, or set `"theme": "nord"` in `settings.json`.
 
 Custom themes can be added under `"themes"` in `settings.json`:
+
 ```json
 {
   "themes": {

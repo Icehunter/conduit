@@ -184,6 +184,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterBundledSkillCommands(reg)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
+	commands.RegisterRecordingCommand(reg)
 
 	sessionStart := time.Now()
 

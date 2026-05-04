@@ -231,7 +231,7 @@
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ⬛ | Large effort (1513 LOC); niche use case; deferred |
 | Custom keybindings | `keybindings/` (14 files) | — | `internal/keybindings/` | ✅ | Full MVP: parser, resolver, JSON loader, defaults, TUI hookup. `command:*` actions execute slash commands; chat/select/confirm actions wired. Single-keystroke only; chords deferred. |
 | Image paste | `utils/imagePaste.ts` | — | `internal/attach/clipboard.go` + resize | ✅ | Image paste ✅; PDF paste ✅ via `internal/attach/pdf.go` (clipboard PDF type + Finder file URI fallback) |
-| Drag-drop attachments | `utils/attachments.ts` | — | ❌ | ❌ | M13 |
+| Drag-drop attachments | `utils/attachments.ts` | — | ✅ | ✅ | file:// URIs + shell-escaped paths → @mention / pendingImages / pendingPDFs |
 | Ink rendering engine | `ink/` (96 files, 13306 LOC) | — | Bubble Tea | 🔲 | Different framework |
 
 ---
@@ -624,9 +624,9 @@
 | Analytics & Telemetry | 0 | 0 | 0 | 7 | 7 |
 | Utilities (shared) | 3 | 0 | 0 | 16 | 19 |
 | State Management | 0 | 0 | 0 | 3 | 3 |
-| **TOTAL** | **245** | **0** | **14** | **130** | **394** |
+| **TOTAL** | **246** | **0** | **13** | **130** | **394** |
 
-**Overall parity: 245/264 scoped features (93% complete)**
+**Overall parity: 246/264 scoped features (93% complete)**
 **Descoped: 130 features (intentionally excluded — bridge, remote, voice, team swarm, Anthropic-internal)**
 
 ### Remaining actionable ❌ items

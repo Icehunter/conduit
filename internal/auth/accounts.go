@@ -74,7 +74,25 @@ func saveAccountStore(s AccountStore) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(s, "", "  ")
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(p); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("accounts: parse existing: %w", err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("accounts: read existing: %w", err)
+	}
+	active, err := json.Marshal(s.Active)
+	if err != nil {
+		return fmt.Errorf("accounts: marshal active: %w", err)
+	}
+	accounts, err := json.Marshal(s.Accounts)
+	if err != nil {
+		return fmt.Errorf("accounts: marshal accounts: %w", err)
+	}
+	raw["active"] = active
+	raw["accounts"] = accounts
+	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return fmt.Errorf("accounts: marshal: %w", err)
 	}

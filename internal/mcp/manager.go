@@ -373,8 +373,13 @@ func (m *Manager) ServerInstructions() map[string]string {
 	return out
 }
 
+// ToolNamePrefix returns the Claude-compatible MCP tool prefix for a server.
+func ToolNamePrefix(serverName string) string {
+	return "mcp__" + strings.TrimSuffix(NormalizeServerName(serverName), "__") + "__"
+}
+
 // AllTools returns all tools across all connected servers, with names
-// prefixed by "<serverName>__" to avoid collisions.
+// prefixed by "mcp__<serverName>__" to avoid collisions.
 func (m *Manager) AllTools() []NamedTool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -384,7 +389,7 @@ func (m *Manager) AllTools() []NamedTool {
 		if srv.Status != StatusConnected {
 			continue
 		}
-		prefix := NormalizeServerName(srvName)
+		prefix := ToolNamePrefix(srvName)
 		for _, t := range srv.Tools {
 			tools = append(tools, NamedTool{
 				ServerName:    srvName,
@@ -398,7 +403,7 @@ func (m *Manager) AllTools() []NamedTool {
 }
 
 // CallTool dispatches a tool call to the appropriate server.
-// qualifiedName is "<prefix><toolName>" as returned by AllTools.
+// qualifiedName is "mcp__<serverName>__<toolName>" as returned by AllTools.
 func (m *Manager) CallTool(ctx context.Context, qualifiedName string, input []byte) (CallResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -407,7 +412,7 @@ func (m *Manager) CallTool(ctx context.Context, qualifiedName string, input []by
 		if srv.Status != StatusConnected {
 			continue
 		}
-		prefix := NormalizeServerName(srvName)
+		prefix := ToolNamePrefix(srvName)
 		if !strings.HasPrefix(qualifiedName, prefix) {
 			continue
 		}

@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -88,5 +90,60 @@ func TestTerminalSetupAdvice_EmptyTermProgram(t *testing.T) {
 	got := terminalSetupAdvice("")
 	if !strings.Contains(got, "isn't recognized") {
 		t.Errorf("empty TERM_PROGRAM should still produce a recognizable message; got %q", got)
+	}
+}
+
+func TestTerminalSetupApply_LeavesMalformedJSONUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", filepath.Join(dir, "AppData", "Roaming"))
+
+	var codeUserDir string
+	switch runtime.GOOS {
+	case "darwin":
+		codeUserDir = filepath.Join(dir, "Library", "Application Support", "Code", "User")
+	case "windows":
+		codeUserDir = filepath.Join(os.Getenv("APPDATA"), "Code", "User")
+	default:
+		codeUserDir = filepath.Join(dir, ".config", "Code", "User")
+	}
+	if err := os.MkdirAll(codeUserDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	codePath := filepath.Join(codeUserDir, "keybindings.json")
+	bad := []byte(`{"key":`)
+	if err := os.WriteFile(codePath, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := applyVSCode("VSCode", "Code")
+	if !strings.Contains(got, "left unchanged") {
+		t.Fatalf("expected unchanged parse error, got %q", got)
+	}
+	after, err := os.ReadFile(codePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(bad) {
+		t.Fatalf("VSCode keybindings were overwritten: %q", after)
+	}
+
+	zedDir := filepath.Join(dir, ".config", "zed")
+	if err := os.MkdirAll(zedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	zedPath := filepath.Join(zedDir, "keymap.json")
+	if err := os.WriteFile(zedPath, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = applyZed()
+	if !strings.Contains(got, "left unchanged") {
+		t.Fatalf("expected unchanged parse error, got %q", got)
+	}
+	after, err = os.ReadFile(zedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(bad) {
+		t.Fatalf("Zed keymap was overwritten: %q", after)
 	}
 }

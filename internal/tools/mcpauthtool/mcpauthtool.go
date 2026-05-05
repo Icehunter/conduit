@@ -40,7 +40,7 @@ func New(manager *mcp.Manager, serverName, serverURL string) tool.Tool {
 }
 
 func (t *authTool) Name() string {
-	return mcp.NormalizeServerName(t.serverName) + "authenticate"
+	return mcp.ToolNamePrefix(t.serverName) + "authenticate"
 }
 
 func (t *authTool) Description() string {

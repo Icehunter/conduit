@@ -2455,10 +2455,10 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 
 	case "resume-pick":
 		// Parse tab-separated session lines from the command result.
-		// Format: filePath\tage\ttitle\tmsgCount
+		// Format: filePath\tage\ttitle\trecordCount\tsize
 		var sessions []resumeSession
 		for _, line := range strings.Split(res.Text, "\n") {
-			parts := strings.SplitN(line, "\t", 4)
+			parts := strings.SplitN(line, "\t", 5)
 			if len(parts) < 3 {
 				continue
 			}
@@ -2469,6 +2469,10 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			}
 			if len(parts) == 4 {
 				_, _ = fmt.Sscanf(parts[3], "%d", &rs.msgCount)
+			}
+			if len(parts) == 5 {
+				_, _ = fmt.Sscanf(parts[3], "%d", &rs.msgCount)
+				rs.size = parts[4]
 			}
 			sessions = append(sessions, rs)
 		}
@@ -2996,7 +3000,7 @@ func (m Model) View() tea.View {
 	// right: hints  edgePad
 	// pad:   all remaining space between left and right
 	edgePad := strings.Repeat(" ", outerPad)
-	barSep := styleStatus.Render(" |")
+	barSep := styleStatus.Render(" | ")
 
 	appSeg := styleStatusAccent.Render("conduit")
 
@@ -3046,7 +3050,7 @@ func (m Model) View() tea.View {
 	if m.rateLimitWarning != "" {
 		leftParts = append(leftParts, styleModeYellow.Render("⚠ "+m.rateLimitWarning))
 	}
-	left := strings.Join(leftParts, barSep)
+	left := " " + strings.Join(leftParts, barSep)
 
 	// Show session title (from /rename or first message) in the right side.
 	var rightParts []string
@@ -3062,7 +3066,7 @@ func (m Model) View() tea.View {
 		}
 	}
 	rightParts = append(rightParts, styleStatus.Render("^Y copy  ^C stop  shift+tab mode"))
-	right := strings.Join(rightParts, barSep) + edgePad
+	right := strings.Join(rightParts, barSep) + " "
 
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {

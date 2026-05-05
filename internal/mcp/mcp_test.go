@@ -3,6 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -20,12 +23,51 @@ func TestNormalizeServerName(t *testing.T) {
 	}
 }
 
+func TestToolNamePrefixMatchesClaudeMCPConvention(t *testing.T) {
+	got := ToolNamePrefix("qwen-router")
+	if got != "mcp__qwen_router__" {
+		t.Fatalf("ToolNamePrefix = %q, want mcp__qwen_router__", got)
+	}
+}
+
 func TestLoadConfigsNoError(t *testing.T) {
 	// LoadConfigs must never return an error regardless of whether config files exist.
 	// Global ~/.claude.json is always read if present, so we only assert no error.
 	_, err := LoadConfigs("/tmp/definitely-nonexistent-8675309")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigsPicksUpTopLevelClaudeMcpServers(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	path := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(path, []byte(`{
+  "mcpServers": {
+    "qwen-router": {
+      "command": "node",
+      "args": ["/tmp/server.js"],
+      "env": {"QWEN_MODEL": "qwen3-coder"}
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgs, err := LoadConfigs("/tmp/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok := cfgs["qwen-router"]
+	if !ok {
+		t.Fatal("qwen-router server was not loaded from top-level mcpServers")
+	}
+	if cfg.Scope != "user" {
+		t.Fatalf("scope = %q, want user", cfg.Scope)
+	}
+	if cfg.Command != "node" || len(cfg.Args) != 1 || cfg.Env["QWEN_MODEL"] != "qwen3-coder" {
+		t.Fatalf("server config not preserved: %+v", cfg)
 	}
 }
 
@@ -76,4 +118,117 @@ func TestManagerConnectAllNoError(t *testing.T) {
 	}
 	// Servers may exist (from ~/.claude.json) or not — both are valid.
 	t.Logf("servers found: %d", len(m.Servers()))
+}
+
+type fakeMCPClient struct {
+	called string
+}
+
+func (f *fakeMCPClient) Initialize(context.Context) (string, error) { return "", nil }
+func (f *fakeMCPClient) ListTools(context.Context) ([]ToolDef, error) {
+	return []ToolDef{{Name: "qwen_implement", Description: "implement with qwen"}}, nil
+}
+func (f *fakeMCPClient) CallTool(_ context.Context, name string, _ json.RawMessage) (CallResult, error) {
+	f.called = name
+	return CallResult{Content: []ContentBlock{{Type: "text", Text: "ok"}}}, nil
+}
+func (f *fakeMCPClient) ListResources(context.Context) ([]ResourceDef, error) { return nil, nil }
+func (f *fakeMCPClient) ReadResource(context.Context, string) ([]ResourceContent, error) {
+	return nil, nil
+}
+func (f *fakeMCPClient) Close() error { return nil }
+
+func TestManagerAllToolsUsesMCPQualifiedNames(t *testing.T) {
+	client := &fakeMCPClient{}
+	m := NewManager()
+	m.servers["qwen-router"] = &ConnectedServer{
+		Name:   "qwen-router",
+		Status: StatusConnected,
+		Tools:  []ToolDef{{Name: "qwen_implement", Description: "implement with qwen"}},
+		client: client,
+	}
+
+	tools := m.AllTools()
+	if len(tools) != 1 {
+		t.Fatalf("len(tools) = %d, want 1", len(tools))
+	}
+	if tools[0].QualifiedName != "mcp__qwen_router__qwen_implement" {
+		t.Fatalf("QualifiedName = %q", tools[0].QualifiedName)
+	}
+	if !strings.HasPrefix(tools[0].Prefix, "mcp__qwen_router__") {
+		t.Fatalf("Prefix = %q", tools[0].Prefix)
+	}
+
+	result, err := m.CallTool(context.Background(), "mcp__qwen_router__qwen_implement", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.called != "qwen_implement" {
+		t.Fatalf("called MCP tool %q, want qwen_implement", client.called)
+	}
+	if len(result.Content) != 1 || result.Content[0].Text != "ok" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestMergedStdioEnvKeepsParentEnvironment(t *testing.T) {
+	t.Setenv("CONDUIT_MCP_PARENT_ENV_TEST", "parent")
+	env := mergedStdioEnv(map[string]string{"QWEN_MODEL": "qwen3-coder"})
+	joined := "\x00" + strings.Join(env, "\x00") + "\x00"
+	if !strings.Contains(joined, "\x00CONDUIT_MCP_PARENT_ENV_TEST=parent\x00") {
+		t.Fatal("merged env dropped parent environment")
+	}
+	if !strings.Contains(joined, "\x00QWEN_MODEL=qwen3-coder\x00") {
+		t.Fatal("merged env did not include configured MCP env")
+	}
+}
+
+func TestSetDisabled_PreservesClaudeJSONFields(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	cwd := filepath.Join(dir, "project")
+	initial := `{
+  "mcpServers": {"global": {"command": "node"}},
+  "projects": {
+    "` + filepath.ToSlash(cwd) + `": {
+      "mcpServers": {"local": {"command": "python"}},
+      "enabledMcpServers": ["keep-enabled"],
+      "customProjectField": {"keep": true}
+    }
+  },
+  "customTopLevel": ["keep"]
+}`
+	path := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetDisabled("local", cwd, true); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["mcpServers"]; !ok {
+		t.Fatal("global mcpServers was removed")
+	}
+	if _, ok := raw["customTopLevel"]; !ok {
+		t.Fatal("custom top-level field was removed")
+	}
+	var projects map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(raw["projects"], &projects); err != nil {
+		t.Fatal(err)
+	}
+	project := projects[cwd]
+	for _, key := range []string{"mcpServers", "enabledMcpServers", "customProjectField", "disabledMcpServers"} {
+		if _, ok := project[key]; !ok {
+			t.Fatalf("project field %q was not preserved/set", key)
+		}
+	}
 }

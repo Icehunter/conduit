@@ -1,6 +1,7 @@
 package globalconfig
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,5 +147,126 @@ func TestIncrementStartups(t *testing.T) {
 	}
 	if cfg.NumStartups != 2 {
 		t.Errorf("NumStartups = %d; want 2", cfg.NumStartups)
+	}
+}
+
+func TestIncrementStartups_PreservesUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	path := filepath.Join(dir, ".claude.json")
+	original := []byte(`{
+  "mcpServers": {"global": {"command": "node"}},
+  "custom": {"nested": true},
+  "numStartups": 7,
+  "projects": {
+    "/tmp/project": {
+      "mcpServers": {"local": {"command": "python"}},
+      "disabledMcpServers": ["old"]
+    }
+  }
+}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	IncrementStartups()
+
+	var raw map[string]json.RawMessage
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["mcpServers"]; !ok {
+		t.Fatal("mcpServers was removed")
+	}
+	if _, ok := raw["custom"]; !ok {
+		t.Fatal("custom field was removed")
+	}
+	var count int
+	if err := json.Unmarshal(raw["numStartups"], &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 8 {
+		t.Fatalf("numStartups = %d; want 8", count)
+	}
+}
+
+func TestIncrementStartups_DoesNotOverwriteCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	path := filepath.Join(dir, ".claude.json")
+	before := []byte("not json{{")
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	IncrementStartups()
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("corrupt file was overwritten: %q", after)
+	}
+}
+
+func TestSetTrusted_PreservesUnknownProjectFields(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("CLAUDE_CODE_SANDBOXED", "")
+	cwd := filepath.Join(dir, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".claude.json")
+	initial := `{
+  "topLevel": "keep",
+  "projects": {
+    "` + filepath.ToSlash(cwd) + `": {
+      "mcpServers": {"local": {"command": "node"}},
+      "disabledMcpServers": ["srv"]
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetTrusted(cwd); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]json.RawMessage
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["topLevel"]; !ok {
+		t.Fatal("top-level field was removed")
+	}
+	var projects map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(raw["projects"], &projects); err != nil {
+		t.Fatal(err)
+	}
+	project := projects[cwd]
+	if _, ok := project["mcpServers"]; !ok {
+		t.Fatal("project mcpServers was removed")
+	}
+	if _, ok := project["disabledMcpServers"]; !ok {
+		t.Fatal("project disabledMcpServers was removed")
+	}
+	var trusted bool
+	if err := json.Unmarshal(project["hasTrustDialogAccepted"], &trusted); err != nil {
+		t.Fatal(err)
+	}
+	if !trusted {
+		t.Fatal("hasTrustDialogAccepted was not set")
 	}
 }

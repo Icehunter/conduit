@@ -140,3 +140,26 @@ func TestConfigTool_PreviousValueReturned(t *testing.T) {
 		t.Errorf("previousValue not in response: %s", res.Content[0].Text)
 	}
 }
+
+func TestConfigTool_DoesNotOverwriteInvalidJSON(t *testing.T) {
+	ct, path := setup(t)
+	before := []byte(`{"model":`)
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := ct.Execute(context.Background(), json.RawMessage(`{"setting":"model","value":"new-model"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error for invalid existing settings JSON")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("invalid JSON file was overwritten: %q", after)
+	}
+}

@@ -73,7 +73,10 @@ func (t *ConfigTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 		path = globalSettingsPath()
 	}
 
-	settings := t.loadSettings(path)
+	settings, err := t.loadSettings(path)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("cannot read settings: %v", err)), nil
+	}
 
 	if inp.Value == nil {
 		// GET operation.
@@ -104,17 +107,24 @@ func (t *ConfigTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 // rawSettings is a generic map for reading/writing settings.json.
 type rawSettings map[string]any
 
-func (t *ConfigTool) loadSettings(path string) rawSettings {
+func (t *ConfigTool) loadSettings(path string) (rawSettings, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return make(rawSettings)
+		if os.IsNotExist(err) {
+			return make(rawSettings), nil
+		}
+		return nil, err
 	}
 	var s rawSettings
-	_ = json.Unmarshal(data, &s)
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &s); err != nil {
+			return nil, err
+		}
+	}
 	if s == nil {
 		s = make(rawSettings)
 	}
-	return s
+	return s, nil
 }
 
 func (t *ConfigTool) saveSettings(path string, s rawSettings) error {

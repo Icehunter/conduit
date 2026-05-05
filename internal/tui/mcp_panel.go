@@ -195,11 +195,11 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:u
 					if m.cfg.MCPManager != nil && len(item.tools) == 0 {
 						for _, srv := range m.cfg.MCPManager.Servers() {
 							if srv.Name == item.name {
-								prefix := mcp.NormalizeServerName(srv.Name)
+								prefix := mcp.ToolNamePrefix(srv.Name)
 								for _, t := range srv.Tools {
 									item.tools = append(item.tools, panelToolItem{
 										name:        t.Name,
-										fullName:    "mcp__" + prefix[:len(prefix)-2] + "__" + t.Name,
+										fullName:    prefix + t.Name,
 										description: t.Description,
 									})
 								}

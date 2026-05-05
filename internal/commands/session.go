@@ -383,7 +383,9 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 					return Result{Type: "text", Text: key + ": (not set)"}
 				}
 				var raw map[string]interface{}
-				_ = json.Unmarshal(data, &raw)
+				if err := json.Unmarshal(data, &raw); err != nil {
+					return Result{Type: "error", Text: "settings.json parse error: " + err.Error()}
+				}
 				val := getNestedKey(raw, key)
 				out, _ := json.MarshalIndent(val, "", "  ")
 				return Result{Type: "text", Text: key + ": " + string(out)}
@@ -675,7 +677,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				sessions = sessions[:20]
 			}
 			// Encode sessions as tab-separated lines for the TUI to parse.
-			// Format: "<filePath>\t<age>\t<title>\t<msgCount>"
+			// Format: "<filePath>\t<age>\t<title>\t<recordCount>\t<size>"
 			var lines []string
 			for _, s := range sessions {
 				age := formatSessionAge(time.Since(s.Modified))
@@ -686,8 +688,9 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if tag, _ := session.LoadTag(s.FilePath); tag != "" {
 					title = "#" + tag + " · " + title
 				}
-				msgCount := countJSONLLines(s.FilePath)
-				lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%d", s.FilePath, age, title, msgCount))
+				recordCount := countJSONLLines(s.FilePath)
+				size := formatSessionFootprint(sessionFootprintBytes(s.FilePath))
+				lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%d\t%s", s.FilePath, age, title, recordCount, size))
 			}
 			return Result{Type: "resume-pick", Text: strings.Join(lines, "\n")}
 		},
@@ -1066,7 +1069,11 @@ func upsertSettingsKey(path string, key string, value interface{}) error {
 	}
 	raw := make(map[string]json.RawMessage)
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) == 1 {
@@ -1079,7 +1086,9 @@ func upsertSettingsKey(path string, key string, value interface{}) error {
 		// Nested key: read sub-object, update, write back.
 		var sub map[string]interface{}
 		if existing, ok := raw[parts[0]]; ok {
-			_ = json.Unmarshal(existing, &sub)
+			if err := json.Unmarshal(existing, &sub); err != nil {
+				return err
+			}
 		}
 		if sub == nil {
 			sub = make(map[string]interface{})
@@ -1133,4 +1142,38 @@ func countJSONLLines(path string) int {
 		}
 	}
 	return count
+}
+
+func sessionFootprintBytes(path string) int64 {
+	var total int64
+	if info, err := os.Stat(path); err == nil {
+		total += info.Size()
+	}
+	sidecarDir := strings.TrimSuffix(path, filepath.Ext(path))
+	_ = filepath.WalkDir(sidecarDir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+func formatSessionFootprint(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	value := float64(bytes)
+	units := []string{"KB", "MB", "GB"}
+	for _, suffix := range units {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f TB", value/unit)
 }

@@ -60,7 +60,7 @@ func RegisterMCPCommand(r *Registry, manager *mcp.Manager) {
 							desc = string([]rune(desc)[:59]) + "…"
 						}
 						fmt.Fprintf(&sb, "    • %s%s — %s\n",
-							mcp.NormalizeServerName(srv.Name), t.Name, desc)
+							mcp.ToolNamePrefix(srv.Name), t.Name, desc)
 					}
 				}
 				return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}

@@ -61,7 +61,25 @@ func saveInstalledPlugins(f *InstalledPluginsV2) error {
 		return err
 	}
 	f.Version = 2
-	data, err := json.MarshalIndent(f, "", "  ")
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("save installed plugins: parse existing: %w", err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("save installed plugins: read existing: %w", err)
+	}
+	versionRaw, err := json.Marshal(f.Version)
+	if err != nil {
+		return err
+	}
+	pluginsRaw, err := json.Marshal(f.Plugins)
+	if err != nil {
+		return err
+	}
+	raw["version"] = versionRaw
+	raw["plugins"] = pluginsRaw
+	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
 	}

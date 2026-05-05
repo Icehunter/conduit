@@ -14,6 +14,7 @@ package globalconfig
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -71,12 +72,30 @@ func load() (*GlobalConfig, error) {
 	return &cfg, nil
 }
 
-func save(cfg *GlobalConfig) error {
+func loadRaw() (map[string]json.RawMessage, error) {
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]json.RawMessage{}, nil
+		}
+		return nil, err
+	}
+	raw := make(map[string]json.RawMessage)
+	if len(data) == 0 {
+		return raw, nil
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func saveRaw(raw map[string]json.RawMessage) error {
 	p := configPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -133,25 +152,54 @@ func SetTrusted(cwd string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	cfg, err := load()
+	raw, err := loadRaw()
 	if err != nil {
 		return err
 	}
-	if cfg.Projects[abs] == nil {
-		cfg.Projects[abs] = &ProjectConfig{}
+	projects := make(map[string]json.RawMessage)
+	if rawProjects, ok := raw["projects"]; ok && len(rawProjects) > 0 {
+		if err := json.Unmarshal(rawProjects, &projects); err != nil {
+			return fmt.Errorf("global config: parse projects: %w", err)
+		}
 	}
-	cfg.Projects[abs].HasTrustDialogAccepted = true
-	return save(cfg)
+	project := make(map[string]json.RawMessage)
+	if rawProject, ok := projects[abs]; ok && len(rawProject) > 0 {
+		if err := json.Unmarshal(rawProject, &project); err != nil {
+			return fmt.Errorf("global config: parse project %q: %w", abs, err)
+		}
+	}
+	project["hasTrustDialogAccepted"] = json.RawMessage("true")
+	projectRaw, err := json.Marshal(project)
+	if err != nil {
+		return err
+	}
+	projects[abs] = projectRaw
+	projectsRaw, err := json.Marshal(projects)
+	if err != nil {
+		return err
+	}
+	raw["projects"] = projectsRaw
+	return saveRaw(raw)
 }
 
 // IncrementStartups bumps the startup counter in ~/.claude.json. Best-effort.
 func IncrementStartups() {
 	mu.Lock()
 	defer mu.Unlock()
-	cfg, err := load()
+	raw, err := loadRaw()
 	if err != nil {
 		return
 	}
-	cfg.NumStartups++
-	_ = save(cfg)
+	var count int
+	if current, ok := raw["numStartups"]; ok {
+		if err := json.Unmarshal(current, &count); err != nil {
+			return
+		}
+	}
+	countRaw, err := json.Marshal(count + 1)
+	if err != nil {
+		return
+	}
+	raw["numStartups"] = countRaw
+	_ = saveRaw(raw)
 }

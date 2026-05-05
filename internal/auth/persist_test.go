@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -68,6 +70,64 @@ func TestSaveLoadForEmail_RoundTrip(t *testing.T) {
 	}
 	if !out.ExpiresAt.Equal(in.ExpiresAt) {
 		t.Errorf("ExpiresAt = %v; want %v", out.ExpiresAt, in.ExpiresAt)
+	}
+}
+
+func TestSaveAccountStore_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing.T) {
+	isolateClaudeDir(t)
+	path, err := accountsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := []byte(`{"active":"old@example.com","accounts":{},"external":{"keep":true}}`)
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = SaveAccountStore(AccountStore{
+		Active: "new@example.com",
+		Accounts: map[string]AccountEntry{
+			"new@example.com": {
+				Email:   "new@example.com",
+				AddedAt: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveAccountStore: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(after, &raw); err != nil {
+		t.Fatal(err)
+	}
+	var external map[string]bool
+	if err := json.Unmarshal(raw["external"], &external); err != nil {
+		t.Fatal(err)
+	}
+	if !external["keep"] {
+		t.Fatalf("external field not preserved: %s", raw["external"])
+	}
+
+	bad := []byte(`{"active":`)
+	if err := os.WriteFile(path, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAccountStore(AccountStore{Active: "next@example.com"}); err == nil {
+		t.Fatal("SaveAccountStore should fail on invalid existing JSON")
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unchanged) != string(bad) {
+		t.Fatalf("invalid accounts file was overwritten: %q", unchanged)
 	}
 }
 

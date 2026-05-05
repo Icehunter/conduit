@@ -37,9 +37,32 @@ func Load() (*StoredCompanion, error) {
 
 // Save persists the companion soul.
 func Save(sc *StoredCompanion) error {
-	data, err := json.MarshalIndent(sc, "", "  ")
+	path := storePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	fields, err := json.Marshal(sc)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(storePath(), data, 0o600)
+	var typed map[string]json.RawMessage
+	if err := json.Unmarshal(fields, &typed); err != nil {
+		return err
+	}
+	for k, v := range typed {
+		raw[k] = v
+	}
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }

@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,6 +124,92 @@ func TestExtractTitle_NoMessages(t *testing.T) {
 	title := ExtractTitle(s.FilePath)
 	if title != "" {
 		t.Errorf("title = %q; want empty for empty session", title)
+	}
+}
+
+func TestExtractTitle_ClaudeCodeStringContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude.jsonl")
+	writeJSONL(t, path,
+		`{"type":"summary","summary":"metadata only"}`,
+		`{"uuid":"u1","type":"user","message":{"role":"user","content":"Please fix /resume loading history"},"timestamp":"2026-05-04T16:50:29.444Z"}`,
+	)
+
+	title := ExtractTitle(path)
+	if title != "Please fix /resume loading history" {
+		t.Errorf("title = %q; want first Claude-style user message", title)
+	}
+}
+
+func TestLoadMessages_ClaudeCodeTranscriptStringContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude.jsonl")
+	writeJSONL(t, path,
+		`{"type":"summary","summary":"metadata only"}`,
+		`{"uuid":"u1","parentUuid":null,"type":"user","message":{"role":"user","content":"hello from Claude Code"},"timestamp":"2026-05-04T16:50:29.444Z"}`,
+		`{"uuid":"a1","parentUuid":"u1","type":"assistant","message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"history restored"}]},"timestamp":"2026-05-04T16:50:36.716Z"}`,
+	)
+
+	msgs, err := LoadMessages(path)
+	if err != nil {
+		t.Fatalf("LoadMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("LoadMessages returned %d messages; want 2", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[0].Content[0].Text != "hello from Claude Code" {
+		t.Fatalf("first message = %+v; want user text from string content", msgs[0])
+	}
+	if msgs[1].Role != "assistant" || msgs[1].Content[0].Text != "history restored" {
+		t.Fatalf("second message = %+v; want assistant text", msgs[1])
+	}
+}
+
+func TestLoadMessages_ClaudeCodeTranscriptUsesLatestParentChain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude.jsonl")
+	writeJSONL(t, path,
+		`{"uuid":"u1","parentUuid":null,"type":"user","message":{"role":"user","content":"root"},"timestamp":"2026-05-04T16:50:29.444Z"}`,
+		`{"uuid":"a1","parentUuid":"u1","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"root reply"}]},"timestamp":"2026-05-04T16:50:30.000Z"}`,
+		`{"uuid":"u-branch","parentUuid":"a1","type":"user","message":{"role":"user","content":"stale branch"},"timestamp":"2026-05-04T16:50:31.000Z"}`,
+		`{"uuid":"a-branch","parentUuid":"u-branch","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"stale reply"}]},"timestamp":"2026-05-04T16:50:32.000Z"}`,
+		`{"uuid":"u2","parentUuid":"a1","type":"user","message":{"role":"user","content":"latest branch"},"timestamp":"2026-05-04T16:50:33.000Z"}`,
+		`{"uuid":"a2","parentUuid":"u2","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"latest reply"}]},"timestamp":"2026-05-04T16:50:34.000Z"}`,
+	)
+
+	msgs, err := LoadMessages(path)
+	if err != nil {
+		t.Fatalf("LoadMessages: %v", err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("LoadMessages returned %d messages; want latest 4-message chain", len(msgs))
+	}
+	got := []string{
+		msgs[0].Content[0].Text,
+		msgs[1].Content[0].Text,
+		msgs[2].Content[0].Text,
+		msgs[3].Content[0].Text,
+	}
+	want := []string{"root", "root reply", "latest branch", "latest reply"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("chain = %q; want %q", got, want)
+	}
+}
+
+func TestLoadMessages_ClaudeCodeTranscriptBridgesSkippedThinking(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude.jsonl")
+	writeJSONL(t, path,
+		`{"uuid":"u1","parentUuid":null,"type":"user","message":{"role":"user","content":"before thinking"},"timestamp":"2026-05-04T16:50:29.444Z"}`,
+		`{"uuid":"think1","parentUuid":"u1","type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private","signature":"sig"}]},"timestamp":"2026-05-04T16:50:30.000Z"}`,
+		`{"uuid":"a1","parentUuid":"think1","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"after thinking"}]},"timestamp":"2026-05-04T16:50:31.000Z"}`,
+	)
+
+	msgs, err := LoadMessages(path)
+	if err != nil {
+		t.Fatalf("LoadMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("LoadMessages returned %d messages; want chain bridged across skipped thinking entry", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "before thinking" || msgs[1].Content[0].Text != "after thinking" {
+		t.Fatalf("messages = %+v; want text before and after skipped thinking", msgs)
 	}
 }
 
@@ -368,3 +455,10 @@ func TestFilterUnresolvedToolUses_DropsAssistantWithOnlyOrphanToolUse(t *testing
 
 // ensure json import is used
 var _ = json.Marshal
+
+func writeJSONL(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}

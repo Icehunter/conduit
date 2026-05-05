@@ -151,29 +151,18 @@ func applyVSCode(name, dirName string) string {
 		return fmt.Sprintf("%s already has a Shift+Enter terminal binding.\nSee: %s", name, kbPath)
 	}
 
+	// Parse JSON array and append entry.
+	bindings := make([]json.RawMessage, 0, 1)
+	if err := json.Unmarshal(stripJSONCComments(content), &bindings); err != nil {
+		return fmt.Sprintf("Could not parse %s keybindings, so it was left unchanged: %v", name, err)
+	}
+
 	// Backup if file existed.
 	if fileExists {
 		backupPath := kbPath + "." + randHex(4) + ".bak"
 		if err := os.WriteFile(backupPath, content, 0o600); err != nil {
 			return fmt.Sprintf("Could not back up %s keybindings: %v", name, err)
 		}
-	}
-
-	// Parse JSON array and append entry.
-	bindings := make([]json.RawMessage, 0, 1)
-	if err := json.Unmarshal(stripJSONCComments(content), &bindings); err != nil {
-		// If unparseable (e.g. JSONC with inline comments), inject before closing bracket.
-		trimmed := strings.TrimRight(strings.TrimSpace(string(content)), "]")
-		if strings.TrimSpace(trimmed) == "[" || strings.TrimSpace(trimmed) == "" {
-			trimmed = "["
-		} else {
-			trimmed += ","
-		}
-		newContent := trimmed + "\n  " + vscodeBinding + "\n]"
-		if err := os.WriteFile(kbPath, []byte(newContent), 0o600); err != nil {
-			return fmt.Sprintf("Could not write %s keybindings: %v", name, err)
-		}
-		return fmt.Sprintf("%s keybinding installed.\nSee: %s\n\nReload %s after saving.", name, kbPath, name)
 	}
 	bindings = append(bindings, json.RawMessage(vscodeBinding))
 	out, err := json.MarshalIndent(bindings, "", "  ")
@@ -254,13 +243,6 @@ func applyZed() string {
 		return "Zed already has a Shift+Enter binding.\nSee: " + keymapPath
 	}
 
-	if fileExists {
-		backupPath := keymapPath + "." + randHex(4) + ".bak"
-		if err := os.WriteFile(backupPath, content, 0o600); err != nil {
-			return "Could not back up Zed keymap: " + err.Error()
-		}
-	}
-
 	const zedEntry = `{
     "context": "Terminal",
     "bindings": {
@@ -270,18 +252,14 @@ func applyZed() string {
 
 	keymap := make([]json.RawMessage, 0, 1)
 	if err := json.Unmarshal(content, &keymap); err != nil {
-		// Fallback: inject before closing bracket.
-		trimmed := strings.TrimRight(strings.TrimSpace(string(content)), "]")
-		if strings.TrimSpace(trimmed) == "[" || strings.TrimSpace(trimmed) == "" {
-			trimmed = "["
-		} else {
-			trimmed += ","
+		return "Could not parse Zed keymap, so it was left unchanged: " + err.Error()
+	}
+
+	if fileExists {
+		backupPath := keymapPath + "." + randHex(4) + ".bak"
+		if err := os.WriteFile(backupPath, content, 0o600); err != nil {
+			return "Could not back up Zed keymap: " + err.Error()
 		}
-		newContent := trimmed + "\n  " + zedEntry + "\n]"
-		if err := os.WriteFile(keymapPath, []byte(newContent), 0o600); err != nil {
-			return "Could not write Zed keymap: " + err.Error()
-		}
-		return "Zed Shift+Enter keybinding installed.\nSee: " + keymapPath + "\n\nReload Zed (Cmd+Shift+P → reload keymap)."
 	}
 	keymap = append(keymap, json.RawMessage(zedEntry))
 	out, err := json.MarshalIndent(keymap, "", "  ")

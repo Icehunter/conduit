@@ -243,9 +243,9 @@ func SaveOutputStyle(name string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	raw := make(map[string]json.RawMessage)
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+	raw, err := readRawObject(path)
+	if err != nil {
+		return err
 	}
 	encoded, err := json.Marshal(name)
 	if err != nil {
@@ -292,15 +292,17 @@ func updateSettingsFile(path string, fn func(*Settings)) error {
 	}
 
 	// Read the raw JSON as an opaque map so unknown fields survive.
-	raw := make(map[string]json.RawMessage)
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+	raw, err := readRawObject(path)
+	if err != nil {
+		return err
 	}
 
 	// Extract just the enabledPlugins section so fn can operate on it.
 	var s Settings
 	if ep, ok := raw["enabledPlugins"]; ok {
-		_ = json.Unmarshal(ep, &s.EnabledPlugins)
+		if err := json.Unmarshal(ep, &s.EnabledPlugins); err != nil {
+			return fmt.Errorf("settings: parse enabledPlugins: %w", err)
+		}
 	}
 
 	fn(&s)
@@ -332,9 +334,9 @@ func ApproveMcpjsonServer(name, choice string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	raw := make(map[string]json.RawMessage)
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+	raw, err := readRawObject(path)
+	if err != nil {
+		return err
 	}
 
 	enabled := decodeStringList(raw["enabledMcpjsonServers"])
@@ -410,14 +412,16 @@ func SavePermissionsField(field string, value interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("settings: SavePermissionsField: mkdir: %w", err)
 	}
-	raw := make(map[string]json.RawMessage)
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+	raw, err := readRawObject(path)
+	if err != nil {
+		return fmt.Errorf("settings: SavePermissionsField: read: %w", err)
 	}
 
 	perms := make(map[string]json.RawMessage)
 	if r, ok := raw["permissions"]; ok && len(r) > 0 {
-		_ = json.Unmarshal(r, &perms)
+		if err := json.Unmarshal(r, &perms); err != nil {
+			return fmt.Errorf("settings: SavePermissionsField: parse permissions: %w", err)
+		}
 	}
 
 	if value == nil {
@@ -457,9 +461,9 @@ func SaveRawKey(key string, value interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	raw := make(map[string]json.RawMessage)
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+	raw, err := readRawObject(path)
+	if err != nil {
+		return err
 	}
 	if value == nil {
 		delete(raw, key)
@@ -475,4 +479,22 @@ func SaveRawKey(key string, value interface{}) error {
 		return err
 	}
 	return os.WriteFile(path, append(out, '\n'), 0o644)
+}
+
+func readRawObject(path string) (map[string]json.RawMessage, error) {
+	raw := make(map[string]json.RawMessage)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return raw, nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return raw, nil
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }

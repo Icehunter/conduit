@@ -15,7 +15,8 @@ type resumeSession struct {
 	filePath string
 	age      string
 	preview  string // session title / first user message
-	msgCount int    // approximate JSONL line count
+	msgCount int    // approximate JSONL record count
+	size     string // transcript plus sidecar directory footprint
 }
 
 // resumePromptState holds the /resume session picker state.
@@ -148,7 +149,10 @@ func (m Model) renderResumePicker() string {
 		detail.WriteString("\n")
 		meta := sel.age
 		if sel.msgCount > 0 {
-			meta += fmt.Sprintf("  ·  %d messages", sel.msgCount)
+			meta += fmt.Sprintf("  ·  %d records", sel.msgCount)
+		}
+		if sel.size != "" {
+			meta += "  ·  " + sel.size
 		}
 		detail.WriteString(stylePickerDesc.Render(meta) + "\n")
 		// Word-wrap the title to available width.

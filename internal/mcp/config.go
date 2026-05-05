@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,20 +324,36 @@ func SetDisabled(name, cwd string, disabled bool) error {
 	// Read existing projects map.
 	var projects map[string]json.RawMessage
 	if raw, ok := cfg["projects"]; ok {
-		_ = json.Unmarshal(raw, &projects)
+		if err := json.Unmarshal(raw, &projects); err != nil {
+			return fmt.Errorf("mcp config: parse projects: %w", err)
+		}
 	}
 	if projects == nil {
 		projects = make(map[string]json.RawMessage)
 	}
 
-	// Read existing project config.
-	var proj claudeJSONProject
+	// Read existing project config as raw JSON so unrelated Claude Code
+	// fields survive enabling/disabling an MCP server.
+	proj := make(map[string]json.RawMessage)
 	if raw, ok := projects[cwd]; ok {
-		_ = json.Unmarshal(raw, &proj)
+		if err := json.Unmarshal(raw, &proj); err != nil {
+			return fmt.Errorf("mcp config: parse project %q: %w", cwd, err)
+		}
 	}
 
 	// Toggle membership in DisabledMcpServers.
-	proj.DisabledMcpServers = toggleList(proj.DisabledMcpServers, name, disabled)
+	var disabledServers []string
+	if rawDisabled, ok := proj["disabledMcpServers"]; ok && len(rawDisabled) > 0 {
+		if err := json.Unmarshal(rawDisabled, &disabledServers); err != nil {
+			return fmt.Errorf("mcp config: parse disabledMcpServers: %w", err)
+		}
+	}
+	disabledServers = toggleList(disabledServers, name, disabled)
+	if len(disabledServers) == 0 {
+		delete(proj, "disabledMcpServers")
+	} else if rawDisabled, err := json.Marshal(disabledServers); err == nil {
+		proj["disabledMcpServers"] = rawDisabled
+	}
 
 	// Write back.
 	projRaw, err := json.Marshal(proj)

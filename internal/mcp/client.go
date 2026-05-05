@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -56,11 +57,7 @@ type stdioClient struct {
 func NewStdioClient(command string, args []string, env map[string]string) (Client, error) {
 	cmd := exec.CommandContext(context.Background(), command, args...) //nolint:noctx
 	if len(env) > 0 {
-		pairs := make([]string, 0, len(env))
-		for k, v := range env {
-			pairs = append(pairs, k+"="+v)
-		}
-		cmd.Env = append(cmd.Env, pairs...)
+		cmd.Env = mergedStdioEnv(env)
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -85,6 +82,15 @@ func NewStdioClient(command string, args []string, env map[string]string) (Clien
 	}
 	go c.readLoop()
 	return c, nil
+}
+
+func mergedStdioEnv(env map[string]string) []string {
+	pairs := make([]string, 0, len(os.Environ())+len(env))
+	pairs = append(pairs, os.Environ()...)
+	for k, v := range env {
+		pairs = append(pairs, k+"="+v)
+	}
+	return pairs
 }
 
 func (c *stdioClient) readLoop() {

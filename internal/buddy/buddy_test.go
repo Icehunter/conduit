@@ -1,6 +1,11 @@
 package buddy
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestMulberry32_Deterministic(t *testing.T) {
 	rng1 := mulberry32(12345)
@@ -155,5 +160,52 @@ func TestForceRarity_StatsUseCorrectFloor(t *testing.T) {
 		if val < floor-10 {
 			t.Errorf("stat %s=%d below legendary dump floor %d", stat, val, floor-10)
 		}
+	}
+}
+
+func TestSave_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	path := storePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := []byte(`{"name":"old","userId":"u1","external":{"keep":true}}`)
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Save(&StoredCompanion{Name: "new", UserID: "u2"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(after, &raw); err != nil {
+		t.Fatal(err)
+	}
+	var external map[string]bool
+	if err := json.Unmarshal(raw["external"], &external); err != nil {
+		t.Fatal(err)
+	}
+	if !external["keep"] {
+		t.Fatalf("external field not preserved: %s", raw["external"])
+	}
+
+	bad := []byte(`{"name":`)
+	if err := os.WriteFile(path, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(&StoredCompanion{Name: "next", UserID: "u3"}); err == nil {
+		t.Fatal("Save should fail on invalid existing JSON")
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(unchanged) != string(bad) {
+		t.Fatalf("invalid buddy file was overwritten: %q", unchanged)
 	}
 }

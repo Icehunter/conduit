@@ -82,19 +82,12 @@ func ExtractTitle(path string) string {
 		switch entry.Type {
 		case "custom-title":
 			customTitle = entry.Title
-		case "message":
+		case "message", "user", "assistant":
 			if firstUserText == "" && len(entry.Message) > 0 {
-				var msg struct {
-					Role    string `json:"role"`
-					Content []struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"content"`
-				}
-				if err := json.Unmarshal(entry.Message, &msg); err == nil && msg.Role == "user" {
-					for _, b := range msg.Content {
-						if b.Type == "text" && b.Text != "" {
-							firstUserText = b.Text
+				if msg, ok := entryAPIMessage(entry); ok && msg.Role == "user" {
+					for _, block := range msg.Content {
+						if block.Type == "text" && block.Text != "" {
+							firstUserText = block.Text
 							break
 						}
 					}
@@ -195,22 +188,16 @@ func Search(path string, term string) ([]SearchResult, error) {
 			continue
 		}
 		var entry Entry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil || entry.Type != "message" {
+		if err := json.Unmarshal([]byte(line), &entry); err != nil || !isLoadableTranscriptEntry(entry.Type) {
 			continue
 		}
-		var msg struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		}
-		if err := json.Unmarshal(entry.Message, &msg); err != nil {
+		msg, ok := entryAPIMessage(entry)
+		if !ok {
 			continue
 		}
-		for _, b := range msg.Content {
-			if b.Type == "text" && strings.Contains(strings.ToLower(b.Text), lower) {
-				snippet := b.Text
+		for _, block := range msg.Content {
+			if block.Type == "text" && strings.Contains(strings.ToLower(block.Text), lower) {
+				snippet := block.Text
 				if len([]rune(snippet)) > 200 {
 					snippet = string([]rune(snippet)[:197]) + "…"
 				}
@@ -292,21 +279,35 @@ func LoadActivity(path string) (Activity, error) {
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		if entry.Timestamp == 0 {
+		ts, ok := entryActivityTime(entry)
+		if !ok {
 			continue
 		}
-		ts := time.UnixMilli(entry.Timestamp)
 		if act.FirstActivity.IsZero() || ts.Before(act.FirstActivity) {
 			act.FirstActivity = ts
 		}
 		if ts.After(act.LastActivity) {
 			act.LastActivity = ts
 		}
-		if entry.Type == "message" {
+		if isLoadableTranscriptEntry(entry.Type) {
 			act.MessageCount++
 		}
 	}
 	return act, nil
+}
+
+func entryActivityTime(entry Entry) (time.Time, bool) {
+	if entry.Timestamp != 0 {
+		return time.UnixMilli(entry.Timestamp), true
+	}
+	if entry.CreatedAt == "" {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse(time.RFC3339Nano, entry.CreatedAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts, true
 }
 
 // FileAccessEntry records a file read or write.

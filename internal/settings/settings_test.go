@@ -200,6 +200,44 @@ func TestSavePermissionsField_EmptyFieldErrors(t *testing.T) {
 	}
 }
 
+func TestSettingsWrites_DoNotOverwriteInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	path := UserSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := []byte(`{"model":`)
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	writes := []struct {
+		name string
+		fn   func() error
+	}{
+		{"SaveRawKey", func() error { return SaveRawKey("model", "new") }},
+		{"SavePermissionsField", func() error { return SavePermissionsField("defaultMode", "plan") }},
+		{"ApproveMcpjsonServer", func() error { return ApproveMcpjsonServer("srv", "yes") }},
+		{"SaveOutputStyle", func() error { return SaveOutputStyle("default") }},
+	}
+	for _, tt := range writes {
+		if err := os.WriteFile(path, before, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := tt.fn(); err == nil {
+			t.Fatalf("%s should fail on invalid existing JSON", tt.name)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("%s overwrote invalid JSON: %q", tt.name, after)
+		}
+	}
+}
+
 func TestLoad_Empty(t *testing.T) {
 	dir := t.TempDir()
 	m, err := loadPaths(projectPaths(dir))

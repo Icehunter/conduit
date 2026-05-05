@@ -13,6 +13,7 @@ package permissions
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -333,13 +334,19 @@ func PersistAllow(rule, cwd string) error {
 
 	raw := make(map[string]json.RawMessage)
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
 	}
 
 	// Read existing permissions.allow list.
 	var perms map[string]json.RawMessage
 	if p, ok := raw["permissions"]; ok {
-		_ = json.Unmarshal(p, &perms)
+		if err := json.Unmarshal(p, &perms); err != nil {
+			return fmt.Errorf("permissions: parse permissions: %w", err)
+		}
 	}
 	if perms == nil {
 		perms = make(map[string]json.RawMessage)
@@ -347,7 +354,9 @@ func PersistAllow(rule, cwd string) error {
 
 	allow := make([]string, 0, 1)
 	if a, ok := perms["allow"]; ok {
-		_ = json.Unmarshal(a, &allow)
+		if err := json.Unmarshal(a, &allow); err != nil {
+			return fmt.Errorf("permissions: parse allow: %w", err)
+		}
 	}
 
 	// Deduplicate.

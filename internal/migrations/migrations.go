@@ -125,7 +125,11 @@ func saveCompleted(claudeDir string, completed map[string]bool) {
 
 	var raw map[string]json.RawMessage
 	if err == nil && len(data) > 0 {
-		_ = json.Unmarshal(data, &raw)
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return
 	}
 	if raw == nil {
 		raw = map[string]json.RawMessage{}

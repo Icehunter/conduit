@@ -36,6 +36,7 @@ import (
 	"github.com/icehunter/conduit/internal/migrations"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/secure"
@@ -365,6 +366,10 @@ func runREPL(continueMode bool, resumeID string) error {
 	if s == nil {
 		s = &settings.Merged{DefaultMode: "default"}
 	}
+	usageStatusEnabled := s.UsageStatusEnabled
+	if userSettings, err := settings.Load(""); err == nil && userSettings != nil {
+		usageStatusEnabled = userSettings.UsageStatusEnabled
+	}
 
 	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
 
@@ -658,17 +663,25 @@ func runREPL(continueMode bool, resumeID string) error {
 	reg.Register(skilltool.New(skillLoader, lp.RunSubAgent))
 
 	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
-		AuthErr:            authErr,
-		Profile:            prof,
-		Session:            sess,
-		ResumedHistory:     resumedHistory,
-		Resumed:            continueMode && len(resumedHistory) > 0,
-		MCPManager:         mcpManager,
-		EnterPlan:          rOpts.enterPlan,
-		ExitPlan:           rOpts.exitPlan,
-		AskUser:            rOpts.askUser,
-		InitialOutputStyle: s.OutputStyle,
-		PluginDirs:         pluginDirs,
+		AuthErr:                   authErr,
+		Profile:                   prof,
+		Session:                   sess,
+		ResumedHistory:            resumedHistory,
+		Resumed:                   continueMode && len(resumedHistory) > 0,
+		MCPManager:                mcpManager,
+		EnterPlan:                 rOpts.enterPlan,
+		ExitPlan:                  rOpts.exitPlan,
+		AskUser:                   rOpts.askUser,
+		InitialOutputStyle:        s.OutputStyle,
+		InitialUsageStatusEnabled: usageStatusEnabled,
+		PluginDirs:                pluginDirs,
+		FetchPlanUsage: func(ctx context.Context) (planusage.Info, error) {
+			tok, err := loadAuth(ctx)
+			if err != nil {
+				return planusage.Info{}, err
+			}
+			return planusage.Fetch(ctx, tok.AccessToken)
+		},
 		LoadAuth: func(ctx context.Context) (string, *profile.Info, error) {
 			tok, err := loadAuth(ctx)
 			if err != nil {

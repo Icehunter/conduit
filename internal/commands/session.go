@@ -18,16 +18,18 @@ import (
 
 // SessionState holds mutable session state that slash commands can read/modify.
 type SessionState struct {
-	GetCost    func() string
-	GetVimMode func() bool
-	SetVimMode func(bool)
-	GetEffort  func() string
-	SetEffort  func(string)
-	GetFast    func() bool
-	SetFast    func(bool)
-	Logout     func() error
-	GetHistory func() []string // message contents for /files, /context
-	GetCwd     func() string
+	GetCost               func() string
+	GetVimMode            func() bool
+	SetVimMode            func(bool)
+	GetEffort             func() string
+	SetEffort             func(string)
+	GetFast               func() bool
+	SetFast               func(bool)
+	GetUsageStatusEnabled func() bool
+	SetUsageStatusEnabled func(bool) error
+	Logout                func() error
+	GetHistory            func() []string // message contents for /files, /context
+	GetCwd                func() string
 	// Rewind removes the last n conversation turns from in-memory history.
 	// Returns the number of turns actually removed.
 	Rewind func(n int) int
@@ -202,6 +204,25 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				return Result{Type: "text", Text: "Fast mode enabled — using Haiku for faster responses."}
 			}
 			return Result{Type: "text", Text: "Fast mode disabled — using default model."}
+		},
+	})
+
+	// /toggle-usage
+	r.Register(Command{
+		Name:        "toggle-usage",
+		Description: "Toggle Claude plan usage footer and background usage fetching",
+		Handler: func(string) Result {
+			if state.GetUsageStatusEnabled == nil || state.SetUsageStatusEnabled == nil {
+				return Result{Type: "text", Text: "Usage footer toggle not available."}
+			}
+			next := !state.GetUsageStatusEnabled()
+			if err := state.SetUsageStatusEnabled(next); err != nil {
+				return Result{Type: "error", Text: fmt.Sprintf("toggle-usage: %v", err)}
+			}
+			if next {
+				return Result{Type: "usage-toggle", Text: "on"}
+			}
+			return Result{Type: "usage-toggle", Text: "off"}
 		},
 	})
 

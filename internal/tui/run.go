@@ -20,6 +20,7 @@ import (
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/outputstyles"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/secure"
@@ -112,6 +113,11 @@ type RunOptions struct {
 
 	// InitialOutputStyle is the style name to activate at startup (from settings).
 	InitialOutputStyle string
+	// InitialUsageStatusEnabled controls the conduit-only plan usage footer.
+	InitialUsageStatusEnabled bool
+	// FetchPlanUsage returns the current Claude plan usage windows. Nil disables
+	// fetching even if the footer setting is enabled.
+	FetchPlanUsage func(context.Context) (planusage.Info, error)
 
 	// PluginDirs is the list of installed plugin root directories, used to
 	// load plugin-provided output styles (lowest priority — overridden by user/project).
@@ -198,6 +204,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	// state change; command callbacks read from it so they see current values.
 	live := &LiveState{}
 	live.SetModelName(modelName) // seed with startup value
+	usageStatusEnabled := runOpts.InitialUsageStatusEnabled
 
 	// modelPtr is still used for methods that can only run inside the event loop
 	// (TasksSummary, LastThinking, CopyLastResponse — they read m.messages).
@@ -305,6 +312,13 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			if prog != nil {
 				prog.Send(setModelNameMsg{name: newModel, fast: on})
 			}
+		},
+		GetUsageStatusEnabled: func() bool {
+			return usageStatusEnabled
+		},
+		SetUsageStatusEnabled: func(on bool) error {
+			usageStatusEnabled = on
+			return settings.SaveRawKey("usageStatusEnabled", on)
 		},
 		// /effort — set thinking budget.
 		GetEffort: func() string {
@@ -435,24 +449,26 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	apiClient := opts.apiClient
 
 	cfg := Config{
-		Version:        version,
-		ModelName:      modelName,
-		Loop:           loop,
-		Program:        &prog,
-		Commands:       reg,
-		APIClient:      apiClient,
-		MCPManager:     runOpts.MCPManager,
-		Gate:           opts.gate,
-		AuthErr:        runOpts.AuthErr,
-		Profile:        runOpts.Profile,
-		Session:        runOpts.Session,
-		ResumedHistory: runOpts.ResumedHistory,
-		Resumed:        runOpts.Resumed,
-		LoadAuth:       runOpts.LoadAuth,
-		NewAPIClient:   runOpts.NewAPIClient,
-		Live:           live,
-		NeedsTrust:     runOpts.NeedsTrust,
-		SetTrusted:     runOpts.SetTrusted,
+		Version:            version,
+		ModelName:          modelName,
+		Loop:               loop,
+		Program:            &prog,
+		Commands:           reg,
+		APIClient:          apiClient,
+		MCPManager:         runOpts.MCPManager,
+		Gate:               opts.gate,
+		AuthErr:            runOpts.AuthErr,
+		Profile:            runOpts.Profile,
+		Session:            runOpts.Session,
+		ResumedHistory:     runOpts.ResumedHistory,
+		Resumed:            runOpts.Resumed,
+		LoadAuth:           runOpts.LoadAuth,
+		NewAPIClient:       runOpts.NewAPIClient,
+		Live:               live,
+		NeedsTrust:         runOpts.NeedsTrust,
+		SetTrusted:         runOpts.SetTrusted,
+		UsageStatusEnabled: runOpts.InitialUsageStatusEnabled,
+		FetchPlanUsage:     runOpts.FetchPlanUsage,
 	}
 	// Seed session ID into LiveState once it's known.
 	if runOpts.Session != nil {

@@ -837,10 +837,7 @@ func (m Model) renderPluginPanel() string {
 	if w < 10 {
 		w = 10
 	}
-	panelH := m.height - 1
-	if panelH < 4 {
-		panelH = 4
-	}
+	panelH := m.panelHeight()
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
 	innerW := w - 2

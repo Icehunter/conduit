@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -33,6 +32,7 @@ import (
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/ratelimit"
@@ -41,13 +41,14 @@ import (
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tokens"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
+	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
 
 // chromeHeight returns the number of terminal rows consumed by everything
 // except the viewport, given the current input row count and terminal
 // height. Dynamic so multi-line input doesn't permanently squeeze chat.
 //
-//	spinner row:   1
+//	working row:   1
 //	input border:  1 (top) + 1 (bottom) = 2
 //	input text:    inputRows (1..inputMaxRows)
 //	status bar:    1
@@ -56,7 +57,7 @@ import (
 // floor 1, ceiling 12) so the chat viewport always keeps at least 70% of
 // the terminal. Beyond the cap, the textarea scrolls internally.
 const (
-	chromeFixed   = 4 // spinner + 2 borders + status (everything except input rows)
+	chromeFixed   = 4 // working row + 2 borders + status (everything except input rows)
 	inputMinRows  = 1
 	inputMaxRows  = 12
 	inputMaxRatio = 0.30
@@ -107,15 +108,27 @@ const (
 	RoleUser Role = iota
 	RoleAssistant
 	RoleTool
+	RoleAssistantInfo
 	RoleError
 	RoleSystem
 )
 
 // Message is one entry in the displayed conversation.
 type Message struct {
-	Role        Role
-	Content     string
-	ToolName    string
+	Role     Role
+	Content  string
+	ToolName string
+	ToolID   string
+
+	ToolInput    string
+	ToolStarted  time.Time
+	ToolDuration time.Duration
+	ToolError    bool
+
+	AssistantModel    string
+	AssistantDuration time.Duration
+	AssistantCost     float64
+
 	WelcomeCard bool // render as the two-panel welcome banner
 }
 
@@ -201,6 +214,12 @@ type (
 		name string
 		fast bool // true when sent by /fast toggle
 	}
+
+	planUsageMsg struct {
+		info planusage.Info
+		err  error
+	}
+	planUsageTickMsg struct{}
 )
 
 // Config is passed from main to the TUI.
@@ -237,6 +256,10 @@ type Config struct {
 	NeedsTrust bool
 	// SetTrusted persists acceptance of the workspace trust dialog.
 	SetTrusted func() error
+	// UsageStatusEnabled controls the conduit-only plan usage footer.
+	UsageStatusEnabled bool
+	// FetchPlanUsage returns the current Claude plan usage windows.
+	FetchPlanUsage func(context.Context) (planusage.Info, error)
 }
 
 // Model is the Bubble Tea model.
@@ -247,7 +270,7 @@ type Model struct {
 
 	input   textarea.Model
 	vp      viewport.Model
-	spinner spinner.Model
+	working workinganim.Anim
 
 	width  int
 	height int
@@ -257,6 +280,7 @@ type Model struct {
 	cancelTurn      context.CancelFunc
 	streaming       string
 	turnID          int               // incremented each turn; agentDoneMsg with stale ID is ignored
+	turnStarted     time.Time         // wall time when the current agent turn started
 	pendingMessages []string          // messages typed while agent is running; drained after turn ends
 	questionAsk     *questionAskState // non-nil when AskUserQuestion is waiting for user input
 
@@ -279,7 +303,7 @@ type Model struct {
 	// most-recent last. Used by /cost to show per-turn breakdown.
 	turnCosts []float64
 
-	// flashMsg is shown in the spinner row briefly (e.g. "Copied!").
+	// flashMsg is shown in the working row briefly (e.g. "Copied!").
 	flashMsg string
 
 	// companionName is the configured companion's name, loaded once at startup.
@@ -299,6 +323,13 @@ type Model struct {
 	// rateLimitWarning is non-empty when a recent turn's rate-limit headers
 	// indicate quota is running low (<20% remaining). Shown in the status bar.
 	rateLimitWarning string
+
+	usageStatusEnabled bool
+	planUsage          planusage.Info
+	planUsageErr       string
+	planUsageFetching  bool
+	planUsageCachedAt  time.Time // when the last successful fetch completed
+	planUsageBackoff   time.Time // don't issue another fetch before this time
 
 	// fastMode is true when /fast is active (showing ⚡ badge).
 	fastMode bool
@@ -434,11 +465,15 @@ func New(cfg Config) Model {
 
 	applyTextareaTheme(&ta)
 
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = styleSpinner
-
-	m := Model{cfg: cfg, input: ta, spinner: sp, modelName: cfg.ModelName, historyIdx: -1, loginFlowMsgStart: -1}
+	m := Model{
+		cfg:                cfg,
+		input:              ta,
+		working:            *workinganim.New(14, "Thinking", colorAccent, colorTool, colorDim),
+		modelName:          cfg.ModelName,
+		historyIdx:         -1,
+		loginFlowMsgStart:  -1,
+		usageStatusEnabled: cfg.UsageStatusEnabled,
+	}
 	if sc, err := buddy.Load(); err == nil && sc != nil {
 		m.companionName = sc.Name
 	}
@@ -490,6 +525,18 @@ func New(cfg Config) Model {
 		m.kb = keybindings.NewResolver(keybindings.Defaults())
 	}
 
+	// Seed plan usage from disk cache so the footer shows immediately on
+	// startup and multiple instances don't all hammer the API at once.
+	if m.usageStatusEnabled {
+		if entry, err := planusage.LoadCache(settings.ClaudeDir()); err == nil && !entry.CachedAt.IsZero() {
+			m.planUsage = entry.Info
+			m.planUsageCachedAt = entry.CachedAt
+			if !entry.BackoffUntil.IsZero() && time.Now().Before(entry.BackoffUntil) {
+				m.planUsageBackoff = entry.BackoffUntil
+			}
+		}
+	}
+
 	// Sync displayed permission mode from the gate, which was initialized with
 	// the value from settings.json. Without this the status bar always shows
 	// "default" even when settings.json has "defaultMode": "plan".
@@ -508,11 +555,11 @@ func New(cfg Config) Model {
 	return m
 }
 
-// Init starts the blink + spinner tick. Also kicks off the MCP approval
+// Init starts the blink + working indicator tick. Also kicks off the MCP approval
 // picker if any project-scope servers are awaiting consent, and the
 // coordinator-panel tick that drives the active-task footer.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick, coordTick()}
+	cmds := []tea.Cmd{textarea.Blink, m.working.Start(), coordTick()}
 	if m.cfg.MCPManager != nil {
 		if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
 			cmds = append(cmds, func() tea.Msg {
@@ -523,10 +570,56 @@ func (m Model) Init() tea.Cmd {
 	if m.companionName != "" {
 		cmds = append(cmds, buddyTick())
 	}
+	if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
+		if (m.planUsageCachedAt.IsZero() || time.Since(m.planUsageCachedAt) >= planUsageRefreshInterval) &&
+			!time.Now().Before(m.planUsageBackoff) {
+			cmds = append(cmds, fetchPlanUsageCmd(m.cfg.FetchPlanUsage))
+		} else {
+			cmds = append(cmds, planUsageTick())
+		}
+	}
 	return tea.Batch(cmds...)
 }
 
 type buddyTickMsg struct{}
+
+const planUsageRefreshInterval = 60 * time.Second
+
+func fetchPlanUsageCmd(fetch func(context.Context) (planusage.Info, error)) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		info, err := fetch(ctx)
+		return planUsageMsg{info: info, err: err}
+	}
+}
+
+// savePlanUsageCacheCmd persists the cache entry to disk as a fire-and-forget
+// Cmd — failures are silently dropped (non-fatal).
+func savePlanUsageCacheCmd(dir string, entry planusage.CacheEntry) tea.Cmd {
+	return func() tea.Msg {
+		_ = planusage.SaveCache(dir, entry)
+		return nil
+	}
+}
+
+func planUsageTick() tea.Cmd {
+	return tea.Tick(planUsageRefreshInterval, func(time.Time) tea.Msg {
+		return planUsageTickMsg{}
+	})
+}
+
+// planUsageErrBackoff returns how long to wait before retrying after an error.
+// Rate-limit errors use max(Retry-After, 5min); other errors use 30s.
+func planUsageErrBackoff(err error) time.Duration {
+	var rle *planusage.RateLimitError
+	if errors.As(err, &rle) {
+		if rle.RetryAfter > 5*time.Minute {
+			return rle.RetryAfter
+		}
+		return 5 * time.Minute
+	}
+	return 30 * time.Second
+}
 
 func buddyTick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return buddyTickMsg{} })
@@ -687,6 +780,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.applyAgentEvent(msg.event)
 		return m, nil
 
+	case planUsageMsg:
+		m.planUsageFetching = false
+		if msg.err != nil {
+			backoff := planUsageErrBackoff(msg.err)
+			m.planUsageBackoff = time.Now().Add(backoff)
+			// Only surface the error when we have no cached data to show.
+			if m.planUsageCachedAt.IsZero() {
+				m.planUsageErr = msg.err.Error()
+			}
+			// Persist updated backoff so other instances (and restarts) respect it.
+			entry := planusage.CacheEntry{
+				Info:         m.planUsage,
+				CachedAt:     m.planUsageCachedAt,
+				BackoffUntil: m.planUsageBackoff,
+			}
+			saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), entry)
+			if m.usageStatusEnabled {
+				return m, tea.Batch(planUsageTick(), saveCacheCmd)
+			}
+			return m, saveCacheCmd
+		}
+		m.planUsage = msg.info
+		m.planUsageCachedAt = time.Now()
+		m.planUsageBackoff = time.Time{}
+		m.planUsageErr = ""
+		entry := planusage.CacheEntry{
+			Info:     m.planUsage,
+			CachedAt: m.planUsageCachedAt,
+		}
+		saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), entry)
+		if m.usageStatusEnabled {
+			return m, tea.Batch(planUsageTick(), saveCacheCmd)
+		}
+		return m, saveCacheCmd
+
+	case planUsageTickMsg:
+		if !m.usageStatusEnabled || m.cfg.FetchPlanUsage == nil || m.planUsageFetching {
+			return m, nil
+		}
+		if time.Now().Before(m.planUsageBackoff) {
+			return m, planUsageTick()
+		}
+		m.planUsageFetching = true
+		return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
+
 	case agentDoneMsg:
 		if msg.turnID != m.turnID {
 			// Stale completion from a previous (interrupted) turn — discard.
@@ -711,10 +849,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tallyTokens()
 			// Record per-turn cost delta in both model and LiveState (LiveState
 			// is read by GetTurnCosts from outside the Bubble Tea event loop).
-			if delta := m.costUSD - m.prevCostUSD; delta > 0 {
-				m.turnCosts = append(m.turnCosts, delta)
+			turnCostDelta := m.costUSD - m.prevCostUSD
+			if turnCostDelta > 0 {
+				m.turnCosts = append(m.turnCosts, turnCostDelta)
 				if m.cfg.Live != nil {
-					m.cfg.Live.AppendTurnCost(delta)
+					m.cfg.Live.AppendTurnCost(turnCostDelta)
 				}
 			}
 			m.prevCostUSD = m.costUSD
@@ -730,6 +869,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if bubbleCmd != nil {
 				cmds = append(cmds, bubbleCmd)
 			}
+			m.appendAssistantInfo(turnCostDelta)
 		}
 		// Final assistant message just committed — refreshViewport's
 		// sticky-bottom honors a scrolled-up user. They explicitly
@@ -828,6 +968,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = nil
 			m.welcomeDismissed = false
 			m.messages = append(m.messages, m.welcomeCard())
+			if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
+				m.planUsageFetching = true
+				return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
+			}
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -929,8 +1073,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-arm the tick whenever there's still active work to display.
 		// When idle, we let it fall off — next sub-agent run schedules a
 		// fresh tick from wherever the work was kicked off (TaskCreate
-		// could call coordTick if needed, but the spinner tick is already
-		// running during agent.Run so we don't lose ticks during work).
+		// could call coordTick if needed, but the working indicator tick is
+		// already running during agent.Run so we don't lose ticks during work).
 		hasActive := false
 		for _, t := range tasktool.GlobalStore().List() {
 			if t.Status == tasktool.StatusInProgress {
@@ -997,10 +1141,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoBottom()
 		return m, nil
 
-	case spinner.TickMsg:
-		var spCmd tea.Cmd
-		m.spinner, spCmd = m.spinner.Update(msg)
-		cmds = append(cmds, spCmd)
+	case workinganim.StepMsg:
+		cmds = append(cmds, m.working.Animate(msg))
 
 	case clearFlash:
 		m.flashMsg = ""
@@ -1096,7 +1238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// within [YOffset=0, YOffset+Height-1=N], no scroll fires.
 		if k, ok := msg.(tea.KeyPressMsg); ok && isNewlineInsertKey(k) {
 			nextLines := m.input.LineCount() + 1
-			cap := chromeHeight(nextLines, m.height) - chromeFixed
+			cap := chromeHeight(nextLines, m.height-m.usageFooterRows()) - chromeFixed
 			if nextLines <= cap {
 				m.input.SetHeight(nextLines)
 			}
@@ -1635,6 +1777,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.running = true
 		m.cancelled = false
 		m.streaming = ""
+		m.turnStarted = time.Now()
 		m.refreshViewport()
 		m.vp.GotoBottom()
 
@@ -2199,6 +2342,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.running = true
 		m.cancelled = false
 		m.streaming = ""
+		m.turnStarted = time.Now()
 		m.refreshViewport()
 		m.vp.GotoBottom()
 		m.turnID++
@@ -2226,6 +2370,31 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		if res.Text != "" {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
 		}
+		m.refreshViewport()
+		return m, nil
+	case "usage-toggle":
+		on := strings.TrimSpace(strings.ToLower(res.Text)) == "on"
+		m.usageStatusEnabled = on
+		m.cfg.UsageStatusEnabled = on
+		m = m.applyLayout()
+		if on {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Plan usage footer enabled."})
+			m.planUsageErr = ""
+			m.planUsageBackoff = time.Time{} // user explicitly re-enabled; clear any backoff
+			m.planUsageFetching = true
+			m.refreshViewport()
+			if m.cfg.FetchPlanUsage != nil {
+				return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
+			}
+			m.planUsageFetching = false
+			m.planUsageErr = "plan usage fetcher unavailable"
+			return m, nil
+		}
+		m.planUsageFetching = false
+		m.planUsageErr = ""
+		m.planUsage = planusage.Info{}
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Plan usage footer disabled."})
+		m = m.applyLayout()
 		m.refreshViewport()
 		return m, nil
 	case "error":
@@ -2596,7 +2765,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	case "flash":
-		// Briefly surface in the spinner row, then queue the next pending
+		// Briefly surface in the working row, then queue the next pending
 		// MCP approval if any are still waiting after this one resolved.
 		if res.Text != "" {
 			m.flashMsg = res.Text
@@ -2709,20 +2878,23 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 			m.streaming = ""
 		}
 		m.messages = append(m.messages, Message{
-			Role: RoleTool, ToolName: ev.ToolName, Content: "running…",
+			Role:        RoleTool,
+			ToolName:    ev.ToolName,
+			ToolID:      ev.ToolID,
+			ToolInput:   string(ev.ToolInput),
+			ToolStarted: time.Now(),
+			Content:     "running…",
 		})
 		m.refreshViewport()
 
 	case agent.EventToolResult:
 		for i := len(m.messages) - 1; i >= 0; i-- {
-			if m.messages[i].Role == RoleTool && m.messages[i].Content == "running…" {
-				content := ev.ResultText
-				if len(content) > 200 {
-					content = content[:200] + "…"
-				}
+			if m.messages[i].Role == RoleTool && (m.messages[i].ToolID == ev.ToolID || (m.messages[i].ToolID == "" && m.messages[i].Content == "running…")) {
+				content := truncateToolResult(ev.ResultText, 500)
 				m.messages[i].Content = content
-				if ev.IsError {
-					m.messages[i].Role = RoleError
+				m.messages[i].ToolError = ev.IsError
+				if !m.messages[i].ToolStarted.IsZero() {
+					m.messages[i].ToolDuration = time.Since(m.messages[i].ToolStarted).Round(time.Second)
 				}
 				break
 			}
@@ -2748,6 +2920,33 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	return m
 }
 
+func (m *Model) appendAssistantInfo(turnCostDelta float64) {
+	duration := time.Duration(0)
+	if !m.turnStarted.IsZero() {
+		duration = time.Since(m.turnStarted).Round(time.Second)
+	}
+	if duration <= 0 && turnCostDelta <= 0 && m.modelName == "" {
+		return
+	}
+	m.messages = append(m.messages, Message{
+		Role:              RoleAssistantInfo,
+		AssistantModel:    shortModelName(m.modelName),
+		AssistantDuration: duration,
+		AssistantCost:     turnCostDelta,
+	})
+}
+
+func truncateToolResult(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes-1]) + "…"
+}
+
 // applyLayout recalculates component dimensions.
 func (m Model) applyLayout() Model {
 	if m.width == 0 || m.height == 0 {
@@ -2757,13 +2956,14 @@ func (m Model) applyLayout() Model {
 	if inputRows < 1 {
 		inputRows = 1
 	}
-	vpHeight := m.height - chromeHeight(inputRows, m.height)
+	usageRows := m.usageFooterRows()
+	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
 	// Match the textarea's visible row count to the available chrome budget
 	// so it doesn't try to render more rows than the layout reserved.
-	visibleRows := m.height - vpHeight - chromeFixed
+	visibleRows := m.height - vpHeight - chromeFixed - usageRows
 	if visibleRows < inputMinRows {
 		visibleRows = inputMinRows
 	}
@@ -2801,6 +3001,25 @@ func (m Model) applyLayout() Model {
 	return m
 }
 
+func (m Model) usageFooterRows() int {
+	if !m.usageStatusEnabled {
+		return 0
+	}
+	return 3
+}
+
+func (m Model) footerChromeRows() int {
+	return 1 + m.usageFooterRows()
+}
+
+func (m Model) panelHeight() int {
+	h := m.height - m.footerChromeRows()
+	if h < 4 {
+		return 4
+	}
+	return h
+}
+
 // refreshViewport rebuilds the viewport content string.
 //
 // Sticky-bottom: if the user was already pinned to the bottom (reading
@@ -2825,7 +3044,7 @@ func (m *Model) refreshViewport() {
 		if rendered == "" {
 			continue // skip empty renders (e.g. pure companion quip messages)
 		}
-		if !first {
+		if !first && msg.Role != RoleAssistantInfo {
 			sb.WriteString(separator(w))
 			sb.WriteByte('\n')
 		}
@@ -2884,7 +3103,7 @@ func (m Model) View() tea.View {
 	// to a stale Model the framework no longer uses. Cheap to do per-frame
 	// (just struct field assignment) and guarantees theme switches apply.
 	applyTextareaTheme(&m.input)
-	m.spinner.Style = styleSpinner
+	m.working.SetColors(colorAccent, colorTool, colorDim)
 
 	// Compute overlay box first so we can shrink the viewport to keep the
 	// input row + status bar on screen. Without this, a tall overlay
@@ -2930,7 +3149,7 @@ func (m Model) View() tea.View {
 	// Viewport.
 	vp := m.vp.View()
 
-	// Spinner row — always 1 line to prevent layout shift.
+	// Working row — always 1 line to prevent layout shift.
 	// Always emit a full-width bg-painted line so the area under the viewport
 	// doesn't expose terminal default bg.
 	var spinRow string
@@ -2938,7 +3157,8 @@ func (m Model) View() tea.View {
 	case m.flashMsg != "":
 		spinRow = styleStatusAccent.Render(m.flashMsg)
 	case m.running:
-		spinRow = m.spinner.View() + " " + styleStatus.Render("Thinking…")
+		m.working.SetLabel("Thinking")
+		spinRow = m.working.Render()
 	default:
 		spinRow = ""
 	}
@@ -2994,103 +3214,38 @@ func (m Model) View() tea.View {
 	}
 	inputBox := bStyle.Width(m.width).Render(innerView)
 
-	// Status bar — fixed left-anchor layout so nothing shifts when mode changes.
-	//
-	// left:  edgePad  conduit  [mode badge]  |  model  [| ctx]  [| cost]
-	// right: hints  edgePad
-	// pad:   all remaining space between left and right
-	edgePad := strings.Repeat(" ", outerPad)
-	barSep := styleStatus.Render(" | ")
-
-	appSeg := styleStatusAccent.Render("conduit")
-
-	var modeBadge string
-	switch m.permissionMode {
-	case permissions.ModeAcceptEdits:
-		modeBadge = styleModePurple.Render("⏵⏵ accept edits")
-	case permissions.ModePlan:
-		modeBadge = styleModeCyan.Render("⏸ plan mode")
-	case permissions.ModeBypassPermissions:
-		modeBadge = styleModeYellow.Render("⏵⏵ auto")
+	edgePad := strings.Repeat(" ", 1)
+	left := edgePad + m.renderModeStatus()
+	rightMax := m.width - lipgloss.Width(left) - 1
+	right := m.renderLocationStatus(rightMax)
+	if right != "" {
+		right += edgePad
 	}
-
-	modelSeg := styleStatusModel.Render(shortModelName(m.modelName))
-
-	var leftParts []string
-	leftParts = append(leftParts, edgePad+appSeg)
-	if coordinator.IsActive() {
-		leftParts = append(leftParts, styleModePurple.Render("⬡ coordinator"))
-	}
-	if modeBadge != "" {
-		leftParts = append(leftParts, modeBadge)
-	}
-	leftParts = append(leftParts, modelSeg)
-	if m.fastMode {
-		leftParts = append(leftParts, styleStatus.Render("⚡ fast"))
-	}
-	if m.totalInputTokens > 0 {
-		pct := m.totalInputTokens * 100 / 200000
-		if pct > 100 {
-			pct = 100
-		}
-		var ctxStyle lipgloss.Style
-		switch {
-		case pct > 80:
-			ctxStyle = styleErrorText
-		case pct > 50:
-			ctxStyle = styleModeYellow
-		default:
-			ctxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")) // green
-		}
-		leftParts = append(leftParts, ctxStyle.Render(fmt.Sprintf("%d%% ctx", pct)))
-	}
-	if m.costUSD > 0 {
-		leftParts = append(leftParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))
-	}
-	if m.rateLimitWarning != "" {
-		leftParts = append(leftParts, styleModeYellow.Render("⚠ "+m.rateLimitWarning))
-	}
-	left := " " + strings.Join(leftParts, barSep)
-
-	// Show session title (from /rename or first message) in the right side.
-	var rightParts []string
-	if m.cfg.Session != nil {
-		title := session.ExtractTitle(m.cfg.Session.FilePath)
-		if title != "" {
-			const maxTitle = 30
-			runes := []rune(title)
-			if len(runes) > maxTitle {
-				title = string(runes[:maxTitle-1]) + "…"
-			}
-			rightParts = append(rightParts, styleStatus.Render(title))
-		}
-	}
-	rightParts = append(rightParts, styleStatus.Render("^Y copy  ^C stop  shift+tab mode"))
-	right := strings.Join(rightParts, barSep) + " "
-
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
 		pad = 1
 	}
 	statusBar := left + strings.Repeat(" ", pad) + right
+	usageFooter := m.renderUsageFooter(m.width)
+	footer := m.renderFooterStack(usageFooter, statusBar)
 
-	// Panel is a full-screen takeover — replace vp+spinner+input with it.
+	// Panel is a full-screen takeover — replace vp+working row+input with it.
 	// Only status bar remains at the bottom.
 	if m.panel != nil {
 		panel := m.renderPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, statusBar)))
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, footer)))
 	}
 
 	// Plugin panel is also a full-screen takeover.
 	if m.pluginPanel != nil {
 		pluginPanel := m.renderPluginPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, statusBar)))
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, footer)))
 	}
 
 	// Settings panel is a full-screen takeover.
 	if m.settingsPanel != nil {
 		sp := m.renderSettingsPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, statusBar)))
+		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, footer)))
 	}
 
 	// (Overlay was computed earlier so we could shrink the viewport.)
@@ -3107,8 +3262,313 @@ func (m Model) View() tea.View {
 	if coord := renderCoordinatorPanel(m.width); coord != "" {
 		parts = append(parts, coord)
 	}
-	parts = append(parts, statusBar)
+	parts = append(parts, footer)
 	return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...)))
+}
+
+func (m Model) renderFooterStack(usageFooter, statusBar string) string {
+	if usageFooter == "" {
+		return statusBar
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, usageFooter, statusBar)
+}
+
+func (m Model) renderModeStatus() string {
+	var mode string
+	var style lipgloss.Style
+	switch m.permissionMode {
+	case permissions.ModeAcceptEdits:
+		mode = "⏵⏵ accept edits"
+		style = styleModePurple
+	case permissions.ModePlan:
+		mode = "⏸ plan mode"
+		style = styleModeCyan
+	case permissions.ModeBypassPermissions:
+		mode = "⏵⏵ auto"
+		style = styleModeYellow
+	default:
+		mode = "default mode"
+		style = styleStatus
+	}
+	if coordinator.IsActive() {
+		mode = "⬡ coordinator | " + mode
+	}
+	return style.Render(mode) + styleStatus.Render(" (shift+tab to cycle)")
+}
+
+func (m Model) renderLocationStatus(maxWidth int) string {
+	if maxWidth < 8 {
+		return ""
+	}
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		return ""
+	}
+	branch := gitBranchName(cwd)
+	sep := " | "
+	if branch == "" {
+		return styleStatus.Render(truncateMiddle(displayPath(cwd), maxWidth))
+	}
+	branchMax := min(lipgloss.Width(branch), maxWidth/3)
+	if branchMax < 8 && maxWidth >= 20 {
+		branchMax = 8
+	}
+	if branchMax > maxWidth {
+		branchMax = maxWidth
+	}
+	branchText := truncateMiddle(branch, branchMax)
+	cwdMax := maxWidth - lipgloss.Width(sep) - lipgloss.Width(branchText)
+	if cwdMax < 8 {
+		return styleStatus.Render(truncateMiddle(displayPath(cwd), maxWidth))
+	}
+	cwdText := truncateMiddle(displayPath(cwd), cwdMax)
+	return styleStatus.Render(cwdText) + styleStatus.Render(sep) + styleStatusAccent.Render(branchText)
+}
+
+func displayPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		if path == home {
+			return "~"
+		}
+		if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			return "~" + strings.TrimPrefix(path, home)
+		}
+	}
+	return path
+}
+
+func gitBranchName(cwd string) string {
+	gitDir := findGitDir(cwd)
+	if gitDir == "" {
+		return ""
+	}
+	headPath := filepath.Join(gitDir, "HEAD")
+	raw, err := os.ReadFile(headPath)
+	if err != nil {
+		return ""
+	}
+	head := strings.TrimSpace(string(raw))
+	const prefix = "ref: refs/heads/"
+	if strings.HasPrefix(head, prefix) {
+		return strings.TrimPrefix(head, prefix)
+	}
+	if len(head) >= 7 {
+		return head[:7]
+	}
+	return head
+}
+
+func findGitDir(cwd string) string {
+	for dir := cwd; dir != ""; dir = filepath.Dir(dir) {
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
+			return gitPath
+		}
+		raw, err := os.ReadFile(gitPath)
+		if err == nil {
+			text := strings.TrimSpace(string(raw))
+			const prefix = "gitdir: "
+			if strings.HasPrefix(text, prefix) {
+				gitDir := strings.TrimSpace(strings.TrimPrefix(text, prefix))
+				if !filepath.IsAbs(gitDir) {
+					gitDir = filepath.Join(dir, gitDir)
+				}
+				return filepath.Clean(gitDir)
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	return ""
+}
+
+func truncateMiddle(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	if maxWidth == 1 {
+		return "…"
+	}
+	runes := []rune(s)
+	leftTarget := (maxWidth - 1) / 2
+	rightTarget := maxWidth - 1 - leftTarget
+	var left []rune
+	for _, r := range runes {
+		if lipgloss.Width(string(left))+lipgloss.Width(string(r)) > leftTarget {
+			break
+		}
+		left = append(left, r)
+	}
+	var right []rune
+	for i := len(runes) - 1; i >= 0; i-- {
+		r := runes[i]
+		if lipgloss.Width(string(right))+lipgloss.Width(string(r)) > rightTarget {
+			break
+		}
+		right = append([]rune{r}, right...)
+	}
+	return string(left) + "…" + string(right)
+}
+
+func (m Model) renderUsageFooter(width int) string {
+	if !m.usageStatusEnabled {
+		return ""
+	}
+	if width < 20 {
+		width = 20
+	}
+	rateLimited := !m.planUsageBackoff.IsZero() && time.Now().Before(m.planUsageBackoff)
+	hasCachedData := !m.planUsage.FiveHour.ResetsAt.IsZero() || !m.planUsage.SevenDay.ResetsAt.IsZero()
+	if m.planUsageErr != "" && !hasCachedData {
+		var line string
+		if rateLimited {
+			line = styleModeYellow.Render(" Usage: rate limited") +
+				styleStatus.Render(" · retry at "+m.planUsageBackoff.Local().Format("3:04pm"))
+		} else {
+			line = styleModeYellow.Render(" Usage: unavailable") + styleStatus.Render(" | "+m.planUsageErr)
+		}
+		return padStatusLine(line, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
+	}
+	if !hasCachedData {
+		line := styleStatus.Render(" Usage: loading...")
+		return padStatusLine(line, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
+	}
+	current := renderUsageWindow("Current", m.planUsage.FiveHour)
+	weekly := renderUsageWindow("Weekly ", m.planUsage.SevenDay)
+	contextLine := m.renderContextUsageWindow()
+
+	dataPoints := []string{
+		padStatusLine(contextLine, width),
+		padStatusLine(current, width),
+		padStatusLine(weekly, width),
+	}
+
+	return strings.Join(dataPoints, "\n")
+}
+
+func (m Model) renderContextUsageWindow() string {
+	const maxContextTokens = 200000
+	pct := 0
+	if m.totalInputTokens > 0 {
+		pct = clampInt(m.totalInputTokens*100/maxContextTokens, 0, 100)
+	}
+
+	labelText := styleStatus.Width(8).Render("Context")
+	bar := usageBar(pct, 18)
+
+	pctText := fmt.Sprintf("%3d%%", pct)
+	if pct >= 85 {
+		pctText = styleErrorText.Render(pctText)
+	} else if pct >= 65 {
+		pctText = styleModeYellow.Render(pctText)
+	} else {
+		pctText = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#3fb950")).
+			Render(pctText)
+	}
+
+	costText := ""
+	if m.costUSD > 0 {
+		costText = styleStatus.Render(fmt.Sprintf(" $%.2f", m.costUSD))
+	}
+
+	return fmt.Sprintf(" %s  %s  %s%s", labelText, bar, pctText, costText)
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func renderUsageWindow(label string, w planusage.Window) string {
+	pct := clampInt(int(w.Utilization+0.5), 0, 100)
+
+	reset := formatUsageReset(w.ResetsAt)
+
+	labelText := styleStatus.Width(8).Render(label)
+	bar := usageBar(pct, 18)
+
+	pctText := fmt.Sprintf("%3d%%", pct)
+	if pct >= 85 {
+		pctText = styleErrorText.Render(pctText)
+	} else if pct >= 65 {
+		pctText = styleModeYellow.Render(pctText)
+	} else {
+		pctText = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#3fb950")).
+			Render(pctText)
+	}
+
+	return fmt.Sprintf(
+		" %s  %s  %s  %s",
+		labelText,
+		bar,
+		pctText,
+		styleStatus.Render(reset),
+	)
+}
+
+func usageBar(pct, width int) string {
+	if width < 1 {
+		width = 1
+	}
+
+	pct = clampInt(pct, 0, 100)
+	filled := width * pct / 100
+	empty := width - filled
+
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950"))
+
+	switch {
+	case pct >= 85:
+		style = styleErrorText
+	case pct >= 65:
+		style = styleModeYellow
+	}
+
+	return style.Render(strings.Repeat("▰", filled)) +
+		styleStatus.Render(strings.Repeat("▱", empty))
+}
+
+func formatUsageReset(t time.Time) string {
+	if t.IsZero() {
+		return "↻ unknown"
+	}
+
+	local := t.Local()
+	now := time.Now()
+
+	localDay := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+	nowDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	days := int(localDay.Sub(nowDay).Hours() / 24)
+
+	switch days {
+	case 0:
+		return "↻ today " + local.Format("3:04pm")
+	case 1:
+		return "↻ tomorrow " + local.Format("3:04pm")
+	default:
+		return "↻ " + local.Format("Jan 2 3:04pm")
+	}
+}
+
+func padStatusLine(line string, width int) string {
+	if lipgloss.Width(line) > width {
+		return lipgloss.NewStyle().Width(width).MaxWidth(width).Render(line)
+	}
+	return line + strings.Repeat(" ", width-lipgloss.Width(line))
 }
 
 // renderCoordinatorPanel renders a footer row per active sub-agent task

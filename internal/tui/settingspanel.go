@@ -721,15 +721,12 @@ func (m Model) renderSettingsPanel() string {
 	if w < 10 {
 		w = 10
 	}
-	panelH := m.height - 1
-	if panelH < 4 {
-		panelH = 4
-	}
+	panelH := m.panelHeight()
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Outer style: Width(w-2), border 1 each side (2), padding 2 each side (4)
 	// → content area = (w-2) - 2 - 4 = w - 8. v1 was w-6 because Width was
 	// content-only there.
-	innerW := w - 2
+	innerW := w - 4
 
 	var sb strings.Builder
 
@@ -1705,23 +1702,9 @@ func mostActiveDay(dailyCounts map[string]int) string {
 }
 
 // buildHeatmap writes a 7-row × N-week GitHub-style activity heatmap.
-//
-// Layout (mirrors Claude Code reference):
-//
-//	     Oct Nov  Dec   Jan   Feb   Mar  Apr
-//	     · · · ·  · · ·  ░ ▒ ▓ █  · ·
-//	Mon  · · · ·  · · ·  ░ ▒ ▓ █  · ·
-//	     · · · ·  · · ·  · · · ·  · ·
-//	Wed  · · · ·  · · ·  · · · ·  · ·
-//	     ...
-//	Fri  ...
-//	     ...
-//
-//	     Less · ░ ▒ ▓ █ More
 func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
-	const leftPad = 5 // "Mon " = 4 + 1 space
+	const leftPad = 5 // "Mon  " = 5
 
-	// Each week column is 2 chars: cell + space.
 	weeks := (innerW - leftPad) / 2
 	if weeks < 8 {
 		weeks = 8
@@ -1731,8 +1714,9 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 	}
 
 	now := time.Now()
-	// Start on the Sunday of (weeks) weeks ago, so the last column ends this week.
-	todaySunday := int(now.Weekday()) // Go: Sun=0, Mon=1..Sat=6
+
+	// Start on Sunday so columns are weeks and rows are weekdays.
+	todaySunday := int(now.Weekday()) // Sun=0, Mon=1..Sat=6
 	startDay := now.AddDate(0, 0, -(weeks*7 - 1 + todaySunday))
 
 	maxCount := 0
@@ -1742,85 +1726,155 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 		}
 	}
 
-	// Colour scale: 4 levels + empty.
-	heatColors := []color.Color{lipgloss.Color("#1B4332"), lipgloss.Color("#2D6A4F"), lipgloss.Color("#52B788"), lipgloss.Color("#B7E4C7")}
-	heatChars := []string{"░", "▒", "▓", "█"}
-
-	cell := func(count int) string {
-		if count == 0 || maxCount == 0 {
-			return stylePickerDesc.Render("·")
-		}
-		// level 0..3
-		level := (count * 4) / (maxCount + 1)
-		if level > 3 {
-			level = 3
-		}
-		return fgOnBg(heatColors[level]).Render(heatChars[level])
+	heatColors := []color.Color{
+		lipgloss.Color("#123524"),
+		lipgloss.Color("#1f6f43"),
+		lipgloss.Color("#2ea043"),
+		lipgloss.Color("#56d364"),
 	}
 
-	// Build grid: grid[dayOfWeek 0=Sun][week] = count
+	emptyChar := "·"
+	heatChars := []string{"∘", "●", "◉", "⬤"}
+
+	emptyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#2a2f36"))
+
+	heatStyles := make([]lipgloss.Style, len(heatColors))
+	for i, c := range heatColors {
+		heatStyles[i] = fgOnBg(c)
+	}
+
+	levelFor := func(count int) int {
+		if count <= 0 || maxCount <= 0 {
+			return -1
+		}
+
+		// Map 1..maxCount onto 0..len(heatChars)-1.
+		level := (count - 1) * len(heatChars) / maxCount
+		if level < 0 {
+			level = 0
+		}
+		if level >= len(heatChars) {
+			level = len(heatChars) - 1
+		}
+		return level
+	}
+
+	cell := func(count int) string {
+		level := levelFor(count)
+		if level < 0 {
+			return emptyStyle.Render(emptyChar)
+		}
+		return heatStyles[level].Render(heatChars[level])
+	}
+
 	grid := make([][]int, 7)
 	for i := range grid {
 		grid[i] = make([]int, weeks)
 	}
+
 	weekStarts := make([]time.Time, weeks)
 	for w := 0; w < weeks; w++ {
 		ws := startDay.AddDate(0, 0, w*7)
 		weekStarts[w] = ws
+
 		for d := 0; d < 7; d++ {
 			day := ws.AddDate(0, 0, d).Format("2006-01-02")
 			grid[d][w] = dailyCounts[day]
 		}
 	}
 
-	// ── Month labels row ────────────────────────────────────────────────────
-	// Each week column = 2 chars ("· "). Build a plain byte buffer and write
-	// "Jan" at the column position when the month changes, ensuring we don't
-	// overwrite a label that was just written (need ≥3 chars gap).
+	renderHeatmapMonths(sb, weekStarts, leftPad)
+	renderHeatmapRows(sb, grid, weeks, cell)
+	renderHeatmapLegend(sb, leftPad, emptyStyle, emptyChar, heatStyles, heatChars)
+}
+
+func renderHeatmapMonths(sb *strings.Builder, weekStarts []time.Time, leftPad int) {
+	weeks := len(weekStarts)
+
 	monthRow := make([]byte, weeks*2+4)
 	for i := range monthRow {
 		monthRow[i] = ' '
 	}
+
 	prevMonth := -1
 	lastLabelEnd := -1
-	for w := 0; w < weeks; w++ {
-		m := int(weekStarts[w].Month())
+
+	for w, ws := range weekStarts {
+		m := int(ws.Month())
 		pos := w * 2
-		if m != prevMonth && pos >= lastLabelEnd {
-			label := weekStarts[w].Format("Jan") // always 3 chars
-			for i, c := range []byte(label) {
-				if pos+i < len(monthRow) {
-					monthRow[pos+i] = c
-				}
-			}
-			prevMonth = m
-			lastLabelEnd = pos + 3
+
+		if m == prevMonth {
+			continue
 		}
+
+		// Need enough space to draw "Jan".
+		if pos < lastLabelEnd+1 {
+			prevMonth = m
+			continue
+		}
+
+		label := ws.Format("Jan")
+		for i, c := range []byte(label) {
+			if pos+i < len(monthRow) {
+				monthRow[pos+i] = c
+			}
+		}
+
+		prevMonth = m
+		lastLabelEnd = pos + len(label)
 	}
-	// Trim trailing spaces.
+
 	monthStr := strings.TrimRight(string(monthRow), " ")
+
 	sb.WriteString(strings.Repeat(" ", leftPad))
 	sb.WriteString(stylePickerDesc.Render(monthStr))
 	sb.WriteByte('\n')
+}
 
-	// ── Day rows ─────────────────────────────────────────────────────────────
-	// Go weekday: Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6
+func renderHeatmapRows(
+	sb *strings.Builder,
+	grid [][]int,
+	weeks int,
+	cell func(count int) string,
+) {
 	rowLabels := [7]string{"   ", "Mon", "   ", "Wed", "   ", "Fri", "   "}
+
 	for d := 0; d < 7; d++ {
-		sb.WriteString(stylePickerDesc.Render(rowLabels[d]) + "  ")
+		sb.WriteString(stylePickerDesc.Render(rowLabels[d]))
+		sb.WriteString("  ")
+
 		for w := 0; w < weeks; w++ {
 			sb.WriteString(cell(grid[d][w]))
-			sb.WriteString(" ")
+
+			if w < weeks-1 {
+				sb.WriteByte(' ')
+			}
 		}
+
 		sb.WriteByte('\n')
 	}
+}
 
-	// ── Legend ────────────────────────────────────────────────────────────────
-	sb.WriteString(strings.Repeat(" ", leftPad) + stylePickerDesc.Render("Less ·"))
-	for i := range heatColors {
-		sb.WriteString(fgOnBg(heatColors[i]).Render(heatChars[i]))
+func renderHeatmapLegend(
+	sb *strings.Builder,
+	leftPad int,
+	emptyStyle lipgloss.Style,
+	emptyChar string,
+	heatStyles []lipgloss.Style,
+	heatChars []string,
+) {
+	sb.WriteString(strings.Repeat(" ", leftPad))
+	sb.WriteString(stylePickerDesc.Render("Less  "))
+	sb.WriteString(emptyStyle.Render(emptyChar))
+
+	for i := range heatChars {
+		sb.WriteByte(' ')
+		sb.WriteString(heatStyles[i].Render(heatChars[i]))
 	}
-	sb.WriteString(stylePickerDesc.Render(" More") + "\n")
+
+	sb.WriteString(stylePickerDesc.Render("  More"))
+	sb.WriteByte('\n')
 }
 
 // buildTokensLineChart renders a per-model step-line chart using asciigraph,

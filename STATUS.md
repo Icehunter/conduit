@@ -1,6 +1,6 @@
 # conduit Implementation Status
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 ## How to read this
 
@@ -53,6 +53,9 @@ Last updated: 2026-05-04
 | Input history (↑↓) | ✅ | |
 | Vim mode | ❌ STUB | toggled but no actual vim keybindings |
 | Status bar | ✅ | model, context%, cost |
+| Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
+| Assistant info row | ✅ | model, duration, per-turn cost after completed responses |
+| Tool message rendering | ✅ | completed successes collapse; running tools show input; errors show details |
 | Welcome card (two-panel) | ✅ | profile fetched from oauth/profile |
 | Permission prompt modal | ✅ | |
 | Login picker modal | ✅ | |
@@ -141,6 +144,7 @@ Last updated: 2026-05-04
 | /fix | ✅ | prompt-inject issue fix |
 | /export | ✅ | writes markdown file to disk |
 | /usage | ✅ | token/cost breakdown by turn |
+| /toggle-usage | ✅ | conduit-only: toggles Claude plan usage footer + fetcher |
 | /vim | ❌ STUB | toggles flag but no actual vim mode |
 | /resume | ✅ | lists previous sessions; use --continue to restore |
 | /rewind | ✅ | conversation snapshots via JSONL |

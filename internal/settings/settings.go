@@ -91,6 +91,9 @@ type Settings struct {
 	// light-daltonized|dark-ansi|light-ansi). Matches Claude Code's
 	// THEME_NAMES so settings.json values are interchangeable.
 	Theme string `json:"theme,omitempty"`
+	// UsageStatusEnabled enables the conduit-only footer that fetches and
+	// renders Claude plan usage windows.
+	UsageStatusEnabled bool `json:"usageStatusEnabled,omitempty"`
 	// ThemeOverrides applies per-field color tweaks on top of the named
 	// theme. Keys are lowercase Palette field names (e.g. "accent",
 	// "success"); values are #RRGGBB hex or ANSI 0-15 codes.
@@ -124,6 +127,8 @@ type Merged struct {
 	OutputStyle string
 	// Theme is the active palette name (last layer wins).
 	Theme string
+	// UsageStatusEnabled enables the conduit-only plan usage footer.
+	UsageStatusEnabled bool
 	// ThemeOverrides is the per-field color override map (last layer wins).
 	ThemeOverrides map[string]string
 	// Themes is the merged custom theme map (last layer wins per name).
@@ -171,6 +176,9 @@ func loadPaths(paths []string) (*Merged, error) {
 		}
 		if s.Theme != "" {
 			merged.Theme = s.Theme
+		}
+		if s.UsageStatusEnabled {
+			merged.UsageStatusEnabled = true
 		}
 		if len(s.ThemeOverrides) > 0 {
 			if merged.ThemeOverrides == nil {

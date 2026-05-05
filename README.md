@@ -232,6 +232,7 @@ conduit --resume <session-id>
 | `/commit` | Create a git commit with a generated message |
 | `/cost` | Token and cost breakdown |
 | `/usage` | Rate limit quota and burn rate |
+| `/toggle-usage` | Toggle Claude plan usage footer and background fetching |
 | `/stats` | Per-tool usage counts |
 | `/session` | Session ID, path, message count, duration |
 | `/tasks` | Active sub-agent tasks |

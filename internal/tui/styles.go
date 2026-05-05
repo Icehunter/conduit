@@ -43,7 +43,6 @@ var (
 	styleUserText           lipgloss.Style
 	styleAssistantText      lipgloss.Style
 	styleToolBadge          lipgloss.Style
-	styleToolContent        lipgloss.Style
 	styleErrorText          lipgloss.Style
 	styleSystemText         lipgloss.Style
 	styleInlineCode         lipgloss.Style
@@ -52,12 +51,10 @@ var (
 	styleInputBorder        lipgloss.Style
 	styleInputBorderActive  lipgloss.Style
 	styleStatus             lipgloss.Style
-	styleStatusModel        lipgloss.Style
 	styleStatusAccent       lipgloss.Style
 	styleModePurple         lipgloss.Style
 	styleModeCyan           lipgloss.Style
 	styleModeYellow         lipgloss.Style
-	styleSpinner            lipgloss.Style
 	styleSep                lipgloss.Style
 	stylePickerBorder       lipgloss.Style
 	stylePickerItem         lipgloss.Style
@@ -97,7 +94,6 @@ func RebuildStyles() {
 	styleUserText = lipgloss.NewStyle().Foreground(colorFg)
 	styleAssistantText = lipgloss.NewStyle().Foreground(colorFg)
 	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Bold(true)
-	styleToolContent = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	styleErrorText = lipgloss.NewStyle().Foreground(colorError)
 	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	// Code blocks: no bg painting on tokens or block container — terminal/
@@ -128,14 +124,12 @@ func RebuildStyles() {
 	styleInputBorderActive = inputBorderActive
 
 	styleStatus = lipgloss.NewStyle().Foreground(colorDim)
-	styleStatusModel = lipgloss.NewStyle().Foreground(colorMuted)
 	styleStatusAccent = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 
 	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Bold(true)
 	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Bold(true)
 	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Bold(true)
 
-	styleSpinner = lipgloss.NewStyle().Foreground(colorAccent)
 	styleSep = lipgloss.NewStyle().Foreground(colorDim)
 
 	stylePickerBorder = lipgloss.NewStyle().

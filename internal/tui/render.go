@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"encoding/json"
+	"fmt"
 	"image/color"
+	"sort"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -45,8 +49,11 @@ func renderMessage(msg Message, width int) string {
 		body := renderMarkdown(content, inner)
 		return pad + styleClaudePrefix.Render(prefixClaude) + "\n" + indentLines(body, pad)
 
+	case RoleAssistantInfo:
+		return pad + renderAssistantInfo(msg, inner)
+
 	case RoleTool:
-		return pad + "  " + styleToolBadge.Render("⚙ "+msg.ToolName) + "  " + styleToolContent.Render(msg.Content)
+		return pad + renderToolMessage(msg, inner)
 
 	case RoleError:
 		// Wrap long error text — OAuth/API errors regularly run hundreds
@@ -109,6 +116,172 @@ func renderMessage(msg Message, width int) string {
 		return sb.String()
 	}
 	return msg.Content
+}
+
+func renderAssistantInfo(msg Message, width int) string {
+	parts := []string{}
+	if msg.AssistantModel != "" {
+		parts = append(parts, styleStatusAccent.Render("◇ "+msg.AssistantModel))
+	}
+	if msg.AssistantDuration > 0 {
+		parts = append(parts, styleStatus.Render(formatMessageDuration(msg.AssistantDuration)))
+	}
+	if msg.AssistantCost > 0 {
+		parts = append(parts, styleStatus.Render(fmt.Sprintf("$%.2f", msg.AssistantCost)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	line := strings.Join(parts, styleStatus.Render(" · "))
+	return styleStatus.Width(width).Render("  " + line)
+}
+
+func renderToolMessage(msg Message, width int) string {
+	statusIcon := styleStatusAccent.Render("✓")
+	statusText := "done"
+	if msg.Content == "running…" {
+		statusIcon = styleModeYellow.Render("●")
+		statusText = "running"
+	} else if msg.ToolError {
+		statusIcon = styleErrorText.Render("✗")
+		statusText = "error"
+	}
+
+	headerParts := []string{
+		statusIcon,
+		styleToolBadge.Render(toolDisplayName(msg.ToolName)),
+		styleStatus.Render(statusText),
+	}
+	if msg.ToolDuration > 0 {
+		headerParts = append(headerParts, styleStatus.Render(formatMessageDuration(msg.ToolDuration)))
+	}
+	header := strings.Join(headerParts, " ")
+
+	running := msg.Content == "running…"
+	summary := toolInputSummary(msg.ToolName, msg.ToolInput)
+	result := strings.TrimSpace(msg.Content)
+	if running {
+		result = ""
+	}
+
+	bodyWidth := max(10, width-4)
+	var lines []string
+	lines = append(lines, "  "+header)
+	if running && summary != "" {
+		lines = append(lines, indentLines(styleStatus.Width(bodyWidth).Render(summary), "    "))
+	}
+	if msg.ToolError && result != "" {
+		resultStyle := styleErrorText
+		lines = append(lines, indentLines(resultStyle.Width(bodyWidth).Render(result), "    "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func toolDisplayName(name string) string {
+	if name == "" {
+		return "Tool"
+	}
+	name = strings.TrimSuffix(name, "Tool")
+	name = strings.TrimPrefix(name, "mcp__")
+	return name
+}
+
+func toolInputSummary(toolName, raw string) string {
+	fields := parseToolInput(raw)
+	if len(fields) == 0 {
+		return ""
+	}
+	lower := strings.ToLower(toolName)
+	switch {
+	case strings.Contains(lower, "bash"):
+		return firstToolField(fields, "command", "cmd")
+	case strings.Contains(lower, "grep"):
+		pattern := firstToolField(fields, "pattern", "query")
+		include := firstToolField(fields, "include", "path")
+		if pattern != "" && include != "" {
+			return pattern + " in " + include
+		}
+		return pattern
+	case strings.Contains(lower, "glob"):
+		pattern := firstToolField(fields, "pattern")
+		path := firstToolField(fields, "path")
+		if pattern != "" && path != "" {
+			return pattern + " under " + path
+		}
+		return pattern
+	case strings.Contains(lower, "edit"), strings.Contains(lower, "write"), strings.Contains(lower, "read"), strings.Contains(lower, "notebook"):
+		return firstToolField(fields, "file_path", "path")
+	case strings.Contains(lower, "fetch"), strings.Contains(lower, "search"):
+		return firstToolField(fields, "url", "query")
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		if fields[k] == "" {
+			continue
+		}
+		parts = append(parts, k+"="+fields[k])
+		if len(parts) == 2 {
+			break
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func parseToolInput(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var values map[string]any
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for k, v := range values {
+		switch t := v.(type) {
+		case string:
+			out[k] = truncate(t, 500)
+		case float64, bool:
+			out[k] = fmt.Sprint(t)
+		case []any:
+			out[k] = fmt.Sprintf("%d item(s)", len(t))
+		case map[string]any:
+			out[k] = "object"
+		}
+	}
+	return out
+}
+
+func firstToolField(fields map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(fields[key]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func formatMessageDuration(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	if d < time.Minute {
+		return d.Round(time.Second).String()
+	}
+	if d < time.Hour {
+		min := int(d / time.Minute)
+		sec := int((d % time.Minute) / time.Second)
+		if sec == 0 {
+			return fmt.Sprintf("%dm", min)
+		}
+		return fmt.Sprintf("%dm%02ds", min, sec)
+	}
+	return d.Round(time.Minute).String()
 }
 
 // renderWelcomeCard renders the two-panel startup banner.
@@ -798,7 +971,20 @@ func renderLine(line string, width int) string {
 	// Blockquote.
 	if strings.HasPrefix(line, "> ") {
 		inner := strings.TrimPrefix(line, "> ")
-		return "  " + styleBQ.Render("│ "+inner)
+		innerW := width - 4 // "  │ " = 4 cols
+		if innerW < 10 {
+			innerW = 10
+		}
+		wrapped := styleBQ.Width(innerW).Render(inner)
+		bqLines := strings.Split(wrapped, "\n")
+		var sb strings.Builder
+		for i, l := range bqLines {
+			if i > 0 {
+				sb.WriteByte('\n')
+			}
+			fmt.Fprintf(&sb, "  %s%s", styleBQ.Render("│ "), l)
+		}
+		return sb.String()
 	}
 
 	// Task list items.

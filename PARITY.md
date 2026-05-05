@@ -33,6 +33,7 @@
 | M-Q Custom keybindings | ✅ | `internal/keybindings/` — parser, resolver, JSON loader, defaults. TUI hookup: `activeContexts()`, `dispatchKeybindingAction()`, `command:*` slash dispatch, chat/select/confirm action IDs. |
 | M-R Image paste | ✅ | ctrl+v reads clipboard via osascript (macOS PNG/TIFF) or xclip/wl-paste (Linux). Multiple images accumulate, badge shows count. tea.PasteMsg for large text pastes. |
 | M-S Bubbletea v2 polish | ✅ | Sticky-bottom scroll, overlay viewport shrink, system msg wrap, innerW lipgloss-v2 fix, ctrl+c signal handling, handleKey/handleKeyBuiltins split (prevents KB recursion), /keybindings live resolver output |
+| M-T Crush-inspired TUI polish | ✅ | `internal/tui/workinganim/` gradient scramble work indicator replaces the plain footer Thinking spinner; assistant info rows show model/duration/cost; tool rows collapse completed successes while preserving running context and error details |
 
 **Test count:** 507 passing, race clean (2026-05-02)
 
@@ -79,6 +80,7 @@
 | API pre-connect optimization | `utils/apiPreconnect.ts` | — | `cmd/conduit/main.go` | ✅ | Background HEAD to api.anthropic.com during startup |
 | Rate limit quota tracking | `services/claudeAiLimits.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | Parse anthropic-ratelimit-* headers, <20% warning in status bar |
 | Rate limit messages | `services/rateLimitMessages.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | WarningMessage() in status bar |
+| Claude plan usage footer | `statusLine` user command + oauth usage endpoint | — | `internal/planusage/`, `/toggle-usage` | ✅ | conduit-only native footer: 5h/7d usage windows, reset times, cached 60s fetch loop |
 | Token estimation | `services/tokenEstimation.ts` | — | `internal/tokens/tokens.go` | ✅ | cl100k_base via tiktoken-go; falls back to chars/4 if encoder init fails |
 | Cost tracking | `cost-tracker.ts` (323 LOC) | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
 

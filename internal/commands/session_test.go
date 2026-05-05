@@ -41,3 +41,31 @@ func TestSessionFootprintBytesIncludesSidecarDir(t *testing.T) {
 		t.Errorf("sessionFootprintBytes() = %d; want transcript + sidecar bytes", got)
 	}
 }
+
+func TestToggleUsageCommand(t *testing.T) {
+	reg := New()
+	enabled := false
+	RegisterSessionCommands(reg, &SessionState{
+		GetUsageStatusEnabled: func() bool { return enabled },
+		SetUsageStatusEnabled: func(on bool) error {
+			enabled = on
+			return nil
+		},
+	})
+
+	res, ok := reg.Dispatch("/toggle-usage")
+	if !ok {
+		t.Fatal("expected /toggle-usage to dispatch")
+	}
+	if res.Type != "usage-toggle" || res.Text != "on" || !enabled {
+		t.Fatalf("first toggle = %#v enabled=%v; want usage-toggle/on enabled", res, enabled)
+	}
+
+	res, ok = reg.Dispatch("/toggle-usage")
+	if !ok {
+		t.Fatal("expected /toggle-usage to dispatch second time")
+	}
+	if res.Type != "usage-toggle" || res.Text != "off" || enabled {
+		t.Fatalf("second toggle = %#v enabled=%v; want usage-toggle/off disabled", res, enabled)
+	}
+}

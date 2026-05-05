@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -130,5 +131,80 @@ func TestRenderMarkdown_Blockquote(t *testing.T) {
 	out := renderMarkdown("> This is a quote", 80)
 	if !strings.Contains(out, "This is a quote") {
 		t.Errorf("blockquote text missing: %q", out)
+	}
+}
+
+func TestRenderMessage_AssistantInfo(t *testing.T) {
+	out := plainText(renderMessage(Message{
+		Role:              RoleAssistantInfo,
+		AssistantModel:    "Sonnet 4.6",
+		AssistantDuration: 12 * time.Second,
+		AssistantCost:     0.03,
+	}, 80))
+
+	for _, want := range []string{"Sonnet 4.6", "12s", "$0.03"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("assistant info missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestRenderMessage_ToolSummary(t *testing.T) {
+	out := plainText(renderMessage(Message{
+		Role:         RoleTool,
+		ToolName:     "BashTool",
+		ToolInput:    `{"command":"make verify"}`,
+		Content:      "All checks passed.",
+		ToolDuration: 2 * time.Second,
+	}, 80))
+
+	for _, want := range []string{"Bash", "done", "2s"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tool render missing %q: %q", want, out)
+		}
+	}
+	for _, hidden := range []string{"make verify", "All checks passed."} {
+		if strings.Contains(out, hidden) {
+			t.Fatalf("completed successful tool render should hide %q: %q", hidden, out)
+		}
+	}
+}
+
+func TestRenderMessage_ToolSummaryWraps(t *testing.T) {
+	longPrompt := "Write a complete, production-quality Go webserver that serves cached data from an S3 bucket. Address all of the identified reliability, security, cache invalidation, observability, and deployment issues without omitting edge cases."
+	out := renderMessage(Message{
+		Role:      RoleTool,
+		ToolName:  "qwen_router__qwen_implement",
+		ToolInput: `{"prompt":"` + longPrompt + `"}`,
+		Content:   "running…",
+	}, 72)
+
+	plain := plainText(out)
+	if !strings.Contains(plain, "reliability") {
+		t.Fatalf("wrapped summary lost prompt content: %q", plain)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if got := ansi.StringWidth(line); got > 72 {
+			t.Fatalf("line width = %d, want <= 72: %q", got, line)
+		}
+	}
+}
+
+func TestRenderMessage_ToolErrorShowsDetails(t *testing.T) {
+	out := plainText(renderMessage(Message{
+		Role:      RoleTool,
+		ToolName:  "BashTool",
+		ToolInput: `{"command":"make verify"}`,
+		Content:   "exit status 1: lint failed",
+		ToolError: true,
+	}, 80))
+
+	for _, want := range []string{"Bash", "error", "exit status 1: lint failed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tool error render missing %q: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "make verify") {
+		t.Fatalf("completed error tool render should hide prompt summary: %q", out)
 	}
 }

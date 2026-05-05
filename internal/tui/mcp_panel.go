@@ -305,12 +305,9 @@ func (m Model) renderPanel() string {
 	if w < 10 {
 		w = 10
 	}
-	// Available height for the panel content = terminal height - 1 (status bar).
-	// Border (top+bottom=2) + padding (top+bottom=2) = 4 rows consumed by chrome.
-	panelH := m.height - 1
-	if panelH < 4 {
-		panelH = 4
-	}
+	// Available height for the panel content = terminal height minus the
+	// shared footer stack.
+	panelH := m.panelHeight()
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
 	innerW := w - 2

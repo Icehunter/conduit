@@ -3029,7 +3029,16 @@ func (m Model) View() tea.View {
 		if pct > 100 {
 			pct = 100
 		}
-		leftParts = append(leftParts, styleStatus.Render(fmt.Sprintf("%d%% ctx", pct)))
+		var ctxStyle lipgloss.Style
+		switch {
+		case pct > 80:
+			ctxStyle = styleErrorText
+		case pct > 50:
+			ctxStyle = styleModeYellow
+		default:
+			ctxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")) // green
+		}
+		leftParts = append(leftParts, ctxStyle.Render(fmt.Sprintf("%d%% ctx", pct)))
 	}
 	if m.costUSD > 0 {
 		leftParts = append(leftParts, styleStatus.Render(fmt.Sprintf("$%.2f", m.costUSD)))

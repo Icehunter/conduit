@@ -94,7 +94,7 @@ func (m Model) renderSearchPanel() string {
 		roleTag := "[" + r.role + "]"
 		label := stylePickerDesc.Render(roleTag) + " " + r.snippet
 		if vi == p.selected {
-			sb.WriteString(stylePickerItemSelected.Render("▶ ") + label + "\n")
+			sb.WriteString(stylePickerItemSelected.Render("❯ ") + label + "\n")
 		} else {
 			sb.WriteString("  " + label + "\n")
 		}
@@ -104,5 +104,5 @@ func (m Model) renderSearchPanel() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width - 4).Render(sb.String())
+	return style.Width(m.width).Render(sb.String())
 }

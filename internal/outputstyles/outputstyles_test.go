@@ -21,10 +21,11 @@ func TestLoad_EmptyDir(t *testing.T) {
 // "default", "Explanatory", "Learning" always show up even with no
 // user/project styles on disk.
 func TestLoadAll_IncludesBuiltins(t *testing.T) {
-	// Use a tempdir as cwd and unset HOME so neither user nor project dir
-	// exists; only built-ins should remain.
+	// Use a tempdir as cwd and point CLAUDE_CONFIG_DIR at a nonexistent subdir
+	// so neither user nor project style dir exists; only built-ins should remain.
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, ".claude"))
 
 	styles, err := LoadAll(dir)
 	if err != nil {
@@ -48,6 +49,7 @@ func TestLoadAll_IncludesBuiltins(t *testing.T) {
 func TestLoadAll_ProjectOverridesBuiltin(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, ".claude"))
 	stylesDir := filepath.Join(dir, ".claude", "output-styles")
 	if err := os.MkdirAll(stylesDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -157,6 +159,7 @@ func TestLoadAll_MergesUserAndProject(t *testing.T) {
 	writeFile(t, filepath.Join(projDir, "proj-style.md"), "project style")
 
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	styles, err := LoadAll(cwd)
 	if err != nil {
 		t.Fatalf("LoadAll: %v", err)
@@ -185,6 +188,7 @@ func TestLoadAll_ProjectOverridesUser(t *testing.T) {
 	writeFile(t, filepath.Join(projDir, "shared.md"), "project version")
 
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	styles, _ := LoadAll(cwd)
 	for _, s := range styles {
 		if s.Name == "shared" && s.Prompt != "project version" {

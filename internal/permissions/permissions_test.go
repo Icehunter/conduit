@@ -1,6 +1,9 @@
 package permissions
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMatchRule_ToolOnly(t *testing.T) {
 	if !matchRule("Bash", "Bash", "") {
@@ -142,6 +145,33 @@ func TestSuggestRule(t *testing.T) {
 		got := SuggestRule(tt.tool, tt.input)
 		if got != tt.want {
 			t.Errorf("SuggestRule(%q, %q) = %q; want %q", tt.tool, tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestSuggestRule_PathHardening(t *testing.T) {
+	tests := []struct {
+		tool        string
+		input       string
+		noTraversal bool // result must not contain ".."
+	}{
+		// Path traversal must be cleaned before building the allow rule.
+		{"Read", "/home/user/project/../../../etc/passwd", true},
+		{"Edit", "/tmp/dir/subdir/../../secret.txt", true},
+		// Repeated slashes — should produce a clean path.
+		{"Write", "/home//user//file.go", false},
+		// Root dir — no glob, just tool name.
+		{"Read", "/", false},
+		// Empty input — just tool name.
+		{"Read", "", false},
+	}
+	for _, tt := range tests {
+		got := SuggestRule(tt.tool, tt.input)
+		if !strings.HasPrefix(got, tt.tool) {
+			t.Errorf("SuggestRule(%q, %q) = %q; must start with tool name", tt.tool, tt.input, got)
+		}
+		if tt.noTraversal && strings.Contains(got, "..") {
+			t.Errorf("SuggestRule(%q, %q) = %q; must not contain path traversal", tt.tool, tt.input, got)
 		}
 	}
 }

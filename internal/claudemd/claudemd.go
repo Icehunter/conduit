@@ -236,6 +236,8 @@ func resolveIncludes(f File, seen map[string]bool) []File {
 func resolveIncludePath(ref, baseDir string) string {
 	home, _ := os.UserHomeDir()
 	switch {
+	case filepath.IsAbs(ref):
+		return ref
 	case strings.HasPrefix(ref, "/"):
 		return ref
 	case strings.HasPrefix(ref, "~/"):

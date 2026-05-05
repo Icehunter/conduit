@@ -36,8 +36,13 @@ type Style struct {
 // Built-in "default", "Explanatory", "Learning" are always present so
 // /output-style with no args is never empty out of the box.
 func LoadAll(cwd string) ([]Style, error) {
-	home, _ := os.UserHomeDir()
-	userDir := filepath.Join(home, ".claude", "output-styles")
+	var userDir string
+	if cd := os.Getenv("CLAUDE_CONFIG_DIR"); cd != "" {
+		userDir = filepath.Join(cd, "output-styles")
+	} else {
+		home, _ := os.UserHomeDir()
+		userDir = filepath.Join(home, ".claude", "output-styles")
+	}
 	projDir := filepath.Join(cwd, ".claude", "output-styles")
 
 	userStyles, _ := loadDir(userDir)

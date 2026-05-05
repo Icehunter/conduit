@@ -82,7 +82,7 @@ func (m Model) renderLoginPicker() string {
 	for i, opt := range loginOptions {
 		var line string
 		if i == p.selected {
-			line = stylePickerItemSelected.Render(fmt.Sprintf("▶ %d. %s", i+1, opt.label)) +
+			line = stylePickerItemSelected.Render(fmt.Sprintf("❯ %d. %s", i+1, opt.label)) +
 				"  " + stylePickerDesc.Render(opt.description)
 		} else {
 			line = stylePickerItem.Render(fmt.Sprintf("  %d. %s", i+1, opt.label)) +
@@ -96,7 +96,7 @@ func (m Model) renderLoginPicker() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width - 4).Render(sb.String())
+	return style.Width(m.width).Render(sb.String())
 }
 
 // welcomeCard returns the two-panel welcome banner shown on startup.

@@ -173,6 +173,22 @@ type (
 		allow       bool
 		alwaysAllow bool // add to session allow list
 	}
+
+	// questionAskMsg is sent when AskUserQuestion needs a real answer from
+	// the user. Unlike permissionAskMsg it does NOT use the permission modal —
+	// it shows the question in chat and lets the user type a free-form answer
+	// or pick a numbered option via the normal input box.
+	questionAskMsg struct {
+		question string
+		options  []questionOption
+		multi    bool
+		reply    chan<- []string
+	}
+	questionOption struct {
+		Label       string
+		Value       string
+		Description string
+	}
 	clearFlash  struct{}
 	clearBubble struct{}
 
@@ -215,6 +231,12 @@ type Config struct {
 	// Live is the shared state bag readable from command callbacks outside
 	// the Bubble Tea event loop. Populated by the model on each Update.
 	Live *LiveState
+	// NeedsTrust is true when the current working directory has not been
+	// marked trusted in ~/.claude.json. The TUI shows the trust dialog
+	// before allowing any agent interaction.
+	NeedsTrust bool
+	// SetTrusted persists acceptance of the workspace trust dialog.
+	SetTrusted func() error
 }
 
 // Model is the Bubble Tea model.
@@ -230,11 +252,13 @@ type Model struct {
 	width  int
 	height int
 
-	running    bool
-	cancelled  bool // true after Ctrl+C; cleared when next turn starts
-	cancelTurn context.CancelFunc
-	streaming  string
-	turnID     int // incremented each turn; agentDoneMsg with stale ID is ignored
+	running         bool
+	cancelled       bool // true after Ctrl+C; cleared when next turn starts
+	cancelTurn      context.CancelFunc
+	streaming       string
+	turnID          int               // incremented each turn; agentDoneMsg with stale ID is ignored
+	pendingMessages []string          // messages typed while agent is running; drained after turn ends
+	questionAsk     *questionAskState // non-nil when AskUserQuestion is waiting for user input
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands
@@ -291,6 +315,9 @@ type Model struct {
 
 	// Permission prompt state — non-nil when a tool is waiting for approval.
 	permPrompt *permissionPromptState
+
+	// trustDialog is non-nil when the workspace trust dialog is pending.
+	trustDialog *trustDialogState
 
 	// Login picker state — non-nil when /login is active.
 	loginPrompt *loginPromptState
@@ -463,6 +490,21 @@ func New(cfg Config) Model {
 		m.kb = keybindings.NewResolver(keybindings.Defaults())
 	}
 
+	// Sync displayed permission mode from the gate, which was initialized with
+	// the value from settings.json. Without this the status bar always shows
+	// "default" even when settings.json has "defaultMode": "plan".
+	if cfg.Gate != nil {
+		m.permissionMode = cfg.Gate.Mode()
+	}
+
+	// Workspace trust dialog — shown before any agent interaction when the
+	// current directory hasn't been accepted yet. Mirrors CC's trust-dialog
+	// gating (decoded/5053.js). Skipped in sandboxed / non-interactive mode
+	// (NeedsTrust is false when CLAUDE_CODE_SANDBOXED is set or -p flag used).
+	if cfg.NeedsTrust && cfg.SetTrusted != nil {
+		m.trustDialog = &trustDialogState{setTrusted: cfg.SetTrusted}
+	}
+
 	return m
 }
 
@@ -531,6 +573,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// bubbletea v2 sends InterruptMsg when it catches SIGINT (ctrl+c
 		// in non-raw-mode or from kill). Mirror the KeyPressMsg ctrl+c
 		// handler: cancel a running turn, or quit when idle.
+		if m.questionAsk != nil {
+			// Cancel a pending AskUserQuestion — send nil so the tool returns
+			// "no answer" rather than blocking forever.
+			m.questionAsk.reply <- nil
+			m.questionAsk = nil
+		}
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
 			m.running = false
@@ -689,6 +737,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// back when the turn finalizes.
 		m.refreshViewport()
 		m.input.Focus()
+
+		// Drain pending messages: if the user typed while we were running,
+		// auto-submit the first queued message now. Subsequent ones will be
+		// sent in future agentDoneMsg cycles.
+		if len(m.pendingMessages) > 0 {
+			next := m.pendingMessages[0]
+			m.pendingMessages = m.pendingMessages[1:]
+			// Inject into input so the normal submit path fires.
+			m.input.SetValue(next)
+			// Send the synthetic Enter key to trigger submission.
+			cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
+		}
+
 		return m, tea.Batch(cmds...)
 
 	case loginStartMsg:
@@ -809,6 +870,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case trustAcceptedMsg:
+		// Trust accepted and persisted — dialog already cleared in acceptTrust.
+		m.refreshViewport()
+		return m, nil
+
 	case permissionAskMsg:
 		m.permPrompt = &permissionPromptState{
 			toolName:  msg.toolName,
@@ -817,6 +883,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			selected:  0,
 		}
 		m.refreshViewport()
+		return m, nil
+
+	case questionAskMsg:
+		// AskUserQuestion: open the interactive selection dialog overlay.
+		state := &questionAskState{
+			question:   msg.question,
+			options:    msg.options,
+			multi:      msg.multi,
+			reply:      msg.reply,
+			focusedIdx: 0,
+			selected:   make([]bool, len(msg.options)),
+		}
+		m.questionAsk = state
+		m.refreshViewport()
+		m.vp.GotoBottom()
 		return m, nil
 
 	case compactDoneMsg:
@@ -1000,7 +1081,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// consume keys (especially Escape) that belong to the overlay.
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
-		m.permPrompt != nil || m.picker != nil || m.onboarding != nil
+		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
+		m.questionAsk != nil || m.trustDialog != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		prevLines := m.input.LineCount()
@@ -1122,6 +1204,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 // keybinding resolver, which means dispatchKeybindingAction can safely
 // call it for synthetic re-dispatches without triggering infinite recursion.
 func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	// Trust dialog captures all keys before anything else.
+	if m.trustDialog != nil {
+		m2, cmd := m.handleTrustKey(msg)
+		return m2, cmd, true
+	}
+
+	// AskUserQuestion dialog captures all keys when active.
+	if m.questionAsk != nil {
+		m2, cmd := m.handleQuestionKey(msg)
+		return m2, cmd, true
+	}
+
 	// Viewport scrollback. Plain Up/Down/PgUp/PgDn are owned by the chat
 	// input (history navigation, multi-line cursor, textarea paging).
 	// Users still need a way to scroll the chat transcript without
@@ -1221,6 +1315,10 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if m.cfg.Gate != nil {
 			m.cfg.Gate.SetMode(m.permissionMode)
 		}
+		// Persist to ~/.claude/settings.json so the Config tool and any
+		// re-read of permissions.defaultMode (e.g. from agents/subprocesses)
+		// see the cycled mode immediately.
+		_ = settings.SavePermissionsField("defaultMode", string(m.permissionMode))
 		m.syncLive()
 		switch m.permissionMode {
 		case permissions.ModeAcceptEdits:
@@ -1286,6 +1384,10 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 
 	case "ctrl+c":
+		if m.questionAsk != nil {
+			m.questionAsk.reply <- nil
+			m.questionAsk = nil
+		}
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
 			m.cancelled = true
@@ -1398,6 +1500,14 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 	case "enter":
 		if m.running {
+			// Queue the message for delivery after the current turn completes.
+			text := strings.TrimSpace(m.input.Value())
+			if text != "" && !strings.HasPrefix(text, "/") {
+				m.pendingMessages = append(m.pendingMessages, text)
+				m.input.Reset()
+				m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
+				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+			}
 			return m, nil, true
 		}
 
@@ -1572,8 +1682,6 @@ func (m Model) expandPastePlaceholders(s string) string {
 // renderCommandPicker renders the slash command picker dropdown.
 func (m Model) renderCommandPicker() string {
 	const maxItems = 8
-	// Cap total line width so the picker stays readable.
-	const maxLineW = 80
 
 	// The current query (text after "/").
 	query := strings.ToLower(strings.TrimPrefix(m.input.Value(), "/"))
@@ -1592,31 +1700,34 @@ func (m Model) renderCommandPicker() string {
 		}
 	}
 
-	// Compute name column width from the longest name in the visible window,
-	// capped so descriptions always get at least 20 chars.
+	// Content area: Width(m.width-2) outer - 2 border - 2 padding (1 each side).
+	contentW := m.width - 4
+
+	// Compute name column width from the longest name across all matches so
+	// the column stays stable as the user scrolls through results.
 	nameColW := 0
-	for i := start; i < end; i++ {
-		n := len([]rune(m.cmdMatches[i].Name)) + 1 // +1 for leading "/"
+	for _, cmd := range m.cmdMatches {
+		n := len([]rune(cmd.Name)) + 1 // +1 for leading "/"
 		if n > nameColW {
 			nameColW = n
 		}
 	}
-	lineW := m.width - 4 // account for picker border padding
-	if lineW > maxLineW {
-		lineW = maxLineW
-	}
 	const minDescW = 20
 	const gap = 2
-	if nameColW > lineW-minDescW-gap {
-		nameColW = lineW - minDescW - gap
+	if nameColW > contentW-minDescW-gap {
+		nameColW = contentW - minDescW - gap
 	}
-	descMax := lineW - nameColW - gap
+	descMax := contentW - nameColW - gap
+	indent := strings.Repeat(" ", nameColW+gap)
 
 	var sb strings.Builder
 	for i := start; i < end; i++ {
+		if i > start {
+			sb.WriteByte('\n')
+		}
 		cmd := m.cmdMatches[i]
 
-		// Render name: "/" + name left-padded to nameColW.
+		// Render name: "/" + name padded to nameColW.
 		rawName := "/" + cmd.Name
 		runes := []rune(rawName)
 		if len(runes) > nameColW {
@@ -1631,20 +1742,48 @@ func (m Model) renderCommandPicker() string {
 			namePart = highlightMatch(rawName, query, stylePickerItem, stylePickerHighlight)
 		}
 
-		// Render description, ellipsized to fit.
-		desc := cmd.Description
-		if descMax > 4 && len([]rune(desc)) > descMax {
-			desc = string([]rune(desc)[:descMax-1]) + "…"
-		}
-		descPart := highlightMatch(desc, query, stylePickerDesc, stylePickerHighlight)
-
-		sb.WriteString(namePart + strings.Repeat(" ", gap) + descPart)
-		if i < end-1 {
+		// Word-wrap description so it flows to additional lines instead of being cut off.
+		descLines := cmdDescWrap(cmd.Description, descMax)
+		sb.WriteString(namePart + strings.Repeat(" ", gap) + highlightMatch(descLines[0], query, stylePickerDesc, stylePickerHighlight))
+		for _, dl := range descLines[1:] {
 			sb.WriteByte('\n')
+			sb.WriteString(indent + highlightMatch(dl, query, stylePickerDesc, stylePickerHighlight))
 		}
 	}
 
-	return stylePickerBorder.Width(m.width - 2).Render(sb.String())
+	pad := strings.Repeat(" ", outerPad)
+	return indentLines(stylePickerBorder.Width(m.width).Render(sb.String()), pad)
+}
+
+// cmdDescWrap splits a description into lines of at most maxW runes, breaking
+// on word boundaries. Always returns at least one element.
+func cmdDescWrap(s string, maxW int) []string {
+	if maxW <= 0 || len([]rune(s)) <= maxW {
+		return []string{s}
+	}
+	var lines []string
+	words := strings.Fields(s)
+	var cur strings.Builder
+	for _, w := range words {
+		wlen := len([]rune(w))
+		if cur.Len() == 0 {
+			cur.WriteString(w)
+		} else if cur.Len()+1+wlen <= maxW {
+			cur.WriteByte(' ')
+			cur.WriteString(w)
+		} else {
+			lines = append(lines, cur.String())
+			cur.Reset()
+			cur.WriteString(w)
+		}
+	}
+	if cur.Len() > 0 {
+		lines = append(lines, cur.String())
+	}
+	if len(lines) == 0 {
+		return []string{s}
+	}
+	return lines
 }
 
 // highlightMatch renders s with every case-insensitive occurrence of query
@@ -2006,6 +2145,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 	case "clear":
 		m.messages = nil
 		m.history = nil
+		m.pendingMessages = nil
 		m.refreshViewport()
 		return m, nil
 	case "exit":
@@ -2250,7 +2390,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			switch id {
 			case "defaultPermissionMode":
 				if s, ok := value.(string); ok {
-					_ = settings.SaveRawKey("permissions", map[string]interface{}{"defaultMode": permModeStoredVal(s)})
+					_ = settings.SavePermissionsField("defaultMode", permModeStoredVal(s))
 					return
 				}
 			case "notifChannel":
@@ -2761,8 +2901,12 @@ func (m Model) View() tea.View {
 		overlayBox = m.renderPicker()
 	} else if m.onboarding != nil {
 		overlayBox = m.renderOnboarding()
+	} else if m.trustDialog != nil {
+		overlayBox = m.renderTrustDialog()
 	} else if m.permPrompt != nil {
 		overlayBox = m.renderPermissionPrompt()
+	} else if m.questionAsk != nil {
+		overlayBox = m.renderQuestionDialog()
 	} else if len(m.cmdMatches) > 0 {
 		overlayBox = m.renderCommandPicker()
 	} else if len(m.atMatches) > 0 {
@@ -2844,7 +2988,7 @@ func (m Model) View() tea.View {
 		badge := styleStatusAccent.Render(label) + "  " + stylePickerDesc.Render("ctrl+v for more · Enter to send · Esc to clear")
 		innerView = badge + "\n" + innerView
 	}
-	inputBox := bStyle.Width(m.width - 2).Render(innerView)
+	inputBox := bStyle.Width(m.width).Render(innerView)
 
 	// Status bar — fixed left-anchor layout so nothing shifts when mode changes.
 	//
@@ -2852,7 +2996,7 @@ func (m Model) View() tea.View {
 	// right: hints  edgePad
 	// pad:   all remaining space between left and right
 	edgePad := strings.Repeat(" ", outerPad)
-	barSep := styleStatus.Render(" | ")
+	barSep := styleStatus.Render(" |")
 
 	appSeg := styleStatusAccent.Render("conduit")
 

@@ -313,13 +313,13 @@ func (m Model) renderPanel() string {
 	}
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
-	innerW := w - 8
+	innerW := w - 2
 
 	var sb strings.Builder
 
 	// Panel title — always shown.
 	sb.WriteString(styleStatusAccent.Render("MCP") + "\n")
-	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW)) + "\n\n")
+	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW-2)) + "\n\n")
 
 	switch p.view {
 	case panelViewList:
@@ -339,10 +339,10 @@ func (m Model) renderPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
-		Width(w - 2).      // -2 for border
-		Height(panelH - 2) // -2 for border
-	return style.Render(sb.String())
+		Width(w).
+		Height(panelH).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width).Render(sb.String())
 }
 
 func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {

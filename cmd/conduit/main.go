@@ -29,6 +29,7 @@ import (
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/claudemd"
+	"github.com/icehunter/conduit/internal/globalconfig"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -367,6 +368,15 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
 
+	// Workspace trust check — mirrors CC's hasTrustDialogAccepted logic.
+	// runPrint (-p) is non-interactive and skips the dialog; CLAUDE_CODE_SANDBOXED
+	// bypasses it too (handled inside IsTrusted).
+	needsTrust := false
+	if trusted, trustErr := globalconfig.IsTrusted(cwd); trustErr == nil && !trusted {
+		needsTrust = true
+	}
+	go globalconfig.IncrementStartups()
+
 	// additionalDirectories: auto-allow file operations under each directory.
 	for _, dir := range s.AdditionalDirs {
 		dir = filepath.Clean(dir)
@@ -673,6 +683,10 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 		NewAPIClient: func(bearer string) *api.Client {
 			return newAPIClient(bearer)
+		},
+		NeedsTrust: needsTrust,
+		SetTrusted: func() error {
+			return globalconfig.SetTrusted(cwd)
 		},
 	})
 

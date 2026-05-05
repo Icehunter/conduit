@@ -171,7 +171,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				for _, level := range []string{"low", "normal", "high", "max"} {
 					marker := "  "
 					if level == current {
-						marker = "▶ "
+						marker = "❯ "
 					}
 					fmt.Fprintf(&sb, "%s%s — %s\n", marker, level, valid[level])
 				}

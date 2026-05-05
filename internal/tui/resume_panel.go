@@ -101,7 +101,7 @@ func (m Model) renderResumePicker() string {
 	var sb strings.Builder
 	// Search line.
 	if p.filter != "" {
-		sb.WriteString(styleStatusAccent.Render("▶ "+p.filter) + "  " +
+		sb.WriteString(styleStatusAccent.Render("❯ "+p.filter) + "  " +
 			stylePickerDesc.Render(fmt.Sprintf("(%d/%d)", len(p.filtered), len(p.sessions))) + "\n\n")
 	} else {
 		sb.WriteString(styleStatusAccent.Render("Resume a previous conversation") +
@@ -131,7 +131,7 @@ func (m Model) renderResumePicker() string {
 		label := s.age + "  " + s.preview
 		var line string
 		if vi == p.selected {
-			line = stylePickerItemSelected.Render("▶ " + label)
+			line = stylePickerItemSelected.Render("❯ " + label)
 		} else {
 			line = stylePickerItem.Render("  " + label)
 		}
@@ -144,7 +144,7 @@ func (m Model) renderResumePicker() string {
 		sel := p.sessions[p.filtered[p.selected]]
 		var detail strings.Builder
 		detail.WriteString("\n")
-		detail.WriteString(strings.Repeat("─", m.width-12))
+		detail.WriteString(strings.Repeat("─", m.width-8))
 		detail.WriteString("\n")
 		meta := sel.age
 		if sel.msgCount > 0 {
@@ -161,5 +161,5 @@ func (m Model) renderResumePicker() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width - 4).Render(sb.String())
+	return style.Width(m.width).Render(sb.String())
 }

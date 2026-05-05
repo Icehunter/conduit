@@ -234,6 +234,50 @@ func TestCreateMessage_401NoRetryWhenNoHook(t *testing.T) {
 	}
 }
 
+func TestContentBlock_MarshalJSON_ToolUseInputAlwaysPresent(t *testing.T) {
+	tests := []struct {
+		name  string
+		block ContentBlock
+		want  string
+	}{
+		{
+			name:  "nil input emits empty object",
+			block: ContentBlock{Type: "tool_use", ID: "toolu_01", Name: "EnterPlanMode", Input: nil},
+			want:  `"input":{}`,
+		},
+		{
+			name:  "empty map emits empty object",
+			block: ContentBlock{Type: "tool_use", ID: "toolu_02", Name: "EnterPlanMode", Input: map[string]any{}},
+			want:  `"input":{}`,
+		},
+		{
+			name:  "non-empty input emits fields",
+			block: ContentBlock{Type: "tool_use", ID: "toolu_03", Name: "Bash", Input: map[string]any{"command": "ls"}},
+			want:  `"input":{"command":"ls"}`,
+		},
+		{
+			name:  "text block has no input field",
+			block: ContentBlock{Type: "text", Text: "hello"},
+			want:  `"type":"text"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := json.Marshal(tt.block)
+			if err != nil {
+				t.Fatalf("Marshal error: %v", err)
+			}
+			got := string(out)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("Marshal(%+v) = %s; want it to contain %s", tt.block, got, tt.want)
+			}
+			if tt.block.Type != "tool_use" && strings.Contains(got, `"input"`) {
+				t.Errorf("non-tool_use block should not have input field, got: %s", got)
+			}
+		})
+	}
+}
+
 func TestCreateMessage_ContextCancel(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {

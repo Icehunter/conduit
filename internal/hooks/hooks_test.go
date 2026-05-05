@@ -2,7 +2,11 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -164,5 +168,80 @@ func TestRunPreToolUse_ApproveResult(t *testing.T) {
 	}
 	if !r.Approved {
 		t.Error("approve directive should propagate Approved=true")
+	}
+}
+
+// --- Conformance tests (M12 hardening) ---
+
+// TestRunPostToolUse_ReceivesOutput verifies that PostToolUse hooks receive the
+// tool output in the `tool_response` field (mirrors HookInput.Output JSON key).
+func TestRunPostToolUse_ReceivesOutput(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "hook_output.json")
+	matchers := []settings.HookMatcher{{
+		Matcher: "Bash",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "cat > " + out,
+		}},
+	}}
+
+	RunPostToolUse(context.Background(), matchers, "sess-1", "Bash", "echo hi output")
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("hook did not write output file: %v", err)
+	}
+	var inp HookInput
+	if err := json.Unmarshal(data, &inp); err != nil {
+		t.Fatalf("parse hook stdin JSON: %v", err)
+	}
+	if inp.ToolName != "Bash" {
+		t.Errorf("tool_name = %q; want Bash", inp.ToolName)
+	}
+	if inp.Output != "echo hi output" {
+		t.Errorf("tool_response = %q; want echo hi output", inp.Output)
+	}
+	if inp.SessionID != "sess-1" {
+		t.Errorf("session_id = %q; want sess-1", inp.SessionID)
+	}
+}
+
+// TestRunPostToolUse_NonMatchingToolSkipped verifies that PostToolUse hooks
+// with a non-matching matcher do not fire.
+func TestRunPostToolUse_NonMatchingToolSkipped(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "hook_output.json")
+	matchers := []settings.HookMatcher{{
+		Matcher: "Edit", // only fires for Edit, not Bash
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "cat > " + out,
+		}},
+	}}
+
+	RunPostToolUse(context.Background(), matchers, "sess", "Bash", "output")
+
+	if _, err := os.Stat(out); err == nil {
+		t.Error("hook should not have fired for non-matching tool")
+	}
+}
+
+// TestRunHook_AsyncReturnsImmediately verifies that async hooks do not block
+// the caller. The hook sleeps 300 ms; the caller should return in <100 ms.
+func TestRunHook_AsyncReturnsImmediately(t *testing.T) {
+	matchers := []settings.HookMatcher{{
+		Matcher: "",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "sleep 0.3",
+			Async:   true,
+		}},
+	}}
+
+	start := time.Now()
+	RunPreToolUse(context.Background(), matchers, "sess", "Bash", nil)
+	elapsed := time.Since(start)
+
+	if elapsed > 150*time.Millisecond {
+		t.Errorf("async hook blocked caller for %v; want <150ms", elapsed)
 	}
 }

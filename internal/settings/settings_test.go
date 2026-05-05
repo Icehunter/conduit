@@ -96,6 +96,110 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+func TestSavePermissionsField_PreservesSiblings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	// Pre-populate with a permissions block that has allow/deny and a
+	// sibling top-level key.
+	seed := map[string]any{
+		"model": "claude-sonnet-4-6",
+		"permissions": map[string]any{
+			"allow": []string{"Bash(git status)"},
+			"deny":  []string{"Bash(rm -rf /)"},
+		},
+	}
+	seedData, _ := json.Marshal(seed)
+	_ = os.MkdirAll(filepath.Dir(UserSettingsPath()), 0o755)
+	if err := os.WriteFile(UserSettingsPath(), seedData, 0o644); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	if err := SavePermissionsField("defaultMode", "plan"); err != nil {
+		t.Fatalf("SavePermissionsField: %v", err)
+	}
+
+	data, err := os.ReadFile(UserSettingsPath())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var got struct {
+		Model       string `json:"model"`
+		Permissions struct {
+			Allow       []string `json:"allow"`
+			Deny        []string `json:"deny"`
+			DefaultMode string   `json:"defaultMode"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, data)
+	}
+	if got.Permissions.DefaultMode != "plan" {
+		t.Errorf("defaultMode = %q, want plan", got.Permissions.DefaultMode)
+	}
+	if len(got.Permissions.Allow) != 1 || got.Permissions.Allow[0] != "Bash(git status)" {
+		t.Errorf("allow clobbered: %v", got.Permissions.Allow)
+	}
+	if len(got.Permissions.Deny) != 1 || got.Permissions.Deny[0] != "Bash(rm -rf /)" {
+		t.Errorf("deny clobbered: %v", got.Permissions.Deny)
+	}
+	if got.Model != "claude-sonnet-4-6" {
+		t.Errorf("model clobbered: %q", got.Model)
+	}
+}
+
+func TestSavePermissionsField_CreatesPermissionsObject(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SavePermissionsField("defaultMode", "acceptEdits"); err != nil {
+		t.Fatalf("SavePermissionsField: %v", err)
+	}
+
+	data, _ := os.ReadFile(UserSettingsPath())
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	perms, ok := raw["permissions"]
+	if !ok {
+		t.Fatalf("permissions key missing; raw=%s", data)
+	}
+	var p map[string]any
+	_ = json.Unmarshal(perms, &p)
+	if p["defaultMode"] != "acceptEdits" {
+		t.Errorf("defaultMode = %v", p["defaultMode"])
+	}
+}
+
+func TestSavePermissionsField_NilDeletes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SavePermissionsField("defaultMode", "plan"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := SavePermissionsField("defaultMode", nil); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	data, _ := os.ReadFile(UserSettingsPath())
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(data, &raw)
+	// Empty permissions object should be removed entirely.
+	if _, ok := raw["permissions"]; ok {
+		t.Errorf("permissions key should be removed when empty; raw=%s", data)
+	}
+}
+
+func TestSavePermissionsField_EmptyFieldErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := SavePermissionsField("", "plan"); err == nil {
+		t.Error("expected error for empty field")
+	}
+}
+
 func TestLoad_Empty(t *testing.T) {
 	dir := t.TempDir()
 	m, err := loadPaths(projectPaths(dir))

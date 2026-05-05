@@ -6,6 +6,7 @@ package track
 
 import (
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -63,6 +64,9 @@ func TestRecord_And_Gain(t *testing.T) {
 }
 
 func TestOpen_DefaultPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("~/.local/share path convention does not apply on Windows")
+	}
 	// Open() must not fail; uses a temp-like path.
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

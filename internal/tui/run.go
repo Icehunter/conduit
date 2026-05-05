@@ -116,6 +116,12 @@ type RunOptions struct {
 	// PluginDirs is the list of installed plugin root directories, used to
 	// load plugin-provided output styles (lowest priority — overridden by user/project).
 	PluginDirs []string
+
+	// NeedsTrust is true when the current directory hasn't been accepted in
+	// ~/.claude.json. The TUI shows the trust dialog before any agent turn.
+	NeedsTrust bool
+	// SetTrusted persists workspace trust acceptance to ~/.claude.json.
+	SetTrusted func() error
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -445,6 +451,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		LoadAuth:       runOpts.LoadAuth,
 		NewAPIClient:   runOpts.NewAPIClient,
 		Live:           live,
+		NeedsTrust:     runOpts.NeedsTrust,
+		SetTrusted:     runOpts.SetTrusted,
 	}
 	// Seed session ID into LiveState once it's known.
 	if runOpts.Session != nil {
@@ -550,33 +558,24 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 	}
 
-	// Wire AskUserQuestion — uses the permission prompt as a simple yes/no for now.
-	// Full multi-choice UI is M-D (TUI polish milestone).
+	// Wire AskUserQuestion — shows the question in chat and waits for the user
+	// to type an answer in the normal input box (no permission dialog).
 	if runOpts.AskUser != nil {
 		runOpts.AskUser.Ask = func(ctx context.Context, question string, opts []askusertool.Option, multi bool) []string {
-			reply := make(chan permissionReply, 1)
-			// Format options inline in the prompt text.
-			prompt := question
-			if len(opts) > 0 {
-				prompt += "\n\nOptions:"
-				for i, o := range opts {
-					prompt += "\n" + itoa(i+1) + ". " + o.Label
-					if o.Description != "" {
-						prompt += " — " + o.Description
-					}
-				}
+			reply := make(chan []string, 1)
+			qopts := make([]questionOption, len(opts))
+			for i, o := range opts {
+				qopts[i] = questionOption{Label: o.Label, Value: o.Value, Description: o.Description}
 			}
-			prog.Send(permissionAskMsg{
-				toolName:  "AskUserQuestion",
-				toolInput: prompt,
-				reply:     reply,
+			prog.Send(questionAskMsg{
+				question: question,
+				options:  qopts,
+				multi:    multi,
+				reply:    reply,
 			})
 			select {
-			case r := <-reply:
-				if r.allow {
-					return []string{"yes"}
-				}
-				return nil
+			case answers := <-reply:
+				return answers
 			case <-ctx.Done():
 				return nil
 			}
@@ -602,10 +601,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	signal.Stop(winch)
 	close(winch)
 	return err
-}
-
-func itoa(n int) string {
-	return fmt.Sprintf("%d", n)
 }
 
 // logoutCredentials removes the active account's token from the keychain

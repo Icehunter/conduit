@@ -20,16 +20,20 @@ import (
 
 // fakeTool implements tool.Tool and records calls.
 type fakeTool struct {
-	name   string
-	result string
-	isErr  bool
+	name       string
+	result     string
+	isErr      bool
+	readOnly   bool // defaults to false; set true to auto-allow in permission gate
+	concurrent bool // defaults to false
 }
 
-func (f *fakeTool) Name() string                             { return f.name }
-func (f *fakeTool) Description() string                      { return "fake" }
-func (f *fakeTool) InputSchema() json.RawMessage             { return json.RawMessage(`{"type":"object"}`) }
-func (f *fakeTool) IsReadOnly(_ json.RawMessage) bool        { return true }
-func (f *fakeTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
+func (f *fakeTool) Name() string        { return f.name }
+func (f *fakeTool) Description() string { return "fake" }
+func (f *fakeTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (f *fakeTool) IsReadOnly(_ json.RawMessage) bool        { return f.readOnly }
+func (f *fakeTool) IsConcurrencySafe(_ json.RawMessage) bool { return f.concurrent }
 func (f *fakeTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
 	if f.isErr {
 		return tool.ErrorResult(f.result), nil
@@ -663,5 +667,163 @@ func newBlockingPreToolHooks(toolName string) *settings.HooksSettings {
 			Matcher: toolName,
 			Hooks:   []settings.Hook{{Type: "command", Command: "false"}},
 		}},
+	}
+}
+
+// --- Conformance tests (M12 hardening) ---
+
+// TestLoop_MessageAssembly_ToolUseResultPairing verifies that after a tool_use
+// response the second API request contains:
+//   - an assistant message with a tool_use block carrying the original ID
+//   - a following user message with a tool_result block referencing the same ID
+func TestLoop_MessageAssembly_ToolUseResultPairing(t *testing.T) {
+	const toolID = "toolu_conformance_01"
+
+	var (
+		mu               sync.Mutex
+		capturedMessages [][]api.Message // messages from each API request
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []api.Message `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		capturedMessages = append(capturedMessages, body.Messages)
+		n := len(capturedMessages)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			_, _ = w.Write([]byte(singleToolUseSSE(toolID)))
+		} else {
+			_, _ = w.Write([]byte(textOnlySSE("done")))
+		}
+	}))
+	defer srv.Close()
+
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "output"})
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{Model: "m", MaxTokens: 1024, System: []api.SystemBlock{{Type: "text", Text: "s"}}})
+
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}},
+	}, func(LoopEvent) {})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	reqs := capturedMessages
+	mu.Unlock()
+
+	if len(reqs) < 2 {
+		t.Fatalf("expected >=2 API requests; got %d", len(reqs))
+	}
+	second := reqs[1]
+
+	// Find the assistant message with the tool_use block.
+	var assistantMsg *api.Message
+	for i := range second {
+		if second[i].Role == "assistant" {
+			for _, b := range second[i].Content {
+				if b.Type == "tool_use" {
+					assistantMsg = &second[i]
+				}
+			}
+		}
+	}
+	if assistantMsg == nil {
+		t.Fatal("second request must contain an assistant message with a tool_use block")
+	}
+
+	var toolUseID string
+	for _, b := range assistantMsg.Content {
+		if b.Type == "tool_use" {
+			toolUseID = b.ID
+		}
+	}
+	if toolUseID != toolID {
+		t.Errorf("tool_use.id = %q; want %q", toolUseID, toolID)
+	}
+
+	// The message immediately after the assistant message must be user with tool_result.
+	var userMsg *api.Message
+	for i := range second {
+		if second[i].Role == "user" {
+			for _, b := range second[i].Content {
+				if b.Type == "tool_result" {
+					userMsg = &second[i]
+				}
+			}
+		}
+	}
+	if userMsg == nil {
+		t.Fatal("second request must contain a user message with a tool_result block")
+	}
+
+	var resultID string
+	for _, b := range userMsg.Content {
+		if b.Type == "tool_result" {
+			resultID = b.ToolUseID
+		}
+	}
+	if resultID != toolID {
+		t.Errorf("tool_result.tool_use_id = %q; want %q", resultID, toolID)
+	}
+}
+
+// TestLoop_AskMode_AlwaysAllowAddsSessionRule verifies that when the gate
+// returns DecisionAsk, the AskPermission callback is invoked; choosing
+// "always allow" adds a session rule so subsequent identical calls auto-allow.
+func TestLoop_AskMode_AlwaysAllowAddsSessionRule(t *testing.T) {
+	const toolID = "toolu_ask_01"
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls == 1 {
+			_, _ = w.Write([]byte(singleToolUseSSE(toolID)))
+		} else {
+			_, _ = w.Write([]byte(textOnlySSE("done")))
+		}
+	}))
+	defer srv.Close()
+
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "output"})
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
+	gate := permissions.New(permissions.ModeDefault, nil, nil, nil)
+	lp := NewLoop(c, reg, LoopConfig{
+		Model: "m", MaxTokens: 1024,
+		System: []api.SystemBlock{{Type: "text", Text: "s"}},
+		Gate:   gate,
+	})
+
+	askCalls := 0
+	lp.SetAskPermission(func(_ context.Context, _, _ string) (bool, bool) {
+		askCalls++
+		return true, true // allow + always allow
+	})
+
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}},
+	}, func(LoopEvent) {})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if askCalls == 0 {
+		t.Error("AskPermission should have been called in ModeDefault")
+	}
+	if askCalls > 1 {
+		t.Errorf("AskPermission called %d times; after always-allow the second+ calls should be auto-approved", askCalls)
+	}
+	// Tool must have executed (Run returned no error and made 2 API calls).
+	if calls != 2 {
+		t.Errorf("expected 2 API calls (tool_use + follow-up); got %d", calls)
 	}
 }

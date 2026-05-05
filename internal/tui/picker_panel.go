@@ -79,7 +79,7 @@ func (m Model) renderPicker() string {
 		}
 		label := marker + it.Label
 		if i == p.selected {
-			sb.WriteString(stylePickerItemSelected.Render("▶ "+label) + "\n")
+			sb.WriteString(stylePickerItemSelected.Render("❯ "+label) + "\n")
 		} else {
 			sb.WriteString(stylePickerItem.Render("  "+label) + "\n")
 		}
@@ -90,5 +90,5 @@ func (m Model) renderPicker() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width - 4).Render(sb.String())
+	return style.Width(m.width).Render(sb.String())
 }

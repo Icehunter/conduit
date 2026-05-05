@@ -1,9 +1,10 @@
-.PHONY: all build test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
+.PHONY: all build install test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
         version version-patch version-minor version-major help
 
 BIN    := bin/conduit
 PKG    := ./...
 GO     := go
+PREFIX ?= /usr/local
 
 VERSION    ?= $(shell cat VERSION 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -17,6 +18,11 @@ build:
 	@mkdir -p bin
 	$(GO) build -trimpath $(LDFLAGS) -o $(BIN) ./cmd/conduit
 	install -m 0755 $(BIN) ./conduit
+
+# Install the binary system-wide.
+install: build
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/conduit
 
 # Run all tests.
 test:
@@ -113,7 +119,8 @@ version-major:
 help:
 	@echo "Targets:"
 	@echo "  all              verify + build (default)"
-	@echo "  build            Build ./conduit binary"
+	@echo "  build            Build ./bin/conduit (and ./conduit at repo root)"
+	@echo "  install          Build + install to PREFIX/bin (default: /usr/local/bin)"
 	@echo "  test             go test ./..."
 	@echo "  test-race        go test -race ./..."
 	@echo "  test-cover       Tests + HTML coverage report"

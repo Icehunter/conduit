@@ -424,7 +424,19 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			return msgs, nil
 		}
 
-		// Auto-compact check before next tool-use turn.
+		// Execute tools, build a user message with all tool_results.
+		toolResults, err := l.executeTools(ctx, assistantBlocks, handler)
+		if err != nil {
+			return msgs, fmt.Errorf("agent: execute tools: %w", err)
+		}
+		msgs = append(msgs, api.Message{
+			Role:    "user",
+			Content: toolResults,
+		})
+
+		// Auto-compact after tool_results are appended. By waiting until both
+		// the assistant tool_use message and the user tool_result message are in
+		// msgs, compact can summarize the complete pair — no orphaned IDs.
 		if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
 			threshold := int(float64(l.cfg.MaxTokens) * 0.8)
 			if inputTokens > threshold {
@@ -436,16 +448,6 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				}
 			}
 		}
-
-		// Execute tools, build a user message with all tool_results.
-		toolResults, err := l.executeTools(ctx, assistantBlocks, handler)
-		if err != nil {
-			return msgs, fmt.Errorf("agent: execute tools: %w", err)
-		}
-		msgs = append(msgs, api.Message{
-			Role:    "user",
-			Content: toolResults,
-		})
 	}
 }
 

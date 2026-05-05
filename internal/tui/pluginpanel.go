@@ -843,7 +843,7 @@ func (m Model) renderPluginPanel() string {
 	}
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
-	innerW := w - 8
+	innerW := w - 2
 
 	var sb strings.Builder
 
@@ -858,10 +858,10 @@ func (m Model) renderPluginPanel() string {
 	}
 	sb.WriteString(strings.Join(tabParts, stylePickerDesc.Render(" | ")))
 	sb.WriteByte('\n')
-	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW)))
+	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW-2)))
 	sb.WriteString("\n\n")
 
-	// Inner content height: panelH minus border(2) minus padding(2) minus title(1) minus separator(1) minus blank(1) = panelH - 7
+	// Inner content height: panelH minus border(2) minus padding(2) minus title(1) minus separator(1) minus blank(1) = panelH - 5
 	contentH := panelH - 7
 	if contentH < 4 {
 		contentH = 4
@@ -881,10 +881,10 @@ func (m Model) renderPluginPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
-		Width(w - 2).
-		Height(panelH - 2)
-	return style.Render(sb.String())
+		Width(w).
+		Height(panelH).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width).Render(sb.String())
 }
 
 func (m Model) renderPluginList(sb *strings.Builder, p *pluginPanelState, innerW, contentH int) {

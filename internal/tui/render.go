@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	prefixYou    = "▶ You"
-	prefixClaude = "◀ Claude"
+	prefixYou    = "› You"
+	prefixClaude = "‹ Claude"
 
 	// outerPad is spaces on each side of all viewport content.
-	outerPad = 2
+	outerPad = 0
 )
 
 // renderMessage renders one message for display.
@@ -31,7 +31,7 @@ func renderMessage(msg Message, width int) string {
 
 	switch msg.Role {
 	case RoleUser:
-		// Wrap user text at inner width minus the prefix width ("▶ You  " = 8 cols).
+		// Wrap user text at inner width minus the prefix width ("❯ You  " = 8 cols).
 		prefixStr := styleYouPrefix.Render(prefixYou) + "  "
 		prefixW := lipgloss.Width(prefixStr)
 		body := styleUserText.Width(inner - prefixW).Render(msg.Content)

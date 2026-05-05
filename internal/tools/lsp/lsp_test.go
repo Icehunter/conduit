@@ -226,7 +226,7 @@ func TestLSPTool_Definition(t *testing.T) {
 			return nil, nil
 		}
 		return []lspclient.Location{
-			{URI: "file://" + goFile, Range: lspclient.Range{
+			{URI: "file://" + filepath.ToSlash(goFile), Range: lspclient.Range{
 				Start: lspclient.Position{Line: 4, Character: 0},
 				End:   lspclient.Position{Line: 4, Character: 8},
 			}},
@@ -267,8 +267,8 @@ func TestLSPTool_References(t *testing.T) {
 			return nil, nil
 		}
 		return []lspclient.Location{
-			{URI: "file://" + goFile, Range: lspclient.Range{Start: lspclient.Position{Line: 0, Character: 0}}},
-			{URI: "file://" + goFile, Range: lspclient.Range{Start: lspclient.Position{Line: 9, Character: 4}}},
+			{URI: "file://" + filepath.ToSlash(goFile), Range: lspclient.Range{Start: lspclient.Position{Line: 0, Character: 0}}},
+			{URI: "file://" + filepath.ToSlash(goFile), Range: lspclient.Range{Start: lspclient.Position{Line: 9, Character: 4}}},
 		}, nil
 	})
 
@@ -305,7 +305,7 @@ func TestLSPTool_Diagnostics(t *testing.T) {
 	})
 
 	// Inject diagnostics directly into the client cache.
-	fileURI := "file://" + goFile
+	fileURI := "file://" + filepath.ToSlash(goFile)
 	cl.StoreDiagnostics(fileURI, []lspclient.Diagnostic{
 		{
 			Range:    lspclient.Range{Start: lspclient.Position{Line: 2, Character: 0}},

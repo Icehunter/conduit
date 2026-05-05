@@ -396,6 +396,60 @@ func removeFrom(list []string, s string) []string {
 	return out
 }
 
+// SavePermissionsField updates a single sub-field under "permissions" in the
+// user settings file (e.g. "defaultMode", "allow", "deny") while preserving
+// the other sub-fields and all unrelated top-level keys.
+//
+// Pass value=nil to delete the sub-field. The "permissions" object itself is
+// removed if it becomes empty.
+func SavePermissionsField(field string, value interface{}) error {
+	if field == "" {
+		return fmt.Errorf("settings: SavePermissionsField: field is required")
+	}
+	path := UserSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("settings: SavePermissionsField: mkdir: %w", err)
+	}
+	raw := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, &raw)
+	}
+
+	perms := make(map[string]json.RawMessage)
+	if r, ok := raw["permissions"]; ok && len(r) > 0 {
+		_ = json.Unmarshal(r, &perms)
+	}
+
+	if value == nil {
+		delete(perms, field)
+	} else {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("settings: SavePermissionsField: marshal value: %w", err)
+		}
+		perms[field] = encoded
+	}
+
+	if len(perms) == 0 {
+		delete(raw, "permissions")
+	} else {
+		encoded, err := json.Marshal(perms)
+		if err != nil {
+			return fmt.Errorf("settings: SavePermissionsField: marshal permissions: %w", err)
+		}
+		raw["permissions"] = encoded
+	}
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("settings: SavePermissionsField: marshal settings: %w", err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		return fmt.Errorf("settings: SavePermissionsField: write: %w", err)
+	}
+	return nil
+}
+
 // SaveRawKey persists an arbitrary key/value to the user settings file using
 // raw-map preservation so no other fields are disturbed.
 func SaveRawKey(key string, value interface{}) error {

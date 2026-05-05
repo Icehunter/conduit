@@ -99,7 +99,7 @@ func (m Model) renderPermissionPrompt() string {
 		prefix := "  "
 		var rendered string
 		if i == p.selected {
-			rendered = stylePickerItemSelected.Render("▶ " + opt)
+			rendered = stylePickerItemSelected.Render("❯ " + opt)
 		} else {
 			rendered = stylePickerItem.Render("  " + opt)
 		}
@@ -111,5 +111,5 @@ func (m Model) renderPermissionPrompt() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
 		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width - 4).Render(sb.String())
+	return style.Width(m.width).Render(sb.String())
 }

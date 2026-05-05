@@ -99,6 +99,12 @@ func (g *Gate) AllowForSession(rule string) {
 // Check determines whether toolName with toolInput may run.
 // toolInput is the raw argument string (e.g. the command for Bash).
 func (g *Gate) Check(toolName, toolInput string) Decision {
+	// AskUserQuestion is always auto-approved: it's the agent asking the user
+	// a question, not invoking an action that needs permission.
+	if toolName == "AskUserQuestion" {
+		return DecisionAllow
+	}
+
 	g.mu.RLock()
 	mode := g.mode
 	allow := g.allow
@@ -248,13 +254,19 @@ func matchGlob(pattern, input string) bool {
 func SuggestRule(toolName, toolInput string) string {
 	switch toolName {
 	case "Read", "Edit", "Write":
-		// Use directory-level glob: Read(//dir/**)
-		dir := filepath.Dir(toolInput)
+		if toolInput == "" {
+			return toolName
+		}
+		// Clean before computing dir to prevent path traversal in allow rules.
+		// e.g. "/home/user/../../etc/passwd" → "/etc" rather than a rule that
+		// allows access to the filesystem root via "..".
+		cleaned := filepath.ToSlash(filepath.Clean(toolInput))
+		dir := filepath.ToSlash(filepath.Dir(cleaned))
 		if dir == "" || dir == "." || dir == "/" {
 			return toolName
 		}
 		// Prepend extra / for absolute paths matching TS "//{path}/**" pattern.
-		if filepath.IsAbs(dir) {
+		if filepath.IsAbs(cleaned) {
 			return toolName + "(/" + dir + "/**)"
 		}
 		return toolName + "(" + dir + "/**)"

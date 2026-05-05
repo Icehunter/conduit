@@ -15,7 +15,15 @@ import (
 
 const testEmail = "test@example.com"
 
+// isolateClaudeDir redirects ~/.claude writes (accounts.json) to a temp dir
+// so tests don't pollute the real user's active account setting.
+func isolateClaudeDir(t *testing.T) {
+	t.Helper()
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+}
+
 func TestDeleteForEmail_RemovesTokens(t *testing.T) {
+	isolateClaudeDir(t)
 	s := secure.NewMemoryStorage()
 	in := PersistedTokens{AccessToken: "AT", RefreshToken: "RT"}
 	if err := SaveForEmail(s, in, testEmail); err != nil {
@@ -31,6 +39,7 @@ func TestDeleteForEmail_RemovesTokens(t *testing.T) {
 }
 
 func TestDeleteForEmail_IdempotentWhenAbsent(t *testing.T) {
+	isolateClaudeDir(t)
 	s := secure.NewMemoryStorage()
 	if err := DeleteForEmail(s, testEmail); err != nil {
 		t.Errorf("Delete on empty store should succeed; got %v", err)
@@ -38,6 +47,7 @@ func TestDeleteForEmail_IdempotentWhenAbsent(t *testing.T) {
 }
 
 func TestSaveLoadForEmail_RoundTrip(t *testing.T) {
+	isolateClaudeDir(t)
 	s := secure.NewMemoryStorage()
 	in := PersistedTokens{
 		AccessToken:  "AT",
@@ -62,6 +72,7 @@ func TestSaveLoadForEmail_RoundTrip(t *testing.T) {
 }
 
 func TestLoadForEmail_NotFoundMaps(t *testing.T) {
+	isolateClaudeDir(t)
 	s := secure.NewMemoryStorage()
 	_, err := LoadForEmail(s, testEmail)
 	if !errors.Is(err, secure.ErrNotFound) {
@@ -70,6 +81,7 @@ func TestLoadForEmail_NotFoundMaps(t *testing.T) {
 }
 
 func TestEnsureFresh_NotLoggedIn(t *testing.T) {
+	isolateClaudeDir(t)
 	s := secure.NewMemoryStorage()
 	_, err := EnsureFresh(context.Background(), s, nil, testEmail, time.Now(), time.Minute)
 	if !errors.Is(err, ErrNotLoggedIn) {
@@ -78,6 +90,7 @@ func TestEnsureFresh_NotLoggedIn(t *testing.T) {
 }
 
 func TestEnsureFresh_NoRefreshNeeded(t *testing.T) {
+	isolateClaudeDir(t)
 	s := secure.NewMemoryStorage()
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	_ = SaveForEmail(s, PersistedTokens{
@@ -95,6 +108,7 @@ func TestEnsureFresh_NoRefreshNeeded(t *testing.T) {
 }
 
 func TestEnsureFresh_RefreshesAndPersists(t *testing.T) {
+	isolateClaudeDir(t)
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

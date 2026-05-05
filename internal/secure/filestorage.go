@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -61,10 +62,13 @@ func (s *FileStorage) loadLocked() error {
 	}
 	// Permission check: refuse to load if the file is group/world-writable
 	// or world-readable. Mirrors decoded/1390.js:66-83.
-	if info, err := os.Lstat(s.path); err == nil {
-		mode := info.Mode().Perm()
-		if mode&0o022 != 0 {
-			return fmt.Errorf("secure: refusing to load credentials at %s: file is group/world-writable (mode %o); run `chmod 600 %s`", s.path, mode, s.path)
+	// Skipped on Windows where Unix permission bits are not meaningful.
+	if runtime.GOOS != "windows" {
+		if info, err := os.Lstat(s.path); err == nil {
+			mode := info.Mode().Perm()
+			if mode&0o022 != 0 {
+				return fmt.Errorf("secure: refusing to load credentials at %s: file is group/world-writable (mode %o); run `chmod 600 %s`", s.path, mode, s.path)
+			}
 		}
 	}
 	var cache map[string]string

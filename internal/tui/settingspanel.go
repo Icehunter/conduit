@@ -729,7 +729,7 @@ func (m Model) renderSettingsPanel() string {
 	// Outer style: Width(w-2), border 1 each side (2), padding 2 each side (4)
 	// → content area = (w-2) - 2 - 4 = w - 8. v1 was w-6 because Width was
 	// content-only there.
-	innerW := w - 8
+	innerW := w - 2
 
 	var sb strings.Builder
 
@@ -744,10 +744,10 @@ func (m Model) renderSettingsPanel() string {
 	}
 	sb.WriteString(strings.Join(tabs, stylePickerDesc.Render(" | ")))
 	sb.WriteByte('\n')
-	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW)))
+	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW-2)))
 	sb.WriteString("\n\n")
 
-	contentH := panelH - 7
+	contentH := panelH - 5
 	if contentH < 4 {
 		contentH = 4
 	}
@@ -769,10 +769,10 @@ func (m Model) renderSettingsPanel() string {
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1).
-		Width(w - 2).
-		Height(panelH - 2)
-	return style.Render(sb.String())
+		Width(w).
+		Height(panelH).
+		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
+	return style.Width(m.width).Render(sb.String())
 }
 
 // ── Status tab ────────────────────────────────────────────────────────────────

@@ -113,6 +113,44 @@ type ContentBlock struct {
 	ResultContent string `json:"content,omitempty"`
 }
 
+// MarshalJSON serialises ContentBlock, ensuring the `input` field is always
+// present for tool_use blocks even when the map is nil or empty.
+// encoding/json's omitempty treats nil and empty maps identically (both
+// omitted), but the Anthropic API requires `input` on every tool_use block.
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, 8)
+	m["type"] = b.Type
+	if b.Text != "" {
+		m["text"] = b.Text
+	}
+	if b.Source != nil {
+		m["source"] = b.Source
+	}
+	if b.ID != "" {
+		m["id"] = b.ID
+	}
+	if b.Name != "" {
+		m["name"] = b.Name
+	}
+	if b.Type == "tool_use" {
+		if b.Input != nil {
+			m["input"] = b.Input
+		} else {
+			m["input"] = map[string]any{}
+		}
+	}
+	if b.ToolUseID != "" {
+		m["tool_use_id"] = b.ToolUseID
+	}
+	if b.IsError {
+		m["is_error"] = b.IsError
+	}
+	if b.ResultContent != "" {
+		m["content"] = b.ResultContent
+	}
+	return json.Marshal(m)
+}
+
 // ImageSource is the source payload for a type=image content block.
 // Mirrors the Anthropic API image source shape.
 type ImageSource struct {

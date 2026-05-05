@@ -246,6 +246,25 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 ---
 
+## M12 — Security Hardening + Conformance Tests 🔶
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `~/.claude.json` global config | ✅ | `internal/globalconfig/` — trust state, numStartups |
+| Workspace trust dialog | ✅ | `internal/tui/trust_panel.go` — mirrors decoded/5053.js |
+| Trust ancestor walk | ✅ | Parent trust implies child; CLAUDE_CODE_SANDBOXED bypass |
+| `SuggestRule` path traversal hardening | ✅ | `filepath.Clean` before glob computation |
+| `permissionMode` display synced from gate | ✅ | Fixed in `tui.New()` — shows correct mode from settings.json |
+| Message assembly conformance test | ✅ | `TestLoop_MessageAssembly_ToolUseResultPairing` |
+| Ask-mode permission flow test | ✅ | `TestLoop_AskMode_AlwaysAllowAddsSessionRule` |
+| PostToolUse hook conformance tests | ✅ | Output field, non-matching skip |
+| HTTP hook conformance tests | ✅ | `internal/hooks/hooks_http_test.go` — block/approve/server-error |
+| Async hook non-blocking test | ✅ | `TestRunHook_AsyncReturnsImmediately` |
+| Fuzz targets (permission rules, JSON-RPC) | 🔲 | SSE parser fuzz exists; others deferred |
+| Trust-gating for hooks/plugins at load time | 🔲 | Dialog currently blocks agent start; hooks load unconditionally |
+
+---
+
 ## Known lies / misleading behavior
 
 | Issue | Location | Fix milestone |

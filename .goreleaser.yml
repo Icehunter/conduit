@@ -31,7 +31,8 @@ archives:
         format: zip
     name_template: "conduit_{{ .Os }}_{{ .Arch }}"
     files:
-      - LICENSE.md
+      - LICENSE
+      - LICENSE-APACHE
       - README.md
 
 checksum:

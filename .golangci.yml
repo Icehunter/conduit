@@ -90,10 +90,10 @@ linters:
       - path: "internal/tools/lsp/lsp.go"
         linters: [unparam]
       # Agent executeTools keeps error return for future error propagation.
-      - path: "internal/agent/loop.go"
+      - path: "internal/agent/looptools.go"
         linters: [unparam]
-      # TUI key handlers return (Model, tea.Cmd) for API consistency; Cmd can become non-nil later.
-      - path: "internal/tui/model.go"
+      # TUI handlers return (Model, tea.Cmd) for API consistency; Cmd can become non-nil later.
+      - path: "internal/tui/(model|updatehandlers|commandresultshandlers)\\.go"
         linters: [unparam]
 
 issues:

@@ -3,17 +3,14 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
@@ -28,7 +25,6 @@ import (
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
-	"github.com/icehunter/conduit/internal/tokens"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
 
@@ -652,110 +648,6 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-// Init starts the blink + working indicator tick. Also kicks off the MCP approval
-// picker if any project-scope servers are awaiting consent, and the
-// coordinator-panel tick that drives the active-task footer.
-func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, m.working.Start(), coordTick()}
-	if m.cfg.MCPManager != nil {
-		if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
-			cmds = append(cmds, func() tea.Msg {
-				return mcpApprovalMsg{pending: pending}
-			})
-		}
-	}
-	if m.companionName != "" {
-		cmds = append(cmds, buddyTick())
-	}
-	if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
-		if (m.planUsageCachedAt.IsZero() || time.Since(m.planUsageCachedAt) >= planUsageRefreshInterval) &&
-			!time.Now().Before(m.planUsageBackoff) {
-			m2, cmd := m.startPlanUsageFetch()
-			m = m2
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		} else {
-			cmds = append(cmds, planUsageTick())
-		}
-	}
-	return tea.Batch(cmds...)
-}
-
-type buddyTickMsg struct{}
-
-const planUsageRefreshInterval = 60 * time.Second
-
-func fetchPlanUsageCmd(fetch func(context.Context, settings.ActiveProviderSettings) (planusage.Info, error), provider settings.ActiveProviderSettings) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		info, err := fetch(ctx, provider)
-		return planUsageMsg{info: info, err: err}
-	}
-}
-
-func (m Model) startPlanUsageFetch() (Model, tea.Cmd) {
-	if !m.usageStatusEnabled || m.cfg.FetchPlanUsage == nil {
-		return m, nil
-	}
-	provider, ok := m.planUsageProviderSettings()
-	if !ok {
-		m.planUsageFetching = false
-		m.planUsageErr = ""
-		m.planUsage = planusage.Info{}
-		m.planUsageCachedAt = time.Time{}
-		m.planUsageBackoff = time.Time{}
-		return m, nil
-	}
-	m.planUsageFetching = true
-	m.planUsageProvider = settings.ProviderKey(provider)
-	return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage, provider)
-}
-
-func (m Model) planUsageProviderSettings() (settings.ActiveProviderSettings, bool) {
-	provider, ok := m.providerForCurrentMode()
-	if !ok || provider.Kind != "claude-subscription" || provider.Account == "" {
-		return settings.ActiveProviderSettings{}, false
-	}
-	return provider, true
-}
-
-func planUsageCacheEntryUseful(entry planusage.CacheEntry) bool {
-	return !entry.CachedAt.IsZero() || !entry.BackoffUntil.IsZero()
-}
-
-// savePlanUsageCacheCmd persists the cache entry to disk as a fire-and-forget
-// Cmd — failures are silently dropped (non-fatal).
-func savePlanUsageCacheCmd(dir, key string, entry planusage.CacheEntry) tea.Cmd {
-	return func() tea.Msg {
-		_ = planusage.SaveCacheForKey(dir, key, entry)
-		return nil
-	}
-}
-
-func planUsageTick() tea.Cmd {
-	return tea.Tick(planUsageRefreshInterval, func(time.Time) tea.Msg {
-		return planUsageTickMsg{}
-	})
-}
-
-// planUsageErrBackoff returns how long to wait before retrying after an error.
-// Rate-limit errors use max(Retry-After, 5min); other errors use 30s.
-func planUsageErrBackoff(err error) time.Duration {
-	var rle *planusage.RateLimitError
-	if errors.As(err, &rle) {
-		if rle.RetryAfter > 5*time.Minute {
-			return rle.RetryAfter
-		}
-		return 5 * time.Minute
-	}
-	return 30 * time.Second
-}
-
-func buddyTick() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return buddyTickMsg{} })
-}
-
 // mcpApprovalMsg is sent on startup when project-scope MCP servers need
 // user approval. The Update handler opens a picker per server, sequentially.
 type mcpApprovalMsg struct {
@@ -766,124 +658,5 @@ type mcpApprovalMsg struct {
 // so the coordinator footer panel re-renders with updated elapsed times.
 type coordTickMsg struct{}
 
-// coordTick schedules the next coordinator tick — only resubscribes when
-// there's still at least one in_progress task to display.
-func coordTick() tea.Cmd {
-	return tea.Tick(time.Second, func(time.Time) tea.Msg { return coordTickMsg{} })
-}
-
-// shortModelName converts "claude-opus-4-7" → "Opus 4.7".
-// Strips date suffixes like "-20251001" so "claude-haiku-4-5-20251001" → "Haiku 4.5".
-func shortModelName(name string) string {
-	name = strings.TrimPrefix(name, "claude-")
-	idx := strings.Index(name, "-")
-	if idx < 0 {
-		return capitalize(name)
-	}
-	family := capitalize(name[:idx])
-	rest := name[idx+1:]
-	// Strip YYYYMMDD date suffix segments (8-digit numbers).
-	parts := strings.Split(rest, "-")
-	var verParts []string
-	for _, p := range parts {
-		if len(p) == 8 {
-			allDigits := true
-			for _, c := range p {
-				if c < '0' || c > '9' {
-					allDigits = false
-					break
-				}
-			}
-			if allDigits {
-				break // drop this and everything after
-			}
-		}
-		verParts = append(verParts, p)
-	}
-	ver := strings.Join(verParts, ".")
-	return family + " " + ver
-}
-
-func capitalize(s string) string {
-	if s == "" {
-		return ""
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-// applyTextareaTheme rebuilds the textarea's stored Focused/Blurred styles
-// from the current theme palette. Bubbles textarea caches styles by VALUE,
-// so reassigning the package-level color vars in RebuildStyles doesn't
-// reach the textarea — we have to re-set them explicitly.
-//
-// Called from Model.New() and from the theme.OnChange listener registered
-// in registerThemeAwareWidgets.
-func applyTextareaTheme(ta *textarea.Model) {
-	// Base must have BOTH fg and bg — every other style inherits from Base.
-	// Without explicit fg, text rendered on the cursor row uses terminal
-	// default fg (light gray on most terminals = unreadable on light theme).
-	taBase := lipgloss.NewStyle().Foreground(colorFg).Background(colorWindowBg)
-	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg)
-
-	// v2: textarea Styles is a value-typed accessor — read, mutate, write back.
-	styles := ta.Styles()
-	for _, s := range []*textarea.StyleState{&styles.Focused, &styles.Blurred} {
-		s.Base = taBase
-		s.Text = taBase
-		s.Placeholder = taPlaceholder
-		s.Prompt = taBase
-		s.CursorLine = taBase
-		s.CursorLineNumber = taBase
-		s.EndOfBuffer = taBase
-		s.LineNumber = taBase
-	}
-	// v2: cursor color/blink live on Styles.Cursor (CursorStyle struct).
-	// Static (non-blink) was preserved earlier in New() via Blink=false.
-	styles.Cursor.Color = colorFg
-	ta.SetStyles(styles)
-}
-
-// tallyTokens estimates token usage from conversation history using
-// cl100k_base — the tokenizer Claude approximates for billing. Falls
-// back to chars/4 if the encoder fails to initialize (offline first run).
-func (m *Model) tallyTokens() {
-	var inputTok, outputTok int
-	for _, msg := range m.history {
-		t := 0
-		for _, b := range msg.Content {
-			t += tokens.Estimate(b.Text)
-		}
-		if msg.Role == "assistant" {
-			outputTok += t
-		} else {
-			inputTok += t
-		}
-	}
-	m.totalInputTokens = inputTok + outputTok // billing input = full context
-	m.totalOutputTokens = outputTok
-	// Opus 4.7: $15/M input + $75/M output.
-	m.costUSD = float64(inputTok)*15.0/1_000_000 + float64(outputTok)*75.0/1_000_000
-	m.syncLive()
-}
-
-// syncLive pushes frequently-read fields into the thread-safe LiveState bag
-// so command callbacks running outside the Bubble Tea event loop always see
-// current values, not the stale initial snapshot from New().
-func (m *Model) syncLive() {
-	if m.cfg.Live == nil {
-		return
-	}
-	m.cfg.Live.SetModelName(m.activeModelDisplayName())
-	if provider, ok := m.activeMCPProvider(); ok {
-		m.cfg.Live.SetLocalMode(true, provider.Server)
-	} else {
-		m.cfg.Live.SetLocalMode(false, "")
-	}
-	m.cfg.Live.SetPermissionMode(m.permissionMode)
-	m.cfg.Live.SetTokens(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
-	m.cfg.Live.SetRateLimitWarning(m.rateLimitWarning)
-	if m.cfg.Session != nil {
-		m.cfg.Live.SetSessionID(m.cfg.Session.ID)
-		m.cfg.Live.SetSessionFile(m.cfg.Session.FilePath)
-	}
-}
+// buddyTickMsg is sent on each companion animation frame tick.
+type buddyTickMsg struct{}

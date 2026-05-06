@@ -50,6 +50,9 @@ state and helper methods can move between files without creating import cycles.
 - `settings_panel.go` handles settings panel navigation, status, and config.
 - `settings_stats.go` handles settings stats rendering, usage, charts, and
   factoids using data loaded by `internal/sessionstats/`.
+- `plugin_panel.go` defines plugin panel state, with data loading, key handling,
+  and rendering split into `plugin_panel_data.go`, `plugin_panel_keys.go`, and
+  `plugin_panel_render.go`.
 - `*_panel.go` files implement individual full-screen or floating panels.
 
 ## Naming

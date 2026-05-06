@@ -213,7 +213,7 @@
 | Tab completion | `screens/REPL.tsx` | — | `internal/tui/key_handler.go`, `internal/tui/attachments_picker.go` | ✅ | |
 | Session resume picker | `screens/ResumeConversation.tsx` | — | `internal/tui/model.go` | ✅ | |
 | MCP panel | — | — | `internal/tui/model.go` (panel) | ✅ | conduit-only |
-| Plugin panel (full) | `commands/plugin/` | — | `internal/tui/plugin_panel.go` | ✅ | conduit-only |
+| Plugin panel (full) | `commands/plugin/` | — | `internal/tui/plugin_panel.go`, `internal/tui/plugin_panel_data.go`, `internal/tui/plugin_panel_keys.go`, `internal/tui/plugin_panel_render.go` | ✅ | conduit-only |
 | Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | ✅ | Browser-launch OAuth flow with URL fallback and code-paste option; no CSS animations (N/A in terminal) |
 | Cost display | `components/Stats.tsx` | — | `internal/tui/summaries.go`, `internal/tui/live_state.go` + `/cost` | ✅ | Status bar (cumulative $X.XX) + /cost shows input/output tokens, total cost, per-turn breakdown |
 | Context visualization | `components/ContextVisualization.tsx` | — | `/context` command | ✅ | Bar chart of tokens: system/history/tools/remaining |

@@ -7,7 +7,14 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/secure"
+	"golang.org/x/sync/singleflight"
 )
+
+// refreshGroup deduplicates concurrent token-refresh calls for the same
+// account. When two goroutines (e.g. background profile fetch + the foreground
+// agent's 401 retry) call EnsureFresh simultaneously for the same email, only
+// one network round-trip is made and both callers receive the result.
+var refreshGroup singleflight.Group
 
 // Service is the keyring service identifier for conduit.
 const Service = "com.icehunter.conduit"
@@ -63,7 +70,20 @@ var ErrNotLoggedIn = errors.New("auth: not logged in")
 
 // EnsureFresh loads the token for email and refreshes it if within skew of
 // expiry. Saves the refreshed token back to the keychain on success.
+// Concurrent calls for the same email are coalesced via singleflight so only
+// one network round-trip is made, preventing races that could invalidate a
+// refresh_token mid-session.
 func EnsureFresh(ctx context.Context, s secure.Storage, c *TokenClient, email string, now time.Time, skew time.Duration) (PersistedTokens, error) {
+	v, err, _ := refreshGroup.Do(email, func() (any, error) {
+		return ensureFreshOnce(ctx, s, c, email, now, skew)
+	})
+	if err != nil {
+		return PersistedTokens{}, err
+	}
+	return v.(PersistedTokens), nil
+}
+
+func ensureFreshOnce(ctx context.Context, s secure.Storage, c *TokenClient, email string, now time.Time, skew time.Duration) (PersistedTokens, error) {
 	p, err := LoadForEmail(s, email)
 	if err != nil {
 		if errors.Is(err, secure.ErrNotFound) {

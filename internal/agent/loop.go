@@ -388,7 +388,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	}
 	defer func() {
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.Stop) > 0 {
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// Use ctx (not Background()) so Ctrl-C cancels slow hooks promptly.
+			// 2s cap: Stop hooks are advisory; don't block shutdown.
+			stopCtx, stopCancel := context.WithTimeout(ctx, 2*time.Second)
 			defer stopCancel()
 			hooks.RunStop(stopCtx, l.cfg.Hooks.Stop, l.cfg.SessionID)
 		}
@@ -863,11 +865,16 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 	if len(parallel) > 0 {
 		sem := make(chan struct{}, maxConcurrentTools)
 		var wg sync.WaitGroup
+		// Add the full count before the loop so wg.Add is never called while
+		// other goroutines are decrementing — a stdlib requirement when the
+		// counter can reach zero mid-loop.
+		wg.Add(len(parallel))
 		for _, wi := range parallel {
-			wg.Add(1)
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
+				// Fill the slot so Phase 3 sees a result for every task.
+				taskResults[wi.idx] = toolResult{idx: wi.idx, text: "cancelled", isError: true}
 				wg.Done()
 				continue
 			}
@@ -917,7 +924,10 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 	var results []api.ContentBlock
 	for i, task := range tasks {
 		tr := taskResults[i]
-		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PostToolUse) > 0 && !tr.isError {
+		// PostToolUse fires unconditionally — error results included — so hook
+		// authors that log or route tool activity see every outcome. Matches
+		// TS reference (runPostToolUseHooks fires without an isError guard).
+		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PostToolUse) > 0 {
 			hooks.RunPostToolUse(ctx, l.cfg.Hooks.PostToolUse, l.cfg.SessionID, task.block.Name, tr.text)
 		}
 		handler(LoopEvent{

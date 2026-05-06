@@ -9,6 +9,18 @@ import (
 	"strings"
 )
 
+// maxSSELineBytes caps a single SSE line. A malicious or proxy-injected server
+// could otherwise OOM the process by sending a multi-MB data: line.
+const maxSSELineBytes = 8 << 20 // 8 MiB
+
+// ErrLineTooLong is returned when a single SSE line exceeds maxSSELineBytes.
+var ErrLineTooLong = errors.New("sse: line exceeds 8 MiB limit")
+
+// ErrTruncated is returned when the stream ends mid-event (incomplete JSON
+// data block). The caller should surface this as a stream error, not treat
+// it as a clean end-of-turn.
+var ErrTruncated = errors.New("sse: stream truncated mid-event")
+
 // Event is a single Server-Sent Event from the Anthropic stream.
 type Event struct {
 	// Type is the value of the `event:` field. For Anthropic this is one
@@ -24,20 +36,25 @@ type Event struct {
 // Parser yields Events from an SSE stream. It is not safe for concurrent
 // use; use one Parser per stream.
 type Parser struct {
-	r *bufio.Reader
+	s *bufio.Scanner
 	// IncludePings, when true, surfaces `ping` events to callers. Default
 	// false because nothing in the agent loop needs them.
 	IncludePings bool
 }
 
 // NewParser wraps r in a Parser. r is read once-through; the parser does
-// not buffer beyond what bufio.Reader keeps.
+// not buffer beyond the configured line limit.
 func NewParser(r io.Reader) *Parser {
-	return &Parser{r: bufio.NewReader(r)}
+	s := bufio.NewScanner(r)
+	buf := make([]byte, 64*1024)
+	s.Buffer(buf, maxSSELineBytes)
+	return &Parser{s: s}
 }
 
 // Next returns the next non-skipped event. Returns io.EOF when the stream
-// ends cleanly. Returns *Error for `error` events surfaced by the API.
+// ends cleanly (on an event boundary). Returns ErrTruncated when the stream
+// ends mid-event. Returns ErrLineTooLong if a single line exceeds 8 MiB.
+// Returns *Error for `error` events surfaced by the API.
 //
 // Comments (lines starting with `:`), empty lines, and unknown fields are
 // silently absorbed per the SSE spec.
@@ -48,9 +65,6 @@ func (p *Parser) Next() (Event, error) {
 			return Event{}, err
 		}
 		if ev == nil {
-			// EOF reached after partial input — treat as clean EOF if
-			// nothing was buffered, otherwise the caller already got the
-			// last event.
 			return Event{}, io.EOF
 		}
 		if ev.Type == "error" {
@@ -64,7 +78,9 @@ func (p *Parser) Next() (Event, error) {
 }
 
 // readEvent reads one event block from the stream. Returns (nil, nil) on
-// clean EOF, (nil, err) on error, (ev, nil) on a parsed event.
+// clean EOF at an event boundary, (nil, err) on error (including ErrTruncated
+// on mid-event EOF and ErrLineTooLong on oversized lines), or (ev, nil) on a
+// parsed event.
 func (p *Parser) readEvent() (*Event, error) {
 	var (
 		typ      string
@@ -74,28 +90,26 @@ func (p *Parser) readEvent() (*Event, error) {
 	)
 
 	for {
-		line, err := p.r.ReadString('\n')
-		if errors.Is(err, io.EOF) {
-			if line == "" && !hasField {
-				return nil, nil
-			}
-			// Treat the trailing partial event as if a blank line follows.
-			line = strings.TrimRight(line, "\r\n")
-			if line == "" {
-				if !hasField {
-					return nil, nil
+		if !p.s.Scan() {
+			err := p.s.Err()
+			if err != nil {
+				if errors.Is(err, bufio.ErrTooLong) {
+					return nil, ErrLineTooLong
 				}
-				return assemble(typ, data, hasData), nil
+				return nil, fmt.Errorf("sse: read: %w", err)
 			}
-			// Process the unterminated line then synthesize a blank.
-			parseLine(line, &typ, &data, &hasData, &hasField)
-			return assemble(typ, data, hasData), nil
+			// Clean EOF from the scanner.
+			if !hasField {
+				return nil, nil // EOF at event boundary — clean end
+			}
+			// EOF arrived mid-event — the stream was truncated.
+			return nil, ErrTruncated
 		}
-		if err != nil {
-			return nil, fmt.Errorf("sse: read: %w", err)
-		}
-		line = strings.TrimRight(line, "\r\n")
-		// Blank line terminates the event.
+
+		line := p.s.Text()
+		// ScanLines already strips \n and \r\n; strip any stray \r.
+		line = strings.TrimRight(line, "\r")
+
 		if line == "" {
 			if !hasField {
 				// Skip stray blank lines between events.

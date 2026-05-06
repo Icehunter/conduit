@@ -94,7 +94,16 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	// Create new file when old_string is empty.
+	// Guard: if the file already exists, refuse rather than silently truncating it.
+	// The model must supply old_string to edit existing content, or use Write to
+	// explicitly overwrite. This prevents clobbering via acceptEdits mode bypass.
 	if in.OldString == "" {
+		if _, err := os.Lstat(in.FilePath); err == nil {
+			return tool.ErrorResult(
+				"file already exists; supply a non-empty old_string to edit it, " +
+					"or use the Write tool to explicitly overwrite",
+			), nil
+		}
 		return t.createFile(in.FilePath, in.NewString)
 	}
 
@@ -226,7 +235,8 @@ func writeAtomic(path, content string) error {
 		return err
 	}
 	// Preserve original file permissions if possible.
-	if st, err := os.Stat(path); err == nil {
+	// Use Lstat so we read the mode of the file AT path, not through a symlink.
+	if st, err := os.Lstat(path); err == nil {
 		_ = os.Chmod(tmpPath, st.Mode())
 	}
 	return os.Rename(tmpPath, path)

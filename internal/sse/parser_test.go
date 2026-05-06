@@ -216,13 +216,54 @@ func FuzzParse(f *testing.F) {
 		p.IncludePings = true
 		// Drain up to a bounded number of events so a pathological input
 		// can't loop forever.
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			_, err := p.Next()
 			if err != nil {
 				return
 			}
 		}
 	})
+}
+
+// TestParse_TruncatedMidEvent ensures EOF mid-event returns ErrTruncated, not
+// a synthesized complete event. The agent loop must surface this as an error.
+func TestParse_TruncatedMidEvent(t *testing.T) {
+	// Stream ends with no blank-line terminator after the data line.
+	body := "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_de"
+	p := NewParser(strings.NewReader(body))
+	_, err := p.Next()
+	if !errors.Is(err, ErrTruncated) {
+		t.Errorf("err = %v; want ErrTruncated", err)
+	}
+}
+
+// TestParse_CleanEOFBetweenEvents returns io.EOF (not ErrTruncated) when
+// the stream ends cleanly on an event boundary.
+func TestParse_CleanEOFBetweenEvents(t *testing.T) {
+	body := "event: message_stop\ndata: {}\n\n"
+	p := NewParser(strings.NewReader(body))
+	_, err := p.Next()
+	if err != nil {
+		t.Fatalf("first event: %v", err)
+	}
+	_, err = p.Next()
+	if !errors.Is(err, io.EOF) {
+		t.Errorf("second Next() err = %v; want io.EOF", err)
+	}
+}
+
+// TestParse_LineTooLong ensures a single oversized data line returns ErrLineTooLong
+// rather than OOMing the process.
+func TestParse_LineTooLong(t *testing.T) {
+	// Write a "data: " prefix followed by 9 MiB of 'x' with no newline terminator.
+	prefix := "data: "
+	overflow := strings.Repeat("x", 9<<20)
+	body := prefix + overflow
+	p := NewParser(strings.NewReader(body))
+	_, err := p.Next()
+	if !errors.Is(err, ErrLineTooLong) {
+		t.Errorf("err = %v; want ErrLineTooLong", err)
+	}
 }
 
 func equalStrings(a, b []string) bool {

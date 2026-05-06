@@ -90,6 +90,7 @@ version-patch:
 	MINOR=$$(echo $$V | cut -d. -f2); \
 	PATCH=$$(echo $$V | cut -d. -f3); \
 	NEW="$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+	printf "Push tag v$$NEW to origin? [y/N] "; read ans; [ "$$ans" = "y" ] || { echo "Aborted."; exit 1; }; \
 	echo $$NEW > VERSION; \
 	git add VERSION && git commit -m "chore: bump version to $$NEW" && git tag "v$$NEW"; \
 	git push && git push origin "v$$NEW"; \
@@ -101,6 +102,7 @@ version-minor:
 	MAJOR=$$(echo $$V | cut -d. -f1); \
 	MINOR=$$(echo $$V | cut -d. -f2); \
 	NEW="$$MAJOR.$$((MINOR + 1)).0"; \
+	printf "Push tag v$$NEW to origin? [y/N] "; read ans; [ "$$ans" = "y" ] || { echo "Aborted."; exit 1; }; \
 	echo $$NEW > VERSION; \
 	git add VERSION && git commit -m "chore: bump version to $$NEW" && git tag "v$$NEW"; \
 	git push && git push origin "v$$NEW"; \
@@ -111,6 +113,7 @@ version-major:
 	@V=$$(cat VERSION); \
 	MAJOR=$$(echo $$V | cut -d. -f1); \
 	NEW="$$((MAJOR + 1)).0.0"; \
+	printf "Push tag v$$NEW to origin? [y/N] "; read ans; [ "$$ans" = "y" ] || { echo "Aborted."; exit 1; }; \
 	echo $$NEW > VERSION; \
 	git add VERSION && git commit -m "chore: bump version to $$NEW" && git tag "v$$NEW"; \
 	git push && git push origin "v$$NEW"; \

@@ -97,7 +97,10 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 		return nil, fmt.Errorf("api: marshal request: %w", err)
 	}
 
-	resp, err := c.do(ctx, body)
+	// withRetry handles 429 with exponential backoff, mirroring StreamMessage.
+	resp, err := withRetry(ctx, func() (*http.Response, error) {
+		return c.do(ctx, body)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +113,9 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 		if err := c.cfg.OnAuth401(ctx); err != nil {
 			return nil, fmt.Errorf("api: refresh on 401: %w", err)
 		}
-		resp, err = c.do(ctx, body)
+		resp, err = withRetry(ctx, func() (*http.Response, error) {
+			return c.do(ctx, body)
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -147,10 +152,8 @@ func (c *Client) do(ctx context.Context, body []byte) (*http.Response, error) {
 		sort.Strings(keys)
 		for _, k := range keys {
 			v := httpReq.Header.Get(k)
-			if strings.EqualFold(k, "Authorization") {
-				if len(v) > 20 {
-					v = v[:20] + "…(redacted)"
-				}
+			if isCredentialHeader(k) {
+				v = "(redacted)"
 			}
 			fmt.Fprintf(os.Stderr, "  %s: %s\n", k, v)
 		}
@@ -275,6 +278,30 @@ func decodeErrorFromResp(resp *http.Response) error {
 	}
 	return fmt.Errorf("api: %d %s: %s%s",
 		resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(raw)), rl)
+}
+
+// isCredentialHeader returns true for any header whose value should be
+// redacted in debug output. Covers all common credential header names plus
+// any header whose name contains "token", "secret", "api-key", or "auth".
+func isCredentialHeader(name string) bool {
+	lower := strings.ToLower(name)
+	explicit := map[string]bool{
+		"authorization":       true,
+		"x-api-key":           true,
+		"cookie":              true,
+		"set-cookie":          true,
+		"anthropic-api-key":   true,
+		"x-anthropic-api-key": true,
+	}
+	if explicit[lower] {
+		return true
+	}
+	for _, kw := range []string{"token", "secret", "api-key", "-auth"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) decodeError(resp *http.Response) error {

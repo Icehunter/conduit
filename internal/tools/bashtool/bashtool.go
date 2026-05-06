@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/icehunter/conduit/internal/iox"
 	"github.com/icehunter/conduit/internal/rtk"
 	"github.com/icehunter/conduit/internal/rtk/track"
 	"github.com/icehunter/conduit/internal/tool"
@@ -138,6 +139,13 @@ var readOnlySubcommands = map[string]map[string]bool{
 }
 
 func isReadOnlyCommand(cmd string) bool {
+	// Any unquoted shell metacharacter (;, &&, ||, |, &, $(), ``, >, <<, \n)
+	// means the command is NOT safe to auto-approve — even if the first token
+	// looks benign (e.g. "cat foo; rm -rf bar" starts with "cat").
+	if hasShellMetachars(cmd) {
+		return false
+	}
+
 	// Strip one leading env-var assignment (FOO=bar cmd ...).
 	if len(cmd) > 0 && cmd[0] != ' ' {
 		eq := false
@@ -236,14 +244,23 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		}
 		cmd.Env = base
 	}
+	// LimitWriter caps the output buffer before cmd.Run() returns, preventing
+	// a subprocess that spews gigabytes from filling RAM. The hard cap is 4×
+	// MaxOutputBytes; on overflow cancel() is called immediately, which sends
+	// SIGKILL to the subprocess via exec.CommandContext.
 	var combined bytes.Buffer
-	cmd.Stdout = &combined
-	cmd.Stderr = &combined
+	lw := &iox.AtomicLimitWriter{
+		W:          &combined,
+		Limit:      int64(MaxOutputBytes) * 4,
+		OnOverflow: cancel,
+	}
+	cmd.Stdout = lw
+	cmd.Stderr = lw
 
 	runErr := cmd.Run()
 
 	out := combined.Bytes()
-	truncated := false
+	truncated := lw.Overflow.Load()
 	if len(out) > MaxOutputBytes {
 		out = out[:MaxOutputBytes]
 		truncated = true

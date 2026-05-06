@@ -150,7 +150,7 @@
 | PowerShellTool | `tools/PowerShellTool/` | — | ❌ | ⬛ | Windows-only |
 | ReadMcpResource | `tools/ReadMcpResourceTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Reads one resource by URI |
 | RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ⬛ | Remote-only (M10) |
-| REPLTool | `tools/REPLTool/` | — | `internal/tools/repltool/` | ✅ | |
+| REPLTool | `tools/REPLTool/` | — | `internal/tools/repltool/` | 🟡 | Functional but no tool-level tests |
 | ScheduleCronTool | `tools/ScheduleCronTool/` | — | ❌ | ⬛ | KAIROS-gated (isKairosCronEnabled) |
 | SendMessageTool | `tools/SendMessageTool/` | — | ❌ | ⬛ | Team messaging (descoped) |
 | SkillTool | `tools/SkillTool/` | — | `internal/tools/skilltool/` | ✅ | |
@@ -285,7 +285,8 @@
 | /tasks | `commands/tasks/` | `internal/commands/session.go` | ✅ | Lists active TaskTool tasks |
 | /theme | `commands/theme/` | `internal/commands/misc.go` + `internal/theme/` | ✅ | Switch palette: dark/light/dark-accessible/light-accessible; hot-swap via OnChange listeners; persisted to settings.json |
 | /usage | `commands/usage/` | `internal/commands/session.go` | ✅ | Token/cost breakdown by turn |
-| /vim | `commands/vim/` | ❌ | ❌ | Vim mode not implemented |
+| /vim | `commands/vim/` | ❌ | ⬛ | Descoped with vim mode (1513 LOC; deferred) |
+| /branch | `commands/branch/` | ❌ | ❌ STUB | Conversation branching not implemented |
 | /voice | `commands/voice/` | ❌ | ⬛ | Requires cgo audio |
 | /rename | `commands/rename/` | `internal/commands/session.go` | ✅ | Renames current session |
 | /sandbox-toggle | `commands/sandbox-toggle/` | ❌ | ⬛ | Anthropic-internal |
@@ -332,7 +333,7 @@
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
 | MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | `internal/mcp/client_ws.go` | ✅ | nhooyr.io/websocket; type="ws"\|"websocket" in server config |
 | MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | `internal/mcp/manager.go` + `cmd/conduit/main.go` | ✅ | Server instructions from initialize response injected into system prompt |
-| LSP integration | `services/lsp/` (7 files) | — | `internal/lsp/` | ✅ | Client, Manager, language→server auto-detect; client/manager/types; 6 tests with in-process mock server |
+| LSP integration | `services/lsp/` (7 files) | — | `internal/lsp/` | 🟡 | Client, Manager, language→server auto-detect; 6 tests exist in `internal/tools/lsp/lsp_test.go` (tool wrapper); `internal/lsp/` package itself has zero unit tests |
 
 ---
 

@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
+          cache-dependency-path: '**/go.sum'
       - name: Install ripgrep (Ubuntu)
         if: runner.os == 'Linux'
         run: sudo apt-get install -y ripgrep
@@ -31,21 +32,33 @@ jobs:
       - run: go test -race -count=1 ./...
 
   lint:
-    runs-on: ubuntu-latest
+    name: lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
+          cache-dependency-path: '**/go.sum'
       - run: make tools
       - run: make lint
 
   vuln:
-    runs-on: ubuntu-latest
+    name: vuln (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+          cache-dependency-path: '**/go.sum'
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
       - run: govulncheck ./...

@@ -51,7 +51,7 @@ Last updated: 2026-05-05
 | Slash command picker (fuzzy) | ✅ | |
 | Tab completion | ✅ | |
 | Input history (↑/↓) | ✅ | |
-| Vim mode | ❌ STUB | toggled but no actual vim keybindings |
+| Vim mode | 🚫 REMOVED | descoped — large effort (1513 LOC); use keybindings system instead |
 | Status bar | ✅ | model, context%, cost |
 | TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
 | Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
@@ -86,7 +86,7 @@ Last updated: 2026-05-05
 | LocalImplement | ✅ | conduit-only wrapper: lets the main agent offload bounded diff drafts to configured MCP `local_implement` |
 | LSPTool | 🔶 | internal/tools/lsp/; hover, definition, references, diagnostics; no tool-level tests |
 | MCPTool | ✅ | internal/tools/mcptool/ |
-| REPLTool | 🔶 | node/python3/bash via temp file (no shell injection); no tool-level tests |
+| REPLTool | 🔶 | node/python3/bash via temp file (no shell injection); no tool-level tests (PARITY was wrong to mark ✅) |
 | SkillTool | ✅ | internal/tools/skilltool/ |
 | TaskCreateTool | ✅ | in-process store |
 | TaskGetTool | ✅ | |
@@ -94,8 +94,8 @@ Last updated: 2026-05-05
 | TaskOutputTool | ✅ | |
 | TaskStopTool | ✅ | |
 | TaskUpdateTool | ✅ | |
-| RemoteTriggerTool | 🔲 M9 | |
-| SendMessageTool | 🔲 M9 | |
+| RemoteTriggerTool | 🚫 REMOVED | Remote-only / M10; descoped (matches PARITY ⬛) |
+| SendMessageTool | 🚫 REMOVED | Team messaging; descoped (matches PARITY ⬛) |
 | ToolSearchTool | ✅ | searches live registry |
 
 ---
@@ -150,13 +150,13 @@ Last updated: 2026-05-05
 | /export | ✅ | writes markdown file to disk |
 | /usage | ✅ | token/cost breakdown by turn |
 | /toggle-usage | ✅ | conduit-only: toggles Claude plan usage footer + fetcher |
-| /vim | ❌ STUB | toggles flag but no actual vim mode |
+| /vim | 🚫 REMOVED | descoped with vim mode — command removed from registry |
 | /resume | ✅ | lists previous sessions; use --continue to restore |
 | /rewind | ✅ | conversation snapshots via JSONL |
 | /rename | ✅ | renames current session |
 | /theme | ✅ | hot-swap palettes; persisted to settings.json |
 | /plan | ✅ | sets plan mode; EnterPlanMode tool wired |
-| /branch | ❌ STUB | needs conversation branching |
+| /branch | ❌ STUB | needs conversation branching (not in PARITY yet — add to §7) |
 | /mcp | ✅ | internal/commands/mcp.go |
 | /agents | ✅ | lists active sub-agents |
 | /skills | ✅ | internal/commands/skills.go |
@@ -225,7 +225,7 @@ Last updated: 2026-05-05
 | Session title persistence (/rename) | ✅ | shown in status bar; /rename persists |
 | MEMORY.md auto-memory | ✅ | ScanMemories, /memory list/show/scan |
 | Skill discovery + execution | ✅ | internal/tools/skilltool/ + internal/plugins/loader.go |
-| Plugin loader | 🔲 | |
+| Plugin loader | ✅ | internal/plugins/loader.go — manifest loading, install, uninstall, enable/disable, MCP sync |
 
 ---
 
@@ -281,4 +281,4 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 | Issue | Location | Fix milestone |
 |-------|----------|---------------|
-| /vim toggles a flag but input isn't actually vim | session.go | deferred |
+| /branch registered as a stub but conversation branching is not implemented | internal/commands/ | deferred |

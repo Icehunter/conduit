@@ -466,6 +466,17 @@ Likely provider types:
 - `openai-compatible`: OpenAI-compatible HTTP API
 - `mcp-local`: local router through MCP
 
+First account-backed step:
+
+- Claude.ai and Anthropic Console logins are now persisted with an account kind.
+- Claude.ai accounts continue to use OAuth bearer auth and the Claude
+  subscription provider kind.
+- Anthropic Console accounts use their minted API key when available and persist
+  as `anthropic-api` providers.
+- Model/role assignment preserves the active account-backed provider kind, so
+  choosing a model while signed into Console does not silently write it back as
+  a Claude subscription provider.
+
 This is the large refactor because Conduit currently assumes Anthropic wire
 format in its API client, streaming loop, thinking config, tool calls, rate-limit
 handling, and usage accounting.

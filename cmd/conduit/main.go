@@ -128,29 +128,42 @@ func run() error {
 	}
 }
 
-// newAPIClient builds a configured API client using the persisted token.
-func newAPIClient(bearer string) *api.Client {
+// newAPIClient builds a configured API client using the persisted account
+// credentials. Claude.ai uses OAuth bearer auth; Anthropic Console uses the
+// minted API key when available.
+func newAPIClient(tok auth.PersistedTokens) *api.Client {
 	entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
 	if entrypoint == "" {
 		entrypoint = "sdk-cli"
 	}
 	ua := fmt.Sprintf("claude-cli/%s (external, %s)", Version, entrypoint)
+	authToken := tok.AccessToken
+	apiKey := ""
+	if auth.InferAccountKind(tok) == auth.AccountKindAnthropicConsole && tok.APIKey != "" {
+		authToken = ""
+		apiKey = tok.APIKey
+	}
+	betaHeaders := []string{
+		"claude-code-20250219",
+		"oauth-2025-04-20",
+		"interleaved-thinking-2025-05-14",
+		"context-management-2025-06-27",
+		"prompt-caching-scope-2026-01-05",
+		"advisor-tool-2026-03-01",
+		"advanced-tool-use-2025-11-20",
+		"effort-2025-11-24",
+		"cache-diagnosis-2026-04-07",
+	}
+	if apiKey != "" {
+		betaHeaders = removeString(betaHeaders, "oauth-2025-04-20")
+	}
 	cfg := api.Config{
-		BaseURL:   auth.ProdConfig.BaseAPIURL,
-		AuthToken: bearer,
-		BetaHeaders: []string{
-			"claude-code-20250219",
-			"oauth-2025-04-20",
-			"interleaved-thinking-2025-05-14",
-			"context-management-2025-06-27",
-			"prompt-caching-scope-2026-01-05",
-			"advisor-tool-2026-03-01",
-			"advanced-tool-use-2025-11-20",
-			"effort-2025-11-24",
-			"cache-diagnosis-2026-04-07",
-		},
-		SessionID: newSessionID(),
-		UserAgent: ua,
+		BaseURL:     auth.ProdConfig.BaseAPIURL,
+		AuthToken:   authToken,
+		APIKey:      apiKey,
+		BetaHeaders: betaHeaders,
+		SessionID:   newSessionID(),
+		UserAgent:   ua,
 		ExtraHeaders: map[string]string{
 			"anthropic-dangerous-direct-browser-access": "true",
 			"X-Stainless-Retry-Count":                   "0",
@@ -159,6 +172,16 @@ func newAPIClient(bearer string) *api.Client {
 	}
 	// Use a proxy-aware transport when HTTPS_PROXY / HTTP_PROXY env vars are set.
 	return api.NewClientWithProxy(cfg)
+}
+
+func removeString(values []string, target string) []string {
+	out := values[:0]
+	for _, value := range values {
+		if value != target {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // loadAuth loads and refreshes tokens for the active account.
@@ -327,10 +350,6 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Try auth — failure is not fatal here. The TUI handles the no-auth state.
 	tok, authErr := loadAuth(ctx)
-	bearer := tok.APIKey
-	if bearer == "" {
-		bearer = tok.AccessToken
-	}
 
 	// Fetch profile info in the background; non-fatal if unavailable.
 	var prof profile.Info
@@ -540,7 +559,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 
-	c := newAPIClient(bearer)
+	c := newAPIClient(tok)
 
 	// Build interactive-tool stubs with nil callbacks; the TUI wires the real
 	// callbacks after prog.Start() via the same send-to-channel pattern used
@@ -754,20 +773,16 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 			return planusage.Fetch(ctx, tok.AccessToken)
 		},
-		LoadAuth: func(ctx context.Context) (string, *profile.Info, error) {
+		LoadAuth: func(ctx context.Context) (auth.PersistedTokens, *profile.Info, error) {
 			tok, err := loadAuth(ctx)
 			if err != nil {
-				return "", nil, err
-			}
-			bearer := tok.APIKey
-			if bearer == "" {
-				bearer = tok.AccessToken
+				return auth.PersistedTokens{}, nil, err
 			}
 			p, _ := profile.Fetch(ctx, tok.AccessToken)
-			return bearer, &p, nil
+			return tok, &p, nil
 		},
-		NewAPIClient: func(bearer string) *api.Client {
-			return newAPIClient(bearer)
+		NewAPIClient: func(tok auth.PersistedTokens) *api.Client {
+			return newAPIClient(tok)
 		},
 		NeedsTrust: needsTrust,
 		SetTrusted: func() error {
@@ -805,11 +820,6 @@ func runPrint(args []string) error {
 		return fmt.Errorf("authentication: %w (use /login inside the REPL to sign in)", err)
 	}
 
-	bearer := p.APIKey
-	if bearer == "" {
-		bearer = p.AccessToken
-	}
-
 	cwd, _ := os.Getwd()
 	loadedPlugins, _ := plugins.LoadAll(cwd)
 	skillEntries := buildSkillEntries(loadedPlugins)
@@ -817,7 +827,7 @@ func runPrint(args []string) error {
 	mem := memdir.BuildPrompt(cwd)
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
-	c := newAPIClient(bearer)
+	c := newAPIClient(p)
 	reg := buildRegistry(c, nil, lsp.NewManager(), nil, nil)
 	modelName := internalmodel.Resolve()
 

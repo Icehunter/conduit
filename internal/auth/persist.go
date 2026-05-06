@@ -25,6 +25,7 @@ type PersistedTokens struct {
 	TokenType    string    `json:"token_type"`
 	Scopes       []string  `json:"scopes"`
 	APIKey       string    `json:"api_key,omitempty"`
+	AccountKind  string    `json:"account_kind,omitempty"`
 }
 
 func (PersistedTokens) String() string { return "<redacted oauth tokens>" }
@@ -38,6 +39,22 @@ func FromTokens(tok Tokens, now time.Time) PersistedTokens {
 		TokenType:    tok.TokenType,
 		Scopes:       tok.Scopes,
 	}
+}
+
+const (
+	AccountKindClaudeAI         = "claude-ai"
+	AccountKindAnthropicConsole = "anthropic-console"
+)
+
+// InferAccountKind returns a conservative auth-source label for legacy tokens.
+func InferAccountKind(p PersistedTokens) string {
+	if p.AccountKind != "" {
+		return p.AccountKind
+	}
+	if p.APIKey != "" {
+		return AccountKindAnthropicConsole
+	}
+	return AccountKindClaudeAI
 }
 
 // ErrNotLoggedIn is returned when no token exists for the requested account.
@@ -64,6 +81,8 @@ func EnsureFresh(ctx context.Context, s secure.Storage, c *TokenClient, email st
 	if fresh.RefreshToken == "" {
 		fresh.RefreshToken = p.RefreshToken
 	}
+	fresh.APIKey = p.APIKey
+	fresh.AccountKind = InferAccountKind(p)
 	// Only write the keychain entry; account metadata was already set up at login.
 	if err := saveToken(s, fresh, email); err != nil {
 		return PersistedTokens{}, err

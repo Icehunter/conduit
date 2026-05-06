@@ -38,6 +38,11 @@ func runLoginFlow(claudeAI bool, display auth.LoginDisplay) error {
 	store := secure.NewDefault()
 	persisted := auth.FromTokens(tok, time.Now())
 	persisted.APIKey = apiKey
+	accountKind := auth.AccountKindAnthropicConsole
+	if claudeAI {
+		accountKind = auth.AccountKindClaudeAI
+	}
+	persisted.AccountKind = accountKind
 
 	// Prefer email from the token response (account.email_address); fall back
 	// to the /api/oauth/profile endpoint (account.email) when the token omits it;
@@ -50,7 +55,7 @@ func runLoginFlow(claudeAI bool, display auth.LoginDisplay) error {
 	if email == "" {
 		email = "default"
 	}
-	if err := auth.SaveForEmail(store, persisted, email); err != nil {
+	if err := auth.SaveForEmailKind(store, persisted, email, accountKind); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 	return nil

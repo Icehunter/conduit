@@ -169,6 +169,7 @@ type (
 	authReloadMsg struct {
 		client  *api.Client
 		profile *profile.Info
+		tokens  auth.PersistedTokens
 		err     error
 	}
 
@@ -253,9 +254,9 @@ type Config struct {
 	// Resumed is true when --continue loaded a prior session.
 	Resumed bool
 	// LoadAuth reloads credentials + profile after /login.
-	LoadAuth func(ctx context.Context) (string, *profile.Info, error)
-	// NewAPIClient constructs a fresh client for the given bearer.
-	NewAPIClient func(bearer string) *api.Client
+	LoadAuth func(ctx context.Context) (auth.PersistedTokens, *profile.Info, error)
+	// NewAPIClient constructs a fresh client for the given persisted token.
+	NewAPIClient func(auth.PersistedTokens) *api.Client
 	// Live is the shared state bag readable from command callbacks outside
 	// the Bubble Tea event loop. Populated by the model on each Update.
 	Live *LiveState
@@ -1043,11 +1044,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg.LoadAuth != nil && m.cfg.NewAPIClient != nil && m.cfg.Loop != nil {
 			return m, func() tea.Msg {
 				ctx := context.Background()
-				bearer, prof, err := m.cfg.LoadAuth(ctx)
+				tok, prof, err := m.cfg.LoadAuth(ctx)
 				if err != nil {
 					return authReloadMsg{err: err}
 				}
-				return authReloadMsg{client: m.cfg.NewAPIClient(bearer), profile: prof}
+				return authReloadMsg{client: m.cfg.NewAPIClient(tok), profile: prof, tokens: tok}
 			}
 		}
 		m.messages = append(m.messages, m.welcomeCard())
@@ -1069,7 +1070,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.welcomeDismissed = false
 			m.messages = append(m.messages, m.welcomeCard())
 			if _, ok := m.activeMCPProvider(); !ok {
-				provider := claudeActiveProvider(m.modelName, m.cfg.Profile.Email)
+				provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email, msg.tokens)
 				m.setActiveProvider(provider)
 				if suffix := persistActiveProvider(provider); suffix != "" {
 					m.messages = append(m.messages, Message{Role: RoleError, Content: strings.TrimSpace(suffix)})
@@ -1102,14 +1103,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, func() tea.Msg {
 				ctx := context.Background()
-				bearer, prof, err := m.cfg.LoadAuth(ctx)
+				tok, prof, err := m.cfg.LoadAuth(ctx)
 				if err != nil {
 					if errors.Is(err, auth.ErrNotLoggedIn) {
 						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to add this account", msg.email)}
 					}
 					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
 				}
-				return authReloadMsg{client: m.cfg.NewAPIClient(bearer), profile: prof}
+				return authReloadMsg{client: m.cfg.NewAPIClient(tok), profile: prof, tokens: tok}
 			}
 		}
 		m.refreshViewport()
@@ -2691,7 +2692,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		return m, tea.Quit
 	case "model":
 		m.modelName = res.Model
-		provider := claudeActiveProvider(res.Model, m.cfg.Profile.Email)
+		provider := accountBackedActiveProvider(res.Model, m.cfg.Profile.Email)
 		m.setActiveProvider(provider)
 		persistSuffix := persistActiveProvider(provider)
 		m.cfg.Loop.SetModel(res.Model)
@@ -2745,6 +2746,9 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			provider.Model = model
 			if provider.Account == "" {
 				provider.Account = m.cfg.Profile.Email
+			}
+			if provider.Kind == "claude-subscription" {
+				provider.Kind = accountBackedActiveProvider(model, provider.Account).Kind
 			}
 			if role == settings.RoleDefault {
 				m.modelName = model
@@ -2844,7 +2848,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 		switch action {
 		case "off":
-			provider := claudeActiveProvider(m.modelName, m.cfg.Profile.Email)
+			provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email)
 			m.setActiveProvider(provider)
 			suffix := persistActiveProvider(provider)
 			m.syncLive()
@@ -2863,7 +2867,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.%s", server, suffix)})
 		default:
 			if _, ok := m.activeMCPProvider(); ok {
-				provider := claudeActiveProvider(m.modelName, m.cfg.Profile.Email)
+				provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email)
 				m.setActiveProvider(provider)
 				suffix := persistActiveProvider(provider)
 				m.syncLive()
@@ -3001,7 +3005,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, func() tea.Msg {
 				ctx := context.Background()
-				bearer, prof, err := m.cfg.LoadAuth(ctx)
+				tok, prof, err := m.cfg.LoadAuth(ctx)
 				if err != nil {
 					// ErrNotLoggedIn means we switched the active pointer but have
 					// no token for this account — guide the user to /login.
@@ -3010,7 +3014,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 					}
 					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
 				}
-				return authReloadMsg{client: m.cfg.NewAPIClient(bearer), profile: prof}
+				return authReloadMsg{client: m.cfg.NewAPIClient(tok), profile: prof, tokens: tok}
 			}
 		}
 		m.refreshViewport()
@@ -3367,19 +3371,33 @@ func runLocalCall(ctx context.Context, manager *mcp.Manager, call commands.Local
 }
 
 func persistClaudeActiveProvider(model, account string) string {
-	value := settings.ActiveProviderSettings{
-		Kind:    "claude-subscription",
+	return persistActiveProvider(accountBackedActiveProvider(model, account))
+}
+
+func accountBackedActiveProvider(model, account string, tokens ...auth.PersistedTokens) settings.ActiveProviderSettings {
+	kind := "claude-subscription"
+	if len(tokens) > 0 {
+		kind = providerKindForAccountKind(auth.InferAccountKind(tokens[0]))
+	} else if account != "" {
+		if store, err := auth.ListAccounts(); err == nil {
+			if entry, ok := store.Accounts[account]; ok && entry.Kind != "" {
+				kind = providerKindForAccountKind(entry.Kind)
+			}
+		}
+	}
+	return settings.ActiveProviderSettings{
+		Kind:    kind,
 		Model:   model,
 		Account: account,
 	}
-	return persistActiveProvider(value)
 }
 
-func claudeActiveProvider(model, account string) settings.ActiveProviderSettings {
-	return settings.ActiveProviderSettings{
-		Kind:    "claude-subscription",
-		Model:   model,
-		Account: account,
+func providerKindForAccountKind(kind string) string {
+	switch kind {
+	case auth.AccountKindAnthropicConsole:
+		return "anthropic-api"
+	default:
+		return "claude-subscription"
 	}
 }
 

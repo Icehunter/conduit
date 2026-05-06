@@ -136,6 +136,34 @@ func TestSaveAccountStore_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing
 	}
 }
 
+func TestSaveForEmailKindPersistsAccountKind(t *testing.T) {
+	isolateClaudeDir(t)
+	store := secure.NewMemoryStorage()
+	tokens := PersistedTokens{
+		AccessToken:  "AT",
+		RefreshToken: "RT",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+	if err := SaveForEmailKind(store, tokens, "api@example.com", AccountKindAnthropicConsole); err != nil {
+		t.Fatalf("SaveForEmailKind: %v", err)
+	}
+
+	got, err := LoadForEmail(store, "api@example.com")
+	if err != nil {
+		t.Fatalf("LoadForEmail: %v", err)
+	}
+	if got.AccountKind != AccountKindAnthropicConsole {
+		t.Fatalf("token account kind = %q, want %q", got.AccountKind, AccountKindAnthropicConsole)
+	}
+	accounts, err := LoadAccountStore()
+	if err != nil {
+		t.Fatalf("LoadAccountStore: %v", err)
+	}
+	if accounts.Accounts["api@example.com"].Kind != AccountKindAnthropicConsole {
+		t.Fatalf("account kind = %q, want %q", accounts.Accounts["api@example.com"].Kind, AccountKindAnthropicConsole)
+	}
+}
+
 func TestLoadAccountStore_ImportsLegacyClaudeAccounts(t *testing.T) {
 	isolateClaudeDir(t)
 	legacyPath, err := legacyAccountsPath()

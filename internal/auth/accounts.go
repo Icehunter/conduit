@@ -21,6 +21,7 @@ import (
 // AccountEntry holds metadata for one stored account.
 type AccountEntry struct {
 	Email   string    `json:"email"`
+	Kind    string    `json:"kind,omitempty"`
 	AddedAt time.Time `json:"added_at"`
 }
 
@@ -141,13 +142,24 @@ func keyForEmail(email string) string {
 // SaveForEmail writes the token to the platform keychain under the email-
 // scoped key and registers the account in conduit.json as active.
 func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
+	return SaveForEmailKind(s, p, email, p.AccountKind)
+}
+
+// SaveForEmailKind writes the token to the platform keychain under the email-
+// scoped key and registers the account in conduit.json as active with its
+// auth source.
+func SaveForEmailKind(s secure.Storage, p PersistedTokens, email, kind string) error {
 	if email == "" {
 		return fmt.Errorf("accounts: email required")
 	}
+	if kind == "" {
+		kind = InferAccountKind(p)
+	}
+	p.AccountKind = kind
 	if err := saveToken(s, p, email); err != nil {
 		return err
 	}
-	return registerAccount(email)
+	return registerAccount(email, kind)
 }
 
 // saveToken writes the token to the keychain only (no account metadata).
@@ -164,14 +176,19 @@ func saveToken(s secure.Storage, p PersistedTokens, email string) error {
 }
 
 // registerAccount adds the email to conduit.json and sets it as active.
-func registerAccount(email string) error {
+func registerAccount(email, kind string) error {
 	store, _ := LoadAccountStore()
 	if store.Accounts == nil {
 		store.Accounts = map[string]AccountEntry{}
 	}
-	if _, exists := store.Accounts[email]; !exists {
-		store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
+	entry, exists := store.Accounts[email]
+	if !exists {
+		entry = AccountEntry{Email: email, AddedAt: time.Now()}
 	}
+	if kind != "" {
+		entry.Kind = kind
+	}
+	store.Accounts[email] = entry
 	store.Active = email
 	return saveAccountStore(store)
 }

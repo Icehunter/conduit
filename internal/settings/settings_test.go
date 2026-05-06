@@ -101,6 +101,17 @@ func TestSaveActiveProviderMirrorsDefaultRole(t *testing.T) {
 	}
 }
 
+func TestProviderKey_AnthropicAPIIncludesAccount(t *testing.T) {
+	value := ActiveProviderSettings{
+		Kind:    "anthropic-api",
+		Account: "api@example.com",
+		Model:   "claude-sonnet-4-6",
+	}
+	if got, want := ProviderKey(value), "anthropic-api.api@example.com.claude-sonnet-4-6"; got != want {
+		t.Fatalf("ProviderKey = %q, want %q", got, want)
+	}
+}
+
 func TestSaveConduitRawKey_DoesNotWriteClaudeSettings(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

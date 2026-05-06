@@ -102,10 +102,10 @@ type RunOptions struct {
 	MCPManager *mcp.Manager
 
 	// LoadAuth reloads credentials + profile after a successful /login.
-	LoadAuth func(ctx context.Context) (string, *profile.Info, error)
+	LoadAuth func(ctx context.Context) (auth.PersistedTokens, *profile.Info, error)
 
-	// NewAPIClient constructs a fresh API client for the given bearer token.
-	NewAPIClient func(bearer string) *api.Client
+	// NewAPIClient constructs a fresh API client for the given persisted token.
+	NewAPIClient func(auth.PersistedTokens) *api.Client
 
 	// Interactive tool stubs — the TUI wires their callbacks after startup.
 	EnterPlan *planmodetool.EnterPlanMode

@@ -650,6 +650,10 @@ func ProviderKey(value ActiveProviderSettings) string {
 		if value.Model != "" {
 			return kind + "." + value.Model
 		}
+	case "anthropic-api":
+		if value.Account != "" && value.Model != "" {
+			return kind + "." + value.Account + "." + value.Model
+		}
 	default:
 		if value.Credential != "" {
 			return kind + "." + value.Credential

@@ -36,7 +36,7 @@ func TestRenderWelcomeSectionDoesNotLeakANSI(t *testing.T) {
 func TestWelcomeCardUsesLocalModeDisplay(t *testing.T) {
 	m := Model{cfg: Config{Version: "test"}, modelName: "claude-sonnet-4-6", localMode: true, localModeServer: "local-router"}
 	msg := m.welcomeCard()
-	if !strings.Contains(msg.Content, "local qwen3-coder · local-router") {
+	if !strings.Contains(msg.Content, "MCP · qwen3-coder · local-router") {
 		t.Fatalf("welcome card content = %q, want local model display", msg.Content)
 	}
 }
@@ -53,7 +53,7 @@ func TestWelcomeCardUsesActiveMCPProviderDisplay(t *testing.T) {
 		},
 	}
 	msg := m.welcomeCard()
-	if !strings.Contains(msg.Content, "local qwen3-coder · local-router") {
+	if !strings.Contains(msg.Content, "MCP · qwen3-coder · local-router") {
 		t.Fatalf("welcome card content = %q, want active MCP provider display", msg.Content)
 	}
 }
@@ -75,7 +75,7 @@ func TestPlanModeUsesPlanningProvider(t *testing.T) {
 	if provider.Server != "plan-router" {
 		t.Fatalf("server = %q, want plan-router", provider.Server)
 	}
-	if got := m.activeModelDisplayName(); !strings.Contains(got, "local planner · plan-router") {
+	if got := m.activeModelDisplayName(); !strings.Contains(got, "MCP · planner · plan-router") {
 		t.Fatalf("display = %q, want planning provider display", got)
 	}
 }
@@ -103,8 +103,8 @@ func TestPermissionModeChangeUpdatesLoopModel(t *testing.T) {
 	if loop.Model() != "claude-opus-4-7" {
 		t.Fatalf("loop model = %q, want planning model", loop.Model())
 	}
-	if got := m.activeModelDisplayName(); got != "claude-opus-4-7" {
-		t.Fatalf("display model = %q, want planning model", got)
+	if got := m.activeModelDisplayName(); got != "Claude Subscription · claude-opus-4-7" {
+		t.Fatalf("display model = %q, want planning provider display", got)
 	}
 
 	m.applyPermissionMode(permissions.ModeBypassPermissions)
@@ -128,12 +128,12 @@ func TestModeRoleRoutingDefaultVsMain(t *testing.T) {
 	}
 
 	m.permissionMode = permissions.ModeDefault
-	if got := m.activeModelDisplayName(); got != "local qwen3-coder · local-router" {
+	if got := m.activeModelDisplayName(); got != "MCP · qwen3-coder · local-router" {
 		t.Fatalf("default mode display = %q, want local default provider", got)
 	}
 
 	m.permissionMode = permissions.ModeBypassPermissions
-	if got := m.activeModelDisplayName(); got != "claude-sonnet-4-6" {
+	if got := m.activeModelDisplayName(); got != "Claude Subscription · claude-sonnet-4-6" {
 		t.Fatalf("auto mode display = %q, want main provider", got)
 	}
 }
@@ -210,7 +210,7 @@ func TestRenderUsageFooterLocalModeOmitsClaudeResets(t *testing.T) {
 	if strings.Contains(out, "unknown") || strings.Contains(out, "tomorrow") {
 		t.Fatalf("local usage footer should not show Claude reset text: %q", out)
 	}
-	if !strings.Contains(out, "Provider") || !strings.Contains(out, "local qwen3-coder") {
+	if !strings.Contains(out, "Provider") || !strings.Contains(out, "MCP · qwen3-coder") {
 		t.Fatalf("local usage footer missing provider row: %q", out)
 	}
 }

@@ -3607,22 +3607,41 @@ func (m Model) activeModelDisplayName() string {
 	provider, ok := m.activeMCPProvider()
 	if !ok {
 		if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != "mcp" && provider.Model != "" {
-			return provider.Model
+			return accountProviderDisplayName(provider)
 		}
 		return m.modelName
 	}
+	return mcpProviderDisplayName(provider, m.localModelName(provider.Server))
+}
+
+func mcpProviderDisplayName(provider settings.ActiveProviderSettings, fallbackModel string) string {
 	server := provider.Server
 	if server == "" {
 		server = "local-router"
 	}
 	model := provider.Model
 	if model == "" {
-		model = m.localModelName(server)
+		model = fallbackModel
 	}
 	if model == "" || model == server {
-		return "local " + server
+		return "MCP · " + server
 	}
-	return fmt.Sprintf("local %s · %s", model, server)
+	return fmt.Sprintf("MCP · %s · %s", model, server)
+}
+
+func accountProviderDisplayName(provider settings.ActiveProviderSettings) string {
+	label := "Claude Subscription"
+	if provider.Kind == "anthropic-api" {
+		label = "Anthropic API"
+	}
+	parts := []string{label}
+	if provider.Model != "" {
+		parts = append(parts, provider.Model)
+	}
+	if provider.Account != "" {
+		parts = append(parts, provider.Account)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m Model) effectiveAssistantModelName() string {
@@ -3906,7 +3925,7 @@ func (m Model) usageFooterRows() int {
 	if !m.usageStatusEnabled {
 		return 0
 	}
-	return 3
+	return 4
 }
 
 func (m Model) footerChromeRows() int {
@@ -4198,11 +4217,11 @@ func (m Model) renderUsageFooter(width int) string {
 	if width < 20 {
 		width = 20
 	}
+	providerLine := m.renderProviderUsageWindow()
 	if _, ok := m.activeMCPProvider(); ok {
-		provider := m.activeModelDisplayName()
-		line := surfaceSpaces(1) + styleStatus.Width(8).Render("Provider") + surfaceSpaces(2) + styleStatus.Render(provider)
 		return padStatusLine(m.renderContextUsageWindow(), width) + "\n" +
-			padStatusLine(line, width) + "\n" +
+			padStatusLine(providerLine, width) + "\n" +
+			padStatusLine("", width) + "\n" +
 			padStatusLine("", width)
 	}
 	rateLimited := !m.planUsageBackoff.IsZero() && time.Now().Before(m.planUsageBackoff)
@@ -4215,11 +4234,11 @@ func (m Model) renderUsageFooter(width int) string {
 		} else {
 			line = styleModeYellow.Render(" Usage: unavailable") + styleStatus.Render(" | "+m.planUsageErr)
 		}
-		return padStatusLine(line, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
+		return padStatusLine(line, width) + "\n" + padStatusLine(providerLine, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
 	}
 	if !hasCachedData {
 		line := styleStatus.Render(" Usage: loading...")
-		return padStatusLine(line, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
+		return padStatusLine(line, width) + "\n" + padStatusLine(providerLine, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
 	}
 	current := renderUsageWindow("Current", m.planUsage.FiveHour)
 	weekly := renderUsageWindow("Weekly ", m.planUsage.SevenDay)
@@ -4227,11 +4246,19 @@ func (m Model) renderUsageFooter(width int) string {
 
 	dataPoints := []string{
 		padStatusLine(contextLine, width),
+		padStatusLine(providerLine, width),
 		padStatusLine(current, width),
 		padStatusLine(weekly, width),
 	}
 
 	return strings.Join(dataPoints, "\n")
+}
+
+func (m Model) renderProviderUsageWindow() string {
+	return surfaceSpaces(1) +
+		styleStatus.Width(8).Render("Provider") +
+		surfaceSpaces(2) +
+		styleStatus.Render(m.activeModelDisplayName())
 }
 
 func (m Model) renderContextUsageWindow() string {

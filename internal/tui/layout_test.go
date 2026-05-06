@@ -14,8 +14,8 @@ func TestComputeLayout_ReservesInputAndFooterRows(t *testing.T) {
 	m.input.SetHeight(1)
 
 	layout := m.computeLayout(image.Rect(0, 0, m.width, m.height))
-	if layout.footer.Dy() != 4 {
-		t.Fatalf("footer height = %d, want 4", layout.footer.Dy())
+	if layout.footer.Dy() != 5 {
+		t.Fatalf("footer height = %d, want 5", layout.footer.Dy())
 	}
 	if layout.workingRow.Dy() != 1 {
 		t.Fatalf("working row height = %d, want 1", layout.workingRow.Dy())

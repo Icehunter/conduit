@@ -479,6 +479,9 @@ First account-backed step:
 - Ctrl+M and `/models` label the model section from the active account kind:
   `Claude Subscription` for Claude.ai and `Anthropic API` for Console. Picker
   values carry the provider kind through selection.
+- Welcome card, `/status`, and the usage footer use the same provider display
+  labels, e.g. `Claude Subscription · <model> · <email>`,
+  `Anthropic API · <model> · <email>`, or `MCP · <model> · <server>`.
 
 This is the large refactor because Conduit currently assumes Anthropic wire
 format in its API client, streaming loop, thinking config, tool calls, rate-limit

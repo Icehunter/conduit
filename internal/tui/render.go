@@ -419,7 +419,6 @@ func renderWelcomeCard(content string, width int) string {
 	modelName := get(1)
 	cwd := get(2)
 	displayName := get(3)
-	email := get(4)
 	orgName := get(5)
 	subscriptionType := get(6)
 
@@ -466,9 +465,6 @@ func renderWelcomeCard(content string, width int) string {
 	}
 	if orgName != "" {
 		account += " · " + orgName
-	}
-	if email != "" {
-		account += " · " + email
 	}
 	addRow(renderWelcomeSection("Session", sectionW))
 	addRow(metaStyle.Render(truncate("◇ "+modelName, innerW)))

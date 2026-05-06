@@ -315,31 +315,24 @@ func (m Model) renderPanel() string {
 	var sb strings.Builder
 
 	// Panel title — always shown.
-	sb.WriteString(styleStatusAccent.Render("MCP") + "\n")
-	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW-2)) + "\n\n")
+	sb.WriteString(panelTitle("MCP") + "  " + panelRule(innerW-7) + "\n\n")
 
 	switch p.view {
 	case panelViewList:
 		m.renderPanelList(&sb, p, innerW)
-		sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter detail · Esc close"))
+		sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter detail · Esc close"))
 	case panelViewDetail:
 		m.renderPanelDetail(&sb, p, innerW)
-		sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · Esc back"))
+		sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · Esc back"))
 	case panelViewTools:
 		m.renderPanelTools(&sb, p, innerW)
-		sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter view · Esc back"))
+		sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter view · Esc back"))
 	case panelViewToolDetail:
 		m.renderPanelToolDetail(&sb, p, innerW)
 		sb.WriteString("\n" + stylePickerDesc.Render("Esc back"))
 	}
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		Width(w).
-		Height(panelH).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return panelFrameStyle(w, panelH).Render(sb.String())
 }
 
 func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {

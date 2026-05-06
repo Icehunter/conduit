@@ -4,8 +4,8 @@ package keybindings
 // that conduit's TUI actually has handlers for. The set is intentionally
 // narrower than CC: features descoped in the parity plan (KAIROS Brief,
 // teammate preview, voice, message actions, transcript pager, attachments,
-// diff dialog, model picker, scroll context) don't appear here. We add
-// them back as those features land.
+// diff dialog, scroll context) don't appear here. We add them back as
+// those features land.
 //
 // Order matters: later blocks shadow earlier ones for the same keystroke
 // in the same context. Within a block, map iteration order is undefined,
@@ -29,6 +29,8 @@ func DefaultBlocks() []Block {
 			Bindings: map[string]string{
 				"escape":    "chat:cancel",
 				"shift+tab": "chat:cycleMode",
+				"ctrl+p":    "chat:commandPicker",
+				"ctrl+m":    "chat:modelPicker",
 				"meta+p":    "chat:modelPicker",
 				"meta+o":    "chat:fastMode",
 				"meta+t":    "chat:thinkingToggle",

@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // pickerItem is one row in a small selection picker.
@@ -84,11 +83,7 @@ func (m Model) renderPicker() string {
 			sb.WriteString(stylePickerItem.Render("  "+label) + "\n")
 		}
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · Escape cancel"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · Escape cancel"))
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return sb.String()
 }

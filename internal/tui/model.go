@@ -19,6 +19,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
@@ -274,11 +275,13 @@ type Model struct {
 
 	width  int
 	height int
+	panelH int
 
 	running         bool
 	cancelled       bool // true after Ctrl+C; cleared when next turn starts
 	cancelTurn      context.CancelFunc
 	streaming       string
+	apiRetryStatus  string
 	turnID          int               // incremented each turn; agentDoneMsg with stale ID is ignored
 	turnStarted     time.Time         // wall time when the current agent turn started
 	pendingMessages []string          // messages typed while agent is running; drained after turn ends
@@ -293,6 +296,8 @@ type Model struct {
 	// or Escape.
 	atMatches  []string // relative paths matching the @ query
 	atSelected int      // selected index
+	atQuery    string   // last @ fragment used to populate atMatches
+	atCwd      string   // cwd used to populate atMatches
 
 	totalInputTokens  int
 	totalOutputTokens int
@@ -358,6 +363,12 @@ type Model struct {
 
 	// Resume picker state — non-nil when /resume is showing session list.
 	resumePrompt *resumePromptState
+
+	// helpOverlay holds the keyboard shortcut help modal. Non-nil when open.
+	helpOverlay *helpOverlayState
+
+	// verboseMode shows full tool output bodies; false (compact) is the default.
+	verboseMode bool
 
 	// doctorPanel holds the /doctor full-screen diagnostics overlay.
 	// Non-nil when the doctor panel is open; nil otherwise.
@@ -468,7 +479,7 @@ func New(cfg Config) Model {
 	m := Model{
 		cfg:                cfg,
 		input:              ta,
-		working:            *workinganim.New(14, "Thinking", colorAccent, colorTool, colorDim),
+		working:            *workinganim.New(14, "Thinking", colorAccent, colorTool, colorDim, colorWindowBg),
 		modelName:          cfg.ModelName,
 		historyIdx:         -1,
 		loginFlowMsgStart:  -1,
@@ -509,9 +520,7 @@ func New(cfg Config) Model {
 			Role:    RoleSystem,
 			Content: fmt.Sprintf("Resumed previous conversation (%d messages). ↑ scroll to see history.", len(cfg.ResumedHistory)),
 		})
-		for _, apiMsg := range cfg.ResumedHistory {
-			m.messages = append(m.messages, historyToDisplayMessage(apiMsg))
-		}
+		m.messages = append(m.messages, historyToDisplayMessages(cfg.ResumedHistory)...)
 		m.tallyTokens()
 	} else {
 		m.messages = append(m.messages, m.welcomeCard())
@@ -681,6 +690,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 				m.streaming = ""
 			}
+			// Mark any in-flight tool rows as interrupted so they don't
+			// stay stuck showing "running…" after the cancel.
+			for i := range m.messages {
+				if m.messages[i].Role == RoleTool && m.messages[i].Content == "running…" {
+					m.messages[i].Content = "interrupted."
+					m.messages[i].ToolError = true
+				}
+			}
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Interrupted."})
 			m.refreshViewport()
 			m.input.Focus()
@@ -694,7 +711,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 			m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 			m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-			m.doctorPanel != nil || m.searchPanel != nil
+			m.doctorPanel != nil || m.searchPanel != nil || m.helpOverlay != nil
 		if !hasOverlay {
 			content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 			content = strings.ReplaceAll(content, "\r", "\n")
@@ -770,7 +787,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
 			}
 			if !m.running {
-				m.atMatches, m.atSelected = m.computeAtMatches()
+				m = m.updateAtMatches()
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -833,6 +850,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancelled = false
 		m.cancelTurn = nil
+		m.apiRetryStatus = ""
 		if m.streaming != "" {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
@@ -1133,9 +1151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Role:    RoleSystem,
 			Content: fmt.Sprintf("Resumed previous conversation (%d messages). ↑ scroll to see history.", len(msg.msgs)),
 		})
-		for _, apiMsg := range msg.msgs {
-			m.messages = append(m.messages, historyToDisplayMessage(apiMsg))
-		}
+		m.messages = append(m.messages, historyToDisplayMessages(msg.msgs)...)
 		m.tallyTokens()
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -1154,7 +1170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case companionBubbleMsg:
 		m.companionBubble = msg.text
-		return m, tea.Tick(10*time.Second, func(_ time.Time) tea.Msg { return clearBubble{} })
+		return m, tea.Tick(5*time.Second, func(_ time.Time) tea.Msg { return clearBubble{} })
 
 	case buddyTickMsg:
 		if m.companionName != "" {
@@ -1261,7 +1277,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Recompute @ file picker matches after every key.
 	if !m.running {
-		m.atMatches, m.atSelected = m.computeAtMatches()
+		m = m.updateAtMatches()
 	}
 
 	return m, tea.Batch(cmds...)
@@ -1279,6 +1295,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// Resume picker intercepts all keys when active.
 	if m.resumePrompt != nil {
 		m2, cmd := m.handleResumeKey(msg)
+		return m2, cmd, true
+	}
+	// Help overlay intercepts all keys when active.
+	if m.helpOverlay != nil {
+		m2, cmd := m.handleHelpOverlayKey(msg)
 		return m2, cmd, true
 	}
 	// Doctor panel intercepts all keys when active.
@@ -1384,7 +1405,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 	switch msg.String() {
 	case "up":
-		if len(m.cmdMatches) > 0 {
+		if m.commandPickerActive() {
 			if m.cmdSelected > 0 {
 				m.cmdSelected--
 			}
@@ -1414,7 +1435,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 
 	case "down":
-		if len(m.cmdMatches) > 0 {
+		if m.commandPickerActive() {
 			if m.cmdSelected < len(m.cmdMatches)-1 {
 				m.cmdSelected++
 			}
@@ -1502,11 +1523,15 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				return m, nil, true
 			}
 		}
-		if len(m.cmdMatches) > 0 {
+		if m.commandPickerActive() {
 			if msg.String() == "tab" {
 				// Tab: complete to the command name with trailing space, close picker.
-				m.input.SetValue("/" + m.cmdMatches[m.cmdSelected].Name + " ")
-				m.input.CursorEnd()
+				if len(m.cmdMatches) > 0 {
+					m.input.SetValue("/" + m.cmdMatches[m.cmdSelected].Name + " ")
+					m.input.CursorEnd()
+				}
+			} else {
+				m.input.Reset()
 			}
 			m.cmdMatches = nil
 			m.cmdSelected = 0
@@ -1544,6 +1569,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 					Content: []api.ContentBlock{{Type: "text", Text: m.streaming}},
 				})
 				m.streaming = ""
+			}
+			for i := range m.messages {
+				if m.messages[i].Role == RoleTool && m.messages[i].Content == "running…" {
+					m.messages[i].Content = "interrupted."
+					m.messages[i].ToolError = true
+				}
 			}
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Interrupted."})
 			m.refreshViewport()
@@ -1623,6 +1654,16 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				}
 			}
 		}
+
+	case "ctrl+o":
+		m.verboseMode = !m.verboseMode
+		if m.verboseMode {
+			m.flashMsg = "verbose mode on (ctrl+o to toggle)"
+		} else {
+			m.flashMsg = "compact mode on (ctrl+o to toggle)"
+		}
+		m.refreshViewport()
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to
@@ -1777,6 +1818,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.running = true
 		m.cancelled = false
 		m.streaming = ""
+		m.apiRetryStatus = ""
 		m.turnStarted = time.Now()
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -1843,8 +1885,24 @@ func (m Model) renderCommandPicker() string {
 		}
 	}
 
-	// Content area: Width(m.width-2) outer - 2 border - 2 padding (1 each side).
-	contentW := m.width - 4
+	contentW := floatingInnerWidth(m.width, floatingCommandSpec) - floatingBodyPadX*2
+	if contentW < 20 {
+		contentW = 20
+	}
+
+	if len(m.cmdMatches) == 0 {
+		var sb strings.Builder
+		sb.WriteString(styleStatusAccent.Render("Commands") + "\n\n")
+		displayQuery := strings.TrimPrefix(m.input.Value(), "/")
+		if displayQuery == "" {
+			sb.WriteString(stylePickerDesc.Render("Type to filter commands."))
+		} else {
+			sb.WriteString(stylePickerDesc.Render(fmt.Sprintf("No commands found for %q.", displayQuery)))
+			sb.WriteByte('\n')
+			sb.WriteString(stylePickerDesc.Render("Enter sends it as an unknown command · Esc closes"))
+		}
+		return sb.String()
+	}
 
 	// Compute name column width from the longest name across all matches so
 	// the column stays stable as the user scrolls through results.
@@ -1857,6 +1915,9 @@ func (m Model) renderCommandPicker() string {
 	}
 	const minDescW = 20
 	const gap = 2
+	if contentW < minDescW+gap+1 {
+		contentW = minDescW + gap + 1
+	}
 	if nameColW > contentW-minDescW-gap {
 		nameColW = contentW - minDescW - gap
 	}
@@ -1864,6 +1925,7 @@ func (m Model) renderCommandPicker() string {
 	indent := strings.Repeat(" ", nameColW+gap)
 
 	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Commands") + "\n\n")
 	for i := start; i < end; i++ {
 		if i > start {
 			sb.WriteByte('\n')
@@ -1878,8 +1940,10 @@ func (m Model) renderCommandPicker() string {
 		}
 		rawName = string(runes) + strings.Repeat(" ", nameColW-len(runes))
 
+		prefix := "  "
 		var namePart string
 		if i == m.cmdSelected {
+			prefix = stylePickerItemSelected.Render("❯ ")
 			namePart = highlightMatch(rawName, query, stylePickerItemSelected, stylePickerHighlight)
 		} else {
 			namePart = highlightMatch(rawName, query, stylePickerItem, stylePickerHighlight)
@@ -1887,15 +1951,14 @@ func (m Model) renderCommandPicker() string {
 
 		// Word-wrap description so it flows to additional lines instead of being cut off.
 		descLines := cmdDescWrap(cmd.Description, descMax)
-		sb.WriteString(namePart + strings.Repeat(" ", gap) + highlightMatch(descLines[0], query, stylePickerDesc, stylePickerHighlight))
+		sb.WriteString(prefix + namePart + surfaceSpaces(gap) + highlightMatch(descLines[0], query, stylePickerDesc, stylePickerHighlight))
 		for _, dl := range descLines[1:] {
 			sb.WriteByte('\n')
-			sb.WriteString(indent + highlightMatch(dl, query, stylePickerDesc, stylePickerHighlight))
+			sb.WriteString(surfaceSpaces(2+lipgloss.Width(indent)) + highlightMatch(dl, query, stylePickerDesc, stylePickerHighlight))
 		}
 	}
 
-	pad := strings.Repeat(" ", outerPad)
-	return indentLines(stylePickerBorder.Width(m.width).Render(sb.String()), pad)
+	return sb.String()
 }
 
 // cmdDescWrap splits a description into lines of at most maxW runes, breaking
@@ -2001,14 +2064,55 @@ func (m Model) computeCommandMatches() ([]commands.Command, int) {
 	return matches, sel
 }
 
+func (m Model) commandPickerActive() bool {
+	text := m.input.Value()
+	return !m.running && m.cfg.Commands != nil && strings.HasPrefix(text, "/") && !strings.Contains(text, " ")
+}
+
+func (m Model) openCommandPicker() Model {
+	if m.running || m.cfg.Commands == nil {
+		return m
+	}
+	m.dismissWelcome()
+	m.input.SetValue("/")
+	m.input.CursorEnd()
+	m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
+	m.refreshViewport()
+	return m
+}
+
 // --- @ file completion ---
 
-// computeAtMatches returns file/dir paths matching the current @fragment.
-// Returns (nil,0) when no @ fragment is active or the input starts with "/".
-func (m Model) computeAtMatches() ([]string, int) {
-	val := m.input.Value()
-	if strings.HasPrefix(val, "/") || m.running {
-		return nil, 0
+// updateAtMatches refreshes the @ file picker only when the cwd or typed
+// @fragment changes. Navigation and redraw churn reuse the existing list so
+// the picker stays visually stable.
+func (m Model) updateAtMatches() Model {
+	frag, ok := atFragment(m.input.Value())
+	if !ok || m.running {
+		m.atMatches = nil
+		m.atSelected = 0
+		m.atQuery = ""
+		m.atCwd = ""
+		return m
+	}
+	cwd, _ := os.Getwd()
+	if frag == m.atQuery && cwd == m.atCwd {
+		if m.atSelected >= len(m.atMatches) {
+			m.atSelected = 0
+		}
+		return m
+	}
+	matches := searchFiles(cwd, frag, 8)
+	m.atMatches = matches
+	m.atSelected = 0
+	m.atQuery = frag
+	m.atCwd = cwd
+	return m
+}
+
+func atFragment(val string) (string, bool) {
+	if strings.HasPrefix(val, "/") {
+		return "", false
 	}
 	// Find the last token in the input.
 	lastIdx := strings.LastIndexAny(val, " \t\n")
@@ -2017,20 +2121,9 @@ func (m Model) computeAtMatches() ([]string, int) {
 		lastToken = val[lastIdx+1:]
 	}
 	if !strings.HasPrefix(lastToken, "@") {
-		return nil, 0 // no @ at end of input
+		return "", false
 	}
-	frag := lastToken[1:] // query after @
-
-	cwd, _ := os.Getwd()
-	matches := searchFiles(cwd, frag, 8)
-	if len(matches) == 0 {
-		return nil, 0
-	}
-	sel := m.atSelected
-	if sel >= len(matches) {
-		sel = 0
-	}
-	return matches, sel
+	return lastToken[1:], true
 }
 
 // acceptAtMatch inserts the selected @ match into the input, replacing the
@@ -2057,6 +2150,8 @@ func (m Model) acceptAtMatch() Model {
 	m.input.CursorEnd()
 	m.atMatches = nil
 	m.atSelected = 0
+	m.atQuery = ""
+	m.atCwd = ""
 	return m
 }
 
@@ -2144,7 +2239,9 @@ func (m Model) renderAtPicker() string {
 		}
 	}
 
+	contentW := floatingInnerWidth(m.width, floatingPickerSpec)
 	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Files") + "\n\n")
 	for i := start; i < end; i++ {
 		path := m.atMatches[i]
 		icon := "+"
@@ -2152,18 +2249,19 @@ func (m Model) renderAtPicker() string {
 			icon = "◇"
 			path += "/"
 		}
-		line := fmt.Sprintf(" %s %s", icon, path)
+		path = truncateMiddle(path, contentW-4)
+		line := fmt.Sprintf("%s %s", icon, path)
 		if i == m.atSelected {
-			line = stylePickerItemSelected.Render(line)
+			line = stylePickerItemSelected.Render("❯ " + line)
 		} else {
-			line = stylePickerItem.Render(line)
+			line = stylePickerItem.Render("  " + line)
 		}
 		sb.WriteString(line)
 		if i < end-1 {
 			sb.WriteByte('\n')
 		}
 	}
-	return stylePickerBorder.Width(m.width - 2).Render(sb.String())
+	return sb.String()
 }
 
 // tabComplete returns the best completion for a partial slash command.
@@ -2197,6 +2295,70 @@ func (m Model) tabComplete(input string) string {
 	}
 }
 
+// historyToDisplayMessages converts API history back into display messages.
+// It keeps tool_use/tool_result pairs together so resumed conversations render
+// the same compact tool rows as live conversations.
+func historyToDisplayMessages(msgs []api.Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	toolIndexByID := make(map[string]int)
+	for _, apiMsg := range msgs {
+		var text strings.Builder
+		flushText := func() {
+			if text.Len() == 0 {
+				return
+			}
+			content := text.String()
+			text.Reset()
+			if apiMsg.Role == "user" {
+				out = append(out, Message{Role: RoleUser, Content: content})
+				return
+			}
+			content = stripCompanionMarkerGlobal(content)
+			if content != "" {
+				out = append(out, Message{Role: RoleAssistant, Content: content})
+			}
+		}
+		appendText := func(s string) {
+			if s == "" {
+				return
+			}
+			if text.Len() > 0 {
+				text.WriteString("\n")
+			}
+			text.WriteString(s)
+		}
+
+		for _, block := range apiMsg.Content {
+			switch block.Type {
+			case "text":
+				appendText(block.Text)
+			case "tool_use":
+				flushText()
+				input := ""
+				if block.Input != nil {
+					if raw, err := json.Marshal(block.Input); err == nil {
+						input = string(raw)
+					}
+				}
+				display := Message{Role: RoleTool, ToolName: block.Name, ToolID: block.ID, ToolInput: input, Content: ""}
+				toolIndexByID[display.ToolID] = len(out)
+				out = append(out, display)
+			case "tool_result":
+				flushText()
+				display := Message{Role: RoleTool, ToolName: "result", ToolID: block.ToolUseID, Content: block.ResultContent, ToolError: block.IsError}
+				if idx, ok := toolIndexByID[display.ToolID]; ok {
+					out[idx].Content = display.Content
+					out[idx].ToolError = display.ToolError
+					continue
+				}
+				out = append(out, display)
+			}
+		}
+		flushText()
+	}
+	return out
+}
+
 // historyToDisplayMessage converts an api.Message back into a display Message.
 func historyToDisplayMessage(msg api.Message) Message {
 	var text strings.Builder
@@ -2210,9 +2372,15 @@ func historyToDisplayMessage(msg api.Message) Message {
 				text.WriteString(block.Text)
 			}
 		case "tool_use":
-			return Message{Role: RoleTool, ToolName: block.Name, Content: ""}
+			input := ""
+			if block.Input != nil {
+				if raw, err := json.Marshal(block.Input); err == nil {
+					input = string(raw)
+				}
+			}
+			return Message{Role: RoleTool, ToolName: block.Name, ToolID: block.ID, ToolInput: input, Content: ""}
 		case "tool_result":
-			return Message{Role: RoleTool, ToolName: "result", Content: block.ResultContent}
+			return Message{Role: RoleTool, ToolName: "result", ToolID: block.ToolUseID, Content: block.ResultContent, ToolError: block.IsError}
 		}
 	}
 	if msg.Role == "user" {
@@ -2285,6 +2453,26 @@ func (d *tuiLoginDisplay) BrowserOpenFailed(err error) {
 // applyCommandResult handles a slash command result in the TUI.
 func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 	switch res.Type {
+	case "help_overlay":
+		if m.helpOverlay == nil {
+			m.helpOverlay = openHelpOverlay(m.width, m.panelHeight(), res.Text)
+		}
+		return m, nil
+	case "commands":
+		return m.openCommandPicker(), nil
+	case "buddy":
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
+		if sc, err := buddy.Load(); err == nil && sc != nil {
+			startTick := m.companionName == ""
+			m.companionName = sc.Name
+			m.refreshViewport()
+			if startTick {
+				return m, buddyTick()
+			}
+			return m, nil
+		}
+		m.refreshViewport()
+		return m, nil
 	case "clear":
 		m.messages = nil
 		m.history = nil
@@ -2342,6 +2530,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.running = true
 		m.cancelled = false
 		m.streaming = ""
+		m.apiRetryStatus = ""
 		m.turnStarted = time.Now()
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -2865,6 +3054,7 @@ func isCancelError(err error) bool {
 func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	switch ev.Type {
 	case agent.EventText:
+		m.apiRetryStatus = ""
 		m.streaming += ev.Text
 		// refreshViewport's sticky-bottom logic preserves the user's
 		// scroll position when they've scrolled up to read history mid-
@@ -2872,7 +3062,10 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		// the bottom.
 		m.refreshViewport()
 
-	case agent.EventToolUse:
+	case agent.EventToolStart:
+		m.apiRetryStatus = ""
+		// Tool block started streaming — show the row immediately.
+		// ToolInput arrives later via EventToolUse.
 		if m.streaming != "" {
 			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
 			m.streaming = ""
@@ -2881,10 +3074,36 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 			Role:        RoleTool,
 			ToolName:    ev.ToolName,
 			ToolID:      ev.ToolID,
-			ToolInput:   string(ev.ToolInput),
 			ToolStarted: time.Now(),
 			Content:     "running…",
 		})
+		m.refreshViewport()
+
+	case agent.EventToolUse:
+		// Block complete — update the existing row with the full input.
+		found := false
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleTool && m.messages[i].ToolID == ev.ToolID {
+				m.messages[i].ToolInput = string(ev.ToolInput)
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Defensive: EventToolStart was missed; create the row now.
+			if m.streaming != "" {
+				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+				m.streaming = ""
+			}
+			m.messages = append(m.messages, Message{
+				Role:        RoleTool,
+				ToolName:    ev.ToolName,
+				ToolID:      ev.ToolID,
+				ToolInput:   string(ev.ToolInput),
+				ToolStarted: time.Now(),
+				Content:     "running…",
+			})
+		}
 		m.refreshViewport()
 
 	case agent.EventToolResult:
@@ -2904,6 +3123,13 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 	case agent.EventRateLimit:
 		m.rateLimitWarning = ev.RateLimitWarning
 		m.syncLive()
+
+	case agent.EventAPIRetry:
+		delay := ev.RetryDelay.Round(time.Second)
+		if delay < time.Second {
+			delay = time.Second
+		}
+		m.apiRetryStatus = fmt.Sprintf("Rate limited · retrying in %s", delay)
 
 	case agent.EventPartial:
 		// Conversation recovery: persist the partial assistant message to
@@ -3013,7 +3239,18 @@ func (m Model) footerChromeRows() int {
 }
 
 func (m Model) panelHeight() int {
-	h := m.height - m.footerChromeRows()
+	if m.panelH > 0 {
+		return m.panelH
+	}
+	inputRows := m.input.Height()
+	if inputRows < inputMinRows {
+		inputRows = inputMinRows
+	}
+	inputRows += 2
+	if len(m.pendingImages)+len(m.pendingPDFs) > 0 {
+		inputRows++
+	}
+	h := m.height - m.footerChromeRows() - inputRows - 1 - renderedLineCount(renderCoordinatorPanel(m.width))
 	if h < 4 {
 		return 4
 	}
@@ -3040,7 +3277,7 @@ func (m *Model) refreshViewport() {
 	var sb strings.Builder
 	first := true
 	for _, msg := range m.messages {
-		rendered := renderMessage(msg, w)
+		rendered := renderMessage(msg, w, m.verboseMode)
 		if rendered == "" {
 			continue // skip empty renders (e.g. pure companion quip messages)
 		}
@@ -3059,7 +3296,7 @@ func (m *Model) refreshViewport() {
 		}
 		displayStreaming := m.stripCompanionMarker(m.streaming)
 		if displayStreaming != "" {
-			sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: displayStreaming}, w))
+			sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: displayStreaming}, w, m.verboseMode))
 			sb.WriteByte('\n')
 		}
 	}
@@ -3080,21 +3317,8 @@ func (m *Model) refreshViewport() {
 // international keyboards), and we leave ReportEventTypes off because we
 // don't need key release events.
 func (m Model) View() tea.View {
-	mkView := func(content string) tea.View {
-		var v tea.View
-		v.SetContent(content)
-		v.AltScreen = true
-		v.KeyboardEnhancements.ReportAlternateKeys = true
-		// MouseModeCellMotion: scroll wheel arrives as tea.MouseWheelMsg
-		// (separate from UP/DOWN key events) so trackpad/wheel scrolls the
-		// viewport while UP/DOWN navigates input history — matching CC's UX.
-		// Trade-off: text selection requires Shift+drag (standard for
-		// mouse-mode TUIs like vim/tmux). Text copy still works via ^Y.
-		v.MouseMode = tea.MouseModeCellMotion
-		return v
-	}
 	if !m.ready {
-		return mkView("Loading…\n")
+		return makeTeaView("Loading…\n")
 	}
 
 	// Re-apply theme styles to widgets every render. Necessary because
@@ -3103,167 +3327,20 @@ func (m Model) View() tea.View {
 	// to a stale Model the framework no longer uses. Cheap to do per-frame
 	// (just struct field assignment) and guarantees theme switches apply.
 	applyTextareaTheme(&m.input)
-	m.working.SetColors(colorAccent, colorTool, colorDim)
+	m.working.SetColorsWithBackground(colorAccent, colorTool, colorDim, colorWindowBg)
 
-	// Compute overlay box first so we can shrink the viewport to keep the
-	// input row + status bar on screen. Without this, a tall overlay
-	// (resume picker with 10 sessions, login picker, permission prompt)
-	// pushes inputBox past the bottom of the alt-screen and lipgloss
-	// Height(m.height) clips it. Order matters: viewport must be rendered
-	// AFTER its height has been adjusted for the overlay.
-	var overlayBox string
-	if m.loginPrompt != nil {
-		overlayBox = m.renderLoginPicker()
-	} else if m.resumePrompt != nil {
-		overlayBox = m.renderResumePicker()
-	} else if m.doctorPanel != nil {
-		overlayBox = m.renderDoctorPanel()
-	} else if m.searchPanel != nil {
-		overlayBox = m.renderSearchPanel()
-	} else if m.picker != nil {
-		overlayBox = m.renderPicker()
-	} else if m.onboarding != nil {
-		overlayBox = m.renderOnboarding()
-	} else if m.trustDialog != nil {
-		overlayBox = m.renderTrustDialog()
-	} else if m.permPrompt != nil {
-		overlayBox = m.renderPermissionPrompt()
-	} else if m.questionAsk != nil {
-		overlayBox = m.renderQuestionDialog()
-	} else if len(m.cmdMatches) > 0 {
-		overlayBox = m.renderCommandPicker()
-	} else if len(m.atMatches) > 0 {
-		overlayBox = m.renderAtPicker()
-	} else if m.companionBubble != "" {
-		overlayBox = m.renderCompanionBubble()
-	}
-	if overlayBox != "" {
-		overlayLines := strings.Count(overlayBox, "\n") + 1
-		newH := m.vp.Height() - overlayLines
-		if newH < 1 {
-			newH = 1
-		}
-		m.vp.SetHeight(newH)
-	}
-
-	// Viewport.
-	vp := m.vp.View()
-
-	// Working row — always 1 line to prevent layout shift.
-	// Always emit a full-width bg-painted line so the area under the viewport
-	// doesn't expose terminal default bg.
-	var spinRow string
-	switch {
-	case m.flashMsg != "":
-		spinRow = styleStatusAccent.Render(m.flashMsg)
-	case m.running:
-		m.working.SetLabel("Thinking")
-		spinRow = m.working.Render()
-	default:
-		spinRow = ""
-	}
-
-	// Input box.
-	bStyle := styleInputBorder
-	if !m.running {
-		bStyle = styleInputBorderActive
-	}
-	// Width: outer border consumes 2 cols; inner padding consumes 2 more.
-	// Force-paint the textarea view in light themes. The textarea's
-	// placeholderView and internal viewport emit ANSI sequences with
-	// internal \033[0m resets that clear bg back to terminal default,
-	// leaving a dark stripe across the input row. Solution:
-	//   1. Replace internal \033[0m with soft reset (\033[22;23;39m) +
-	//      bg reapply, so bg persists across reset boundaries.
-	//   2. Pad each line to inner width with bg-painted spaces so cells
-	//      right of the placeholder text are filled.
-	//   3. Wrap in a fg+bg style so the line starts with bg set.
-	innerView := m.input.View()
-	if theme.Active().Background != "" {
-		innerW := m.width - 4
-		if innerW < 1 {
-			innerW = 1
-		}
-		bgEsc := theme.AnsiBG(theme.Active().Background)
-		fgEsc := theme.AnsiFG(theme.Active().Primary)
-		const fullReset = "\x1b[0m"
-		const softReset = "\x1b[22;23;39m"
-		var fixed []string
-		for _, line := range strings.Split(innerView, "\n") {
-			line = strings.ReplaceAll(line, fullReset, softReset+bgEsc+fgEsc)
-			w := lipgloss.Width(line)
-			if w < innerW {
-				line += strings.Repeat(" ", innerW-w)
-			}
-			fixed = append(fixed, bgEsc+fgEsc+line+fullReset)
-		}
-		innerView = strings.Join(fixed, "\n")
-	}
-	// If clipboard images or PDFs are queued, prepend an attachment badge.
-	if n := len(m.pendingImages) + len(m.pendingPDFs); n > 0 {
-		parts := []string{}
-		if ni := len(m.pendingImages); ni > 0 {
-			parts = append(parts, fmt.Sprintf("%d image(s)", ni))
-		}
-		if np := len(m.pendingPDFs); np > 0 {
-			parts = append(parts, fmt.Sprintf("%d PDF(s)", np))
-		}
-		label := "📎 [" + strings.Join(parts, ", ") + "]"
-		badge := styleStatusAccent.Render(label) + "  " + stylePickerDesc.Render("ctrl+v for more · Enter to send · Esc to clear")
-		innerView = badge + "\n" + innerView
-	}
-	inputBox := bStyle.Width(m.width).Render(innerView)
-
-	edgePad := strings.Repeat(" ", 1)
-	left := edgePad + m.renderModeStatus()
-	rightMax := m.width - lipgloss.Width(left) - 1
-	right := m.renderLocationStatus(rightMax)
-	if right != "" {
-		right += edgePad
-	}
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if pad < 1 {
-		pad = 1
-	}
-	statusBar := left + strings.Repeat(" ", pad) + right
-	usageFooter := m.renderUsageFooter(m.width)
-	footer := m.renderFooterStack(usageFooter, statusBar)
-
-	// Panel is a full-screen takeover — replace vp+working row+input with it.
-	// Only status bar remains at the bottom.
-	if m.panel != nil {
-		panel := m.renderPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, panel, footer)))
-	}
-
-	// Plugin panel is also a full-screen takeover.
-	if m.pluginPanel != nil {
-		pluginPanel := m.renderPluginPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, pluginPanel, footer)))
-	}
-
-	// Settings panel is a full-screen takeover.
-	if m.settingsPanel != nil {
-		sp := m.renderSettingsPanel()
-		return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, sp, footer)))
-	}
-
-	// (Overlay was computed earlier so we could shrink the viewport.)
-
-	// JoinVertical with explicit newlines between non-empty parts.
-	// spinRow is always full-width bg-painted (set above) so it covers the
-	// gap between viewport and input regardless of whether it has content.
-	parts := []string{vp}
-	parts = append(parts, spinRow)
-	if overlayBox != "" {
-		parts = append(parts, overlayBox)
-	}
-	parts = append(parts, inputBox)
-	if coord := renderCoordinatorPanel(m.width); coord != "" {
-		parts = append(parts, coord)
-	}
-	parts = append(parts, footer)
-	return mkView(paintApp(m.width, m.height, lipgloss.JoinVertical(lipgloss.Left, parts...)))
+	canvas := uv.NewScreenBuffer(m.width, m.height)
+	canvas.Fill(&uv.Cell{
+		Content: " ",
+		Width:   1,
+		Style: uv.Style{
+			Fg: colorFg,
+			Bg: colorWindowBg,
+		},
+	})
+	m.Draw(canvas, canvas.Bounds())
+	rendered := strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
+	return makeTeaView(paintApp(m.width, m.height, rendered))
 }
 
 func (m Model) renderFooterStack(usageFooter, statusBar string) string {
@@ -3290,10 +3367,33 @@ func (m Model) renderModeStatus() string {
 		mode = "default mode"
 		style = styleStatus
 	}
+	renderedMode := style.Render(mode)
 	if coordinator.IsActive() {
-		mode = "⬡ coordinator | " + mode
+		renderedMode = styleStatus.Render("⬡ coordinator") + styleStatus.Render(" | ") + renderedMode
 	}
-	return style.Render(mode) + styleStatus.Render(" (shift+tab to cycle)")
+	return renderedMode + styleStatus.Render(" (shift+tab to cycle)")
+}
+
+func (m Model) renderTokenStatus() string {
+	// Plan users see tokens + cost in the Context row of the usage footer.
+	// Only show here for API-key users who have no footer.
+	if m.usageStatusEnabled || m.totalInputTokens == 0 {
+		return ""
+	}
+	tok := m.totalInputTokens
+	var tokStr string
+	switch {
+	case tok >= 1_000_000:
+		tokStr = fmt.Sprintf("%.1fM tok", float64(tok)/1_000_000)
+	case tok >= 1_000:
+		tokStr = fmt.Sprintf("%.1fk tok", float64(tok)/1_000)
+	default:
+		tokStr = fmt.Sprintf("%d tok", tok)
+	}
+	if m.costUSD > 0 {
+		return styleStatus.Render(tokStr) + styleStatus.Render(fmt.Sprintf(" · $%.2f", m.costUSD))
+	}
+	return styleStatus.Render(tokStr)
 }
 
 func (m Model) renderLocationStatus(maxWidth int) string {
@@ -3470,15 +3570,30 @@ func (m Model) renderContextUsageWindow() string {
 	} else {
 		pctText = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#3fb950")).
+			Background(colorWindowBg).
 			Render(pctText)
+	}
+
+	var tokText string
+	if m.totalInputTokens > 0 {
+		tok := m.totalInputTokens
+		switch {
+		case tok >= 1_000_000:
+			tokText = fmt.Sprintf(" · %.1fM tok", float64(tok)/1_000_000)
+		case tok >= 1_000:
+			tokText = fmt.Sprintf(" · %.1fk tok", float64(tok)/1_000)
+		default:
+			tokText = fmt.Sprintf(" · %d tok", tok)
+		}
+		tokText = styleStatus.Render(tokText)
 	}
 
 	costText := ""
 	if m.costUSD > 0 {
-		costText = styleStatus.Render(fmt.Sprintf(" $%.2f", m.costUSD))
+		costText = styleStatus.Render(fmt.Sprintf(" · $%.2f", m.costUSD))
 	}
 
-	return fmt.Sprintf(" %s  %s  %s%s", labelText, bar, pctText, costText)
+	return surfaceSpaces(1) + labelText + surfaceSpaces(2) + bar + surfaceSpaces(2) + pctText + tokText + costText
 }
 
 func clampInt(v, min, max int) int {
@@ -3507,16 +3622,11 @@ func renderUsageWindow(label string, w planusage.Window) string {
 	} else {
 		pctText = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#3fb950")).
+			Background(colorWindowBg).
 			Render(pctText)
 	}
 
-	return fmt.Sprintf(
-		" %s  %s  %s  %s",
-		labelText,
-		bar,
-		pctText,
-		styleStatus.Render(reset),
-	)
+	return surfaceSpaces(1) + labelText + surfaceSpaces(2) + bar + surfaceSpaces(2) + pctText + surfaceSpaces(2) + styleStatus.Render(reset)
 }
 
 func usageBar(pct, width int) string {
@@ -3528,7 +3638,7 @@ func usageBar(pct, width int) string {
 	filled := width * pct / 100
 	empty := width - filled
 
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950"))
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Background(colorWindowBg)
 
 	switch {
 	case pct >= 85:
@@ -3566,9 +3676,9 @@ func formatUsageReset(t time.Time) string {
 
 func padStatusLine(line string, width int) string {
 	if lipgloss.Width(line) > width {
-		return lipgloss.NewStyle().Width(width).MaxWidth(width).Render(line)
+		return lipgloss.NewStyle().Background(colorWindowBg).Width(width).MaxWidth(width).Render(line)
 	}
-	return line + strings.Repeat(" ", width-lipgloss.Width(line))
+	return line + surfaceSpaces(width-lipgloss.Width(line))
 }
 
 // renderCoordinatorPanel renders a footer row per active sub-agent task
@@ -3616,27 +3726,19 @@ func renderCoordinatorPanel(width int) string {
 	return sb.String()
 }
 
-// paintApp paints the theme background across the visible TUI region —
-// but ONLY when the active palette has a Background value set. Dark themes
-// leave Background empty so the terminal bg shows through cleanly.
+// paintApp paints the shared surface background across the visible TUI
+// region. The floating chrome intentionally uses its own dark surface even
+// for ANSI themes, so repaint after lipgloss resets to avoid black holes
+// behind styled text and wrapped descriptions.
 //
-// Light themes set Background so the user sees a light surface even on a
-// dark terminal. The paint isn't pixel-perfect (TUI cell rendering means
-// some widget chrome shows terminal bg), but it makes light themes usable.
-//
-// Two-phase paint to keep bg painted across lipgloss internal resets:
+// Two-phase paint:
 //  1. Replace internal "\x1b[0m" with soft reset + bg reapply
 //  2. Pad each line to width and wrap in styleAppSurface
 func paintApp(w, h int, content string) string {
 	if w <= 0 || h <= 0 {
 		return content
 	}
-	pBg := theme.Active().Background
-	if pBg == "" {
-		// Dark themes — passthrough, terminal bg shows through.
-		return content
-	}
-	bg := theme.AnsiBG(pBg)
+	bg := theme.AnsiBG(windowBgHex)
 	const fullReset = "\x1b[0m"
 	const softReset = "\x1b[22;23;39m"
 	lines := strings.Split(content, "\n")
@@ -3644,7 +3746,7 @@ func paintApp(w, h int, content string) string {
 		line = strings.ReplaceAll(line, fullReset, softReset+bg)
 		visW := lipgloss.Width(line)
 		if visW < w {
-			line += strings.Repeat(" ", w-visW)
+			line += surfaceSpaces(w - visW)
 		}
 		lines[i] = bg + line + fullReset
 	}
@@ -3739,19 +3841,11 @@ func capitalize(s string) string {
 // Called from Model.New() and from the theme.OnChange listener registered
 // in registerThemeAwareWidgets.
 func applyTextareaTheme(ta *textarea.Model) {
-	hasBg := theme.Active().Background != ""
-	maybeBg := func(s lipgloss.Style) lipgloss.Style {
-		if hasBg {
-			return s.Background(colorBg)
-		}
-		return s
-	}
-
 	// Base must have BOTH fg and bg — every other style inherits from Base.
 	// Without explicit fg, text rendered on the cursor row uses terminal
 	// default fg (light gray on most terminals = unreadable on light theme).
-	taBase := maybeBg(lipgloss.NewStyle().Foreground(colorFg))
-	taPlaceholder := maybeBg(lipgloss.NewStyle().Foreground(colorMuted))
+	taBase := lipgloss.NewStyle().Foreground(colorFg).Background(colorWindowBg)
+	taPlaceholder := lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg)
 
 	// v2: textarea Styles is a value-typed accessor — read, mutate, write back.
 	styles := ta.Styles()
@@ -3767,10 +3861,6 @@ func applyTextareaTheme(ta *textarea.Model) {
 	}
 	// v2: cursor color/blink live on Styles.Cursor (CursorStyle struct).
 	// Static (non-blink) was preserved earlier in New() via Blink=false.
-	if hasBg {
-		styles.Cursor.Color = colorFg
-	} else {
-		styles.Cursor.Color = colorFg
-	}
+	styles.Cursor.Color = colorFg
 	ta.SetStyles(styles)
 }

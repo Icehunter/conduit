@@ -35,9 +35,5 @@ func (m Model) renderDoctorPanel() string {
 		sb.WriteString(line + "\n")
 	}
 	sb.WriteString("\n" + stylePickerDesc.Render("q / Esc  close"))
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return panelFrameStyle(m.width, lipgloss.Height(sb.String())+4).Render(sb.String())
 }

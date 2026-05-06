@@ -23,7 +23,7 @@ const (
 
 // renderMessage renders one message for display.
 // width is the full viewport width.
-func renderMessage(msg Message, width int) string {
+func renderMessage(msg Message, width int, verbose bool) string {
 	if width < 20 {
 		width = 80
 	}
@@ -31,12 +31,12 @@ func renderMessage(msg Message, width int) string {
 	if inner < 10 {
 		inner = 10
 	}
-	pad := strings.Repeat(" ", outerPad)
+	pad := surfaceSpaces(outerPad)
 
 	switch msg.Role {
 	case RoleUser:
 		// Wrap user text at inner width minus the prefix width ("❯ You  " = 8 cols).
-		prefixStr := styleYouPrefix.Render(prefixYou) + "  "
+		prefixStr := styleYouPrefix.Render(prefixYou) + surfaceSpaces(2)
 		prefixW := lipgloss.Width(prefixStr)
 		body := styleUserText.Width(inner - prefixW).Render(msg.Content)
 		return pad + prefixStr + body
@@ -53,7 +53,7 @@ func renderMessage(msg Message, width int) string {
 		return pad + renderAssistantInfo(msg, inner)
 
 	case RoleTool:
-		return pad + renderToolMessage(msg, inner)
+		return pad + renderToolMessage(msg, inner, verbose)
 
 	case RoleError:
 		// Wrap long error text — OAuth/API errors regularly run hundreds
@@ -71,7 +71,7 @@ func renderMessage(msg Message, width int) string {
 			if i == 0 {
 				sb.WriteString(styleErrorText.Render(errPrefix))
 			} else {
-				sb.WriteString(strings.Repeat(" ", prefixW))
+				sb.WriteString(surfaceSpaces(prefixW))
 			}
 			sb.WriteString(ln)
 			if i < len(lines)-1 {
@@ -106,7 +106,7 @@ func renderMessage(msg Message, width int) string {
 			if i == 0 {
 				sb.WriteString(styleSystemText.Render(sysPrefix))
 			} else {
-				sb.WriteString(strings.Repeat(" ", prefixW))
+				sb.WriteString(surfaceSpaces(prefixW))
 			}
 			sb.WriteString(ln)
 			if i < len(lines)-1 {
@@ -133,18 +133,22 @@ func renderAssistantInfo(msg Message, width int) string {
 		return ""
 	}
 	line := strings.Join(parts, styleStatus.Render(" · "))
-	return styleStatus.Width(width).Render("  " + line)
+	return styleStatus.Width(width).Render(surfaceSpaces(2) + line)
 }
 
-func renderToolMessage(msg Message, width int) string {
+func renderToolMessage(msg Message, width int, verbose bool) string {
 	statusIcon := styleStatusAccent.Render("✓")
-	statusText := "done"
+	statusText := toolDoneVerb(msg.ToolName)
+	archived := msg.Content == "" && msg.ToolDuration == 0 && !msg.ToolError
 	if msg.Content == "running…" {
 		statusIcon = styleModeYellow.Render("●")
 		statusText = "running"
 	} else if msg.ToolError {
 		statusIcon = styleErrorText.Render("✗")
-		statusText = "error"
+		statusText = "failed"
+	} else if archived {
+		statusIcon = styleStatus.Render("◦")
+		statusText = "used"
 	}
 
 	headerParts := []string{
@@ -155,10 +159,19 @@ func renderToolMessage(msg Message, width int) string {
 	if msg.ToolDuration > 0 {
 		headerParts = append(headerParts, styleStatus.Render(formatMessageDuration(msg.ToolDuration)))
 	}
-	header := strings.Join(headerParts, " ")
+	header := strings.Join(headerParts, surfaceSpaces(1))
 
 	running := msg.Content == "running…"
 	summary := toolInputSummary(msg.ToolName, msg.ToolInput)
+	if summary == "" && !msg.ToolError && !running {
+		summary = toolResultSummary(msg.ToolName, msg.Content)
+	}
+	if !msg.ToolError && summary != "" {
+		available := width - lipgloss.Width(surfaceSpaces(2)+header) - lipgloss.Width(" · ")
+		if available >= 8 {
+			header += styleStatus.Render(" · " + truncate(summary, available))
+		}
+	}
 	result := strings.TrimSpace(msg.Content)
 	if running {
 		result = ""
@@ -166,13 +179,12 @@ func renderToolMessage(msg Message, width int) string {
 
 	bodyWidth := max(10, width-4)
 	var lines []string
-	lines = append(lines, "  "+header)
-	if running && summary != "" {
-		lines = append(lines, indentLines(styleStatus.Width(bodyWidth).Render(summary), "    "))
-	}
+	lines = append(lines, surfaceSpaces(2)+header)
 	if msg.ToolError && result != "" {
-		resultStyle := styleErrorText
-		lines = append(lines, indentLines(resultStyle.Width(bodyWidth).Render(result), "    "))
+		lines = append(lines, indentLines(styleErrorText.Width(bodyWidth).Render(result), surfaceSpaces(4)))
+	}
+	if verbose && !msg.ToolError && !running && !archived && result != "" {
+		lines = append(lines, indentLines(styleStatus.Width(bodyWidth).Render(result), surfaceSpaces(4)))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -182,8 +194,36 @@ func toolDisplayName(name string) string {
 		return "Tool"
 	}
 	name = strings.TrimSuffix(name, "Tool")
-	name = strings.TrimPrefix(name, "mcp__")
+	if strings.HasPrefix(name, "mcp__") {
+		parts := strings.Split(strings.TrimPrefix(name, "mcp__"), "__")
+		if len(parts) >= 2 {
+			return parts[0] + "/" + parts[len(parts)-1]
+		}
+	}
+	if strings.Contains(name, "__") {
+		parts := strings.Split(name, "__")
+		return parts[len(parts)-1]
+	}
 	return name
+}
+
+func toolDoneVerb(toolName string) string {
+	lower := strings.ToLower(toolName)
+	switch {
+	case strings.Contains(lower, "bash"), strings.Contains(lower, "shell"), strings.Contains(lower, "repl"):
+		return "ran"
+	case strings.Contains(lower, "grep"), strings.Contains(lower, "glob"), strings.Contains(lower, "search"):
+		return "searched"
+	case strings.Contains(lower, "read"), strings.Contains(lower, "fetch"):
+		return "read"
+	case strings.Contains(lower, "edit"), strings.Contains(lower, "write"), strings.Contains(lower, "notebook"):
+		return "updated"
+	case strings.Contains(lower, "todo"):
+		return "updated"
+	case strings.Contains(lower, "task"), strings.Contains(lower, "agent"):
+		return "finished"
+	}
+	return "done"
 }
 
 func toolInputSummary(toolName, raw string) string {
@@ -230,6 +270,37 @@ func toolInputSummary(toolName, raw string) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func toolResultSummary(toolName, content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "no output"
+	}
+	lower := strings.ToLower(toolName)
+	if strings.Contains(lower, "bash") || strings.Contains(lower, "shell") || strings.Contains(lower, "repl") {
+		lines := strings.Split(content, "\n")
+		nonEmpty := 0
+		first := ""
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			nonEmpty++
+			if first == "" {
+				first = line
+			}
+		}
+		if first == "" {
+			return "no output"
+		}
+		if nonEmpty == 1 {
+			return first
+		}
+		return fmt.Sprintf("%s +%d lines", first, nonEmpty-1)
+	}
+	return ""
 }
 
 func parseToolInput(raw string) map[string]string {
@@ -284,7 +355,9 @@ func formatMessageDuration(d time.Duration) string {
 	return d.Round(time.Minute).String()
 }
 
-// renderWelcomeCard renders the two-panel startup banner.
+// renderWelcomeCard renders the startup banner. It is intentionally more
+// graphic than normal chat rows: this is the idle/welcome state, not the
+// active conversation surface.
 // content is tab-separated: version, modelName, cwd, displayName, email, orgName, subscriptionType.
 func renderWelcomeCard(content string, width int) string {
 	parts := strings.Split(content, "\t")
@@ -303,106 +376,77 @@ func renderWelcomeCard(content string, width int) string {
 	subscriptionType := get(6)
 
 	outerW := width - outerPad*2
-	if outerW < 50 {
-		outerW = 50
+	if outerW < 42 {
+		outerW = 42
 	}
-	// innerW = content inside the borders, excluding the 1-space inner pad each side.
 	innerW := outerW - 4 // 1 border + 1 pad on each side
-
-	// Left column: ~38% of inner width, floored at 45 chars and capped at innerW/2.
-	divW := 3 // " │ "
-	leftW := innerW * 38 / 100
-	if leftW < 45 {
-		leftW = 45
-	}
-	if leftW > innerW/2 {
-		leftW = innerW / 2
-	}
-	rightW := innerW - leftW - divW - 1 // -1 for the leading space before leftW
-	if rightW < 10 {
-		rightW = 10
-	}
 
 	titleStyle := fgOnBg(colorFg).Bold(true)
 	metaStyle := fgOnBg(colorMuted)
-	accentStyle := fgOnBg(colorAccent).Bold(true)
-	dimStyle := fgOnBg(colorDim)
+	accentStyle := fgOnBg(colorWindowTitle).Bold(true)
+	toolStyle := fgOnBg(colorWindowBorder).Bold(true)
 
-	// Build greeting — use display name if available.
-	greeting := "Welcome back!"
-	if displayName != "" {
-		greeting = "Welcome back, " + displayName + "!"
+	bodyRows := []string{}
+	addRow := func(s string) {
+		bodyRows = append(bodyRows, padToWidth(s, innerW))
+	}
+	addBlank := func() { addRow("") }
+
+	if logo := renderWelcomeLogo(innerW); logo != "" {
+		for _, line := range strings.Split(logo, "\n") {
+			addRow(line)
+		}
+		addBlank()
 	}
 
-	// Left column: greeting, blank, subscription line, email, org, blank, model, cwd.
-	// Only show lines with content; always show model+cwd.
-	var leftLines []string
-	leftLines = append(leftLines, padToWidth(titleStyle.Render(truncate(greeting, leftW)), leftW))
-	leftLines = append(leftLines, padToWidth("", leftW))
-	if subscriptionType != "" {
-		sub := subscriptionType
-		if orgName != "" {
-			sub += " · " + orgName
-		}
-		leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(sub, leftW)), leftW))
+	greeting := "Welcome back"
+	if displayName != "" {
+		greeting += ", " + displayName
+	}
+	addRow(titleStyle.Render(truncate(greeting, innerW)))
+	addRow(metaStyle.Render(truncate(displayPath(cwd), innerW)))
+	addBlank()
+
+	sectionW := innerW
+	if sectionW > 72 {
+		sectionW = 72
+	}
+
+	account := subscriptionType
+	if account == "" {
+		account = "Claude"
+	}
+	if orgName != "" {
+		account += " · " + orgName
 	}
 	if email != "" {
-		leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(email, leftW)), leftW))
+		account += " · " + email
 	}
-	leftLines = append(leftLines, padToWidth("", leftW))
-	leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(modelName, leftW)), leftW))
-	leftLines = append(leftLines, padToWidth(metaStyle.Render(truncate(cwd, leftW)), leftW))
+	addRow(renderWelcomeSection("Session", sectionW))
+	addRow(metaStyle.Render(truncate("◇ "+modelName, innerW)))
+	addRow(metaStyle.Render(truncate("◇ "+account, innerW)))
+	addBlank()
 
-	divider := dimStyle.Render(" │ ")
-
-	// Row content width = innerW. Wrapper is "│ " + row + " │" = outerW.
-	rowW := innerW
-	rightW = rowW - leftW - divW
-	if rightW < 10 {
-		rightW = 10
+	addRow(renderWelcomeSection("Start", sectionW))
+	startRows := []string{
+		"ctrl+p    commands",
+		"ctrl+m    models",
+		"shift+tab mode",
 	}
-
-	tr := func(s string) string { return truncate(s, rightW) }
-	rightLines := []string{
-		accentStyle.Render("Tips for getting started"),
-		metaStyle.Render(tr("Run /init to create a CLAUDE.md for this project")),
-		metaStyle.Render(tr("Use /help to see all available commands")),
-		metaStyle.Render(tr("Press ↑/↓ to navigate input history")),
-		metaStyle.Render(tr("Ctrl+Y copies the last code block")),
-		metaStyle.Render(""),
-		accentStyle.Render("What's new"),
-		metaStyle.Render(tr("/release-notes for full release notes")),
-	}
-
-	// Normalise row count.
-	rows := len(rightLines)
-	if len(leftLines) > rows {
-		rows = len(leftLines)
-	}
-	for len(leftLines) < rows {
-		leftLines = append(leftLines, strings.Repeat(" ", leftW))
-	}
-	for len(rightLines) < rows {
-		rightLines = append(rightLines, "")
-	}
-
-	var bodyRows []string
-	for i := 0; i < rows; i++ {
-		left := padToWidth(leftLines[i], leftW)
-		right := padToWidth(rightLines[i], rightW)
-		row := left + divider + right
-		// Pad to rowW.
-		rw := lipgloss.Width(row)
-		if rw < rowW {
-			row += strings.Repeat(" ", rowW-rw)
+	for i, row := range startRows {
+		marker := accentStyle.Render("› ")
+		if i%2 == 1 {
+			marker = toolStyle.Render("› ")
 		}
-		bodyRows = append(bodyRows, row)
+		addRow(marker + metaStyle.Render(truncate(row, innerW-2)))
 	}
+	addBlank()
+	addRow(ornamentGradientText(renderSlashFill(innerW)))
 
 	// ── Manual border with title in top line ─────────────────────────────────
-	borderStyle := fgOnBg(colorAccent)
+	borderStyle := fgOnBg(colorWindowBorder)
 	titleText := " conduit v" + version + " "
-	titleRendered := fgOnBg(colorAccent).Bold(true).Render(titleText)
+	titleRendered := brandGradientText(titleText)
 	titleW := len(titleText) // plain width (no ANSI) for dash counting
 
 	// Top: ╭─ title ───────────────╮
@@ -414,33 +458,88 @@ func renderWelcomeCard(content string, width int) string {
 		borderStyle.Render(strings.Repeat("─", afterTitle)+"╮")
 
 	// Content rows flanked by │ and one space of inner padding. Each row
-	// gets wrapped in a bg-painted style at the end so the inner spaces
-	// (which are bare " " concatenations, not lipgloss-styled) inherit
-	// the theme bg instead of exposing terminal default.
-	bgWrap := lipgloss.NewStyle()
+	// gets wrapped in a bg-painted style at the end so bare spaces inherit
+	// the shared surface instead of exposing the terminal default.
+	bgWrap := lipgloss.NewStyle().Background(colorWindowBg)
 	fullRows := make([]string, 0, 2+len(bodyRows)+2)
 	fullRows = append(fullRows, bgWrap.Render(topBorder))
-	blankInner := strings.Repeat(" ", innerW)
-	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│")))
+	blankInner := surfaceSpaces(innerW)
+	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+surfaceSpaces(1)+blankInner+surfaceSpaces(1)+borderStyle.Render("│")))
 	for _, r := range bodyRows {
 		lw := lipgloss.Width(r)
-		if lw < rowW {
-			r += strings.Repeat(" ", rowW-lw)
+		if lw < innerW {
+			r += surfaceSpaces(innerW - lw)
 		}
-		fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+r+" "+borderStyle.Render("│")))
+		fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+surfaceSpaces(1)+r+surfaceSpaces(1)+borderStyle.Render("│")))
 	}
-	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+" "+blankInner+" "+borderStyle.Render("│")))
+	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("│")+surfaceSpaces(1)+blankInner+surfaceSpaces(1)+borderStyle.Render("│")))
 	fullRows = append(fullRows, bgWrap.Render(borderStyle.Render("╰"+strings.Repeat("─", outerW-2)+"╯")))
 
-	pad := strings.Repeat(" ", outerPad)
+	pad := surfaceSpaces(outerPad)
 	return indentLines(strings.Join(fullRows, "\n"), pad)
+}
+
+func renderWelcomeLogo(width int) string {
+	if width < 54 {
+		return brandGradientText("conduit") + surfaceSpaces(1) +
+			ornamentGradientText(renderSlashFill(width-8))
+	}
+	logoLines := []string{
+		" ██████╗ ██████╗ ███╗   ██╗██████╗ ██╗   ██╗██╗████████╗",
+		"██╔════╝██╔═══██╗████╗  ██║██╔══██╗██║   ██║██║╚══██╔══╝",
+		"██║     ██║   ██║██╔██╗ ██║██║  ██║██║   ██║██║   ██║   ",
+		"╚██████╗╚██████╔╝██║ ╚████║██████╔╝╚██████╔╝██║   ██║   ",
+		" ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝  ╚═════╝ ╚═╝   ╚═╝   ",
+	}
+	maxLogoW := 0
+	for _, line := range logoLines {
+		if w := lipgloss.Width(line); w > maxLogoW {
+			maxLogoW = w
+		}
+	}
+	if maxLogoW > width {
+		return brandGradientText("conduit") + " " +
+			ornamentGradientText(renderSlashFill(width-8))
+	}
+	slashW := width - maxLogoW - 2
+	if slashW < 0 {
+		slashW = 0
+	}
+	var out []string
+	for i, line := range logoLines {
+		tail := ""
+		if i == 0 || i == len(logoLines)-1 {
+			tail = surfaceSpaces(2) + ornamentGradientText(renderSlashFill(slashW))
+		}
+		out = append(out, brandGradientText(line)+tail)
+	}
+	return strings.Join(out, "\n")
+}
+
+func renderWelcomeSection(label string, width int) string {
+	if width < lipgloss.Width(label)+4 {
+		return fgOnBg(colorWindowTitle).Bold(true).Render(label)
+	}
+	ruleW := width - lipgloss.Width(label) - 3
+	if ruleW < 0 {
+		ruleW = 0
+	}
+	return brandGradientText(label+" ") +
+		ornamentGradientText(ornamentGradientText(strings.Repeat("─", ruleW)))
+}
+
+func renderSlashFill(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return strings.Repeat("/", width)
 }
 
 // padToWidth right-pads a (possibly ANSI-coloured) string to the given visible width.
 func padToWidth(s string, w int) string {
 	sw := lipgloss.Width(s)
 	if sw < w {
-		return s + strings.Repeat(" ", w-sw)
+		return s + surfaceSpaces(w-sw)
 	}
 	return s
 }
@@ -575,31 +674,34 @@ func renderTable(lines []string, width int) string {
 		}
 	}
 
-	styleCell := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0"))
-	styleHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B"))
+	styleCell := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D8E0")).Background(colorWindowBg)
+	styleHeader := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Background(colorWindowBg)
 
 	var sb strings.Builder
 	for ri, row := range rows {
-		sb.WriteString("  ") // indent
+		sb.WriteString(surfaceSpaces(2))
 		for i := 0; i < cols; i++ {
 			cell := ""
 			if i < len(row) {
 				cell = row[i]
 			}
-			padded := cell + strings.Repeat(" ", colWidths[i]-len(cell))
+			padded := cell
+			if pad := colWidths[i] - len(cell); pad > 0 {
+				padded += surfaceSpaces(pad)
+			}
 			if ri == 0 {
 				sb.WriteString(styleHeader.Render(padded))
 			} else {
 				sb.WriteString(styleCell.Render(padded))
 			}
 			if i < cols-1 {
-				sb.WriteString("  ")
+				sb.WriteString(surfaceSpaces(2))
 			}
 		}
 		sb.WriteByte('\n')
 		// Underline header row.
 		if ri == 0 && len(rows) > 1 {
-			sb.WriteString("  ")
+			sb.WriteString(surfaceSpaces(2))
 			total := 0
 			for _, w := range colWidths {
 				total += w + 2
@@ -610,7 +712,7 @@ func renderTable(lines []string, width int) string {
 			if total > width-4 {
 				total = width - 4
 			}
-			sb.WriteString(styleSep.Render(strings.Repeat("─", total)))
+			sb.WriteString(styleSep.Render(ornamentGradientText(strings.Repeat("─", total))))
 			sb.WriteByte('\n')
 		}
 	}
@@ -673,14 +775,15 @@ var (
 	}
 )
 
-// codeStyle returns a foreground-only style for one syntax category,
-// picking the palette set based on the active theme.
+// codeStyle returns a syntax style for one category, picking the palette set
+// based on the active theme. Keep the background on the shared window surface
+// so styled code tokens do not punch black cells through chat.
 func codeStyle(get func(codePaletteSet) color.Color) lipgloss.Style {
 	set := codePaletteDark
 	if isLightTheme() {
 		set = codePaletteLight
 	}
-	return lipgloss.NewStyle().Foreground(get(set))
+	return lipgloss.NewStyle().Foreground(get(set)).Background(colorWindowBg)
 }
 
 // isLightTheme returns true when the active palette uses dark foregrounds
@@ -778,17 +881,11 @@ var langComments = map[string][]string{
 }
 
 var (
-	cDiffAdd    = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorCodeBg).Bold(false) // actually green
-	cDiffDel    = lipgloss.NewStyle().Foreground(lipgloss.Color("#F07178")).Background(colorCodeBg)
-	cDiffHunk   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorCodeBg)
-	cDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("#7986CB")).Background(colorCodeBg)
+	cDiffAdd    lipgloss.Style
+	cDiffDel    lipgloss.Style
+	cDiffHunk   lipgloss.Style
+	cDiffHeader lipgloss.Style
 )
-
-func init() {
-	// Override with proper green — lipgloss colors set in var block above need
-	// to reference each other, so we fix the add color here.
-	cDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(colorCodeBg)
-}
 
 func highlightLine(line, lang string) string {
 	// Diff language: color by line prefix.
@@ -933,14 +1030,14 @@ func isOperator(r rune) bool {
 
 // styleHeading1/2/3 are styles for GFM headings.
 var (
-	styleHeading1  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Underline(true)
-	styleHeading2  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA"))
-	styleHeading3  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF"))
-	styleItalic    = lipgloss.NewStyle().Italic(true)
-	styleStrike    = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A"))
-	styleBQ        = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Italic(true)
-	styleChecked   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF"))
-	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A"))
+	styleHeading1  lipgloss.Style
+	styleHeading2  lipgloss.Style
+	styleHeading3  lipgloss.Style
+	styleItalic    lipgloss.Style
+	styleStrike    lipgloss.Style
+	styleBQ        lipgloss.Style
+	styleChecked   lipgloss.Style
+	styleUnchecked lipgloss.Style
 )
 
 // renderLine applies block-level and inline styling, word-wrapping to width.
@@ -954,7 +1051,7 @@ func renderLine(line string, width int) string {
 		if w < 1 {
 			w = 1
 		}
-		return styleSep.Render(strings.Repeat("─", w))
+		return styleSep.Render(ornamentGradientText(strings.Repeat("─", w)))
 	}
 
 	// Headings.
@@ -982,7 +1079,7 @@ func renderLine(line string, width int) string {
 			if i > 0 {
 				sb.WriteByte('\n')
 			}
-			fmt.Fprintf(&sb, "  %s%s", styleBQ.Render("│ "), l)
+			sb.WriteString(surfaceSpaces(2) + styleBQ.Render("│ ") + l)
 		}
 		return sb.String()
 	}
@@ -1010,8 +1107,8 @@ func renderLine(line string, width int) string {
 
 // applyInline applies all inline GFM styles: bold, italic, strikethrough, code.
 func applyInline(line string) string {
-	line = applyDelim(line, "**", lipgloss.NewStyle().Bold(true))
-	line = applyDelim(line, "__", lipgloss.NewStyle().Bold(true))
+	line = applyDelim(line, "**", lipgloss.NewStyle().Background(colorWindowBg).Bold(true))
+	line = applyDelim(line, "__", lipgloss.NewStyle().Background(colorWindowBg).Bold(true))
 	line = applyDelim(line, "~~", styleStrike)
 	line = applyDelim(line, "`", styleInlineCode)
 	// Italic: single * or _ (applied after ** to avoid conflict)
@@ -1068,5 +1165,5 @@ func separator(width int) string {
 	if width < 1 {
 		width = 1
 	}
-	return styleSep.Render(strings.Repeat("─", width))
+	return styleSep.Render(ornamentGradientText(strings.Repeat("─", width)))
 }

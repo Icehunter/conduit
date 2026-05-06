@@ -24,37 +24,7 @@ func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 	prefix := "[" + sc.Name + ": "
 	closingBracket := "]"
 
-	// Require the last user message to mention the companion name as a word.
-	// This prevents Claude from spontaneously including the marker when the
-	// user wasn't addressing the companion.
-	companionLower := strings.ToLower(sc.Name)
-	userAddressed := false
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		msg := m.messages[i]
-		if msg.Role == RoleUser {
-			lower := strings.ToLower(msg.Content)
-			// Word-boundary check: name must be preceded/followed by non-letter.
-			idx := strings.Index(lower, companionLower)
-			for idx >= 0 {
-				before := idx == 0 || !isLetter(rune(lower[idx-1]))
-				after := idx+len(companionLower) >= len(lower) || !isLetter(rune(lower[idx+len(companionLower)]))
-				if before && after {
-					userAddressed = true
-					break
-				}
-				next := strings.Index(lower[idx+1:], companionLower)
-				if next < 0 {
-					break
-				}
-				idx = idx + 1 + next
-			}
-			break
-		}
-		if msg.Role == RoleAssistant {
-			break
-		}
-	}
-	if !userAddressed {
+	if !m.userAddressedCompanion(sc.Name) {
 		return m, nil
 	}
 
@@ -88,6 +58,38 @@ func (m Model) maybeFireCompanionBubble() (Model, tea.Cmd) {
 		return m, func() tea.Msg { return companionBubbleMsg{text: quip} }
 	}
 	return m, nil
+}
+
+func (m Model) userAddressedCompanion(name string) bool {
+	companionLower := strings.ToLower(name)
+	seenAssistant := false
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		msg := m.messages[i]
+		if msg.Role == RoleUser {
+			lower := strings.ToLower(msg.Content)
+			idx := strings.Index(lower, companionLower)
+			for idx >= 0 {
+				before := idx == 0 || !isLetter(rune(lower[idx-1]))
+				after := idx+len(companionLower) >= len(lower) || !isLetter(rune(lower[idx+len(companionLower)]))
+				if before && after {
+					return true
+				}
+				next := strings.Index(lower[idx+1:], companionLower)
+				if next < 0 {
+					break
+				}
+				idx = idx + 1 + next
+			}
+			return false
+		}
+		if msg.Role == RoleAssistant {
+			if seenAssistant {
+				break
+			}
+			seenAssistant = true
+		}
+	}
+	return false
 }
 
 // companionBubbleMsg is sent when the companion should speak.
@@ -145,21 +147,25 @@ func (m Model) stripCompanionMarker(s string) string {
 	return s
 }
 
-// renderCompanionBubble renders a speech bubble with the companion face.
-// The face and bubble box are joined horizontally so they align properly.
-// Returns "" when no bubble is active or companion not configured.
+// renderCompanionBubble renders the configured companion. When the companion
+// has speech text, the face and bubble box are joined horizontally so they
+// align properly; otherwise the idle face is still visible.
 func (m Model) renderCompanionBubble() string {
-	if m.companionBubble == "" {
+	if m.companionName == "" {
 		return ""
 	}
 	sc, err := buddy.Load()
 	if err != nil || sc == nil {
 		return ""
 	}
-	bones := buddy.GenerateBones(sc.UserID)
+	bones := buddy.GenerateBones(sc.UserID, sc.ForcedRarity)
 	sprite := buddy.RenderSprite(bones, m.buddyFrame)
+	spriteStyle := lipgloss.NewStyle().Background(colorWindowBg)
+	if strings.TrimSpace(m.companionBubble) == "" {
+		return spriteStyle.Render(sprite)
+	}
 
-	const maxW = 28
+	const maxW = 34
 	// Word-wrap the text to maxW columns.
 	var wrapped []string
 	words := strings.Fields(m.companionBubble)
@@ -178,20 +184,23 @@ func (m Model) renderCompanionBubble() string {
 		wrapped = append(wrapped, cur)
 	}
 
-	// Build the speech bubble text block.
-	textStyle := lipgloss.NewStyle().Foreground(colorFg).Italic(true)
+	textStyle := fgOnBg(colorFg).Italic(true)
 	var rows []string
 	for _, l := range wrapped {
 		rows = append(rows, textStyle.Render(l))
 	}
-	bubbleStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(1).PaddingRight(1).
-		Width(maxW + 2)
-	bubble := bubbleStyle.Render(strings.Join(rows, "\n"))
+	bubble := strings.Join(rows, "\n")
 
-	// Join animated sprite + bubble side by side.
-	spriteStyle := lipgloss.NewStyle().PaddingRight(1)
-	return lipgloss.JoinHorizontal(lipgloss.Center, spriteStyle.Render(sprite), bubble)
+	// Join bubble + animated sprite side by side. The text sits to the left
+	// so the companion can live on the lower-right without blocking the input.
+	tail := fgOnBg(colorWindowTitle).Render("‹")
+	content := lipgloss.JoinHorizontal(lipgloss.Center, bubble+tail, spriteStyle.Render(sprite))
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(colorWindowBorder).
+		BorderBackground(colorWindowBg).
+		Background(colorWindowBg).
+		PaddingLeft(1).
+		PaddingRight(1).
+		Render(content)
 }

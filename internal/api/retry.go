@@ -12,6 +12,30 @@ import (
 	"time"
 )
 
+// RetryEvent describes one API retry delay. It is exposed through context so
+// higher layers can render a useful "waiting for rate limit" state without the
+// HTTP client importing UI packages.
+type RetryEvent struct {
+	Attempt    int
+	Delay      time.Duration
+	RetryAfter time.Duration
+	Err        error
+}
+
+type retryHandlerKey struct{}
+
+// RetryHandler is called before sleeping for a retry. Return false to abort
+// the retry and surface the decoded API error immediately.
+type RetryHandler func(RetryEvent) bool
+
+// WithRetryHandler installs a handler used by withRetry.
+func WithRetryHandler(ctx context.Context, handler RetryHandler) context.Context {
+	if handler == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, retryHandlerKey{}, handler)
+}
+
 // Retry parameters mirroring withRetry.ts:
 //
 //	base=1s, multiplier=2, max=32s, jitter=25%, maxRetries=5
@@ -101,6 +125,17 @@ func withRetry(ctx context.Context, fn func() (*http.Response, error)) (*http.Re
 		}
 
 		d := retryDelay(attempt, retryAfter)
+		if handler, ok := ctx.Value(retryHandlerKey{}).(RetryHandler); ok && handler != nil {
+			retryAfterDuration := time.Duration(retryAfter * float64(time.Second))
+			if !handler(RetryEvent{
+				Attempt:    attempt + 1,
+				Delay:      d,
+				RetryAfter: retryAfterDuration,
+				Err:        decodeErr,
+			}) {
+				return nil, decodeErr
+			}
+		}
 		if err := sleepFn(ctx, d); err != nil {
 			return nil, err
 		}

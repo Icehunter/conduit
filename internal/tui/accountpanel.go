@@ -8,7 +8,7 @@ package tui
 //   Detail — per-account action menu (Switch / Re-login / Remove / Delete / Back)
 //
 // Navigation:
-//   ↑↓/jk   navigate list / actions
+//   ↑/↓/jk   navigate list / actions
 //   Enter    select
 //   Esc      detail → list; list → close panel
 //   ←/→      switch to adjacent tab (handled by settings panel)
@@ -259,7 +259,7 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 		}
 		sb.WriteString(addCursor + addLabel.Render("+ Add account") + "\n")
 		sb.WriteString("\n")
-		sb.WriteString(dim.Render("  ↑↓ navigate · Enter select · Esc close · ←/→ tabs"))
+		sb.WriteString(dim.Render("  ↑/↓ navigate · Enter select · Esc close · ←/→ tabs"))
 
 	case accountViewDetail:
 		sb.WriteString(accent.Render("  "+a.detailEmail) + "\n\n")
@@ -285,6 +285,6 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 			sb.WriteString(cursor + label + "\n")
 		}
 		sb.WriteString("\n")
-		sb.WriteString(dim.Render("  ↑↓ navigate · Enter confirm · Esc back"))
+		sb.WriteString(dim.Render("  ↑/↓ navigate · Enter confirm · Esc back"))
 	}
 }

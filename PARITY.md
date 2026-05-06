@@ -33,7 +33,7 @@
 | M-Q Custom keybindings | ✅ | `internal/keybindings/` — parser, resolver, JSON loader, defaults. TUI hookup: `activeContexts()`, `dispatchKeybindingAction()`, `command:*` slash dispatch, chat/select/confirm action IDs. |
 | M-R Image paste | ✅ | ctrl+v reads clipboard via osascript (macOS PNG/TIFF) or xclip/wl-paste (Linux). Multiple images accumulate, badge shows count. tea.PasteMsg for large text pastes. |
 | M-S Bubbletea v2 polish | ✅ | Sticky-bottom scroll, overlay viewport shrink, system msg wrap, innerW lipgloss-v2 fix, ctrl+c signal handling, handleKey/handleKeyBuiltins split (prevents KB recursion), /keybindings live resolver output |
-| M-T Crush-inspired TUI polish | ✅ | `internal/tui/workinganim/` gradient scramble work indicator replaces the plain footer Thinking spinner; assistant info rows show model/duration/cost; tool rows collapse completed successes while preserving running context and error details |
+| M-T Crush-inspired TUI polish | ✅ | `internal/tui/workinganim/` gradient scramble work indicator replaces the plain footer Thinking spinner; ultraviolet compositor layers floating, size-clamped panels/pickers/modals without viewport shrink; assistant info rows show model/duration/cost; live and resumed tool rows stay one-line with tool-specific verbs and summaries while preserving error details |
 
 **Test count:** 507 passing, race clean (2026-05-02)
 
@@ -224,7 +224,7 @@
 | Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
 | Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | ✅ | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge, message count, preview panel showing age+count+title of selected session. Tag tabs descoped (no tag-based grouping in CC external build). |
 | Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command → search-panel overlay | ✅ | Navigable search results panel; j/k navigation; Enter loads matching session; grouped by session title+age; ripgrep code-search panel descoped |
-| Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑↓/jk Enter; current marked ● |
+| Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑/↓/jk Enter; current marked ● |
 | Theme picker | `components/ThemePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /theme with no args opens picker; lists built-ins + user themes |
 | Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |

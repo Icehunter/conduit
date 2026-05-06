@@ -90,6 +90,76 @@ func TestStreamMessage_429MaxRetries(t *testing.T) {
 	}
 }
 
+func TestStreamMessage_429RetryHandlerNotified(t *testing.T) {
+	oldSleep := sleepFn
+	t.Cleanup(func() { sleepFn = oldSleep })
+	sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("retry-after", "5")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"rate limited"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"x\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n")
+		_, _ = io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n")
+		_, _ = io.WriteString(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL, AuthToken: "tok"}, srv.Client())
+	var got RetryEvent
+	ctx := WithRetryHandler(context.Background(), func(ev RetryEvent) bool {
+		got = ev
+		return true
+	})
+	_, err := c.StreamMessage(ctx, &MessageRequest{Model: "m", MaxTokens: 1})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	if got.Attempt != 1 {
+		t.Fatalf("retry attempt = %d, want 1", got.Attempt)
+	}
+	if got.RetryAfter != 5*time.Second {
+		t.Fatalf("retry-after = %v, want 5s", got.RetryAfter)
+	}
+	if got.Err == nil || !strings.Contains(got.Err.Error(), "rate_limit_error") {
+		t.Fatalf("retry error = %v, want rate_limit_error", got.Err)
+	}
+}
+
+func TestStreamMessage_429RetryHandlerCanAbort(t *testing.T) {
+	calls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("retry-after", "600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"rate limited"}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL, AuthToken: "tok"}, srv.Client())
+	ctx := WithRetryHandler(context.Background(), func(RetryEvent) bool { return false })
+	_, err := c.StreamMessage(ctx, &MessageRequest{Model: "m", MaxTokens: 1})
+	if err == nil {
+		t.Fatal("expected rate-limit error")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	if !strings.Contains(err.Error(), "rate_limit_error") {
+		t.Fatalf("err = %v, want rate_limit_error", err)
+	}
+}
+
 // TestStreamMessage_429ContextCancellation verifies backoff respects context cancellation.
 func TestStreamMessage_429ContextCancellation(t *testing.T) {
 	mux := http.NewServeMux()

@@ -99,6 +99,7 @@ func (m Model) renderResumePicker() string {
 	if p == nil {
 		return ""
 	}
+	contentW := floatingInnerWidth(m.width, floatingPickerSpec)
 	var sb strings.Builder
 	// Search line.
 	if p.filter != "" {
@@ -129,7 +130,7 @@ func (m Model) renderResumePicker() string {
 	for vi := start; vi < end; vi++ {
 		i := p.filtered[vi]
 		s := p.sessions[i]
-		label := s.age + "  " + s.preview
+		label := truncateMiddle(s.age+"  "+s.preview, contentW)
 		var line string
 		if vi == p.selected {
 			line = stylePickerItemSelected.Render("❯ " + label)
@@ -138,14 +139,14 @@ func (m Model) renderResumePicker() string {
 		}
 		sb.WriteString(line + "\n")
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter load · Esc clear search · Ctrl+C cancel"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter load · Esc clear search · Ctrl+C cancel"))
 
 	// Preview panel: show selected session detail below the list.
 	if len(p.filtered) > 0 {
 		sel := p.sessions[p.filtered[p.selected]]
 		var detail strings.Builder
 		detail.WriteString("\n")
-		detail.WriteString(strings.Repeat("─", m.width-8))
+		detail.WriteString(ornamentGradientText(strings.Repeat("─", contentW-4)))
 		detail.WriteString("\n")
 		meta := sel.age
 		if sel.msgCount > 0 {
@@ -157,13 +158,9 @@ func (m Model) renderResumePicker() string {
 		detail.WriteString(stylePickerDesc.Render(meta) + "\n")
 		// Word-wrap the title to available width.
 		titleStyle := lipgloss.NewStyle().Foreground(colorFg)
-		detail.WriteString(titleStyle.Render(sel.preview))
+		detail.WriteString(titleStyle.Render(wordWrap(sel.preview, contentW)))
 		sb.WriteString(detail.String())
 	}
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return sb.String()
 }

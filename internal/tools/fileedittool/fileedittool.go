@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/pmezard/go-difflib/difflib"
 )
 
 // Tool implements the Edit tool.
@@ -132,7 +133,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
 
-	return tool.TextResult(fmt.Sprintf("The file %s has been edited successfully.", in.FilePath)), nil
+	return tool.TextResult(editDiff(in.FilePath, fileStr, updated)), nil
 }
 
 // createFile creates a new file (or overwrites) with the given content.
@@ -143,7 +144,30 @@ func (t *Tool) createFile(path, content string) (tool.Result, error) {
 	if err := writeAtomic(path, content); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
-	return tool.TextResult(fmt.Sprintf("New file created at: %s", path)), nil
+	return tool.TextResult(editDiff(path, "", content)), nil
+}
+
+// editDiff generates a unified diff between old and new content wrapped in a
+// fenced diff block for TUI rendering. Empty oldContent means a new file.
+func editDiff(path, oldContent, newContent string) string {
+	label := path
+	if home, err := os.UserHomeDir(); err == nil {
+		if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			label = "~" + strings.TrimPrefix(path, home)
+		}
+	}
+	ud := difflib.UnifiedDiff{
+		A:        difflib.SplitLines(oldContent),
+		B:        difflib.SplitLines(newContent),
+		FromFile: label,
+		ToFile:   label,
+		Context:  3,
+	}
+	text, err := difflib.GetUnifiedDiffString(ud)
+	if err != nil || text == "" {
+		return fmt.Sprintf("Edited %s", label)
+	}
+	return "```diff\n" + strings.TrimRight(text, "\n") + "\n```"
 }
 
 // findString looks for needle in haystack. First tries exact match, then

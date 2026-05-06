@@ -63,6 +63,35 @@ func TestRegisterPermissionsCommand_NilGate(t *testing.T) {
 	}
 }
 
+func TestRegisterBuiltins_CommandPickerCommand(t *testing.T) {
+	r := New()
+	RegisterBuiltins(r)
+
+	result, ok := r.Dispatch("/commands")
+	if !ok {
+		t.Fatal("expected /commands to be registered")
+	}
+	if result.Type != "commands" {
+		t.Errorf("result type = %q, want 'commands'", result.Type)
+	}
+}
+
+func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
+	r := New()
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {})
+
+	result, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to be registered")
+	}
+	if result.Type != "picker" {
+		t.Errorf("result type = %q, want 'picker'", result.Type)
+	}
+	if result.Model != "model" {
+		t.Errorf("result model = %q, want 'model'", result.Model)
+	}
+}
+
 func TestRegisterPermissionsCommand_WithGate(t *testing.T) {
 	r := New()
 	gate := permissions.New(

@@ -42,7 +42,7 @@ func RegisterBuddyCommand(r *Registry, getUserID func() string) {
 					return Result{Type: "error", Text: fmt.Sprintf("buddy: save: %v", err)}
 				}
 				bones := buddy.GenerateBones(userID, forcedRarity)
-				return Result{Type: "text", Text: fmt.Sprintf("Your companion has been named!\n\n%s", buddy.Summary(bones, name))}
+				return Result{Type: "buddy", Text: fmt.Sprintf("Your companion has been named!\n\n%s", buddy.Summary(bones, name))}
 			}
 
 			// /buddy — show companion or hatch notice
@@ -59,7 +59,7 @@ func RegisterBuddyCommand(r *Registry, getUserID func() string) {
 				userID = getUserID()
 			}
 			bones := buddy.GenerateBones(userID, sc.ForcedRarity)
-			return Result{Type: "text", Text: buddy.Summary(bones, sc.Name)}
+			return Result{Type: "buddy", Text: buddy.Summary(bones, sc.Name)}
 		},
 	})
 }

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/session"
 )
@@ -99,10 +98,6 @@ func (m Model) renderSearchPanel() string {
 			sb.WriteString("  " + label + "\n")
 		}
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter load session · q/Esc close"))
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter load session · q/Esc close"))
+	return panelFrameStyle(m.width, renderedLineCount(sb.String())+4).Render(sb.String())
 }

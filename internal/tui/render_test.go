@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/icehunter/conduit/internal/api"
 )
 
 // plainText strips ANSI escapes so substring assertions don't fail when
@@ -140,7 +142,7 @@ func TestRenderMessage_AssistantInfo(t *testing.T) {
 		AssistantModel:    "Sonnet 4.6",
 		AssistantDuration: 12 * time.Second,
 		AssistantCost:     0.03,
-	}, 80))
+	}, 80, false))
 
 	for _, want := range []string{"Sonnet 4.6", "12s", "$0.03"} {
 		if !strings.Contains(out, want) {
@@ -156,32 +158,36 @@ func TestRenderMessage_ToolSummary(t *testing.T) {
 		ToolInput:    `{"command":"make verify"}`,
 		Content:      "All checks passed.",
 		ToolDuration: 2 * time.Second,
-	}, 80))
+	}, 80, false))
 
-	for _, want := range []string{"Bash", "done", "2s"} {
+	for _, want := range []string{"Bash", "ran", "2s", "make verify"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tool render missing %q: %q", want, out)
 		}
 	}
-	for _, hidden := range []string{"make verify", "All checks passed."} {
-		if strings.Contains(out, hidden) {
-			t.Fatalf("completed successful tool render should hide %q: %q", hidden, out)
-		}
+	if strings.Contains(out, "All checks passed.") {
+		t.Fatalf("completed successful tool render should hide result preview: %q", out)
+	}
+	if got := strings.Count(out, "\n"); got != 0 {
+		t.Fatalf("completed successful tool row should stay one line, got %d newlines: %q", got, out)
 	}
 }
 
-func TestRenderMessage_ToolSummaryWraps(t *testing.T) {
+func TestRenderMessage_RunningToolSummaryStaysOneLine(t *testing.T) {
 	longPrompt := "Write a complete, production-quality Go webserver that serves cached data from an S3 bucket. Address all of the identified reliability, security, cache invalidation, observability, and deployment issues without omitting edge cases."
 	out := renderMessage(Message{
 		Role:      RoleTool,
 		ToolName:  "qwen_router__qwen_implement",
 		ToolInput: `{"prompt":"` + longPrompt + `"}`,
 		Content:   "running…",
-	}, 72)
+	}, 72, false)
 
 	plain := plainText(out)
-	if !strings.Contains(plain, "reliability") {
-		t.Fatalf("wrapped summary lost prompt content: %q", plain)
+	if !strings.Contains(plain, "Write a complete") {
+		t.Fatalf("running summary lost prompt content: %q", plain)
+	}
+	if got := strings.Count(out, "\n"); got != 0 {
+		t.Fatalf("running successful tool row should stay one line, got %d newlines: %q", got, out)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if got := ansi.StringWidth(line); got > 72 {
@@ -197,14 +203,121 @@ func TestRenderMessage_ToolErrorShowsDetails(t *testing.T) {
 		ToolInput: `{"command":"make verify"}`,
 		Content:   "exit status 1: lint failed",
 		ToolError: true,
-	}, 80))
+	}, 80, false))
 
-	for _, want := range []string{"Bash", "error", "exit status 1: lint failed"} {
+	for _, want := range []string{"Bash", "failed", "exit status 1: lint failed"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("tool error render missing %q: %q", want, out)
 		}
 	}
 	if strings.Contains(out, "make verify") {
 		t.Fatalf("completed error tool render should hide prompt summary: %q", out)
+	}
+}
+
+func TestHistoryToDisplayMessage_ToolUsePreservesInput(t *testing.T) {
+	msg := historyToDisplayMessage(api.Message{
+		Role: "assistant",
+		Content: []api.ContentBlock{{
+			Type:  "tool_use",
+			ID:    "toolu_1",
+			Name:  "BashTool",
+			Input: map[string]any{"command": "git status --short"},
+		}},
+	})
+
+	out := plainText(renderMessage(msg, 80, false))
+	for _, want := range []string{"Bash", "used", "git status --short"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("resumed tool render missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestHistoryToDisplayMessages_PairsToolResultWithToolUse(t *testing.T) {
+	msgs := historyToDisplayMessages([]api.Message{
+		{
+			Role: "assistant",
+			Content: []api.ContentBlock{{
+				Type:  "tool_use",
+				ID:    "toolu_1",
+				Name:  "Bash",
+				Input: map[string]any{"command": "git status --short"},
+			}},
+		},
+		{
+			Role: "user",
+			Content: []api.ContentBlock{{
+				Type:          "tool_result",
+				ToolUseID:     "toolu_1",
+				ResultContent: " M internal/tui/render.go",
+			}},
+		},
+	})
+
+	if len(msgs) != 1 {
+		t.Fatalf("historyToDisplayMessages len = %d, want 1: %#v", len(msgs), msgs)
+	}
+	out := plainText(renderMessage(msgs[0], 80, false))
+	for _, want := range []string{"Bash", "ran", "git status --short"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("paired resumed tool render missing %q: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "M internal/tui/render.go") {
+		t.Fatalf("paired successful tool result should stay hidden: %q", out)
+	}
+}
+
+func TestHistoryToDisplayMessages_PreservesTextAroundToolUse(t *testing.T) {
+	msgs := historyToDisplayMessages([]api.Message{
+		{
+			Role: "assistant",
+			Content: []api.ContentBlock{
+				{Type: "text", Text: "I'll check status."},
+				{
+					Type:  "tool_use",
+					ID:    "toolu_1",
+					Name:  "Bash",
+					Input: map[string]any{"command": "git status --short"},
+				},
+			},
+		},
+		{
+			Role: "user",
+			Content: []api.ContentBlock{{
+				Type:          "tool_result",
+				ToolUseID:     "toolu_1",
+				ResultContent: "",
+			}},
+		},
+	})
+
+	if len(msgs) != 2 {
+		t.Fatalf("historyToDisplayMessages len = %d, want 2: %#v", len(msgs), msgs)
+	}
+	if msgs[0].Role != RoleAssistant || !strings.Contains(msgs[0].Content, "I'll check status.") {
+		t.Fatalf("assistant text not preserved: %#v", msgs[0])
+	}
+	out := plainText(renderMessage(msgs[1], 80, false))
+	if !strings.Contains(out, "git status --short") {
+		t.Fatalf("tool row missing command: %q", out)
+	}
+}
+
+func TestRenderMessage_ToolResultFallbackSummary(t *testing.T) {
+	out := plainText(renderMessage(Message{
+		Role:     RoleTool,
+		ToolName: "Bash",
+		Content:  "first line\nsecond line\nthird line",
+	}, 80, false))
+
+	for _, want := range []string{"Bash", "ran", "first line +2 lines"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tool fallback summary missing %q: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "second line") {
+		t.Fatalf("tool fallback summary should not expand successful output: %q", out)
 	}
 }

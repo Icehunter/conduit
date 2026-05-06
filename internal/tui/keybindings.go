@@ -24,12 +24,14 @@ func (m Model) activeContexts() []string {
 	switch {
 	case m.permPrompt != nil:
 		return []string{"Confirmation", "Global"}
-	case m.picker != nil, m.resumePrompt != nil, m.loginPrompt != nil:
+	case m.picker != nil, m.resumePrompt != nil, m.loginPrompt != nil, m.commandPickerActive(), len(m.atMatches) > 0:
 		return []string{"Select", "Global"}
 	case m.settingsPanel != nil:
 		return []string{"Settings", "Global"}
 	case m.pluginPanel != nil:
 		return []string{"Plugin", "Global"}
+	case m.helpOverlay != nil:
+		return []string{"Help", "Global"}
 	case m.panel != nil:
 		return []string{"Global"}
 	default:
@@ -59,6 +61,10 @@ func (m Model) dispatchKeybindingAction(action string, _ tea.KeyPressMsg) (Model
 
 	switch action {
 	// App-level
+	case "help:dismiss":
+		m.helpOverlay = nil
+		return m, nil, true
+
 	case "app:interrupt":
 		// Same as ctrl+c: cancel turn if running, quit if idle.
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
@@ -81,6 +87,20 @@ func (m Model) dispatchKeybindingAction(action string, _ tea.KeyPressMsg) (Model
 	case "chat:cycleMode":
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 		return m2, cmd, true
+	case "chat:commandPicker":
+		if m.running {
+			return m, nil, true
+		}
+		return m.openCommandPicker(), nil, true
+	case "chat:modelPicker":
+		if m.running || m.cfg.Commands == nil {
+			return m, nil, true
+		}
+		if res, ok := m.cfg.Commands.Dispatch("/model"); ok {
+			m2, cmd := m.applyCommandResult(res)
+			return m2, cmd, true
+		}
+		return m, nil, true
 
 	case "select:next":
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyDown})

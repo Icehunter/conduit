@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // loginPromptState holds the /login account picker state.
@@ -90,13 +89,9 @@ func (m Model) renderLoginPicker() string {
 		}
 		sb.WriteString(line + "\n")
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1/2 quick pick · Escape cancel"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1/2 quick pick · Escape cancel"))
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return sb.String()
 }
 
 // welcomeCard returns the two-panel welcome banner shown on startup.

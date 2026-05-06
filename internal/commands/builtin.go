@@ -19,6 +19,16 @@ func RegisterBuiltins(r *Registry) {
 		Handler:     helpHandler(r),
 	})
 	r.Register(Command{
+		Name:        "commands",
+		Description: "Open the slash command picker",
+		Handler:     func(string) Result { return Result{Type: "commands"} },
+	})
+	r.Register(Command{
+		Name:        "?",
+		Description: "Show keyboard shortcut help",
+		Handler:     func(args string) Result { return Result{Type: "help_overlay", Text: strings.TrimSpace(args)} },
+	})
+	r.Register(Command{
 		Name:        "clear",
 		Description: "Clear the conversation history and start fresh",
 		Handler:     func(string) Result { return Result{Type: "clear"} },
@@ -37,32 +47,38 @@ func RegisterBuiltins(r *Registry) {
 
 // RegisterModelCommand adds /model with the current model name and a setter.
 func RegisterModelCommand(r *Registry, getModel func() string, setModel func(string)) {
+	modelHandler := func(args string) Result {
+		args = strings.TrimSpace(args)
+		if args == "" {
+			values := []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
+			labels := []string{
+				"Opus 4.7   — most capable",
+				"Sonnet 4.6 — balanced (default)",
+				"Haiku 4.5  — fastest, cheapest",
+			}
+			return pickerResult("model", "Pick a model", getModel(), values, labels)
+		}
+		// Normalise shorthand names.
+		name := resolveModelName(args)
+		setModel(name)
+		internalmodel.SetOverride(name)
+		// Persist so the choice survives restart. Best-effort — surface
+		// the failure in the message rather than swallowing it.
+		suffix := ""
+		if err := settings.SaveRawKey("model", name); err != nil {
+			suffix = fmt.Sprintf(" (failed to persist: %v)", err)
+		}
+		return Result{Type: "model", Model: name, Text: fmt.Sprintf("Switched to %s%s", name, suffix)}
+	}
 	r.Register(Command{
 		Name:        "model",
 		Description: "Show or switch the active model (/model [name])",
-		Handler: func(args string) Result {
-			args = strings.TrimSpace(args)
-			if args == "" {
-				values := []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
-				labels := []string{
-					"Opus 4.7   — most capable",
-					"Sonnet 4.6 — balanced (default)",
-					"Haiku 4.5  — fastest, cheapest",
-				}
-				return pickerResult("model", "Pick a model", getModel(), values, labels)
-			}
-			// Normalise shorthand names.
-			name := resolveModelName(args)
-			setModel(name)
-			internalmodel.SetOverride(name)
-			// Persist so the choice survives restart. Best-effort — surface
-			// the failure in the message rather than swallowing it.
-			suffix := ""
-			if err := settings.SaveRawKey("model", name); err != nil {
-				suffix = fmt.Sprintf(" (failed to persist: %v)", err)
-			}
-			return Result{Type: "model", Model: name, Text: fmt.Sprintf("Switched to %s%s", name, suffix)}
-		},
+		Handler:     modelHandler,
+	})
+	r.Register(Command{
+		Name:        "models",
+		Description: "Open the model picker",
+		Handler:     modelHandler,
 	})
 }
 

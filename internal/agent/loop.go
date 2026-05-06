@@ -48,9 +48,11 @@ type EventType int
 
 const (
 	EventText       EventType = iota // a text delta streamed from the model
-	EventToolUse                     // a tool_use block completed; tool is about to run
+	EventToolStart                   // tool_use block started streaming; name known, input pending
+	EventToolUse                     // tool_use block complete; tool is about to run
 	EventToolResult                  // tool execution finished
 	EventRateLimit                   // rate-limit headers received; RateLimitWarning may be non-empty
+	EventAPIRetry                    // API returned 429 and the client is backing off
 	EventPartial                     // stream errored mid-turn; PartialBlocks holds what was received
 )
 
@@ -73,6 +75,11 @@ type LoopEvent struct {
 	// EventRateLimit
 	RateLimitWarning string // non-empty when quota is running low
 	RateLimitInfo    ratelimit.Info
+
+	// EventAPIRetry
+	RetryAttempt int
+	RetryDelay   time.Duration
+	RetryErr     error
 
 	// EventPartial — fired before a stream error bubbles up so callers
 	// can persist whatever assistant content was streamed before the
@@ -352,7 +359,19 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			}
 		}
 
-		stream, err := l.client.StreamMessage(ctx, req)
+		streamCtx := api.WithRetryHandler(ctx, func(ev api.RetryEvent) bool {
+			handler(LoopEvent{
+				Type:         EventAPIRetry,
+				RetryAttempt: ev.Attempt,
+				RetryDelay:   ev.Delay,
+				RetryErr:     ev.Err,
+			})
+			// Short 429s are usually transient. Long retry-after values are
+			// plan/quota exhaustion; surfacing the error is clearer than
+			// leaving the user watching a spinner for minutes or hours.
+			return ev.Delay <= 2*time.Minute
+		})
+		stream, err := l.client.StreamMessage(streamCtx, req)
 		if err != nil {
 			return msgs, fmt.Errorf("agent: stream: %w", err)
 		}
@@ -508,6 +527,13 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 					blockType: raw.Type,
 					toolID:    raw.ID,
 					toolName:  raw.Name,
+				}
+				if raw.Type == "tool_use" {
+					handler(LoopEvent{
+						Type:     EventToolStart,
+						ToolName: raw.Name,
+						ToolID:   raw.ID,
+					})
 				}
 			}
 

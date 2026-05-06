@@ -20,7 +20,6 @@ import (
 //	colorError  → palette.Danger
 //	colorTool   → palette.Info
 //	colorBorder → palette.Border
-//	colorCodeBg → palette.CodeBg
 var (
 	colorAccent color.Color
 	colorMuted  color.Color
@@ -28,9 +27,14 @@ var (
 	colorError  color.Color
 	colorTool   color.Color
 	colorFg     color.Color
-	colorBg     color.Color
-	colorCodeBg color.Color
+
+	colorWindowBorder color.Color
+	colorWindowTitle  color.Color
+	colorWindowBg     color.Color
+	colorSelectionFg  color.Color
 )
+
+const windowBgHex = "#1F1E26"
 
 // styleAppSurface paints the entire TUI region with the theme background.
 // View() wraps its top-level output in this so empty space and padding
@@ -56,7 +60,6 @@ var (
 	styleModeCyan           lipgloss.Style
 	styleModeYellow         lipgloss.Style
 	styleSep                lipgloss.Style
-	stylePickerBorder       lipgloss.Style
 	stylePickerItem         lipgloss.Style
 	stylePickerItemSelected lipgloss.Style
 	stylePickerDesc         lipgloss.Style
@@ -74,36 +77,27 @@ func RebuildStyles() {
 	colorError = lipgloss.Color(p.Danger)
 	colorTool = lipgloss.Color(p.Info)
 	colorFg = lipgloss.Color(p.Primary)
-	colorBg = lipgloss.Color(p.Background)
-	colorCodeBg = lipgloss.Color(p.CodeBg)
+	colorWindowBorder = lipgloss.Color(gradientPurple)
+	colorWindowTitle = lipgloss.Color(gradientBlue)
+	colorWindowBg = lipgloss.Color(windowBgHex)
+	colorSelectionFg = lipgloss.Color("#FFFFFF")
 
-	// styleAppSurface is used by paintApp's outer wrap. Background is set
-	// only when the active palette has a Background value (light themes).
-	if p.Background != "" {
-		styleAppSurface = lipgloss.NewStyle().
-			Background(lipgloss.Color(p.Background)).
-			Foreground(colorFg)
-	} else {
-		styleAppSurface = lipgloss.NewStyle().Foreground(colorFg)
-	}
+	styleAppSurface = lipgloss.NewStyle().
+		Background(colorWindowBg).
+		Foreground(colorFg)
 
 	// Foreground-only theming. Terminal bg shows through everywhere except
 	// code blocks (which keep their own bg for visual differentiation).
-	styleYouPrefix = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	styleClaudePrefix = lipgloss.NewStyle().Foreground(colorMuted)
-	styleUserText = lipgloss.NewStyle().Foreground(colorFg)
-	styleAssistantText = lipgloss.NewStyle().Foreground(colorFg)
-	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Bold(true)
-	styleErrorText = lipgloss.NewStyle().Foreground(colorError)
-	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
-	// Code blocks: no bg painting on tokens or block container — terminal/
-	// theme bg shows through. PaddingLeft(2) is the visual differentiation.
-	// Painting the block bg would require painting every syntax token bg too
-	// (otherwise terminal default leaks between tokens), and the hardcoded
-	// token colors are tuned for dark bg only.
-	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF"))
-	styleCodeBorder = lipgloss.NewStyle().PaddingLeft(2)
-	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted)
+	styleYouPrefix = lipgloss.NewStyle().Foreground(colorAccent).Background(colorWindowBg).Bold(true)
+	styleClaudePrefix = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg)
+	styleUserText = lipgloss.NewStyle().Foreground(colorFg).Background(colorWindowBg)
+	styleAssistantText = lipgloss.NewStyle().Foreground(colorFg).Background(colorWindowBg)
+	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Background(colorWindowBg).Bold(true)
+	styleErrorText = lipgloss.NewStyle().Foreground(colorError).Background(colorWindowBg)
+	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg).Italic(true)
+	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF")).Background(colorWindowBg)
+	styleCodeBorder = lipgloss.NewStyle().Background(colorWindowBg).PaddingLeft(2)
+	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg)
 
 	// Input border: paint bg when theme has Background set (light themes)
 	// so the padding cells inside the border don't expose terminal default
@@ -111,37 +105,52 @@ func RebuildStyles() {
 	inputBorder := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colorDim).
+		Background(colorWindowBg).
+		BorderBackground(colorWindowBg).
 		PaddingLeft(1).PaddingRight(1)
 	inputBorderActive := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
+		BorderForeground(colorWindowBorder).
+		Background(colorWindowBg).
+		BorderBackground(colorWindowBg).
 		PaddingLeft(1).PaddingRight(1)
-	if p.Background != "" {
-		inputBorder = inputBorder.Background(colorBg).BorderBackground(colorBg)
-		inputBorderActive = inputBorderActive.Background(colorBg).BorderBackground(colorBg)
-	}
 	styleInputBorder = inputBorder
 	styleInputBorderActive = inputBorderActive
 
-	styleStatus = lipgloss.NewStyle().Foreground(colorDim)
-	styleStatusAccent = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	styleStatus = lipgloss.NewStyle().Foreground(colorDim).Background(colorWindowBg)
+	styleStatusAccent = lipgloss.NewStyle().Foreground(colorWindowTitle).Background(colorWindowBg).Bold(true)
 
-	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Bold(true)
-	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Bold(true)
-	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Bold(true)
+	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Background(colorWindowBg).Bold(true)
+	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Background(colorWindowBg).Bold(true)
+	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Background(colorWindowBg).Bold(true)
 
-	styleSep = lipgloss.NewStyle().Foreground(colorDim)
+	styleSep = lipgloss.NewStyle().Foreground(colorDim).Background(colorWindowBg)
 
-	stylePickerBorder = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(1).
-		PaddingRight(1)
-	stylePickerItem = lipgloss.NewStyle().Foreground(colorFg)
-	stylePickerItemSelected = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	stylePickerDesc = lipgloss.NewStyle().Foreground(colorMuted)
+	stylePickerItem = lipgloss.NewStyle().Foreground(colorFg).Background(colorWindowBg)
+	stylePickerItemSelected = lipgloss.NewStyle().
+		Foreground(colorSelectionFg).
+		Background(colorWindowBg).
+		Bold(true)
+	stylePickerDesc = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg)
 	// Bold-only highlight for matched query characters (no underline — too noisy in autocomplete).
-	stylePickerHighlight = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	stylePickerHighlight = lipgloss.NewStyle().
+		Foreground(colorWindowTitle).
+		Background(colorWindowBg).
+		Bold(true)
+
+	styleHeading1 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFCB6B")).Background(colorWindowBg).Underline(true)
+	styleHeading2 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C792EA")).Background(colorWindowBg)
+	styleHeading3 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#89DDFF")).Background(colorWindowBg)
+	styleItalic = lipgloss.NewStyle().Background(colorWindowBg).Italic(true)
+	styleStrike = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("#546E7A")).Background(colorWindowBg)
+	styleBQ = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorWindowBg).Italic(true)
+	styleChecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorWindowBg)
+	styleUnchecked = lipgloss.NewStyle().Foreground(lipgloss.Color("#546E7A")).Background(colorWindowBg)
+
+	cDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("#C3E88D")).Background(colorWindowBg)
+	cDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("#F07178")).Background(colorWindowBg)
+	cDiffHunk = lipgloss.NewStyle().Foreground(lipgloss.Color("#89DDFF")).Background(colorWindowBg)
+	cDiffHeader = lipgloss.NewStyle().Foreground(lipgloss.Color("#7986CB")).Background(colorWindowBg)
 }
 
 func init() {
@@ -154,11 +163,7 @@ func init() {
 // don't punch holes through the painted surface. For dark themes, bg is
 // left unset and the terminal default shows through.
 func fgOnBg(c color.Color) lipgloss.Style {
-	s := lipgloss.NewStyle().Foreground(c)
-	if theme.Active().Background != "" {
-		s = s.Background(colorBg)
-	}
-	return s
+	return lipgloss.NewStyle().Foreground(c).Background(colorWindowBg)
 }
 
 // Widget theme refresh is handled in Model.View() (re-applies styles every

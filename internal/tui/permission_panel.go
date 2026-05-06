@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // permissionPromptState holds the active permission prompt data.
@@ -87,7 +86,7 @@ func (m Model) renderPermissionPrompt() string {
 	label := p.toolName
 	if p.toolInput != "" {
 		short := p.toolInput
-		maxLen := m.width - 20
+		maxLen := floatingInnerWidth(m.width, floatingModalSpec) - 4
 		if maxLen > 10 && len(short) > maxLen {
 			short = short[:maxLen] + "…"
 		}
@@ -105,11 +104,7 @@ func (m Model) renderPermissionPrompt() string {
 		}
 		sb.WriteString(prefix + rendered + "\n")
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1/2/3 quick pick"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1/2/3 quick pick"))
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return sb.String()
 }

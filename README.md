@@ -203,7 +203,9 @@ conduit --resume <session-id>
 | Command | Description |
 |---------|-------------|
 | `/help` | List all commands |
+| `/commands` | Open the slash command picker |
 | `/model` | Switch model (claude-opus-4-7, claude-sonnet-4-6, …) |
+| `/models` | Open the model picker |
 | `/fast` | Toggle fast mode (⚡ badge in status bar) |
 | `/effort <level>` | Set thinking budget: low / normal / high / max |
 | `/compact` | Summarise and compress conversation history |

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // questionAskState drives the interactive AskUserQuestion selection dialog.
@@ -186,7 +185,7 @@ func (m Model) renderQuestionDialog() string {
 	// Question text.
 	sb.WriteString(styleStatusAccent.Render("◆ Question") + "\n\n")
 	// Wrap long question text at panel width.
-	qText := wordWrap(q.question, m.width-10)
+	qText := wordWrap(q.question, floatingInnerWidth(m.width, floatingModalSpec))
 	sb.WriteString(stylePickerItem.Render(qText) + "\n\n")
 
 	if q.textMode {
@@ -254,17 +253,13 @@ func (m Model) renderQuestionDialog() string {
 			} else {
 				sb.WriteString(stylePickerItem.Render("    "+label) + "\n")
 			}
-			sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Space toggle · Enter submit · Tab to type"))
+			sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Space toggle · Enter submit · Tab to type"))
 		} else {
-			sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1-9 quick pick · Tab to type"))
+			sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1-9 quick pick · Tab to type"))
 		}
 	}
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return sb.String()
 }
 
 // wordWrap wraps s to at most maxWidth characters per line.

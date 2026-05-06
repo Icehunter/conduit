@@ -1,15 +1,15 @@
 package tui
 
 // Settings panel — full-screen takeover mirroring the TS Settings component.
-// Matches plugin panel's visual style: rounded border, accent tabs with | separator,
-// ❯ cursor for list items, no underlines.
+// Matches the floating panel visual language: rounded border, gradient slash
+// ornament header, color-only tabs, ❯ cursor for list items, no underlines.
 //
 // Tabs: Status · Config · Stats · Usage
 // Navigation:
 //   ←/→    switch main tabs (from header); switch subtabs (from Stats content)
 //   ↓/Enter drop into list from header
 //   ↑       return to header from top of list
-//   ↑↓      navigate list
+//   ↑/↓      navigate list
 //   ←/→     cycle enum value when on an enum item in Config list
 //   r        cycle date range in Stats
 //   Esc/q    close (with search-clear / header-return first if applicable)
@@ -721,7 +721,10 @@ func (m Model) renderSettingsPanel() string {
 	if w < 10 {
 		w = 10
 	}
-	panelH := m.panelHeight()
+	panelH := m.panelHeight() - 1
+	if panelH < 8 {
+		panelH = m.panelHeight()
+	}
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Outer style: Width(w-2), border 1 each side (2), padding 2 each side (4)
 	// → content area = (w-2) - 2 - 4 = w - 8. v1 was w-6 because Width was
@@ -730,21 +733,17 @@ func (m Model) renderSettingsPanel() string {
 
 	var sb strings.Builder
 
-	// ── Tab header (same style as plugin panel) ─────────────────────────────
-	var tabs []string
-	for i, name := range settingsTabNames {
-		if settingsPanelTab(i) == p.tab {
-			tabs = append(tabs, styleStatusAccent.Render(name))
-		} else {
-			tabs = append(tabs, stylePickerDesc.Render(name))
-		}
-	}
-	sb.WriteString(strings.Join(tabs, stylePickerDesc.Render(" | ")))
-	sb.WriteByte('\n')
-	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW-2)))
+	// ── Crush-style panel header + tab selector ────────────────────────────
+	title := panelTitle("Settings")
+	tabs := settingsColorTabs(settingsTabNames, int(p.tab))
+
+	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 4
+	ornW = max(min(0, ornW), 12)
+
+	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 	sb.WriteString("\n\n")
 
-	contentH := panelH - 5
+	contentH := panelH - 3
 	if contentH < 4 {
 		contentH = 4
 	}
@@ -763,13 +762,19 @@ func (m Model) renderSettingsPanel() string {
 		m.renderSettingsAccounts(&sb, p, innerW, contentH)
 	}
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		Width(w).
-		Height(panelH).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return panelFrameStyle(w, panelH).Render(sb.String())
+}
+
+func settingsColorTabs(labels []string, active int) string {
+	parts := make([]string, 0, len(labels))
+	for i, label := range labels {
+		if i == active {
+			parts = append(parts, styleStatusAccent.Render(label))
+		} else {
+			parts = append(parts, stylePickerDesc.Render(label))
+		}
+	}
+	return strings.Join(parts, surfaceSpaces(2))
 }
 
 // ── Status tab ────────────────────────────────────────────────────────────────
@@ -780,11 +785,11 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 		snap = p.getStatus()
 	}
 
-	bold := lipgloss.NewStyle().Bold(true).Foreground(colorFg)
+	bold := fgOnBg(colorFg).Bold(true)
 	dim := stylePickerDesc
 
 	row := func(label, value string) {
-		sb.WriteString(bold.Render(label+":") + " " + fgOnBg(colorFg).Render(value) + "\n")
+		sb.WriteString(bold.Render(label+":") + surfaceSpaces(1) + fgOnBg(colorFg).Render(value) + "\n")
 	}
 
 	authStatus := dim.Render("not found")
@@ -867,7 +872,7 @@ func modelDescription(model string) string {
 func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, _, contentH int) {
 	// Show focus state in header hint.
 	if p.cfgFocus == configFocusHeader {
-		sb.WriteString(stylePickerDesc.Render("  ↓/Enter to navigate settings") + "\n\n")
+		sb.WriteString(stylePickerDesc.Render("  ↓ to navigate settings") + "\n\n")
 	} else if p.search != "" {
 		sb.WriteString(styleStatusAccent.Render("  Filter: "+p.search) +
 			stylePickerDesc.Render("  Backspace clear · ↑ tabs") + "\n\n")
@@ -911,7 +916,7 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 			if isSel {
 				label = styleStatusAccent.Render(item.label)
 			}
-			line = cursor + dot + " " + label
+			line = cursor + dot + surfaceSpaces(1) + label
 		case "enum":
 			label := labelStyle.Render(item.label)
 			if isSel {
@@ -923,14 +928,14 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 			} else {
 				val = valueStyle.Render(item.value)
 			}
-			line = cursor + label + "  " + val
+			line = cursor + label + surfaceSpaces(2) + val
 		case "info":
 			label := labelStyle.Render(item.label)
 			if isSel {
 				label = styleStatusAccent.Render(item.label)
 			}
 			val := valueStyle.Render(item.value)
-			line = cursor + label + "  " + val
+			line = cursor + label + surfaceSpaces(2) + val
 		}
 		sb.WriteString(line + "\n")
 		count++
@@ -981,21 +986,7 @@ type modelRow struct {
 }
 
 func (m Model) renderSettingsStats(sb *strings.Builder, p *settingsPanelState, innerW, _ int) {
-	// Sub-tab header — same style as main tabs.
-	var subTabs []string
-	for i, name := range statsSubTabNames {
-		if statsSubTab(i) == p.statsSubTab {
-			subTabs = append(subTabs, styleStatusAccent.Render(name))
-		} else {
-			subTabs = append(subTabs, stylePickerDesc.Render(name))
-		}
-	}
-	// Show focus: if content-focused, show ❯ before active subtab.
-	prefix := "  "
-	if p.cfgFocus == configFocusList {
-		prefix = styleStatusAccent.Render("❯ ")
-	}
-	sb.WriteString(prefix + strings.Join(subTabs, stylePickerDesc.Render(" | ")) + "\n\n")
+	sb.WriteString(surfaceSpaces(2) + settingsColorTabs(statsSubTabNames, int(p.statsSubTab)) + "\n\n")
 
 	if !p.statsLoaded {
 		sb.WriteString(stylePickerDesc.Render("  Loading stats…"))
@@ -1013,7 +1004,7 @@ func (m Model) renderSettingsStats(sb *strings.Builder, p *settingsPanelState, i
 			rangeLabels = append(rangeLabels, stylePickerDesc.Render(label))
 		}
 	}
-	sb.WriteString("  " + strings.Join(rangeLabels, stylePickerDesc.Render(" · ")) +
+	sb.WriteString(surfaceSpaces(2) + strings.Join(rangeLabels, stylePickerDesc.Render(" · ")) +
 		stylePickerDesc.Render("  (r to cycle)") + "\n\n")
 
 	switch p.statsSubTab {
@@ -1063,14 +1054,14 @@ func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, inn
 	for _, row := range rows {
 		l := row[0]
 		r := row[1]
-		lPart := dim.Render(fmt.Sprintf("%-16s", l.label+":")) + " " + acc(l.value)
-		rPart := dim.Render(fmt.Sprintf("%-18s", r.label+":")) + " " + acc(r.value)
+		lPart := dim.Render(fmt.Sprintf("%-16s", l.label+":")) + surfaceSpaces(1) + acc(l.value)
+		rPart := dim.Render(fmt.Sprintf("%-18s", r.label+":")) + surfaceSpaces(1) + acc(r.value)
 		lVis := lipgloss.Width(lPart)
 		pad := leftColW - lVis
 		if pad < 2 {
 			pad = 2
 		}
-		sb.WriteString("  " + lPart + strings.Repeat(" ", pad) + rPart + "\n")
+		sb.WriteString(surfaceSpaces(2) + lPart + surfaceSpaces(pad) + rPart + "\n")
 	}
 
 	sb.WriteByte('\n')
@@ -1109,7 +1100,7 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 	}
 
 	// Tokens per Day chart using asciigraph (top 3 models as separate colored series).
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colorFg).Render("  Tokens per Day") + "\n")
+	sb.WriteString(fgOnBg(colorFg).Bold(true).Render("  Tokens per Day") + "\n")
 	buildTokensLineChart(sb, stats.dailyModelTokens, rows, modelColors, innerW)
 	sb.WriteByte('\n')
 
@@ -1122,8 +1113,8 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 		}
 		color := modelColors[idx%len(modelColors)]
 		dot := fgOnBg(color).Render("●")
-		name := lipgloss.NewStyle().Bold(true).Foreground(colorFg).Render(shortModelName(r.name))
-		line1 = dot + " " + name + " " + stylePickerDesc.Render(fmt.Sprintf("(%d%%)", pct))
+		name := fgOnBg(colorFg).Bold(true).Render(shortModelName(r.name))
+		line1 = dot + surfaceSpaces(1) + name + surfaceSpaces(1) + stylePickerDesc.Render(fmt.Sprintf("(%d%%)", pct))
 		line2 = stylePickerDesc.Render(fmt.Sprintf("    In: %s · Out: %s",
 			formatNum(r.u.inputTokens), formatNum(r.u.outputTokens)))
 		return
@@ -1144,16 +1135,16 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 			if pad2 < 1 {
 				pad2 = 1
 			}
-			sb.WriteString("  " + l1 + strings.Repeat(" ", pad1) + r1 + "\n")
-			sb.WriteString("  " + l2 + strings.Repeat(" ", pad2) + r2 + "\n")
+			sb.WriteString(surfaceSpaces(2) + l1 + surfaceSpaces(pad1) + r1 + "\n")
+			sb.WriteString(surfaceSpaces(2) + l2 + surfaceSpaces(pad2) + r2 + "\n")
 		} else {
-			sb.WriteString("  " + l1 + "\n")
-			sb.WriteString("  " + l2 + "\n")
+			sb.WriteString(surfaceSpaces(2) + l1 + "\n")
+			sb.WriteString(surfaceSpaces(2) + l2 + "\n")
 		}
 		sb.WriteByte('\n')
 	}
 	if len(rows) > 4 {
-		sb.WriteString(stylePickerDesc.Render(fmt.Sprintf("  ↓ 1–4 of %d models (↑↓ to scroll)", len(rows))) + "\n")
+		sb.WriteString(stylePickerDesc.Render(fmt.Sprintf("  ↓ 1–4 of %d models (↑/↓ to scroll)", len(rows))) + "\n")
 	}
 }
 
@@ -1165,7 +1156,7 @@ func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, i
 		snap = p.getStatus()
 	}
 
-	bold := lipgloss.NewStyle().Bold(true).Foreground(colorFg)
+	bold := fgOnBg(colorFg).Bold(true)
 	dim := stylePickerDesc
 
 	sb.WriteString(bold.Render("Session") + "\n\n")
@@ -1737,7 +1728,8 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 	heatChars := []string{"∘", "●", "◉", "⬤"}
 
 	emptyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#2a2f36"))
+		Foreground(lipgloss.Color("#2a2f36")).
+		Background(colorWindowBg)
 
 	heatStyles := make([]lipgloss.Style, len(heatColors))
 	for i, c := range heatColors {
@@ -1827,7 +1819,7 @@ func renderHeatmapMonths(sb *strings.Builder, weekStarts []time.Time, leftPad in
 
 	monthStr := strings.TrimRight(string(monthRow), " ")
 
-	sb.WriteString(strings.Repeat(" ", leftPad))
+	sb.WriteString(surfaceSpaces(leftPad))
 	sb.WriteString(stylePickerDesc.Render(monthStr))
 	sb.WriteByte('\n')
 }
@@ -1842,13 +1834,13 @@ func renderHeatmapRows(
 
 	for d := 0; d < 7; d++ {
 		sb.WriteString(stylePickerDesc.Render(rowLabels[d]))
-		sb.WriteString("  ")
+		sb.WriteString(surfaceSpaces(2))
 
 		for w := 0; w < weeks; w++ {
 			sb.WriteString(cell(grid[d][w]))
 
 			if w < weeks-1 {
-				sb.WriteByte(' ')
+				sb.WriteString(surfaceSpaces(1))
 			}
 		}
 
@@ -1864,12 +1856,12 @@ func renderHeatmapLegend(
 	heatStyles []lipgloss.Style,
 	heatChars []string,
 ) {
-	sb.WriteString(strings.Repeat(" ", leftPad))
+	sb.WriteString(surfaceSpaces(leftPad))
 	sb.WriteString(stylePickerDesc.Render("Less  "))
 	sb.WriteString(emptyStyle.Render(emptyChar))
 
 	for i := range heatChars {
-		sb.WriteByte(' ')
+		sb.WriteString(surfaceSpaces(1))
 		sb.WriteString(heatStyles[i].Render(heatChars[i]))
 	}
 

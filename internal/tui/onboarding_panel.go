@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -66,9 +65,5 @@ func (m Model) renderOnboarding() string {
 
 	sb.WriteString(stylePickerDesc.Render("Press Enter to continue · Ctrl+C to exit"))
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return panelFrameStyle(m.width, renderedLineCount(sb.String())+4).Render(sb.String())
 }

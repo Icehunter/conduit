@@ -50,12 +50,13 @@ Last updated: 2026-05-05
 | Input box | ✅ | |
 | Slash command picker (fuzzy) | ✅ | |
 | Tab completion | ✅ | |
-| Input history (↑↓) | ✅ | |
+| Input history (↑/↓) | ✅ | |
 | Vim mode | ❌ STUB | toggled but no actual vim keybindings |
 | Status bar | ✅ | model, context%, cost |
+| TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
 | Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
 | Assistant info row | ✅ | model, duration, per-turn cost after completed responses |
-| Tool message rendering | ✅ | completed successes collapse; running tools show input; errors show details |
+| Tool message rendering | ✅ | one-line live/archive rows with tool-specific verbs + input/result summary; resumed tool_results pair back to tool_use; errors show details |
 | Welcome card (two-panel) | ✅ | profile fetched from oauth/profile |
 | Permission prompt modal | ✅ | |
 | Login picker modal | ✅ | |
@@ -115,9 +116,11 @@ Last updated: 2026-05-05
 | Command | Status | Notes |
 |---------|--------|-------|
 | /help | ✅ | |
+| /commands | ✅ | opens slash command picker |
 | /clear | ✅ | |
 | /exit, /quit | ✅ | |
 | /model | ✅ | lists and switches models |
+| /models | ✅ | alias for /model picker |
 | /compact | ✅ | calls Haiku to summarize |
 | /permissions | ✅ | shows gate state |
 | /hooks | ✅ | shows configured hooks |

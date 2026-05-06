@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // trustDialogState drives the workspace trust overlay shown the first time
@@ -75,7 +74,7 @@ func (m Model) renderTrustDialog() string {
 			"(Like your own code, a well-known open source project, or work from your team.) "+
 			"If not, take a moment to review what's in this folder first. "+
 			"conduit will be able to read, edit, and execute files here.",
-		m.width-14,
+		floatingInnerWidth(m.width, floatingModalSpec),
 	)
 	sb.WriteString(stylePickerItem.Render(prompt) + "\n\n")
 
@@ -87,11 +86,7 @@ func (m Model) renderTrustDialog() string {
 			sb.WriteString(stylePickerItem.Render("    "+opt) + "\n")
 		}
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑↓ navigate · Enter select · 1 trust · 2 exit"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1 trust · 2 exit"))
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return sb.String()
 }

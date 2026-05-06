@@ -847,15 +847,11 @@ func (m Model) renderPluginPanel() string {
 	// Title bar with tabs.
 	var tabParts []string
 	for i, name := range pluginTabNames {
-		if pluginPanelTab(i) == p.tab {
-			tabParts = append(tabParts, styleStatusAccent.Render(name))
-		} else {
-			tabParts = append(tabParts, stylePickerDesc.Render(name))
-		}
+		tabParts = append(tabParts, chromeTab(name, pluginPanelTab(i) == p.tab))
 	}
 	sb.WriteString(strings.Join(tabParts, stylePickerDesc.Render(" | ")))
 	sb.WriteByte('\n')
-	sb.WriteString(stylePickerDesc.Render(strings.Repeat("─", innerW-2)))
+	sb.WriteString(panelRule(innerW - 2))
 	sb.WriteString("\n\n")
 
 	// Inner content height: panelH minus border(2) minus padding(2) minus title(1) minus separator(1) minus blank(1) = panelH - 5
@@ -875,13 +871,7 @@ func (m Model) renderPluginPanel() string {
 		m.renderPluginAddMkt(&sb, p, innerW)
 	}
 
-	style := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		Width(w).
-		Height(panelH).
-		PaddingLeft(2).PaddingRight(2).PaddingTop(1).PaddingBottom(1)
-	return style.Width(m.width).Render(sb.String())
+	return panelFrameStyle(w, panelH).Render(sb.String())
 }
 
 func (m Model) renderPluginList(sb *strings.Builder, p *pluginPanelState, innerW, contentH int) {
@@ -1003,7 +993,7 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 	}
 	footer := baseFooter
 	if total > maxItems {
-		footer = fmt.Sprintf("↑↓ scroll (%d–%d/%d) · %s", start+1, end, total, baseFooter)
+		footer = fmt.Sprintf("↑/↓ scroll (%d–%d/%d) · %s", start+1, end, total, baseFooter)
 	}
 	sb.WriteString("\n" + stylePickerDesc.Render(footer))
 }

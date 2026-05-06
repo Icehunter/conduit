@@ -11,6 +11,7 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // reloadPluginPanelCmd returns a tea.Cmd that reloads panel data from disk.
@@ -46,7 +47,7 @@ func rebuildPluginPanel(msg pluginPanelReloadMsg) *pluginPanelState {
 				marketplace: marketplace,
 				version:     e.Version,
 				scope:       e.Scope,
-				enabled:     true, // default; override below
+				enabled:     settings.PluginEnabled(id),
 			})
 		}
 		// Sort installed by name.

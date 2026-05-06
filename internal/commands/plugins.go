@@ -132,9 +132,6 @@ func pluginDialogResult(ps []*plugins.Plugin) Result {
 func buildPluginPanelData(_ []*plugins.Plugin) PluginPanelData {
 	var data PluginPanelData
 
-	// Load enabled state from user settings.
-	enabledMap := loadEnabledPlugins()
-
 	// Installed plugins.
 	installed, err := plugins.LoadInstalledPlugins()
 	if err != nil {
@@ -143,14 +140,13 @@ func buildPluginPanelData(_ []*plugins.Plugin) PluginPanelData {
 		for id, entries := range installed.Plugins {
 			name, marketplace := splitPluginID(id)
 			for _, e := range entries {
-				enabled := enabledMap[id]
 				data.Installed = append(data.Installed, PluginPanelInstalledEntry{
 					ID:          id,
 					Name:        name,
 					Marketplace: marketplace,
 					Version:     e.Version,
 					Scope:       e.Scope,
-					Enabled:     enabled,
+					Enabled:     settings.PluginEnabled(id),
 					InstallPath: e.InstallPath,
 				})
 				break // one entry per plugin (first/user scope)
@@ -197,15 +193,6 @@ func buildPluginPanelData(_ []*plugins.Plugin) PluginPanelData {
 	}
 
 	return data
-}
-
-// loadEnabledPlugins reads Conduit's settings file and returns the enabledPlugins map.
-func loadEnabledPlugins() map[string]bool {
-	cfg, err := settings.LoadConduitConfig()
-	if err != nil || cfg.EnabledPlugins == nil {
-		return map[string]bool{}
-	}
-	return cfg.EnabledPlugins
 }
 
 func splitPluginID(id string) (name, marketplace string) {

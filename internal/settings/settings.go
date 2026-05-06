@@ -331,6 +331,20 @@ func SetPluginEnabled(pluginID string, enabled bool) error {
 	return SaveConduitEnabledPlugin(pluginID, enabled)
 }
 
+// PluginEnabled reports whether an installed plugin should be active. The
+// enabledPlugins map is sparse: missing entries are enabled by default.
+func PluginEnabled(pluginID string) bool {
+	cfg, err := LoadConduitConfig()
+	if err != nil || cfg.EnabledPlugins == nil {
+		return true
+	}
+	enabled, ok := cfg.EnabledPlugins[pluginID]
+	if !ok {
+		return true
+	}
+	return enabled
+}
+
 // RemovePlugin removes a plugin from enabledPlugins in the user settings file.
 func RemovePlugin(pluginID string) error {
 	return UpdateConduitConfig(func(cfg *ConduitConfig) {

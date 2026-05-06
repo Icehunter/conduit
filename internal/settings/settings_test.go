@@ -500,6 +500,30 @@ func TestSavePermissionsField_EmptyFieldErrors(t *testing.T) {
 	}
 }
 
+func TestPluginEnabled_DefaultsMissingEntriesToEnabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if !PluginEnabled("alpha@market") {
+		t.Fatal("missing enabledPlugins entry should default to enabled")
+	}
+	if err := SetPluginEnabled("alpha@market", false); err != nil {
+		t.Fatalf("SetPluginEnabled false: %v", err)
+	}
+	if PluginEnabled("alpha@market") {
+		t.Fatal("explicit false should disable plugin")
+	}
+	if !PluginEnabled("beta@market") {
+		t.Fatal("unlisted plugin should remain enabled when map has other entries")
+	}
+	if err := SetPluginEnabled("alpha@market", true); err != nil {
+		t.Fatalf("SetPluginEnabled true: %v", err)
+	}
+	if !PluginEnabled("alpha@market") {
+		t.Fatal("explicit true should enable plugin")
+	}
+}
+
 func TestSettingsWrites_DoNotOverwriteInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

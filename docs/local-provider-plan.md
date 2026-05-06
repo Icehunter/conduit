@@ -437,8 +437,20 @@ working.
 Initial wiring:
 
 - main: normal chat loop
-- background: memory extraction, compact helpers, low-risk helper tasks
+- background: memory extraction, session-memory updates, auto-dream
+  consolidation, compaction helpers, and Task/SkillTool sub-agent calls
 - planning: plan mode and architecture/planning prompts
+
+Current implementation:
+
+- The foreground loop keeps using the mode-selected provider/model.
+- Background helpers resolve `roles.background` dynamically when the role points
+  at a Claude/API-shaped provider.
+- MCP/local background providers are intentionally ignored until the true
+  provider abstraction exists, because these helpers currently call the
+  Anthropic Messages API directly.
+- Task and SkillTool sub-agents use the background model so side work does not
+  change the visible chat model.
 
 This can later feed Ctrl+M and `/model` so users can switch a role rather than
 only switch one global Claude model.

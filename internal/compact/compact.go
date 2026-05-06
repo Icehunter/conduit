@@ -15,9 +15,9 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 )
 
-// compactModel is the model used for summarization sub-calls.
-// Mirrors getSmallFastModel() — Sonnet is fast and cheap for this.
-const compactModel = "claude-haiku-4-5-20251001"
+// DefaultModel is the fallback model used for summarization sub-calls.
+// Mirrors getSmallFastModel().
+const DefaultModel = "claude-haiku-4-5-20251001"
 
 // systemPrompt tells the compaction model exactly what to produce.
 const systemPrompt = `You are a conversation summarizer. Your task is to create a concise but complete summary of a conversation between a user and an AI assistant.
@@ -56,8 +56,16 @@ type Result struct {
 // Compact summarizes messages using the Anthropic API and returns a Result.
 // The caller should replace their history with Result.NewHistory.
 func Compact(ctx context.Context, client *api.Client, messages []api.Message, customInstructions string) (*Result, error) {
+	return CompactWithModel(ctx, client, DefaultModel, messages, customInstructions)
+}
+
+// CompactWithModel summarizes messages using the requested model.
+func CompactWithModel(ctx context.Context, client *api.Client, model string, messages []api.Message, customInstructions string) (*Result, error) {
 	if len(messages) == 0 {
 		return nil, errors.New("no messages to compact")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = DefaultModel
 	}
 
 	// Build a readable transcript of the conversation.
@@ -69,7 +77,7 @@ func Compact(ctx context.Context, client *api.Client, messages []api.Message, cu
 	}
 
 	req := &api.MessageRequest{
-		Model:     compactModel,
+		Model:     model,
 		MaxTokens: 8192,
 		System: []api.SystemBlock{{
 			Type: "text",

@@ -281,6 +281,8 @@ type Config struct {
 	// InitialProviders/Roles are conduit's named provider role bindings.
 	InitialProviders map[string]settings.ActiveProviderSettings
 	InitialRoles     map[string]string
+	// BackgroundModel returns the model for helper calls such as /compact.
+	BackgroundModel func() string
 	// FetchPlanUsage returns the current Claude plan usage windows.
 	FetchPlanUsage func(context.Context) (planusage.Info, error)
 }
@@ -2780,10 +2782,11 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		customInstructions := res.Text
 		client := m.cfg.APIClient
+		backgroundModel := m.backgroundModel()
 		histCopy := make([]api.Message, len(m.history))
 		copy(histCopy, m.history)
 		return m, func() tea.Msg {
-			result, err := compact.Compact(context.Background(), client, histCopy, customInstructions)
+			result, err := compact.CompactWithModel(context.Background(), client, backgroundModel, histCopy, customInstructions)
 			if err != nil {
 				return compactDoneMsg{err: err}
 			}
@@ -3450,6 +3453,18 @@ func (m Model) currentProviderRole() string {
 	default:
 		return settings.RoleDefault
 	}
+}
+
+func (m Model) backgroundModel() string {
+	if m.cfg.BackgroundModel != nil {
+		if model := strings.TrimSpace(m.cfg.BackgroundModel()); model != "" {
+			return model
+		}
+	}
+	if provider, ok := m.providerForRole(settings.RoleBackground); ok && provider.Kind != "mcp" && provider.Model != "" {
+		return provider.Model
+	}
+	return compact.DefaultModel
 }
 
 func (m Model) providerForCurrentMode() (settings.ActiveProviderSettings, bool) {

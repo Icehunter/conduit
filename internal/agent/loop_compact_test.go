@@ -22,6 +22,7 @@ func TestLoop_AutoCompact(t *testing.T) {
 
 	calls := 0
 	var seenMsgCounts []int
+	var compactModel string
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +38,8 @@ func TestLoop_AutoCompact(t *testing.T) {
 
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		if strings.Contains(body.Model, "haiku") {
+		if body.Model == "background-model" {
+			compactModel = body.Model
 			// Compaction call — return summary.
 			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"c\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"haiku\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n")
 			fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
@@ -85,6 +87,9 @@ func TestLoop_AutoCompact(t *testing.T) {
 		MaxTokens:   maxTokens,
 		MaxTurns:    10,
 		AutoCompact: true,
+		BackgroundModel: func() string {
+			return "background-model"
+		},
 	})
 
 	msgs := []api.Message{
@@ -103,6 +108,9 @@ func TestLoop_AutoCompact(t *testing.T) {
 	// Should have: turn1 (sonnet) + compact (haiku) + turn2 (sonnet) = 3 calls.
 	if calls != 3 {
 		t.Errorf("calls = %d; want 3 (turn1 + compact + turn2)", calls)
+	}
+	if compactModel != "background-model" {
+		t.Errorf("compact model = %q, want background-model", compactModel)
 	}
 
 	// After compaction, the second main call sees a smaller history

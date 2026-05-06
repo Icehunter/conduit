@@ -29,6 +29,7 @@ import (
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/claudemd"
+	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/globalconfig"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
@@ -267,6 +268,18 @@ func resolveImplementProvider(fn func() *settings.ActiveProviderSettings) *setti
 		return nil
 	}
 	return fn()
+}
+
+func claudeRoleModel(cwd, role, fallback string) string {
+	latest, err := settings.Load(cwd)
+	if err != nil {
+		return fallback
+	}
+	provider, ok := latest.ProviderForRole(role)
+	if !ok || provider == nil || provider.Kind == "mcp" || provider.Model == "" {
+		return fallback
+	}
+	return provider.Model
 }
 
 // buildMetadata returns the API metadata block.
@@ -637,6 +650,9 @@ func runREPL(continueMode bool, resumeID string) error {
 		LastAssistantTime: lastAssistant,
 		ThinkingBudget:    thinkingBudget(),
 		NotifyOnComplete:  true,
+		BackgroundModel: func() string {
+			return claudeRoleModel(cwd, settings.RoleBackground, compact.DefaultModel)
+		},
 		OnFileAccess: func(op, path string) {
 			if sess != nil {
 				_ = sess.AppendFileAccess(op, path)
@@ -664,7 +680,7 @@ func runREPL(continueMode bool, resumeID string) error {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer cancel()
 					recent := tui.SummarizeMessages(snapshot, 20)
-					_ = memdir.RunExtract(ctx, cwd, recent, lp.RunSubAgent)
+					_ = memdir.RunExtract(ctx, cwd, recent, lp.RunBackgroundAgent)
 				}()
 			}
 
@@ -695,7 +711,7 @@ func runREPL(continueMode bool, resumeID string) error {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer cancel()
 					recent := tui.SummarizeMessages(snapshot, 30)
-					_ = sessionmem.RunUpdate(ctx, path, recent, lp.RunSubAgent)
+					_ = sessionmem.RunUpdate(ctx, path, recent, lp.RunBackgroundAgent)
 				}()
 			}
 		},
@@ -707,9 +723,9 @@ func runREPL(continueMode bool, resumeID string) error {
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.
-	reg.Register(agenttool.New(lp.RunSubAgent))
+	reg.Register(agenttool.New(lp.RunBackgroundAgent))
 	skillLoader := plugins.NewSkillLoader(loadedPlugins)
-	reg.Register(skilltool.New(skillLoader, lp.RunSubAgent))
+	reg.Register(skilltool.New(skillLoader, lp.RunBackgroundAgent))
 
 	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
 		AuthErr:                   authErr,
@@ -768,7 +784,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		if memdir.ShouldDream(cwd, sessionDir) {
 			dreamCtx, dreamCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer dreamCancel()
-			_ = memdir.RunDream(dreamCtx, cwd, sessionDir, lp.RunSubAgent)
+			_ = memdir.RunDream(dreamCtx, cwd, sessionDir, lp.RunBackgroundAgent)
 		}
 	}
 
@@ -806,14 +822,15 @@ func runPrint(args []string) error {
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
-		Model:     modelName,
-		MaxTokens: internalmodel.MaxTokens,
-		System:    agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
-		Metadata:  buildMetadata(),
-		MaxTurns:  10,
+		Model:           modelName,
+		MaxTokens:       internalmodel.MaxTokens,
+		System:          agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
+		Metadata:        buildMetadata(),
+		MaxTurns:        10,
+		BackgroundModel: func() string { return compact.DefaultModel },
 	})
-	reg.Register(agenttool.New(lp.RunSubAgent))
-	reg.Register(skilltool.New(plugins.NewSkillLoader(loadedPlugins), lp.RunSubAgent))
+	reg.Register(agenttool.New(lp.RunBackgroundAgent))
+	reg.Register(skilltool.New(plugins.NewSkillLoader(loadedPlugins), lp.RunBackgroundAgent))
 
 	_, err = lp.Run(ctx, []api.Message{{
 		Role:    "user",

@@ -159,6 +159,10 @@ type LoopConfig struct {
 	// LastAssistantTime seeds the gap calculation on resume. If zero, the
 	// loop initializes from the first assistant response.
 	LastAssistantTime time.Time
+
+	// BackgroundModel returns the model used for helper calls such as
+	// compaction, memory extraction, and Task sub-agents. Empty means use Model.
+	BackgroundModel func() string
 }
 
 // Loop drives the agentic query cycle.
@@ -171,10 +175,10 @@ type Loop struct {
 // NewLoop constructs a Loop.
 func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 	l := &Loop{client: client, reg: reg, cfg: cfg}
-	// Wire the sub-agent runner into the hooks package so prompt/agent hooks
-	// can spawn LLM calls. This overwrites any previously set runner on the
-	// last NewLoop call — single-process usage, so that's fine.
-	hooks.SubAgentRunner = l.RunSubAgent
+	// Wire the background runner into the hooks package so prompt/agent hooks
+	// can spawn helper LLM calls. This overwrites any previously set runner on
+	// the last NewLoop call — single-process usage, so that's fine.
+	hooks.SubAgentRunner = l.RunBackgroundAgent
 	return l
 }
 
@@ -185,6 +189,16 @@ func (l *Loop) SetModel(name string) {
 
 // Model returns the model configured for new requests.
 func (l *Loop) Model() string {
+	return l.cfg.Model
+}
+
+// BackgroundModel returns the helper/background model for new secondary calls.
+func (l *Loop) BackgroundModel() string {
+	if l.cfg.BackgroundModel != nil {
+		if model := strings.TrimSpace(l.cfg.BackgroundModel()); model != "" {
+			return model
+		}
+	}
 	return l.cfg.Model
 }
 
@@ -216,8 +230,8 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 }
 
 // RunSubAgent runs a nested agent loop with the given prompt as the sole user
-// message. Used by AgentTool and SkillTool to spawn forked sub-agents.
-// The sub-agent inherits the same tools, model, and system prompt but starts
+// message. Used by callers that explicitly need the foreground model.
+// The sub-agent inherits the same tools and system prompt but starts
 // with a fresh single-turn history. Returns the concatenated text from the
 // final assistant message.
 //
@@ -225,6 +239,16 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 // <task-notification> XML block so the coordinator model can identify and
 // process it correctly per its system prompt instructions.
 func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
+	return l.runSubAgentWithModel(ctx, prompt, l.cfg.Model)
+}
+
+// RunBackgroundAgent runs a nested agent loop on the configured background
+// model. The foreground chat model is not changed.
+func (l *Loop) RunBackgroundAgent(ctx context.Context, prompt string) (string, error) {
+	return l.runSubAgentWithModel(ctx, prompt, l.BackgroundModel())
+}
+
+func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string) (string, error) {
 	start := time.Now()
 	msgs := []api.Message{
 		{
@@ -232,7 +256,11 @@ func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
 			Content: []api.ContentBlock{{Type: "text", Text: prompt}},
 		},
 	}
-	history, err := l.Run(ctx, msgs, func(LoopEvent) {})
+	child := &Loop{client: l.client, reg: l.reg, cfg: l.cfg}
+	if strings.TrimSpace(model) != "" {
+		child.cfg.Model = model
+	}
+	history, err := child.Run(ctx, msgs, func(LoopEvent) {})
 
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
@@ -425,7 +453,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
 				threshold := int(float64(l.cfg.MaxTokens) * 0.8)
 				if inputTokens > threshold {
-					if result, err := compact.Compact(ctx, l.client, msgs, ""); err == nil {
+					if result, err := compact.CompactWithModel(ctx, l.client, l.BackgroundModel(), msgs, ""); err == nil {
 						msgs = result.NewHistory
 						if l.cfg.OnCompact != nil && result.Summary != "" {
 							l.cfg.OnCompact(result.Summary)
@@ -464,7 +492,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
 			threshold := int(float64(l.cfg.MaxTokens) * 0.8)
 			if inputTokens > threshold {
-				if result, err := compact.Compact(ctx, l.client, msgs, ""); err == nil {
+				if result, err := compact.CompactWithModel(ctx, l.client, l.BackgroundModel(), msgs, ""); err == nil {
 					msgs = result.NewHistory
 					if l.cfg.OnCompact != nil && result.Summary != "" {
 						l.cfg.OnCompact(result.Summary)

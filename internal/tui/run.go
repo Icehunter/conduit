@@ -14,6 +14,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -465,7 +466,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			recent := SummarizeMessages(modelPtr.history, 20)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			if err := memdir.RunExtract(ctx, cwd, recent, loop.RunSubAgent); err != nil {
+			if err := memdir.RunExtract(ctx, cwd, recent, loop.RunBackgroundAgent); err != nil {
 				return "", err
 			}
 			return "Memory extraction complete.", nil
@@ -502,7 +503,13 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InitialActiveProvider:     runOpts.InitialActiveProvider,
 		InitialProviders:          runOpts.InitialProviders,
 		InitialRoles:              runOpts.InitialRoles,
-		FetchPlanUsage:            runOpts.FetchPlanUsage,
+		BackgroundModel: func() string {
+			if loop != nil {
+				return loop.BackgroundModel()
+			}
+			return compact.DefaultModel
+		},
+		FetchPlanUsage: runOpts.FetchPlanUsage,
 	}
 	// Seed session ID into LiveState once it's known.
 	if runOpts.Session != nil {

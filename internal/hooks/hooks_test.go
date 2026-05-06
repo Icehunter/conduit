@@ -45,21 +45,21 @@ func TestMatchesTool_Glob(t *testing.T) {
 }
 
 func TestRunHook_ZeroExit(t *testing.T) {
-	r := runHook(context.Background(), "true", HookInput{})
+	r := runHook(context.Background(), "true", maxHookTimeout, HookInput{})
 	if r.Blocked {
 		t.Errorf("zero-exit hook should not block; reason: %s", r.Reason)
 	}
 }
 
 func TestRunHook_NonZeroExit(t *testing.T) {
-	r := runHook(context.Background(), "false", HookInput{})
+	r := runHook(context.Background(), "false", maxHookTimeout, HookInput{})
 	if !r.Blocked {
 		t.Error("non-zero exit should block")
 	}
 }
 
 func TestRunHook_BlockDirective(t *testing.T) {
-	r := runHook(context.Background(), `echo '{"decision":"block","reason":"test"}'`, HookInput{})
+	r := runHook(context.Background(), `echo '{"decision":"block","reason":"test"}'`, maxHookTimeout, HookInput{})
 	if !r.Blocked {
 		t.Error("block directive should block")
 	}
@@ -69,7 +69,7 @@ func TestRunHook_BlockDirective(t *testing.T) {
 }
 
 func TestRunHook_ApproveDirective(t *testing.T) {
-	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, HookInput{})
+	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, maxHookTimeout, HookInput{})
 	if r.Blocked {
 		t.Error("approve directive should not block")
 	}
@@ -105,7 +105,7 @@ func TestRunPreToolUse_NonMatchingTool(t *testing.T) {
 }
 
 func TestRunHook_ApproveDirectiveSetsApproved(t *testing.T) {
-	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, HookInput{})
+	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, maxHookTimeout, HookInput{})
 	if r.Blocked {
 		t.Error("approve should not block")
 	}
@@ -115,7 +115,7 @@ func TestRunHook_ApproveDirectiveSetsApproved(t *testing.T) {
 }
 
 func TestRunHook_NonJSONStdoutIsAdvisory(t *testing.T) {
-	r := runHook(context.Background(), `echo "some output"`, HookInput{})
+	r := runHook(context.Background(), `echo "some output"`, maxHookTimeout, HookInput{})
 	if r.Blocked || r.Approved {
 		t.Error("non-JSON stdout should be advisory only")
 	}
@@ -123,7 +123,7 @@ func TestRunHook_NonJSONStdoutIsAdvisory(t *testing.T) {
 
 func TestRunHook_StdinReceivesJSON(t *testing.T) {
 	// Hook reads stdin and exits non-zero if it doesn't contain session_id.
-	r := runHook(context.Background(), `grep -q '"session_id"' || exit 1`, HookInput{SessionID: "test-session"})
+	r := runHook(context.Background(), `grep -q '"session_id"' || exit 1`, maxHookTimeout, HookInput{SessionID: "test-session"})
 	if r.Blocked {
 		t.Errorf("hook should have found session_id in stdin: %s", r.Reason)
 	}

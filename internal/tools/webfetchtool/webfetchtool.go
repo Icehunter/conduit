@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,6 +24,59 @@ import (
 
 	"github.com/icehunter/conduit/internal/tool"
 )
+
+// ssrfDeniedNets are IP ranges blocked to prevent server-side request forgery
+// against cloud metadata endpoints, internal services, and loopback.
+var ssrfDeniedNets = func() []*net.IPNet {
+	cidrs := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"169.254.0.0/16", // link-local / AWS metadata
+		"100.64.0.0/10",  // CGNAT
+		"::1/128",        // IPv6 loopback
+		"fc00::/7",       // IPv6 ULA
+		"fe80::/10",      // IPv6 link-local
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, _ := net.ParseCIDR(c)
+		if n != nil {
+			nets = append(nets, n)
+		}
+	}
+	return nets
+}()
+
+// isPrivateIP returns true if addr is in any of the SSRF-denied ranges.
+func isPrivateIP(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range ssrfDeniedNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ssrfSafeDialer wraps net.Dialer and rejects connections to private IPs
+// after DNS resolution, preventing DNS-rebinding attacks.
+type ssrfSafeDialer struct{ net.Dialer }
+
+func (d *ssrfSafeDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if isPrivateIP(addr) {
+		return nil, fmt.Errorf("webfetch: request to private/internal address denied: %s", addr)
+	}
+	return d.Dialer.DialContext(ctx, network, addr)
+}
 
 // MaxContentBytes caps the response body size.
 const MaxContentBytes = 200 * 1024 // 200 KB
@@ -39,10 +93,24 @@ type Tool struct {
 	client *http.Client
 }
 
-// New returns a fresh WebFetch tool.
+// New returns a fresh WebFetch tool with an SSRF-safe HTTP client that
+// blocks requests to private/internal IP ranges after DNS resolution.
 func New() *Tool {
+	return newWithDialer(&ssrfSafeDialer{})
+}
+
+// newWithDialer constructs a Tool using the provided DialContext — exposed for
+// tests so httptest servers on 127.0.0.1 can bypass the SSRF guard.
+func newWithDialer(d interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}) *Tool {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = d.DialContext
 	return &Tool{
-		client: &http.Client{Timeout: HTTPTimeout},
+		client: &http.Client{
+			Timeout:   HTTPTimeout,
+			Transport: transport,
+		},
 	}
 }
 
@@ -170,7 +238,7 @@ func htmlToMarkdown(htmlStr string) string {
 	// Collapse runs of blank lines to at most one.
 	var kept []string
 	blank := false
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimRight(line, " \t")
 		if line == "" {
 			if !blank {

@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,6 +31,7 @@ import (
 	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/globalconfig"
+	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -48,7 +48,6 @@ import (
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
-	"github.com/icehunter/conduit/internal/tools/bashtool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
@@ -317,9 +316,11 @@ func runREPL(continueMode bool, resumeID string) error {
 		internalmodel.SetDefault(s.Model)
 	}
 
-	// Inject session env vars into the bash tool so every subprocess inherits them.
+	// SessionEnv is stored in RegistryOpts and passed to BashTool.New() rather
+	// than a package-level global, so initialization order doesn't matter.
+	var sessionEnv map[string]string
 	if len(s.Env) > 0 {
-		bashtool.SessionEnv = s.Env
+		sessionEnv = s.Env
 	}
 
 	// Connect MCP servers in the background; non-fatal if config missing or servers fail.
@@ -373,6 +374,7 @@ func runREPL(continueMode bool, resumeID string) error {
 			d, _ := os.Getwd()
 			return d
 		}, OriginalCwd: cwd},
+		SessionEnv: sessionEnv,
 	}
 
 	reg := app.BuildRegistry(c, mcpManager, lspManager, rOpts, func() *settings.ActiveProviderSettings {
@@ -391,16 +393,28 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build MCP server instructions block from connected servers that returned
 	// instructions in their initialize response. Injected as an additional
 	// system block — mirrors MCP instructions delta in Claude Code.
-	var mcpInstructionsPrompt string
+	var mcpInstructionsBuf strings.Builder
 	for srvName, instr := range mcpManager.ServerInstructions() {
-		mcpInstructionsPrompt += "## " + srvName + "\n" + instr + "\n\n"
+		mcpInstructionsBuf.WriteString("## ")
+		mcpInstructionsBuf.WriteString(srvName)
+		mcpInstructionsBuf.WriteString("\n")
+		mcpInstructionsBuf.WriteString(instr)
+		mcpInstructionsBuf.WriteString("\n\n")
 	}
 	// Buddy companion intro: when a companion is configured, tell the
 	// model about it so the model defers to the buddy when the user
 	// addresses it by name. Mirrors src/buddy/prompt.ts.
 	if intro := buddy.IntroPrompt(); intro != "" {
-		mcpInstructionsPrompt += intro + "\n"
+		mcpInstructionsBuf.WriteString(intro)
+		mcpInstructionsBuf.WriteString("\n")
 	}
+
+	// bgCtx / bgWg bound background memory goroutines to the session lifetime.
+	// On shutdown, bgCancel signals them to stop; bgWg lets us drain them
+	// with a grace window rather than killing them immediately.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	var bgWg sync.WaitGroup
 
 	// extractInflight single-flights post-Stop memory extraction so a fast
 	// chain of end_turns doesn't queue multiple sub-agent runs. Mirrors CC's
@@ -432,7 +446,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build system blocks; append prior session summary on resume so the
 	// new turn picks up where the previous one left off. Append (not
 	// prepend) keeps the Max wire fingerprint intact.
-	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsPrompt, skillEntries...)
+	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsBuf.String(), skillEntries...)
 	if strings.TrimSpace(priorSummary) != "" {
 		systemBlocks = append(systemBlocks, api.SystemBlock{
 			Type: "text",
@@ -486,17 +500,17 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 			extractMu.Unlock()
 			if extractWasIdle {
-				go func() {
+				bgWg.Go(func() {
 					defer func() {
 						extractMu.Lock()
 						extractInflight = false
 						extractMu.Unlock()
 					}()
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					ctx, cancel := context.WithTimeout(bgCtx, 5*time.Minute)
 					defer cancel()
 					recent := tui.SummarizeMessages(snapshot, 20)
 					_ = memdir.RunExtract(ctx, cwd, recent, lp.RunBackgroundAgent)
-				}()
+				})
 			}
 
 			// Session-memory update (throttled to every UpdateEveryNTurns
@@ -513,7 +527,7 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 			sessionMemMu.Unlock()
 			if shouldUpdate {
-				go func() {
+				bgWg.Go(func() {
 					defer func() {
 						sessionMemMu.Lock()
 						sessionMemInflight = false
@@ -523,11 +537,11 @@ func runREPL(continueMode bool, resumeID string) error {
 					if err != nil {
 						return
 					}
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					ctx, cancel := context.WithTimeout(bgCtx, 5*time.Minute)
 					defer cancel()
 					recent := tui.SummarizeMessages(snapshot, 30)
 					_ = sessionmem.RunUpdate(ctx, path, recent, lp.RunBackgroundAgent)
-				}()
+				})
 			}
 		},
 		OnCompact: func(summary string) {
@@ -541,6 +555,10 @@ func runREPL(continueMode bool, resumeID string) error {
 	reg.Register(agenttool.New(lp.RunBackgroundAgent))
 	skillLoader := plugins.NewSkillLoader(loadedPlugins)
 	reg.Register(skilltool.New(skillLoader, lp.RunBackgroundAgent))
+
+	// Wire a session-scoped async group so async hooks are cancellable and
+	// drainable at shutdown instead of leaking as untracked goroutines.
+	hooks.DefaultAsyncGroup = hooks.NewAsyncGroup(ctx)
 
 	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
 		AuthErr:                   authErr,
@@ -595,6 +613,10 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 	})
 
+	// Drain async hooks: cancel their context and wait up to 5s for them to
+	// finish before the process tears down further state.
+	hooks.DefaultAsyncGroup.Shutdown(5 * time.Second)
+
 	// Auto-dream: after the session ends, check whether memory consolidation
 	// should fire. Mirrors autoDream.ts gate: 24h elapsed + 5 sessions.
 	// Runs synchronously (after TUI exits) so the terminal is restored before
@@ -606,6 +628,16 @@ func runREPL(continueMode bool, resumeID string) error {
 			defer dreamCancel()
 			_ = memdir.RunDream(dreamCtx, cwd, sessionDir, lp.RunBackgroundAgent)
 		}
+	}
+
+	// Drain in-flight background memory goroutines. Cancel bgCtx first so
+	// they abort any pending sub-agent API calls, then wait up to 10s.
+	bgCancel()
+	drainDone := make(chan struct{})
+	go func() { bgWg.Wait(); close(drainDone) }()
+	select {
+	case <-drainDone:
+	case <-time.After(10 * time.Second):
 	}
 
 	return tuiErr
@@ -672,6 +704,3 @@ func thinkingBudget() int {
 	}
 	return 0
 }
-
-// keep json import used (for ContentBlock marshaling in history tracking)
-var _ = json.Marshal

@@ -8,23 +8,19 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 )
 
-// subAgentRunner is a function that can run a sub-agent prompt.
-// Injected by the caller (agent loop) when prompt/agent hooks are needed.
-// If nil, prompt/agent hooks are skipped (treated as advisory no-ops).
-var SubAgentRunner func(ctx context.Context, prompt string) (string, error)
-
 // runPromptHook evaluates a prompt hook by sending the prompt (with $ARGUMENTS
 // substituted) to the LLM. The response is parsed as a HookOutput directive.
 // Mirrors src/utils/hooks/execPromptHook.ts.
 func runPromptHook(ctx context.Context, hook settings.Hook, input HookInput) Result {
-	if SubAgentRunner == nil || hook.Prompt == "" {
+	runner := subAgentRunner()
+	if runner == nil || hook.Prompt == "" {
 		return Result{} // no runner available — advisory no-op
 	}
 
 	// Substitute $ARGUMENTS with the JSON-encoded hook input.
 	prompt := substituteArguments(hook.Prompt, input)
 
-	result, err := SubAgentRunner(ctx, prompt)
+	result, err := runner(ctx, prompt)
 	if err != nil {
 		// Non-fatal: prompt hook failure is advisory.
 		return Result{}
@@ -37,7 +33,8 @@ func runPromptHook(ctx context.Context, hook settings.Hook, input HookInput) Res
 // framing. If the agent returns a block decision, the tool call is blocked.
 // Mirrors src/utils/hooks/execAgentHook.ts.
 func runAgentHook(ctx context.Context, hook settings.Hook, input HookInput) Result {
-	if SubAgentRunner == nil || hook.Prompt == "" {
+	runner := subAgentRunner()
+	if runner == nil || hook.Prompt == "" {
 		return Result{} // no runner available — advisory no-op
 	}
 
@@ -47,12 +44,21 @@ func runAgentHook(ctx context.Context, hook settings.Hook, input HookInput) Resu
 	agentPrompt := "You are a verification agent. " + prompt +
 		"\n\nRespond with JSON: {\"decision\":\"block\",\"reason\":\"...\"} to block, or {\"decision\":\"approve\"} to allow."
 
-	result, err := SubAgentRunner(ctx, agentPrompt)
+	result, err := runner(ctx, agentPrompt)
 	if err != nil {
 		return Result{}
 	}
 
 	return parseHookResponse(result)
+}
+
+// subAgentRunner returns the sub-agent runner from DefaultAsyncGroup, or nil
+// if no group has been set. This avoids a package-level mutable global.
+func subAgentRunner() func(ctx context.Context, prompt string) (string, error) {
+	if DefaultAsyncGroup == nil {
+		return nil
+	}
+	return DefaultAsyncGroup.SubAgentRunner
 }
 
 // substituteArguments replaces $ARGUMENTS in the prompt with the JSON-encoded

@@ -53,9 +53,10 @@ type stdioClient struct {
 }
 
 // NewStdioClient creates a Client that runs cmd with the given args and env,
-// communicating over stdio.
-func NewStdioClient(command string, args []string, env map[string]string) (Client, error) {
-	cmd := exec.CommandContext(context.Background(), command, args...) //nolint:noctx
+// communicating over stdio. The provided ctx controls the subprocess lifetime —
+// cancelling it kills the child process.
+func NewStdioClient(ctx context.Context, command string, args []string, env map[string]string) (Client, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
 	if len(env) > 0 {
 		cmd.Env = mergedStdioEnv(env)
 	}

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -213,7 +214,9 @@ func matchPattern(pattern, input string) bool {
 	return pattern == input
 }
 
-// matchGlob does simple glob matching supporting * (single segment) and ** (any depth).
+// matchGlob does simple glob matching supporting * (any sequence) and ** (any depth).
+// Uses the two-pointer/checkpoint algorithm: O(n·m) with no recursion, safe against
+// adversarial patterns with many wildcards.
 func matchGlob(pattern, input string) bool {
 	// Fast path: trailing /** means "this directory and anything under it".
 	if strings.HasSuffix(pattern, "/**") {
@@ -227,24 +230,33 @@ func matchGlob(pattern, input string) bool {
 		return rest != input && !strings.Contains(rest, "/")
 	}
 
-	// General single-wildcard matching.
-	parts := strings.SplitN(pattern, "*", 2)
-	if len(parts) == 1 {
-		return pattern == input
+	// General matching: two-pointer with a star checkpoint.
+	// Whenever we see a '*' in the pattern we record (starPos, matchPos) and
+	// advance. On mismatch we backtrack to starPos+1 and retry from matchPos+1.
+	p, i := 0, 0
+	starPos, matchPos := -1, 0
+	for i < len(input) {
+		if p < len(pattern) && pattern[p] == '*' {
+			starPos = p
+			matchPos = i
+			p++
+		} else if p < len(pattern) && pattern[p] == input[i] {
+			p++
+			i++
+		} else if starPos >= 0 {
+			// Backtrack: the previous '*' consumes one more character.
+			p = starPos + 1
+			matchPos++
+			i = matchPos
+		} else {
+			return false
+		}
 	}
-	left, right := parts[0], parts[1]
-	if !strings.HasPrefix(input, left) {
-		return false
+	// Consume any trailing stars.
+	for p < len(pattern) && pattern[p] == '*' {
+		p++
 	}
-	remaining := input[len(left):]
-	if right == "" {
-		return true
-	}
-	// right may itself contain wildcards — recurse.
-	if strings.Contains(right, "*") {
-		return matchGlob(right, remaining)
-	}
-	return strings.HasSuffix(remaining, right)
+	return p == len(pattern)
 }
 
 // SuggestRule returns the broad rule string to use for "always allow".
@@ -360,10 +372,8 @@ func PersistAllow(rule, cwd string) error {
 	}
 
 	// Deduplicate.
-	for _, existing := range allow {
-		if existing == rule {
-			return nil
-		}
+	if slices.Contains(allow, rule) {
+		return nil
 	}
 	allow = append(allow, rule)
 
@@ -382,5 +392,5 @@ func PersistAllow(rule, cwd string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	return os.WriteFile(path, append(out, '\n'), 0o600)
 }

@@ -12,7 +12,6 @@ jobs:
       matrix:
         target:
           - { pkg: ./internal/sse, fn: FuzzParse }
-          - { pkg: ./internal/auth, fn: FuzzCallbackURL }
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6

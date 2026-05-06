@@ -67,12 +67,21 @@ type RegistryOpts struct {
 	Synthetic     *syntheticoutputtool.SyntheticOutput
 	EnterWorktree *worktreetool.EnterWorktree
 	ExitWorktree  *worktreetool.ExitWorktree
+
+	// SessionEnv is passed directly to bashtool.New so that subprocess
+	// environment injection is stored on the Tool instance rather than a
+	// package-level global.
+	SessionEnv map[string]string
 }
 
 // BuildRegistry builds the tool registry, including MCP server tools.
 func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *RegistryOpts, implementProvider func() *settings.ActiveProviderSettings) *tool.Registry {
 	reg := tool.NewRegistry()
-	reg.Register(bashtool.New())
+	var sessionEnv map[string]string
+	if rOpts != nil {
+		sessionEnv = rOpts.SessionEnv
+	}
+	reg.Register(bashtool.New(sessionEnv))
 	reg.Register(fileedittool.New())
 	reg.Register(filereadtool.New())
 	reg.Register(filewritetool.New())

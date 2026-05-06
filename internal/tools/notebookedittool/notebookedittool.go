@@ -141,7 +141,7 @@ func (*Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error
 	case "delete":
 		return deleteCell(&nb, in)
 	}
-	panic("unreachable")
+	return tool.ErrorResult(fmt.Sprintf("unknown edit_mode %q", editMode)), nil
 }
 
 func replaceCell(nb *notebookFile, in Input) (tool.Result, error) {

@@ -3,6 +3,7 @@ package webfetchtool
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,10 @@ func input(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
+// newTestTool returns a Tool that uses a plain dialer (no SSRF guard) so
+// tests can connect to httptest servers on 127.0.0.1.
+func newTestTool() *Tool { return newWithDialer(&net.Dialer{}) }
+
 func TestWebFetch_PlainText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -22,7 +27,7 @@ func TestWebFetch_PlainText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
 		"url":    srv.URL,
 		"prompt": "what does it say?",
@@ -45,7 +50,7 @@ func TestWebFetch_HTMLStripped(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
 		"url":    srv.URL,
 		"prompt": "summarize",
@@ -77,7 +82,7 @@ func TestWebFetch_404ReturnsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
 		"url":    srv.URL,
 		"prompt": "anything",
@@ -94,7 +99,7 @@ func TestWebFetch_404ReturnsError(t *testing.T) {
 }
 
 func TestWebFetch_InvalidURL(t *testing.T) {
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
 		"url":    "not-a-url",
 		"prompt": "x",
@@ -108,7 +113,7 @@ func TestWebFetch_InvalidURL(t *testing.T) {
 }
 
 func TestWebFetch_EmptyURL(t *testing.T) {
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
 		"url":    "",
 		"prompt": "x",
@@ -130,7 +135,7 @@ func TestWebFetch_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(ctx, input(t, map[string]any{
 		"url":    srv.URL,
 		"prompt": "x",
@@ -148,13 +153,13 @@ func TestWebFetch_LargeBodyTruncated(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		// Write more than MaxContentBytes.
 		chunk := strings.Repeat("x", 1024)
-		for i := 0; i < MaxContentBytes/1024+2; i++ {
+		for range MaxContentBytes/1024 + 2 {
 			_, _ = w.Write([]byte(chunk))
 		}
 	}))
 	defer srv.Close()
 
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), input(t, map[string]any{
 		"url":    srv.URL,
 		"prompt": "x",
@@ -171,7 +176,7 @@ func TestWebFetch_LargeBodyTruncated(t *testing.T) {
 }
 
 func TestWebFetch_InvalidJSON(t *testing.T) {
-	tt := New()
+	tt := newTestTool()
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{bad`))
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +187,7 @@ func TestWebFetch_InvalidJSON(t *testing.T) {
 }
 
 func TestWebFetch_StaticMetadata(t *testing.T) {
-	tt := New()
+	tt := newTestTool()
 	if tt.Name() != "WebFetch" {
 		t.Errorf("Name = %q", tt.Name())
 	}

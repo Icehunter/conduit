@@ -115,7 +115,7 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 		for k, v := range cfg.Env {
 			envMap[k] = expandEnv(v)
 		}
-		client, err = NewStdioClient(cmd, args, envMap)
+		client, err = NewStdioClient(ctx, cmd, args, envMap)
 	case "sse", "http":
 		hdrs := make(map[string]string, len(cfg.Headers))
 		for k, v := range cfg.Headers {

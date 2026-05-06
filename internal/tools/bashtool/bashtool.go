@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -33,10 +34,6 @@ var (
 	trackOnce sync.Once
 	trackDB   *track.DB
 )
-
-// SessionEnv is injected by the loop at startup from settings.Merged.Env.
-// When non-nil, each subprocess inherits the base environment plus these vars.
-var SessionEnv map[string]string
 
 func getTrackDB() *track.DB {
 	trackOnce.Do(func() {
@@ -62,10 +59,15 @@ const MaxTimeout = 10 * time.Minute
 const MaxOutputBytes = 30000
 
 // Tool implements the Bash tool.
-type Tool struct{}
+type Tool struct {
+	// env holds session-level environment variables (from settings.Merged.Env)
+	// that each subprocess should inherit in addition to the process environment.
+	env map[string]string
+}
 
-// New returns a fresh Bash tool. Stateless; one instance is fine.
-func New() *Tool { return &Tool{} }
+// New returns a Bash tool that injects env into every subprocess it spawns.
+// Pass nil (or an empty map) when no extra variables are needed.
+func New(env map[string]string) *Tool { return &Tool{env: env} }
 
 // Name implements tool.Tool.
 func (*Tool) Name() string { return "Bash" }
@@ -198,6 +200,12 @@ type Input struct {
 
 // Execute runs the command and returns its output.
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+	if runtime.GOOS == "windows" {
+		return tool.ErrorResult(
+			"Bash is not available on Windows. " +
+				"Install WSL (Windows Subsystem for Linux) or Git Bash and ensure `bash` is on your PATH.",
+		), nil
+	}
 	var in Input
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("invalid input: %v", err)), nil
@@ -221,9 +229,9 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// `bash -c` matches the real tool's shell-out behavior.
 	cmd := exec.CommandContext(cctx, "bash", "-c", in.Command)
 	// Inherit process env + any session-level env injected from settings.
-	if len(SessionEnv) > 0 {
+	if len(t.env) > 0 {
 		base := os.Environ()
-		for k, v := range SessionEnv {
+		for k, v := range t.env {
 			base = append(base, k+"="+v)
 		}
 		cmd.Env = base
@@ -262,8 +270,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		// Non-zero exit: surface to the model as an in-band error so it
 		// can correct course.
 		exitCode := -1
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			exitCode = ee.ExitCode()
 		}
 		fmt.Fprintf(&sb, "Exit code: %d\n", exitCode)

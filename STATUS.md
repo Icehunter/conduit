@@ -84,9 +84,9 @@ Last updated: 2026-05-05
 | TodoWriteTool | ✅ | internal/tools/todowritetool/ |
 | AgentTool | ✅ | internal/tools/agenttool/ |
 | LocalImplement | ✅ | conduit-only wrapper: lets the main agent offload bounded diff drafts to configured MCP `local_implement` |
-| LSPTool | ✅ | internal/tools/lsp/; hover, definition, references, diagnostics |
+| LSPTool | 🔶 | internal/tools/lsp/; hover, definition, references, diagnostics; no tool-level tests |
 | MCPTool | ✅ | internal/tools/mcptool/ |
-| REPLTool | ✅ | node/python3/bash via temp file (no shell injection) |
+| REPLTool | 🔶 | node/python3/bash via temp file (no shell injection); no tool-level tests |
 | SkillTool | ✅ | internal/tools/skilltool/ |
 | TaskCreateTool | ✅ | in-process store |
 | TaskGetTool | ✅ | |
@@ -229,14 +229,14 @@ Last updated: 2026-05-05
 
 ---
 
-## M9 — Multi-agent + Coordinator 🔲
+## M9 — Multi-agent + Coordinator 🔶
 
-| Component | Status |
-|-----------|--------|
-| AgentTool (subagents) | 🔲 |
-| Swarm/coordinator | 🔲 |
-| SendMessageTool | 🔲 |
-| RemoteTriggerTool | 🔲 |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| AgentTool (subagents) | ✅ | internal/tools/agenttool/; RunSubAgent implemented |
+| Swarm/coordinator | ✅ | internal/coordinator/coordinator.go; system prompt injection, task-notification XML, MCP context |
+| SendMessageTool | 🔲 | Team messaging feature; descoped |
+| RemoteTriggerTool | 🔲 | Remote-only (M10); descoped |
 
 ---
 

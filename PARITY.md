@@ -184,7 +184,7 @@
 | PostToolUse hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
 | SessionStart hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
 | Stop hooks | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
-| Hook approve directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | Bypasses AskPermission |
+| Hook approve directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | Bypasses AskPermission; sticky across all matchers (block still short-circuits) |
 | Hook block directive | `utils/hooks/` | — | `internal/hooks/hooks.go` | ✅ | |
 | HTTP hooks | `utils/hooks/execHttpHook.ts` | — | `internal/hooks/http.go` | ✅ | POST JSON, parse decision |
 | Prompt hooks | `utils/hooks/execPromptHook.ts` | — | `internal/hooks/llm.go` | ✅ | Sub-agent prompt, inject result |

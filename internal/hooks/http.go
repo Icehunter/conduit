@@ -9,12 +9,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
-
-const defaultHTTPTimeout = 10 * time.Minute
 
 // runHTTPHook POSTs hook input as JSON to the configured URL and interprets
 // the JSON response as a HookOutput directive. Mirrors execHttpHook.ts.
@@ -28,12 +25,7 @@ func runHTTPHook(ctx context.Context, hook settings.Hook, input HookInput) Resul
 		return Result{Blocked: true, Reason: fmt.Sprintf("http hook: marshal: %v", err)}
 	}
 
-	timeout := defaultHTTPTimeout
-	if hook.TimeoutSecs > 0 {
-		timeout = time.Duration(hook.TimeoutSecs) * time.Second
-	}
-
-	hctx, cancel := context.WithTimeout(ctx, timeout)
+	hctx, cancel := context.WithTimeout(ctx, hookTimeout(hook.TimeoutSecs))
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(hctx, http.MethodPost, hook.URL, bytes.NewReader(payload))

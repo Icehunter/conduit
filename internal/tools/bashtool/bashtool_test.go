@@ -10,7 +10,7 @@ import (
 )
 
 func TestBash_StdoutCapture(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"echo hello"}`))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -24,7 +24,7 @@ func TestBash_StdoutCapture(t *testing.T) {
 }
 
 func TestBash_CombinedStdoutStderr(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(
 		`{"command":"echo out; echo err 1>&2"}`))
 	if err != nil {
@@ -40,7 +40,7 @@ func TestBash_CombinedStdoutStderr(t *testing.T) {
 }
 
 func TestBash_NonZeroExit(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"exit 7"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestBash_Timeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX sleep")
 	}
-	tt := New()
+	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"sleep 5","timeout":100}`))
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestBash_Timeout(t *testing.T) {
 }
 
 func TestBash_TimeoutCappedToMax(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	// Send timeout > MaxTimeout; should be silently capped (no immediate
 	// error from a fast command).
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"echo ok","timeout":99999999}`))
@@ -84,7 +84,7 @@ func TestBash_TimeoutCappedToMax(t *testing.T) {
 }
 
 func TestBash_ContextCancel(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	res, err := tt.Execute(ctx, json.RawMessage(`{"command":"echo hi"}`))
@@ -97,7 +97,7 @@ func TestBash_ContextCancel(t *testing.T) {
 }
 
 func TestBash_OutputTruncated(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	// Generate ~50KB of output (more than MaxOutputBytes).
 	res, err := tt.Execute(context.Background(),
 		json.RawMessage(`{"command":"yes a | head -c 50000"}`))
@@ -113,7 +113,7 @@ func TestBash_OutputTruncated(t *testing.T) {
 }
 
 func TestBash_EmptyCommandRejected(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"   "}`))
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestBash_EmptyCommandRejected(t *testing.T) {
 }
 
 func TestBash_InvalidJSONRejected(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{not json`))
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestBash_InvalidJSONRejected(t *testing.T) {
 }
 
 func TestBash_StaticMetadata(t *testing.T) {
-	tt := New()
+	tt := New(nil)
 	if tt.Name() != "Bash" {
 		t.Errorf("Name = %q", tt.Name())
 	}

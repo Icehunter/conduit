@@ -94,6 +94,7 @@ func RunStop(ctx context.Context, hooks []settings.HookMatcher, sessionID string
 }
 
 func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName string, input HookInput) Result {
+	var result Result
 	for _, m := range matchers {
 		if !matchesTool(m.Matcher, toolName) {
 			continue
@@ -101,21 +102,36 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 		for _, hook := range m.Hooks {
 			if hook.Async {
 				// Fire-and-forget: run in background, never block the caller.
+				// When DefaultAsyncGroup is set (normal session path), the
+				// goroutine is tracked and cancellable at shutdown. When nil
+				// (tests or non-session callers), fall back to an untracked
+				// goroutine tied to context.Background() — original behaviour.
 				h := hook
 				in := input
-				go func() {
-					bgCtx := context.Background()
-					_ = dispatchHook(bgCtx, h, in)
-				}()
+				if DefaultAsyncGroup != nil {
+					DefaultAsyncGroup.Go(func(ctx context.Context) {
+						_ = dispatchHook(ctx, h, in)
+					})
+				} else {
+					go func() {
+						_ = dispatchHook(context.Background(), h, in)
+					}()
+				}
 				continue
 			}
 			r := dispatchHook(ctx, hook, input)
-			if r.Blocked || r.Approved {
+			if r.Blocked {
+				// Block short-circuits all remaining hooks immediately.
 				return r
+			}
+			if r.Approved {
+				// Approved is sticky but does not stop later matchers — a more
+				// specific matcher further down the list may still block.
+				result.Approved = true
 			}
 		}
 	}
-	return Result{}
+	return result
 }
 
 // dispatchHook routes a hook to the appropriate runner based on its type.
@@ -125,7 +141,7 @@ func dispatchHook(ctx context.Context, hook settings.Hook, input HookInput) Resu
 		if hook.Command == "" {
 			return Result{}
 		}
-		return runHook(ctx, hook.Command, input)
+		return runHook(ctx, hook.Command, hookTimeout(hook.TimeoutSecs), input)
 	case "http":
 		return runHTTPHook(ctx, hook, input)
 	case "prompt":
@@ -151,11 +167,34 @@ func matchesTool(matcher, toolName string) bool {
 	return strings.EqualFold(matcher, toolName)
 }
 
+// maxHookTimeout is the upper bound for any hook execution.
+const maxHookTimeout = 60 * time.Second
+
+// minHookTimeout is the lower bound to prevent zero/negative values from
+// disabling the timeout guard.
+const minHookTimeout = time.Second
+
+// hookTimeout converts a per-hook TimeoutSecs value to a clamped duration.
+// 0 → default (60s). Values outside [1s, 60s] are clamped.
+func hookTimeout(secs int) time.Duration {
+	if secs <= 0 {
+		return maxHookTimeout
+	}
+	d := time.Duration(secs) * time.Second
+	if d < minHookTimeout {
+		return minHookTimeout
+	}
+	if d > maxHookTimeout {
+		return maxHookTimeout
+	}
+	return d
+}
+
 // runHook executes a single hook command with JSON input on stdin.
-func runHook(ctx context.Context, command string, input HookInput) Result {
+func runHook(ctx context.Context, command string, timeout time.Duration, input HookInput) Result {
 	payload, _ := json.Marshal(input)
 
-	hctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	hctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(hctx, "sh", "-c", command)

@@ -167,6 +167,7 @@ type LoopConfig struct {
 
 // Loop drives the agentic query cycle.
 type Loop struct {
+	mu     sync.RWMutex
 	client *api.Client
 	reg    *tool.Registry
 	cfg    LoopConfig
@@ -176,56 +177,76 @@ type Loop struct {
 func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 	l := &Loop{client: client, reg: reg, cfg: cfg}
 	// Wire the background runner into the hooks package so prompt/agent hooks
-	// can spawn helper LLM calls. This overwrites any previously set runner on
-	// the last NewLoop call — single-process usage, so that's fine.
-	hooks.SubAgentRunner = l.RunBackgroundAgent
+	// can spawn helper LLM calls. Stored on DefaultAsyncGroup to avoid a
+	// package-level mutable global.
+	if hooks.DefaultAsyncGroup != nil {
+		hooks.DefaultAsyncGroup.SubAgentRunner = l.RunBackgroundAgent
+	}
 	return l
 }
 
 // SetModel updates the model used for new requests (from /model slash command).
 func (l *Loop) SetModel(name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.cfg.Model = name
 }
 
 // Model returns the model configured for new requests.
 func (l *Loop) Model() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.cfg.Model
 }
 
 // BackgroundModel returns the helper/background model for new secondary calls.
 func (l *Loop) BackgroundModel() string {
-	if l.cfg.BackgroundModel != nil {
-		if model := strings.TrimSpace(l.cfg.BackgroundModel()); model != "" {
-			return model
+	l.mu.RLock()
+	bgModel := l.cfg.BackgroundModel
+	model := l.cfg.Model
+	l.mu.RUnlock()
+	if bgModel != nil {
+		if m := strings.TrimSpace(bgModel()); m != "" {
+			return m
 		}
 	}
-	return l.cfg.Model
+	return model
 }
 
 // SetThinkingBudget updates the thinking budget for subsequent requests.
 // Set to 0 to disable thinking. Used by /effort command.
 func (l *Loop) SetThinkingBudget(budget int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.cfg.ThinkingBudget = budget
 }
 
 // GetThinkingBudget returns the current thinking budget.
 func (l *Loop) GetThinkingBudget() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.cfg.ThinkingBudget
 }
 
 // SetSystem replaces the system blocks for subsequent requests.
 func (l *Loop) SetSystem(blocks []api.SystemBlock) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.cfg.System = blocks
 }
 
 // SetClient swaps the API client (e.g. after a fresh login reloads credentials).
 func (l *Loop) SetClient(client *api.Client) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.client = client
 }
 
 // SetAskPermission installs the interactive permission callback.
 // Called from the TUI after the Bubble Tea program is created.
 func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.cfg.AskPermission = fn
 }
 
@@ -239,7 +260,10 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 // <task-notification> XML block so the coordinator model can identify and
 // process it correctly per its system prompt instructions.
 func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
-	return l.runSubAgentWithModel(ctx, prompt, l.cfg.Model)
+	l.mu.RLock()
+	model := l.cfg.Model
+	l.mu.RUnlock()
+	return l.runSubAgentWithModel(ctx, prompt, model)
 }
 
 // RunBackgroundAgent runs a nested agent loop on the configured background
@@ -256,7 +280,20 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string) (
 			Content: []api.ContentBlock{{Type: "text", Text: prompt}},
 		},
 	}
-	child := &Loop{client: l.client, reg: l.reg, cfg: l.cfg}
+	l.mu.RLock()
+	childClient := l.client
+	childCfg := l.cfg
+	l.mu.RUnlock()
+
+	// Sub-agents must not fire parent-session side effects. Strip callbacks
+	// and notifications so a sub-agent end_turn doesn't send desktop pings
+	// or re-trigger memory extraction / session-memory updates.
+	childCfg.NotifyOnComplete = false
+	childCfg.OnEndTurn = nil
+	childCfg.OnCompact = nil
+	childCfg.OnFileAccess = nil
+
+	child := &Loop{client: childClient, reg: l.reg, cfg: childCfg}
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}
@@ -336,13 +373,24 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
 
+	// Snapshot mutable fields under the read lock so that concurrent Set*
+	// calls from the TUI goroutine cannot race with this turn's reads.
+	l.mu.RLock()
+	model := l.cfg.Model
+	system := l.cfg.System
+	thinkingBudget := l.cfg.ThinkingBudget
+	client := l.client
+	l.mu.RUnlock()
+
 	// Fire SessionStart hooks once before the first turn.
 	if l.cfg.Hooks != nil && len(l.cfg.Hooks.SessionStart) > 0 {
 		hooks.RunSessionStart(ctx, l.cfg.Hooks.SessionStart, l.cfg.SessionID)
 	}
 	defer func() {
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.Stop) > 0 {
-			hooks.RunStop(context.Background(), l.cfg.Hooks.Stop, l.cfg.SessionID)
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stopCancel()
+			hooks.RunStop(stopCtx, l.cfg.Hooks.Stop, l.cfg.SessionID)
 		}
 	}()
 
@@ -377,18 +425,18 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		req := &api.MessageRequest{
-			Model:     l.cfg.Model,
+			Model:     model,
 			MaxTokens: l.cfg.MaxTokens,
-			System:    l.cfg.System,
+			System:    system,
 			Messages:  msgs,
 			Stream:    true,
 			Tools:     tools,
 			Metadata:  l.cfg.Metadata,
 		}
-		if l.cfg.ThinkingBudget > 0 {
+		if thinkingBudget > 0 {
 			req.Thinking = &api.ThinkingConfig{
 				Type:         "enabled",
-				BudgetTokens: l.cfg.ThinkingBudget,
+				BudgetTokens: thinkingBudget,
 			}
 		}
 
@@ -404,7 +452,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			// leaving the user watching a spinner for minutes or hours.
 			return ev.Delay <= 2*time.Minute
 		})
-		stream, err := l.client.StreamMessage(streamCtx, req)
+		stream, err := client.StreamMessage(streamCtx, req)
 		if err != nil {
 			return msgs, fmt.Errorf("agent: stream: %w", err)
 		}
@@ -753,8 +801,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				tasks = append(tasks, task)
 				continue
 			case permissions.DecisionAsk:
-				if !hookApproved && l.cfg.AskPermission != nil {
-					allow, alwaysAllow := l.cfg.AskPermission(ctx, block.Name, permInput)
+				l.mu.RLock()
+				askPermission := l.cfg.AskPermission
+				l.mu.RUnlock()
+				if !hookApproved && askPermission != nil {
+					allow, alwaysAllow := askPermission(ctx, block.Name, permInput)
 					if !allow {
 						task.denied = true
 						task.denyMsg = fmt.Sprintf("%s denied by user", block.Name)
@@ -814,7 +865,12 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		var wg sync.WaitGroup
 		for _, wi := range parallel {
 			wg.Add(1)
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				wg.Done()
+				continue
+			}
 			go func() {
 				defer wg.Done()
 				defer func() { <-sem }()

@@ -476,6 +476,9 @@ First account-backed step:
 - Model/role assignment preserves the active account-backed provider kind, so
   choosing a model while signed into Console does not silently write it back as
   a Claude subscription provider.
+- Ctrl+M and `/models` label the model section from the active account kind:
+  `Claude Subscription` for Claude.ai and `Anthropic API` for Console. Picker
+  values carry the provider kind through selection.
 
 This is the large refactor because Conduit currently assumes Anthropic wire
 format in its API client, streaming loop, thinking config, tool calls, rate-limit

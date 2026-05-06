@@ -69,6 +69,21 @@ func SummarizeMessages(history []api.Message, n int) string {
 	return sb.String()
 }
 
+func activeAccountProviderKind() string {
+	email := auth.ActiveEmail()
+	if email == "" {
+		return "claude-subscription"
+	}
+	store, err := auth.ListAccounts()
+	if err != nil {
+		return "claude-subscription"
+	}
+	if entry, ok := store.Accounts[email]; ok && entry.Kind == auth.AccountKindAnthropicConsole {
+		return "anthropic-api"
+	}
+	return "claude-subscription"
+}
+
 // altScreenExit/clearScreen are ANSI sequences for terminal cleanup.
 const (
 	altScreenExit = "\x1b[?1049l\x1b[?25h" // exit alt-screen, show cursor
@@ -202,6 +217,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return internalmodel.Resolve()
 		},
 		func(name string) { loop.SetModel(name) },
+		activeAccountProviderKind,
 		runOpts.MCPManager,
 		runOpts.InitialProviders,
 	)

@@ -3585,6 +3585,12 @@ func providerPickerValue(provider settings.ActiveProviderSettings) string {
 		}
 		return "local:" + server
 	}
+	if provider.Kind == "anthropic-api" {
+		return "anthropic-api:" + provider.Model
+	}
+	if provider.Kind == "claude-subscription" {
+		return "claude-subscription:" + provider.Model
+	}
 	return provider.Model
 }
 

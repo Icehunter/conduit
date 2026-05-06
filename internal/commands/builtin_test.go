@@ -78,7 +78,7 @@ func TestRegisterBuiltins_CommandPickerCommand(t *testing.T) {
 
 func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 	r := New()
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, nil)
 
 	result, ok := r.Dispatch("/models")
 	if !ok {
@@ -114,7 +114,7 @@ func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 
 func TestRegisterModelCommand_LocalSelectionSwitchesProvider(t *testing.T) {
 	r := New()
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, nil)
 
 	result, ok := r.Dispatch("/model local")
 	if !ok {
@@ -139,7 +139,7 @@ func TestRegisterModelCommand_ConfiguredLocalTargets(t *testing.T) {
 			ImplementTool: "implement",
 		},
 	}
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, providers)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers)
 
 	result, ok := r.Dispatch("/models")
 	if !ok {
@@ -171,7 +171,7 @@ func TestRegisterModelCommand_ConfiguredLocalTargets(t *testing.T) {
 
 func TestRegisterModelCommand_ClaudeSelectionSwitchesProvider(t *testing.T) {
 	r := New()
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, nil)
 
 	result, ok := r.Dispatch("/model opus")
 	if !ok {
@@ -185,10 +185,48 @@ func TestRegisterModelCommand_ClaudeSelectionSwitchesProvider(t *testing.T) {
 	}
 }
 
+func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
+	r := New()
+	RegisterModelCommand(
+		r,
+		func() string { return "claude-sonnet-4-6" },
+		func(string) {},
+		func() string { return "anthropic-api" },
+		nil,
+		nil,
+	)
+
+	result, ok := r.Dispatch("/model opus")
+	if !ok {
+		t.Fatal("expected /model opus to dispatch")
+	}
+	if result.Type != "provider-switch" || result.Provider == nil {
+		t.Fatalf("/model opus = %#v", result)
+	}
+	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-4-7" {
+		t.Fatalf("provider = %#v, want Anthropic API Opus provider", result.Provider)
+	}
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	if !got.Items[0].Section || got.Items[0].Label != "Anthropic API" {
+		t.Fatalf("first picker item = %#v, want Anthropic API section", got.Items[0])
+	}
+	if got.Items[1].Value != "anthropic-api:claude-opus-4-7" {
+		t.Fatalf("first model value = %q, want anthropic-api prefix", got.Items[1].Value)
+	}
+}
+
 func TestRegisterModelCommand_RoleSelection(t *testing.T) {
 	r := New()
 	called := false
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) { called = true }, nil, nil)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) { called = true }, nil, nil, nil)
 
 	result, ok := r.Dispatch("/model --role planning opus")
 	if !ok {

@@ -264,6 +264,9 @@ func modelPickerProviderLabel(value string) string {
 	if strings.HasPrefix(value, "local:") {
 		return stylePickerDesc.Render("MCP")
 	}
+	if strings.HasPrefix(value, "anthropic-api:") {
+		return stylePickerDesc.Render("Anthropic API")
+	}
 	return stylePickerDesc.Render("Claude")
 }
 

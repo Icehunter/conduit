@@ -14,6 +14,7 @@ import (
 	"github.com/icehunter/conduit/internal/memdir"
 	rg "github.com/icehunter/conduit/internal/ripgrep"
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // SessionState holds mutable session state that slash commands can read/modify.
@@ -367,8 +368,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 		Name:        "config",
 		Description: "Open settings panel, or: /config get <key> | set <key> <value> | list",
 		Handler: func(args string) Result {
-			home, _ := os.UserHomeDir()
-			settingsPath := filepath.Join(home, ".claude", "settings.json")
+			settingsPath := settings.ConduitSettingsPath()
 
 			parts := strings.Fields(args)
 			sub := ""

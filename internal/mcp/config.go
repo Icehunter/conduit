@@ -17,11 +17,6 @@ type pluginsInstalledV2 struct {
 	} `json:"plugins"`
 }
 
-// pluginsSettingsJSON is the minimal shape of ~/.claude/settings.json we need.
-type pluginsSettingsJSON struct {
-	EnabledPlugins map[string]interface{} `json:"enabledPlugins"`
-}
-
 // claudeJSON is the shape of ~/.claude.json used by real Claude Code.
 // We only decode the fields we need for MCP server discovery.
 type claudeJSON struct {
@@ -155,16 +150,7 @@ func loadPluginMCPServers(merged map[string]ServerConfig) {
 		pluginsDir = filepath.Join(claudeHome, "plugins")
 	}
 
-	// Read which plugins are enabled from settings.json.
-	settingsPath := filepath.Join(claudeHome, "settings.json")
-	settingsData, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return
-	}
-	var settings pluginsSettingsJSON
-	if err := json.Unmarshal(settingsData, &settings); err != nil {
-		return
-	}
+	enabledPlugins := loadEnabledPlugins(claudeHome)
 
 	// Read installed plugin paths from installed_plugins.json.
 	installedPath := filepath.Join(pluginsDir, "installed_plugins.json")
@@ -180,7 +166,7 @@ func loadPluginMCPServers(merged map[string]ServerConfig) {
 	for pluginID, entries := range installed.Plugins {
 		// Check if this plugin is enabled (value must be truthy).
 		enabled := false
-		if v, ok := settings.EnabledPlugins[pluginID]; ok {
+		if v, ok := enabledPlugins[pluginID]; ok {
 			switch val := v.(type) {
 			case bool:
 				enabled = val
@@ -222,6 +208,28 @@ func loadPluginMCPServers(merged map[string]ServerConfig) {
 			merged[qualName] = srv
 		}
 	}
+}
+
+func loadEnabledPlugins(claudeHome string) map[string]interface{} {
+	if cfg, err := settings.LoadConduitConfig(); err == nil && len(cfg.EnabledPlugins) > 0 {
+		out := make(map[string]interface{}, len(cfg.EnabledPlugins))
+		for k, v := range cfg.EnabledPlugins {
+			out[k] = v
+		}
+		return out
+	}
+	settingsPath := filepath.Join(claudeHome, "settings.json")
+	settingsData, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil
+	}
+	var raw struct {
+		EnabledPlugins map[string]interface{} `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal(settingsData, &raw); err != nil {
+		return nil
+	}
+	return raw.EnabledPlugins
 }
 
 // ancestorDirs returns the directory chain from filesystem root down to (and

@@ -425,6 +425,37 @@ func TestRenderUsageFooterLocalModeOmitsClaudeResets(t *testing.T) {
 	}
 }
 
+func TestRenderUsageFooterBackoffOnlyCacheShowsRateLimited(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	if err := settings.SaveConduitRawKey("accounts", map[string]any{
+		"active": "claude-ai:work@example.com",
+		"accounts": map[string]any{
+			"claude-ai:work@example.com": map[string]any{
+				"email": "work@example.com",
+				"kind":  "claude-ai",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save accounts: %v", err)
+	}
+	m := Model{
+		usageStatusEnabled: true,
+		planUsageBackoff:   time.Now().Add(5 * time.Minute),
+		providers: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.work@example.com.claude-opus-4-7": {Kind: "claude-subscription", Account: "work@example.com", Model: "claude-opus-4-7"},
+		},
+		roles: map[string]string{settings.RoleDefault: "claude-subscription.work@example.com.claude-opus-4-7"},
+	}
+	out := plainText(m.renderUsageFooter(100))
+	if !strings.Contains(out, "rate limited") {
+		t.Fatalf("footer = %q, want rate limited", out)
+	}
+	if strings.Contains(out, "loading") {
+		t.Fatalf("footer = %q, should not show loading during cached backoff", out)
+	}
+}
+
 func TestLocalPromptFromContentIncludesAtMentionContent(t *testing.T) {
 	dir := t.TempDir()
 	oldwd, err := os.Getwd()

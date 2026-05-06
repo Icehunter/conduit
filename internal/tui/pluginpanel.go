@@ -851,7 +851,7 @@ func (m Model) renderPluginPanel() string {
 	}
 	sb.WriteString(strings.Join(tabParts, stylePickerDesc.Render(" | ")))
 	sb.WriteByte('\n')
-	sb.WriteString(panelRule(innerW - 2))
+	sb.WriteString(panelRule(innerW - 4))
 	sb.WriteString("\n\n")
 
 	// Inner content height: panelH minus border(2) minus padding(2) minus title(1) minus separator(1) minus blank(1) = panelH - 5

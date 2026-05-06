@@ -55,6 +55,18 @@ func LoadCacheForKey(dir, key string) (CacheEntry, error) {
 	return store.Default, nil
 }
 
+func LoadCacheForKeyWithFallback(dir, legacyDir, key string) (CacheEntry, error) {
+	entry, err := LoadCacheForKey(dir, key)
+	if err != nil || cacheEntryUseful(entry) || legacyDir == "" || legacyDir == dir {
+		return entry, err
+	}
+	return LoadCacheForKey(legacyDir, key)
+}
+
+func cacheEntryUseful(entry CacheEntry) bool {
+	return !entry.CachedAt.IsZero() || !entry.BackoffUntil.IsZero()
+}
+
 // SaveCache writes entry to dir atomically (temp file + rename).
 func SaveCache(dir string, entry CacheEntry) error {
 	return SaveCacheForKey(dir, "", entry)

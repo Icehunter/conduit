@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Permissions is the permissions section of a settings file.
@@ -178,6 +179,7 @@ const (
 
 // Load reads and merges settings from all layers for the given cwd.
 func Load(cwd string) (*Merged, error) {
+	_ = ensureConduitConfigImported()
 	return loadPaths(settingsFiles(cwd))
 }
 
@@ -256,8 +258,13 @@ func loadPaths(paths []string) (*Merged, error) {
 }
 
 func settingsFiles(cwd string) []string {
-	paths := []string{
-		filepath.Join(claudeDir(), "settings.json"),
+	paths := []string{}
+	conduitExists := false
+	if _, err := os.Stat(ConduitSettingsPath()); err == nil {
+		conduitExists = true
+	}
+	if !conduitExists {
+		paths = append(paths, filepath.Join(claudeDir(), "settings.json"))
 	}
 	if cwd != "" {
 		paths = append(paths,
@@ -265,7 +272,9 @@ func settingsFiles(cwd string) []string {
 			filepath.Join(cwd, ".claude", "settings.local.json"),
 		)
 	}
-	paths = append(paths, ConduitSettingsPath())
+	if conduitExists {
+		paths = append(paths, ConduitSettingsPath())
+	}
 	return paths
 }
 
@@ -297,103 +306,38 @@ func UserSettingsPath() string {
 // here load after Claude-compatible settings and should only be written by
 // conduit-specific features.
 func ConduitSettingsPath() string {
-	dir := os.Getenv("CONDUIT_CONFIG_DIR")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			return filepath.Join(".conduit", "conduit.json")
-		}
-		dir = filepath.Join(home, ".conduit")
+	return filepath.Join(ConduitDir(), "conduit.json")
+}
+
+// ConduitDir returns conduit's private user configuration directory.
+func ConduitDir() string {
+	if dir := os.Getenv("CONDUIT_CONFIG_DIR"); dir != "" {
+		return dir
 	}
-	return filepath.Join(dir, "conduit.json")
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".conduit"
+	}
+	return filepath.Join(home, ".conduit")
 }
 
 // SaveOutputStyle persists the active output style name to the user settings file.
 func SaveOutputStyle(name string) error {
-	path := UserSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	raw, err := readRawObject(path)
-	if err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(name)
-	if err != nil {
-		return err
-	}
-	if name == "" {
-		delete(raw, "outputStyle")
-	} else {
-		raw["outputStyle"] = encoded
-	}
-	out, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	return SaveConduitOutputStyle(name)
 }
 
 // SetPluginEnabled sets enabledPlugins[pluginID] in the user settings file.
 func SetPluginEnabled(pluginID string, enabled bool) error {
-	return updateSettingsFile(UserSettingsPath(), func(s *Settings) {
-		if s.EnabledPlugins == nil {
-			s.EnabledPlugins = make(map[string]bool)
-		}
-		s.EnabledPlugins[pluginID] = enabled
-	})
+	return SaveConduitEnabledPlugin(pluginID, enabled)
 }
 
 // RemovePlugin removes a plugin from enabledPlugins in the user settings file.
 func RemovePlugin(pluginID string) error {
-	return updateSettingsFile(UserSettingsPath(), func(s *Settings) {
-		if s.EnabledPlugins != nil {
-			delete(s.EnabledPlugins, pluginID)
+	return UpdateConduitConfig(func(cfg *ConduitConfig) {
+		if cfg.EnabledPlugins != nil {
+			delete(cfg.EnabledPlugins, pluginID)
 		}
 	})
-}
-
-// updateSettingsFile reads, mutates only enabledPlugins, and writes the settings file.
-// It uses a raw JSON map so that unknown fields (and fields written by real Claude Code
-// in formats we don't model, like null arrays or non-standard enum values) are preserved
-// exactly — we never clobber them by round-tripping through our typed Settings struct.
-func updateSettingsFile(path string, fn func(*Settings)) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	// Read the raw JSON as an opaque map so unknown fields survive.
-	raw, err := readRawObject(path)
-	if err != nil {
-		return err
-	}
-
-	// Extract just the enabledPlugins section so fn can operate on it.
-	var s Settings
-	if ep, ok := raw["enabledPlugins"]; ok {
-		if err := json.Unmarshal(ep, &s.EnabledPlugins); err != nil {
-			return fmt.Errorf("settings: parse enabledPlugins: %w", err)
-		}
-	}
-
-	fn(&s)
-
-	// Write enabledPlugins back into the raw map.
-	if s.EnabledPlugins == nil {
-		delete(raw, "enabledPlugins")
-	} else {
-		ep, err := json.Marshal(s.EnabledPlugins)
-		if err != nil {
-			return err
-		}
-		raw["enabledPlugins"] = ep
-	}
-
-	data, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 // ApproveMcpjsonServer records an approval decision for a project-scope MCP
@@ -401,7 +345,7 @@ func updateSettingsFile(path string, fn func(*Settings)) error {
 // enableAllProjectMcpServers=true and add to enabled; "no" → add to
 // disabledMcpjsonServers. Idempotent; preserves all other settings keys.
 func ApproveMcpjsonServer(name, choice string) error {
-	path := UserSettingsPath()
+	path := ConduitSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -542,8 +486,7 @@ func savePermissionsField(path, op, field string, value interface{}) error {
 // SaveRawKey persists an arbitrary key/value to the user settings file using
 // raw-map preservation so no other fields are disturbed.
 func SaveRawKey(key string, value interface{}) error {
-	path := UserSettingsPath()
-	return saveRawKey(path, key, value)
+	return SaveConduitRawKey(key, value)
 }
 
 // SaveConduitRawKey persists a conduit-only key/value to ~/.conduit/conduit.json
@@ -636,8 +579,12 @@ type accountStoreSettings struct {
 }
 
 type accountEntrySettings struct {
-	Email string `json:"email"`
-	Kind  string `json:"kind,omitempty"`
+	Email            string    `json:"email"`
+	Kind             string    `json:"kind,omitempty"`
+	DisplayName      string    `json:"display_name,omitempty"`
+	OrganizationName string    `json:"organization_name,omitempty"`
+	SubscriptionType string    `json:"subscription_type,omitempty"`
+	AddedAt          time.Time `json:"added_at,omitempty"`
 }
 
 func providerKindMatchesAccount(providerKind, accountKind string) bool {

@@ -48,6 +48,42 @@ func TestLoad_ConduitSettingsOverrideClaudeSettings(t *testing.T) {
 	}
 }
 
+func TestLoad_ImportsClaudeUserSettingsOnceThenConduitWins(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(filepath.Dir(UserSettingsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UserSettingsPath(), []byte(`{"model":"claude-sonnet-4-6","theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if merged.Model != "claude-sonnet-4-6" || merged.Theme != "dark" {
+		t.Fatalf("first load = model %q theme %q, want imported Claude values", merged.Model, merged.Theme)
+	}
+	if err := SaveConduitModel("claude-opus-4-7"); err != nil {
+		t.Fatalf("SaveConduitModel: %v", err)
+	}
+	if err := os.WriteFile(UserSettingsPath(), []byte(`{"model":"claude-haiku-4-5","theme":"light"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err = Load("")
+	if err != nil {
+		t.Fatalf("second Load: %v", err)
+	}
+	if merged.Model != "claude-opus-4-7" {
+		t.Fatalf("second load model = %q, want Conduit value", merged.Model)
+	}
+	if merged.Theme != "dark" {
+		t.Fatalf("second load theme = %q, want imported Conduit value to beat changed Claude global", merged.Theme)
+	}
+}
+
 func TestLoad_ProviderRoles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -248,11 +284,7 @@ func TestSaveConduitRawKey_DoesNotWriteClaudeSettings(t *testing.T) {
 		t.Fatalf("SaveConduitRawKey: %v", err)
 	}
 
-	claudeData, err := os.ReadFile(UserSettingsPath())
-	if err != nil {
-		t.Fatalf("read Claude settings: %v", err)
-	}
-	if strings.Contains(string(claudeData), "activeProvider") {
+	if claudeData, err := os.ReadFile(UserSettingsPath()); err == nil && strings.Contains(string(claudeData), "activeProvider") {
 		t.Fatalf("Claude settings should not contain activeProvider: %s", claudeData)
 	}
 
@@ -272,7 +304,7 @@ func TestApproveMcpjsonServer_RoundTrip(t *testing.T) {
 	if err := ApproveMcpjsonServer("foo", "yes"); err != nil {
 		t.Fatalf("approve yes: %v", err)
 	}
-	merged, err := loadPaths([]string{UserSettingsPath()})
+	merged, err := loadPaths([]string{ConduitSettingsPath()})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -284,7 +316,7 @@ func TestApproveMcpjsonServer_RoundTrip(t *testing.T) {
 	if err := ApproveMcpjsonServer("foo", "no"); err != nil {
 		t.Fatalf("approve no: %v", err)
 	}
-	merged, _ = loadPaths([]string{UserSettingsPath()})
+	merged, _ = loadPaths([]string{ConduitSettingsPath()})
 	if contains(merged.EnabledMcpjsonServers, "foo") {
 		t.Errorf("'foo' should have been removed from enabled; got %v", merged.EnabledMcpjsonServers)
 	}
@@ -300,7 +332,7 @@ func TestApproveMcpjsonServer_YesAllSetsFlag(t *testing.T) {
 	if err := ApproveMcpjsonServer("bar", "yes_all"); err != nil {
 		t.Fatalf("approve yes_all: %v", err)
 	}
-	merged, _ := loadPaths([]string{UserSettingsPath()})
+	merged, _ := loadPaths([]string{ConduitSettingsPath()})
 	if !merged.EnableAllProjectMcpServers {
 		t.Errorf("EnableAllProjectMcpServers should be true after yes_all")
 	}
@@ -319,7 +351,7 @@ func TestApproveMcpjsonServer_PreservesOtherKeys(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 
-	data, _ := os.ReadFile(UserSettingsPath())
+	data, _ := os.ReadFile(ConduitSettingsPath())
 	var raw map[string]json.RawMessage
 	_ = json.Unmarshal(data, &raw)
 	if _, ok := raw["model"]; !ok {
@@ -471,32 +503,29 @@ func TestSavePermissionsField_EmptyFieldErrors(t *testing.T) {
 func TestSettingsWrites_DoNotOverwriteInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	path := UserSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	before := []byte(`{"model":`)
-	if err := os.WriteFile(path, before, 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	writes := []struct {
 		name string
+		path string
 		fn   func() error
 	}{
-		{"SaveRawKey", func() error { return SaveRawKey("model", "new") }},
-		{"SavePermissionsField", func() error { return SavePermissionsField("defaultMode", "plan") }},
-		{"ApproveMcpjsonServer", func() error { return ApproveMcpjsonServer("srv", "yes") }},
-		{"SaveOutputStyle", func() error { return SaveOutputStyle("default") }},
+		{"SaveRawKey", ConduitSettingsPath(), func() error { return SaveRawKey("model", "new") }},
+		{"SavePermissionsField", UserSettingsPath(), func() error { return SavePermissionsField("defaultMode", "plan") }},
+		{"ApproveMcpjsonServer", ConduitSettingsPath(), func() error { return ApproveMcpjsonServer("srv", "yes") }},
+		{"SaveOutputStyle", ConduitSettingsPath(), func() error { return SaveOutputStyle("default") }},
 	}
 	for _, tt := range writes {
-		if err := os.WriteFile(path, before, 0o644); err != nil {
+		if err := os.MkdirAll(filepath.Dir(tt.path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tt.path, before, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if err := tt.fn(); err == nil {
 			t.Fatalf("%s should fail on invalid existing JSON", tt.name)
 		}
-		after, err := os.ReadFile(path)
+		after, err := os.ReadFile(tt.path)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -25,7 +25,7 @@ func (m Model) handleOnboardingKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		// Persist so the welcome doesn't show on next launch. Best-effort —
 		// a failure here just means the user sees the screen again, no data
 		// loss, so silent.
-		_ = settings.SaveRawKey("onboardingComplete", true)
+		_ = settings.SaveConduitOnboardingComplete(true)
 		m.refreshViewport()
 		return m, nil
 	case "ctrl+c", "q":

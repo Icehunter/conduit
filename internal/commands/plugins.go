@@ -199,20 +199,13 @@ func buildPluginPanelData(_ []*plugins.Plugin) PluginPanelData {
 	return data
 }
 
-// loadEnabledPlugins reads the user settings file and returns the enabledPlugins map.
+// loadEnabledPlugins reads Conduit's settings file and returns the enabledPlugins map.
 func loadEnabledPlugins() map[string]bool {
-	path := settings.UserSettingsPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
+	cfg, err := settings.LoadConduitConfig()
+	if err != nil || cfg.EnabledPlugins == nil {
 		return map[string]bool{}
 	}
-	var s struct {
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
-	}
-	if err := json.Unmarshal(data, &s); err != nil || s.EnabledPlugins == nil {
-		return map[string]bool{}
-	}
-	return s.EnabledPlugins
+	return cfg.EnabledPlugins
 }
 
 func splitPluginID(id string) (name, marketplace string) {

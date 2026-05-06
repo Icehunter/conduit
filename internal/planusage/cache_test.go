@@ -51,6 +51,49 @@ func TestLoadCache_Missing(t *testing.T) {
 	}
 }
 
+func TestLoadCacheForKeyWithFallback(t *testing.T) {
+	dir := t.TempDir()
+	legacyDir := t.TempDir()
+	key := "claude-subscription.work@example.com.claude-opus-4-7"
+	entry := CacheEntry{CachedAt: time.Now().Truncate(time.Second)}
+	if err := SaveCacheForKey(legacyDir, key, entry); err != nil {
+		t.Fatalf("SaveCacheForKey legacy: %v", err)
+	}
+
+	got, err := LoadCacheForKeyWithFallback(dir, legacyDir, key)
+	if err != nil {
+		t.Fatalf("LoadCacheForKeyWithFallback: %v", err)
+	}
+	if !got.CachedAt.Equal(entry.CachedAt) {
+		t.Fatalf("CachedAt = %v, want %v", got.CachedAt, entry.CachedAt)
+	}
+}
+
+func TestLoadCacheForKeyWithFallbackKeepsBackoffOnlyEntry(t *testing.T) {
+	dir := t.TempDir()
+	legacyDir := t.TempDir()
+	key := "claude-subscription.work@example.com.claude-opus-4-7"
+	entry := CacheEntry{BackoffUntil: time.Now().Add(5 * time.Minute).Truncate(time.Second)}
+	if err := SaveCacheForKey(dir, key, entry); err != nil {
+		t.Fatalf("SaveCacheForKey: %v", err)
+	}
+	legacy := CacheEntry{CachedAt: time.Now().Truncate(time.Second)}
+	if err := SaveCacheForKey(legacyDir, key, legacy); err != nil {
+		t.Fatalf("SaveCacheForKey legacy: %v", err)
+	}
+
+	got, err := LoadCacheForKeyWithFallback(dir, legacyDir, key)
+	if err != nil {
+		t.Fatalf("LoadCacheForKeyWithFallback: %v", err)
+	}
+	if !got.BackoffUntil.Equal(entry.BackoffUntil) {
+		t.Fatalf("BackoffUntil = %v, want %v", got.BackoffUntil, entry.BackoffUntil)
+	}
+	if !got.CachedAt.IsZero() {
+		t.Fatalf("CachedAt = %v, want zero backoff-only entry", got.CachedAt)
+	}
+}
+
 func TestLoadCache_Corrupt(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, cacheFile), []byte("{bad json"), 0o600); err != nil {

@@ -400,7 +400,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		},
 		SetUsageStatusEnabled: func(on bool) error {
 			usageStatusEnabled = on
-			return settings.SaveRawKey("usageStatusEnabled", on)
+			return settings.SaveConduitUsageStatusEnabled(on)
 		},
 		// /effort — set thinking budget.
 		GetEffort: func() string {

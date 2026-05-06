@@ -33,6 +33,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 )
 
@@ -205,8 +206,7 @@ func (p *settingsPanelState) rebuildConfigItems() {
 		snap = p.getStatus()
 	}
 
-	home, _ := os.UserHomeDir()
-	data, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	data, _ := os.ReadFile(settings.ConduitSettingsPath())
 
 	getBool := func(key string, def bool) bool {
 		if strings.Contains(string(data), `"`+key+`":false`) ||

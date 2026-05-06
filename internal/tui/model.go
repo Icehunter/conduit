@@ -602,9 +602,14 @@ func New(cfg Config) Model {
 		m.messages = append(m.messages, m.welcomeCard())
 	}
 
-	// Load user keybindings. Errors are silently ignored — we fall back to
-	// defaults so a malformed keybindings.json never prevents startup.
-	if bindings, err := keybindings.LoadAll(settings.ClaudeDir()); err == nil {
+	// Load user keybindings. Conduit owns ~/.conduit/keybindings.json; the
+	// Claude path is a compatibility fallback for users who have not copied
+	// bindings over yet.
+	keybindingsDir := settings.ConduitDir()
+	if _, err := os.Stat(keybindings.UserFilePath(keybindingsDir)); err != nil {
+		keybindingsDir = settings.ClaudeDir()
+	}
+	if bindings, err := keybindings.LoadAll(keybindingsDir); err == nil {
 		m.kb = keybindings.NewResolver(bindings)
 	} else {
 		m.kb = keybindings.NewResolver(keybindings.Defaults())
@@ -617,7 +622,7 @@ func New(cfg Config) Model {
 		if provider, ok := m.planUsageProviderSettings(); ok {
 			cacheKey = settings.ProviderKey(provider)
 		}
-		if entry, err := planusage.LoadCacheForKey(settings.ClaudeDir(), cacheKey); err == nil && !entry.CachedAt.IsZero() {
+		if entry, err := planusage.LoadCacheForKeyWithFallback(settings.ConduitDir(), settings.ClaudeDir(), cacheKey); err == nil && planUsageCacheEntryUseful(entry) {
 			m.planUsage = entry.Info
 			m.planUsageCachedAt = entry.CachedAt
 			m.planUsageProvider = cacheKey
@@ -726,6 +731,10 @@ func (m Model) planUsageProviderSettings() (settings.ActiveProviderSettings, boo
 		return settings.ActiveProviderSettings{}, false
 	}
 	return provider, true
+}
+
+func planUsageCacheEntryUseful(entry planusage.CacheEntry) bool {
+	return !entry.CachedAt.IsZero() || !entry.BackoffUntil.IsZero()
 }
 
 // savePlanUsageCacheCmd persists the cache entry to disk as a fire-and-forget
@@ -938,7 +947,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				CachedAt:     m.planUsageCachedAt,
 				BackoffUntil: m.planUsageBackoff,
 			}
-			saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), m.planUsageProvider, entry)
+			saveCacheCmd := savePlanUsageCacheCmd(settings.ConduitDir(), m.planUsageProvider, entry)
 			if m.usageStatusEnabled {
 				return m, tea.Batch(planUsageTick(), saveCacheCmd)
 			}
@@ -952,7 +961,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Info:     m.planUsage,
 			CachedAt: m.planUsageCachedAt,
 		}
-		saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), m.planUsageProvider, entry)
+		saveCacheCmd := savePlanUsageCacheCmd(settings.ConduitDir(), m.planUsageProvider, entry)
 		if m.usageStatusEnabled {
 			return m, tea.Batch(planUsageTick(), saveCacheCmd)
 		}
@@ -3202,11 +3211,11 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 				// Apply the theme live so the panel re-renders with new colors.
 				if s, ok := value.(string); ok {
 					theme.Set(s)
-					_ = settings.SaveRawKey("theme", s)
+					_ = settings.SaveConduitTheme(s)
 					return
 				}
 			}
-			_ = settings.SaveRawKey(key, value)
+			_ = settings.SaveConduitRawKey(key, value)
 		}
 		panel, statsCmd := newSettingsPanel(
 			defaultTab, getStatus, getMCPInfo,
@@ -4424,6 +4433,11 @@ func (m Model) renderUsageFooter(width int) string {
 		} else {
 			line = styleModeYellow.Render(" Usage: unavailable") + styleStatus.Render(" | "+m.planUsageErr)
 		}
+		return padStatusLine(line, width) + "\n" + padStatusLine(providerLine, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
+	}
+	if rateLimited && !hasCachedData {
+		line := styleModeYellow.Render(" Usage: rate limited") +
+			styleStatus.Render(" · retry at "+m.planUsageBackoff.Local().Format("3:04pm"))
 		return padStatusLine(line, width) + "\n" + padStatusLine(providerLine, width) + "\n" + padStatusLine("", width) + "\n" + padStatusLine(m.renderContextUsageWindow(), width)
 	}
 	if !hasCachedData {

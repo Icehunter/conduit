@@ -94,7 +94,7 @@ func RegisterMiscCommands(r *Registry) {
 					name, strings.Join(theme.AvailableThemes(), ", "),
 				)}
 			}
-			persistErr := settings.SaveRawKey("theme", theme.Active().Name)
+			persistErr := settings.SaveConduitTheme(theme.Active().Name)
 			head := fmt.Sprintf("Theme switched to %s", theme.Active().Name)
 			if persistErr != nil {
 				head += fmt.Sprintf(" (failed to persist: %v)", persistErr)

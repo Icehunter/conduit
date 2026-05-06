@@ -3,8 +3,8 @@ package auth
 // Multi-account support.
 //
 // Each account's token is stored in the platform keychain under the key
-// "oauth-tokens-<email>". ~/.conduit/conduit.json tracks which accounts
-// exist and which is currently active.
+// "oauth-tokens-<kind>:<email>". ~/.conduit/conduit.json tracks which
+// accounts exist and which is currently active.
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/icehunter/conduit/internal/secure"
@@ -29,6 +30,32 @@ type AccountEntry struct {
 type AccountStore struct {
 	Active   string                  `json:"active"`
 	Accounts map[string]AccountEntry `json:"accounts"`
+}
+
+// AccountID returns the stable account store/keychain identity for an auth
+// source and email. Email alone is not unique: Claude.ai and Anthropic Console
+// accounts may legitimately share the same address.
+func AccountID(kind, email string) string {
+	if email == "" {
+		return ""
+	}
+	if kind == "" {
+		kind = AccountKindClaudeAI
+	}
+	return kind + ":" + email
+}
+
+func splitAccountID(id string) (kind, email string, ok bool) {
+	kind, email, ok = strings.Cut(id, ":")
+	if !ok || email == "" {
+		return "", id, false
+	}
+	switch kind {
+	case AccountKindClaudeAI, AccountKindAnthropicConsole:
+		return kind, email, true
+	default:
+		return "", id, false
+	}
 }
 
 func accountsPath() string {
@@ -68,7 +95,7 @@ func LoadAccountStore() (AccountStore, error) {
 	if s.Accounts == nil {
 		s.Accounts = map[string]AccountEntry{}
 	}
-	return s, nil
+	return normalizeAccountStore(s), nil
 }
 
 func loadOrImportLegacyAccountStore() (AccountStore, error) {
@@ -82,6 +109,7 @@ func loadOrImportLegacyAccountStore() (AccountStore, error) {
 	if legacy.Active == "" && len(legacy.Accounts) == 0 {
 		return legacy, nil
 	}
+	legacy = normalizeAccountStore(legacy)
 	_ = saveAccountStore(legacy)
 	return legacy, nil
 }
@@ -102,12 +130,41 @@ func loadLegacyAccountStore() (AccountStore, error) {
 	if s.Accounts == nil {
 		s.Accounts = map[string]AccountEntry{}
 	}
-	return s, nil
+	return normalizeAccountStore(s), nil
+}
+
+func normalizeAccountStore(s AccountStore) AccountStore {
+	if s.Accounts == nil {
+		s.Accounts = map[string]AccountEntry{}
+	}
+	normalized := make(map[string]AccountEntry, len(s.Accounts))
+	active := s.Active
+	for key, entry := range s.Accounts {
+		if entry.Email == "" {
+			if kind, email, ok := splitAccountID(key); ok {
+				entry.Kind = kind
+				entry.Email = email
+			} else {
+				entry.Email = key
+			}
+		}
+		if entry.Kind == "" {
+			entry.Kind = AccountKindClaudeAI
+		}
+		id := AccountID(entry.Kind, entry.Email)
+		normalized[id] = entry
+		if active == key || active == entry.Email {
+			active = id
+		}
+	}
+	s.Accounts = normalized
+	s.Active = active
+	return s
 }
 
 // SaveAccountStore writes the account store to ~/.conduit/conduit.json.
 // Exported so the TUI account panel can remove accounts without a full delete.
-func SaveAccountStore(s AccountStore) error { return saveAccountStore(s) }
+func SaveAccountStore(s AccountStore) error { return saveAccountStore(normalizeAccountStore(s)) }
 
 func saveAccountStore(s AccountStore) error {
 	p := accountsPath()
@@ -134,9 +191,13 @@ func saveAccountStore(s AccountStore) error {
 	return os.WriteFile(p, data, 0o600)
 }
 
-// keyForEmail returns the keychain key name for an email.
+// keyForEmail returns the legacy keychain key name for an email.
 func keyForEmail(email string) string {
 	return PersistKey + "-" + email
+}
+
+func keyForEmailKind(email, kind string) string {
+	return PersistKey + "-" + AccountID(kind, email)
 }
 
 // SaveForEmail writes the token to the platform keychain under the email-
@@ -156,7 +217,7 @@ func SaveForEmailKind(s secure.Storage, p PersistedTokens, email, kind string) e
 		kind = InferAccountKind(p)
 	}
 	p.AccountKind = kind
-	if err := saveToken(s, p, email); err != nil {
+	if err := saveTokenForKind(s, p, email, kind); err != nil {
 		return err
 	}
 	return registerAccount(email, kind)
@@ -165,11 +226,22 @@ func SaveForEmailKind(s secure.Storage, p PersistedTokens, email, kind string) e
 // saveToken writes the token to the keychain only (no account metadata).
 // Used internally by EnsureFresh to persist refreshed tokens.
 func saveToken(s secure.Storage, p PersistedTokens, email string) error {
+	kind, resolvedEmail := resolveAccountRef(email)
+	if resolvedEmail == "" {
+		resolvedEmail = email
+	}
+	if kind == "" {
+		kind = InferAccountKind(p)
+	}
+	return saveTokenForKind(s, p, resolvedEmail, kind)
+}
+
+func saveTokenForKind(s secure.Storage, p PersistedTokens, email, kind string) error {
 	buf, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("accounts: marshal tokens: %w", err)
 	}
-	if err := s.Set(Service, keyForEmail(email), buf); err != nil {
+	if err := s.Set(Service, keyForEmailKind(email, kind), buf); err != nil {
 		return fmt.Errorf("accounts: save token for %s: %w", email, err)
 	}
 	return nil
@@ -181,15 +253,16 @@ func registerAccount(email, kind string) error {
 	if store.Accounts == nil {
 		store.Accounts = map[string]AccountEntry{}
 	}
-	entry, exists := store.Accounts[email]
+	id := AccountID(kind, email)
+	entry, exists := store.Accounts[id]
 	if !exists {
 		entry = AccountEntry{Email: email, AddedAt: time.Now()}
 	}
 	if kind != "" {
 		entry.Kind = kind
 	}
-	store.Accounts[email] = entry
-	store.Active = email
+	store.Accounts[id] = entry
+	store.Active = id
 	return saveAccountStore(store)
 }
 
@@ -198,7 +271,11 @@ func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 	if email == "" {
 		return PersistedTokens{}, secure.ErrNotFound
 	}
-	raw, err := s.Get(Service, keyForEmail(email))
+	kind, resolvedEmail := resolveAccountRef(email)
+	raw, err := s.Get(Service, keyForEmailKind(resolvedEmail, kind))
+	if err != nil && !strings.Contains(email, ":") {
+		raw, err = s.Get(Service, keyForEmail(email))
+	}
 	if err != nil {
 		return PersistedTokens{}, err
 	}
@@ -211,33 +288,38 @@ func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 
 // DeleteForEmail removes an account's token and conduit.json entry.
 func DeleteForEmail(s secure.Storage, email string) error {
-	_ = s.Delete(Service, keyForEmail(email))
 	store, err := LoadAccountStore()
 	if err != nil {
 		return err
 	}
-	delete(store.Accounts, email)
-	if store.Active == email {
+	kind, resolvedEmail, id := resolveAccountRefFromStore(store, email)
+	_ = s.Delete(Service, keyForEmailKind(resolvedEmail, kind))
+	if !strings.Contains(email, ":") {
+		_ = s.Delete(Service, keyForEmail(email))
+	}
+	delete(store.Accounts, id)
+	if store.Active == id {
 		store.Active = ""
 	}
 	return saveAccountStore(store)
 }
 
-// SetActive switches the active account. Requires that the email already
+// SetActive switches the active account. Requires that the account already
 // has a saved token (from a prior /login).
 func SetActive(store *AccountStore, email string) error {
 	s := secure.NewDefault()
-	if _, err := s.Get(Service, keyForEmail(email)); err != nil {
+	kind, resolvedEmail, id := resolveAccountRefFromStore(*store, email)
+	if _, err := s.Get(Service, keyForEmailKind(resolvedEmail, kind)); err != nil {
 		return fmt.Errorf("no saved credentials for %q — run /login first", email)
 	}
-	if _, ok := store.Accounts[email]; !ok {
-		store.Accounts[email] = AccountEntry{Email: email, AddedAt: time.Now()}
+	if _, ok := store.Accounts[id]; !ok {
+		store.Accounts[id] = AccountEntry{Email: resolvedEmail, Kind: kind, AddedAt: time.Now()}
 	}
-	store.Active = email
+	store.Active = id
 	return saveAccountStore(*store)
 }
 
-// ActiveEmail returns the currently active account email.
+// ActiveEmail returns the currently active account identity.
 // If active is unset but exactly one account exists, that account is
 // auto-selected and persisted so subsequent calls are consistent.
 // Returns "" only when no accounts are registered.
@@ -264,6 +346,46 @@ func ActiveEmail() string {
 	store.Active = best
 	_ = saveAccountStore(store)
 	return best
+}
+
+func resolveAccountRef(ref string) (kind, email string) {
+	store, err := LoadAccountStore()
+	if err == nil {
+		kind, email, _ = resolveAccountRefFromStore(store, ref)
+		return kind, email
+	}
+	if k, e, ok := splitAccountID(ref); ok {
+		return k, e
+	}
+	return AccountKindClaudeAI, ref
+}
+
+func resolveAccountRefFromStore(store AccountStore, ref string) (kind, email, id string) {
+	store = normalizeAccountStore(store)
+	if entry, ok := store.Accounts[ref]; ok {
+		return entry.Kind, entry.Email, ref
+	}
+	if k, e, ok := splitAccountID(ref); ok {
+		return k, e, ref
+	}
+	var matchedID string
+	var matchedEntry AccountEntry
+	for accountID, entry := range store.Accounts {
+		if entry.Email != ref {
+			continue
+		}
+		if accountID == store.Active {
+			return entry.Kind, entry.Email, accountID
+		}
+		if matchedID == "" || entry.AddedAt.After(matchedEntry.AddedAt) {
+			matchedID = accountID
+			matchedEntry = entry
+		}
+	}
+	if matchedID != "" {
+		return matchedEntry.Kind, matchedEntry.Email, matchedID
+	}
+	return AccountKindClaudeAI, ref, AccountID(AccountKindClaudeAI, ref)
 }
 
 // ListAccounts returns all registered accounts.

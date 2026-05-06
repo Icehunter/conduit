@@ -546,6 +546,13 @@ func New(cfg Config) Model {
 			m.ensureDefaultLocalTools()
 		}
 	}
+	// Sync displayed permission mode from the gate before rendering any
+	// startup messages. The active provider is role-dependent, so welcome
+	// cards must see the same mode as the footer and agent loop.
+	if cfg.Gate != nil {
+		m.permissionMode = cfg.Gate.Mode()
+		m.applyEffectiveProviderForMode()
+	}
 	if sc, err := buddy.Load(); err == nil && sc != nil {
 		m.companionName = sc.Name
 	}
@@ -605,13 +612,6 @@ func New(cfg Config) Model {
 				m.planUsageBackoff = entry.BackoffUntil
 			}
 		}
-	}
-
-	// Sync displayed permission mode from the gate, which was initialized with
-	// the value from settings.json. Without this the status bar always shows
-	// "default" even when settings.json has "defaultMode": "plan".
-	if cfg.Gate != nil {
-		m.permissionMode = cfg.Gate.Mode()
 	}
 
 	// Workspace trust dialog — shown before any agent interaction when the
@@ -1093,20 +1093,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		}
-		if err := auth.SetActive(&store, msg.email); err != nil {
+		if err := auth.SetActive(&store, msg.account); err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: err.Error()})
 			m.refreshViewport()
 			return m, nil
 		}
 		if m.cfg.LoadAuth != nil && m.cfg.NewAPIClient != nil && m.cfg.Loop != nil {
-			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switching to %s…", msg.email)})
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switching to %s…", msg.account)})
 			m.refreshViewport()
 			return m, func() tea.Msg {
 				ctx := context.Background()
 				tok, prof, err := m.cfg.LoadAuth(ctx)
 				if err != nil {
 					if errors.Is(err, auth.ErrNotLoggedIn) {
-						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to add this account", msg.email)}
+						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to add this account", msg.account)}
 					}
 					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
 				}
@@ -2968,40 +2968,40 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	case "account-switch":
-		email := res.Text
+		account := res.Text
 		store, err := auth.ListAccounts()
 		if err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: "account-switch: " + err.Error()})
 			m.refreshViewport()
 			return m, nil
 		}
-		if email == "" {
+		if account == "" {
 			// No email given — list accounts.
 			var sb strings.Builder
 			sb.WriteString("Logged-in accounts:\n\n")
-			for e, entry := range store.Accounts {
+			for id, entry := range store.Accounts {
 				active := ""
-				if e == store.Active {
+				if id == store.Active {
 					active = "  ← active"
 				}
-				fmt.Fprintf(&sb, "  %s  (added %s)%s\n", entry.Email, entry.AddedAt.Format("2006-01-02"), active)
+				fmt.Fprintf(&sb, "  %s  (id %s, added %s)%s\n", accountDisplayLabel(id, entry.Email, entry.Kind), id, entry.AddedAt.Format("2006-01-02"), active)
 			}
 			if len(store.Accounts) == 0 {
 				sb.WriteString("  (none — run /login to add an account)\n")
 			}
-			sb.WriteString("\nUse /login --switch <email> to activate an account.")
+			sb.WriteString("\nUse /login --switch <account-id> to activate an account.")
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: sb.String()})
 			m.refreshViewport()
 			return m, nil
 		}
-		if err := auth.SetActive(&store, email); err != nil {
+		if err := auth.SetActive(&store, account); err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: err.Error()})
 			m.refreshViewport()
 			return m, nil
 		}
 		// Reload credentials and API client live — same flow as after /login.
 		if m.cfg.LoadAuth != nil && m.cfg.NewAPIClient != nil && m.cfg.Loop != nil {
-			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switching to %s…", email)})
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Switching to %s…", account)})
 			m.refreshViewport()
 			return m, func() tea.Msg {
 				ctx := context.Background()
@@ -3010,7 +3010,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 					// ErrNotLoggedIn means we switched the active pointer but have
 					// no token for this account — guide the user to /login.
 					if errors.Is(err, auth.ErrNotLoggedIn) {
-						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to sign in to this account", email)}
+						return authReloadMsg{err: fmt.Errorf("no saved credentials for %s — run /login to sign in to this account", account)}
 					}
 					return authReloadMsg{err: fmt.Errorf("account switch: %w", err)}
 				}
@@ -3165,6 +3165,14 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: "picker: invalid or empty payload"})
 			m.refreshViewport()
 			return m, nil
+		}
+		if res.Model == "model" {
+			payload.Items = m.filterModelPickerItems(payload.Items)
+			if len(payload.Items) == 0 {
+				m.messages = append(m.messages, Message{Role: RoleError, Content: "No configured model providers. Add an account or MCP provider first."})
+				m.refreshViewport()
+				return m, nil
+			}
 		}
 		current := payload.Current
 		role := settings.RoleDefault
@@ -3382,6 +3390,13 @@ func accountBackedActiveProvider(model, account string, tokens ...auth.Persisted
 		if store, err := auth.ListAccounts(); err == nil {
 			if entry, ok := store.Accounts[account]; ok && entry.Kind != "" {
 				kind = providerKindForAccountKind(entry.Kind)
+			} else {
+				for id, entry := range store.Accounts {
+					if entry.Email == account && id == store.Active && entry.Kind != "" {
+						kind = providerKindForAccountKind(entry.Kind)
+						break
+					}
+				}
 			}
 		}
 	}
@@ -3495,13 +3510,109 @@ func (m Model) providerForRole(role string) (settings.ActiveProviderSettings, bo
 	}
 	if ref := m.roles[role]; ref != "" {
 		if provider, ok := m.providers[ref]; ok {
+			if !m.providerAvailable(provider) {
+				return settings.ActiveProviderSettings{}, false
+			}
 			return provider, true
 		}
 	}
 	if role == settings.RoleDefault && m.activeProvider != nil {
+		if !m.providerAvailable(*m.activeProvider) {
+			return settings.ActiveProviderSettings{}, false
+		}
 		return *m.activeProvider, true
 	}
 	return settings.ActiveProviderSettings{}, false
+}
+
+func (m Model) providerAvailable(provider settings.ActiveProviderSettings) bool {
+	switch provider.Kind {
+	case "claude-subscription", "anthropic-api":
+		return m.accountProviderAvailable(provider)
+	default:
+		return true
+	}
+}
+
+func (m Model) accountProviderAvailable(provider settings.ActiveProviderSettings) bool {
+	if provider.Account == "" {
+		return false
+	}
+	store, err := auth.LoadAccountStore()
+	if err != nil || len(store.Accounts) == 0 {
+		return false
+	}
+	if entry, ok := store.Accounts[provider.Account]; ok {
+		return tuiProviderKindMatchesAccount(provider.Kind, entry.Kind)
+	}
+	for _, entry := range store.Accounts {
+		if entry.Email == provider.Account && tuiProviderKindMatchesAccount(provider.Kind, entry.Kind) {
+			return true
+		}
+	}
+	return false
+}
+
+func tuiProviderKindMatchesAccount(providerKind, accountKind string) bool {
+	switch providerKind {
+	case "anthropic-api":
+		return accountKind == auth.AccountKindAnthropicConsole
+	case "claude-subscription":
+		return accountKind == "" || accountKind == auth.AccountKindClaudeAI
+	default:
+		return false
+	}
+}
+
+func (m Model) filterModelPickerItems(items []pickerItem) []pickerItem {
+	out := make([]pickerItem, 0, len(items))
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		if !item.Section {
+			if m.modelPickerItemAvailable(item) {
+				out = append(out, item)
+			}
+			continue
+		}
+		start := len(out)
+		out = append(out, item)
+		for i+1 < len(items) && !items[i+1].Section {
+			i++
+			if m.modelPickerItemAvailable(items[i]) {
+				out = append(out, items[i])
+			}
+		}
+		if len(out) == start+1 {
+			out = out[:start]
+		}
+	}
+	return out
+}
+
+func (m Model) modelPickerItemAvailable(item pickerItem) bool {
+	switch {
+	case strings.HasPrefix(item.Value, "local:"):
+		return true
+	case strings.HasPrefix(item.Value, "anthropic-api:"):
+		return m.anyAccountForProviderKind("anthropic-api")
+	case strings.HasPrefix(item.Value, "claude-subscription:"):
+		return m.anyAccountForProviderKind("claude-subscription")
+	default:
+		return true
+	}
+}
+
+func (m Model) anyAccountForProviderKind(kind string) bool {
+	store, err := auth.LoadAccountStore()
+	if err != nil {
+		return false
+	}
+	for _, entry := range store.Accounts {
+		if tuiProviderKindMatchesAccount(kind, entry.Kind) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) mcpActiveProvider(server string) settings.ActiveProviderSettings {

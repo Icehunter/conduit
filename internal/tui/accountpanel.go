@@ -35,7 +35,9 @@ const (
 )
 
 type accountItem struct {
+	id       string
 	email    string
+	kind     string
 	addedAt  time.Time
 	isActive bool
 	hasToken bool
@@ -51,17 +53,17 @@ type accountPanelState struct {
 	view     accountPanelView
 	selected int // cursor: 0..len(accounts) inclusive (last = "+ Add")
 
-	accounts    []accountItem
-	loadErr     string
-	detailEmail string
-	actions     []accountAction
-	actionIdx   int
+	accounts  []accountItem
+	loadErr   string
+	detailID  string
+	actions   []accountAction
+	actionIdx int
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
 
 // accountSwitchedMsg drives the live credential reload after switching.
-type accountSwitchedMsg struct{ email string }
+type accountSwitchedMsg struct{ account string }
 
 // commandsLoginMsg opens the login picker from "+ Add account".
 type commandsLoginMsg struct{}
@@ -74,6 +76,24 @@ func newAccountPanel() *accountPanelState {
 	return p
 }
 
+func accountSortLabel(id string, entry auth.AccountEntry) string {
+	return accountDisplayLabel(id, entry.Email, entry.Kind)
+}
+
+func accountDisplayLabel(id, email, kind string) string {
+	if email == "" {
+		email = id
+	}
+	switch kind {
+	case auth.AccountKindAnthropicConsole:
+		return "Anthropic Console · " + email
+	case auth.AccountKindClaudeAI, "":
+		return "Claude.ai · " + email
+	default:
+		return kind + " · " + email
+	}
+}
+
 func (p *accountPanelState) refresh() {
 	store, err := auth.LoadAccountStore()
 	if err != nil {
@@ -83,28 +103,32 @@ func (p *accountPanelState) refresh() {
 	p.loadErr = ""
 	s := secure.NewDefault()
 
-	emails := make([]string, 0, len(store.Accounts))
-	for e := range store.Accounts {
-		emails = append(emails, e)
+	ids := make([]string, 0, len(store.Accounts))
+	for id := range store.Accounts {
+		ids = append(ids, id)
 	}
 	// Active account first, then alphabetical.
-	sort.Slice(emails, func(i, j int) bool {
-		ai := emails[i] == store.Active
-		aj := emails[j] == store.Active
+	sort.Slice(ids, func(i, j int) bool {
+		ai := ids[i] == store.Active
+		aj := ids[j] == store.Active
 		if ai != aj {
 			return ai
 		}
-		return emails[i] < emails[j]
+		left := accountSortLabel(ids[i], store.Accounts[ids[i]])
+		right := accountSortLabel(ids[j], store.Accounts[ids[j]])
+		return left < right
 	})
 
-	p.accounts = make([]accountItem, 0, len(emails))
-	for _, e := range emails {
-		entry := store.Accounts[e]
-		_, tokenErr := auth.LoadForEmail(s, e)
+	p.accounts = make([]accountItem, 0, len(ids))
+	for _, id := range ids {
+		entry := store.Accounts[id]
+		_, tokenErr := auth.LoadForEmail(s, id)
 		p.accounts = append(p.accounts, accountItem{
-			email:    e,
+			id:       id,
+			email:    entry.Email,
+			kind:     entry.Kind,
 			addedAt:  entry.AddedAt,
-			isActive: e == store.Active,
+			isActive: id == store.Active,
 			hasToken: tokenErr == nil,
 		})
 	}
@@ -115,11 +139,11 @@ func (p *accountPanelState) refresh() {
 	}
 }
 
-func (p *accountPanelState) openDetail(email string) {
+func (p *accountPanelState) openDetail(id string) {
 	store, _ := auth.LoadAccountStore()
-	isActive := store.Active == email
+	isActive := store.Active == id
 
-	p.detailEmail = email
+	p.detailID = id
 	p.actionIdx = 0
 	p.actions = nil
 	if !isActive {
@@ -159,7 +183,7 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 				m.settingsPanel = nil
 				return m, func() tea.Msg { return commandsLoginMsg{} }
 			}
-			a.openDetail(a.accounts[a.selected].email)
+			a.openDetail(a.accounts[a.selected].id)
 		}
 
 	case accountViewDetail:
@@ -171,17 +195,17 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 		case "enter":
 			switch a.actions[a.actionIdx].id {
 			case "switch":
-				email := a.detailEmail
+				account := a.detailID
 				m.settingsPanel = nil
-				return m, func() tea.Msg { return accountSwitchedMsg{email: email} }
+				return m, func() tea.Msg { return accountSwitchedMsg{account: account} }
 			case "login":
 				m.settingsPanel = nil
 				return m, func() tea.Msg { return commandsLoginMsg{} }
 			case "remove":
 				store, err := auth.LoadAccountStore()
 				if err == nil {
-					delete(store.Accounts, a.detailEmail)
-					if store.Active == a.detailEmail {
+					delete(store.Accounts, a.detailID)
+					if store.Active == a.detailID {
 						store.Active = ""
 					}
 					_ = auth.SaveAccountStore(store)
@@ -190,7 +214,7 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 				a.refresh()
 			case "delete":
 				s := secure.NewDefault()
-				_ = auth.DeleteForEmail(s, a.detailEmail)
+				_ = auth.DeleteForEmail(s, a.detailID)
 				a.view = accountViewList
 				a.refresh()
 			case "back":
@@ -239,7 +263,7 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 			if isSel {
 				emailStyle = accent
 			}
-			line := cursor + emailStyle.Render(acc.email)
+			line := cursor + emailStyle.Render(accountDisplayLabel(acc.id, acc.email, acc.kind))
 			if acc.isActive {
 				line += "  " + accent.Render("● active")
 			} else if !acc.hasToken {
@@ -262,7 +286,9 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 		sb.WriteString(dim.Render("  ↑/↓ navigate · Enter select · Esc close · ←/→ tabs"))
 
 	case accountViewDetail:
-		sb.WriteString(accent.Render("  "+a.detailEmail) + "\n\n")
+		store, _ := auth.LoadAccountStore()
+		entry := store.Accounts[a.detailID]
+		sb.WriteString(accent.Render("  "+accountDisplayLabel(a.detailID, entry.Email, entry.Kind)) + "\n\n")
 		for i, act := range a.actions {
 			isSel := i == a.actionIdx
 			cursor := "  "

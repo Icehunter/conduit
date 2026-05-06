@@ -116,8 +116,8 @@ func TestSaveAccountStore_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing
 	if err := json.Unmarshal(raw["accounts"], &accounts); err != nil {
 		t.Fatal(err)
 	}
-	if accounts.Active != "new@example.com" {
-		t.Fatalf("active = %q, want new@example.com", accounts.Active)
+	if accounts.Active != AccountID(AccountKindClaudeAI, "new@example.com") {
+		t.Fatalf("active = %q, want normalized new@example.com", accounts.Active)
 	}
 
 	bad := []byte(`{"active":`)
@@ -159,8 +159,44 @@ func TestSaveForEmailKindPersistsAccountKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAccountStore: %v", err)
 	}
-	if accounts.Accounts["api@example.com"].Kind != AccountKindAnthropicConsole {
-		t.Fatalf("account kind = %q, want %q", accounts.Accounts["api@example.com"].Kind, AccountKindAnthropicConsole)
+	apiID := AccountID(AccountKindAnthropicConsole, "api@example.com")
+	if accounts.Accounts[apiID].Kind != AccountKindAnthropicConsole {
+		t.Fatalf("account kind = %q, want %q", accounts.Accounts[apiID].Kind, AccountKindAnthropicConsole)
+	}
+}
+
+func TestSaveForEmailKindAllowsSameEmailAcrossKinds(t *testing.T) {
+	isolateClaudeDir(t)
+	store := secure.NewMemoryStorage()
+	if err := SaveForEmailKind(store, PersistedTokens{AccessToken: "claude"}, "same@example.com", AccountKindClaudeAI); err != nil {
+		t.Fatalf("SaveForEmailKind Claude: %v", err)
+	}
+	if err := SaveForEmailKind(store, PersistedTokens{AccessToken: "console"}, "same@example.com", AccountKindAnthropicConsole); err != nil {
+		t.Fatalf("SaveForEmailKind Console: %v", err)
+	}
+
+	accounts, err := LoadAccountStore()
+	if err != nil {
+		t.Fatalf("LoadAccountStore: %v", err)
+	}
+	claudeID := AccountID(AccountKindClaudeAI, "same@example.com")
+	consoleID := AccountID(AccountKindAnthropicConsole, "same@example.com")
+	if _, ok := accounts.Accounts[claudeID]; !ok {
+		t.Fatalf("missing Claude account: %#v", accounts.Accounts)
+	}
+	if _, ok := accounts.Accounts[consoleID]; !ok {
+		t.Fatalf("missing Console account: %#v", accounts.Accounts)
+	}
+	claudeToken, err := LoadForEmail(store, claudeID)
+	if err != nil {
+		t.Fatalf("LoadForEmail Claude: %v", err)
+	}
+	consoleToken, err := LoadForEmail(store, consoleID)
+	if err != nil {
+		t.Fatalf("LoadForEmail Console: %v", err)
+	}
+	if claudeToken.AccessToken != "claude" || consoleToken.AccessToken != "console" {
+		t.Fatalf("tokens crossed: claude=%q console=%q", claudeToken.AccessToken, consoleToken.AccessToken)
 	}
 }
 
@@ -191,7 +227,8 @@ func TestLoadAccountStore_ImportsLegacyClaudeAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAccountStore: %v", err)
 	}
-	if got.Active != legacy.Active || got.Accounts["legacy@example.com"].Email != "legacy@example.com" {
+	legacyID := AccountID(AccountKindClaudeAI, "legacy@example.com")
+	if got.Active != legacyID || got.Accounts[legacyID].Email != "legacy@example.com" {
 		t.Fatalf("imported account store = %#v", got)
 	}
 

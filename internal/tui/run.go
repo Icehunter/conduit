@@ -72,14 +72,17 @@ func SummarizeMessages(history []api.Message, n int) string {
 func activeAccountProviderKind() string {
 	email := auth.ActiveEmail()
 	if email == "" {
-		return "claude-subscription"
+		return ""
 	}
 	store, err := auth.ListAccounts()
 	if err != nil {
-		return "claude-subscription"
+		return ""
 	}
 	if entry, ok := store.Accounts[email]; ok && entry.Kind == auth.AccountKindAnthropicConsole {
 		return "anthropic-api"
+	}
+	if _, ok := store.Accounts[email]; !ok {
+		return ""
 	}
 	return "claude-subscription"
 }

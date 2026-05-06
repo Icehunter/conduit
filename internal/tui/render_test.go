@@ -22,6 +22,21 @@ import (
 // lipgloss v2 emits per-rune styling that interleaves with the text.
 func plainText(s string) string { return ansi.Strip(s) }
 
+func saveTestClaudeAccount(t *testing.T, email string) {
+	t.Helper()
+	if err := settings.SaveConduitRawKey("accounts", map[string]any{
+		"active": "claude-ai:" + email,
+		"accounts": map[string]any{
+			"claude-ai:" + email: map[string]any{
+				"email": email,
+				"kind":  "claude-ai",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save accounts: %v", err)
+	}
+}
+
 func TestRenderWelcomeSectionDoesNotLeakANSI(t *testing.T) {
 	out := renderWelcomeSection("Session", 40)
 	plain := plainText(out)
@@ -83,14 +98,15 @@ func TestPlanModeUsesPlanningProvider(t *testing.T) {
 func TestPermissionModeChangeUpdatesLoopModel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	saveTestClaudeAccount(t, "test@example.com")
 	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "claude-sonnet-4-6"})
 	m := Model{
 		cfg:            Config{Loop: loop},
 		modelName:      "claude-sonnet-4-6",
-		activeProvider: &settings.ActiveProviderSettings{Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+		activeProvider: &settings.ActiveProviderSettings{Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
 		providers: map[string]settings.ActiveProviderSettings{
-			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
-			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7"},
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
+			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7", Account: "test@example.com"},
 		},
 		roles: map[string]string{
 			settings.RoleMain:     "claude-subscription.claude-sonnet-4-6",
@@ -103,7 +119,7 @@ func TestPermissionModeChangeUpdatesLoopModel(t *testing.T) {
 	if loop.Model() != "claude-opus-4-7" {
 		t.Fatalf("loop model = %q, want planning model", loop.Model())
 	}
-	if got := m.activeModelDisplayName(); got != "Claude Subscription · claude-opus-4-7" {
+	if got := m.activeModelDisplayName(); got != "Claude Subscription · claude-opus-4-7 · test@example.com" {
 		t.Fatalf("display model = %q, want planning provider display", got)
 	}
 
@@ -114,12 +130,15 @@ func TestPermissionModeChangeUpdatesLoopModel(t *testing.T) {
 }
 
 func TestModeRoleRoutingDefaultVsMain(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	saveTestClaudeAccount(t, "test@example.com")
 	m := Model{
 		modelName:      "claude-sonnet-4-6",
 		activeProvider: &settings.ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
 		providers: map[string]settings.ActiveProviderSettings{
 			"mcp.local-router":                      {Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
-			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
 		},
 		roles: map[string]string{
 			settings.RoleDefault: "mcp.local-router",
@@ -133,26 +152,69 @@ func TestModeRoleRoutingDefaultVsMain(t *testing.T) {
 	}
 
 	m.permissionMode = permissions.ModeBypassPermissions
-	if got := m.activeModelDisplayName(); got != "Claude Subscription · claude-sonnet-4-6" {
+	if got := m.activeModelDisplayName(); got != "Claude Subscription · claude-sonnet-4-6 · test@example.com" {
 		t.Fatalf("auto mode display = %q, want main provider", got)
+	}
+}
+
+func TestStartupWelcomeUsesSavedPermissionModeProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	saveTestClaudeAccount(t, "syndicated.life@gmail.com")
+	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "stale-startup-model"})
+	gate := permissions.New(permissions.ModeBypassPermissions, nil, nil, nil)
+	m := New(Config{
+		Version:   "test",
+		ModelName: "stale-startup-model",
+		Loop:      loop,
+		Gate:      gate,
+		InitialActiveProvider: &settings.ActiveProviderSettings{
+			Kind:       "mcp",
+			Server:     "local-router",
+			Model:      "qwen3-coder",
+			DirectTool: "local_direct",
+		},
+		InitialProviders: map[string]settings.ActiveProviderSettings{
+			"mcp.local-router":                      {Kind: "mcp", Server: "local-router", Model: "qwen3-coder", DirectTool: "local_direct"},
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "syndicated.life@gmail.com"},
+		},
+		InitialRoles: map[string]string{
+			settings.RoleDefault: "mcp.local-router",
+			settings.RoleMain:    "claude-subscription.claude-sonnet-4-6",
+		},
+	})
+	if loop.Model() != "claude-sonnet-4-6" {
+		t.Fatalf("startup loop model = %q, want main role model", loop.Model())
+	}
+	if len(m.messages) == 0 {
+		t.Fatal("startup should render welcome card")
+	}
+	content := plainText(m.messages[0].Content)
+	if !strings.Contains(content, "Claude Subscription · claude-sonnet-4-6 · syndicated.life@gmail.com") {
+		t.Fatalf("welcome card = %q, want main role provider", content)
+	}
+	if strings.Contains(content, "MCP · qwen3-coder · local-router") {
+		t.Fatalf("welcome card used default MCP provider in auto mode: %q", content)
 	}
 }
 
 func TestPermissionModeChangeRefreshesWelcomeViewport(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	saveTestClaudeAccount(t, "test@example.com")
 	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "claude-sonnet-4-6"})
 	m := New(Config{
 		Version:   "test",
 		ModelName: "claude-sonnet-4-6",
 		Loop:      loop,
 		InitialActiveProvider: &settings.ActiveProviderSettings{
-			Kind:  "claude-subscription",
-			Model: "claude-sonnet-4-6",
+			Kind:    "claude-subscription",
+			Model:   "claude-sonnet-4-6",
+			Account: "test@example.com",
 		},
 		InitialProviders: map[string]settings.ActiveProviderSettings{
-			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
-			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7"},
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
+			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7", Account: "test@example.com"},
 		},
 		InitialRoles: map[string]string{
 			settings.RoleMain:     "claude-subscription.claude-sonnet-4-6",
@@ -201,6 +263,30 @@ func TestModelPickerTabCyclesProviderRoles(t *testing.T) {
 	}
 	if updated.picker.current != "local:local-router" {
 		t.Fatalf("current = %q, want local role provider", updated.picker.current)
+	}
+}
+
+func TestModelPickerFiltersDeletedAccountProviders(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	if err := settings.SaveConduitRawKey("accounts", map[string]any{
+		"active":   "",
+		"accounts": map[string]any{},
+	}); err != nil {
+		t.Fatalf("save empty accounts: %v", err)
+	}
+	m := Model{}
+	items := m.filterModelPickerItems([]pickerItem{
+		{Label: "Claude Subscription", Section: true},
+		{Value: "claude-subscription:claude-sonnet-4-6", Label: "Sonnet"},
+		{Label: "MCP local-router", Section: true},
+		{Value: "local:local-router", Label: "qwen3-coder"},
+	})
+	if len(items) != 2 {
+		t.Fatalf("items = %#v, want only MCP section and row", items)
+	}
+	if !items[0].Section || items[0].Label != "MCP local-router" || items[1].Value != "local:local-router" {
+		t.Fatalf("items = %#v, want stale account section filtered", items)
 	}
 }
 

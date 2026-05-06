@@ -565,15 +565,90 @@ func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
 	}
 	if ref := m.Roles[role]; ref != "" {
 		if provider, ok := m.Providers[ref]; ok {
+			if !m.providerAvailable(provider) {
+				return nil, false
+			}
 			cp := provider
 			return &cp, true
 		}
 	}
 	if role == RoleDefault && m.ActiveProvider != nil {
+		if !m.providerAvailable(*m.ActiveProvider) {
+			return nil, false
+		}
 		cp := *m.ActiveProvider
 		return &cp, true
 	}
 	return nil, false
+}
+
+func (m *Merged) providerAvailable(provider ActiveProviderSettings) bool {
+	switch provider.Kind {
+	case "claude-subscription", "anthropic-api":
+		return m.accountProviderAvailable(provider)
+	default:
+		return true
+	}
+}
+
+func (m *Merged) accountProviderAvailable(provider ActiveProviderSettings) bool {
+	if provider.Account == "" {
+		return false
+	}
+	accounts, ok := m.accountStore()
+	if !ok || len(accounts.Accounts) == 0 {
+		return false
+	}
+	if entry, ok := accounts.Accounts[provider.Account]; ok {
+		return providerKindMatchesAccount(provider.Kind, entry.Kind)
+	}
+	for _, entry := range accounts.Accounts {
+		if entry.Email == provider.Account && providerKindMatchesAccount(provider.Kind, entry.Kind) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Merged) accountStore() (accountStoreSettings, bool) {
+	if m == nil {
+		return accountStoreSettings{}, false
+	}
+	path := ConduitSettingsPath()
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return accountStoreSettings{}, false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil || len(raw["accounts"]) == 0 {
+		return accountStoreSettings{}, false
+	}
+	var accounts accountStoreSettings
+	if err := json.Unmarshal(raw["accounts"], &accounts); err != nil {
+		return accountStoreSettings{}, false
+	}
+	return accounts, true
+}
+
+type accountStoreSettings struct {
+	Active   string                          `json:"active"`
+	Accounts map[string]accountEntrySettings `json:"accounts"`
+}
+
+type accountEntrySettings struct {
+	Email string `json:"email"`
+	Kind  string `json:"kind,omitempty"`
+}
+
+func providerKindMatchesAccount(providerKind, accountKind string) bool {
+	switch providerKind {
+	case "anthropic-api":
+		return accountKind == "anthropic-console"
+	case "claude-subscription":
+		return accountKind == "" || accountKind == "claude-ai"
+	default:
+		return false
+	}
 }
 
 // SaveActiveProvider persists the active default provider and mirrors it into

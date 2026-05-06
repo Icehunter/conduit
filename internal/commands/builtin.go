@@ -73,16 +73,18 @@ func RegisterModelCommand(
 			providerKind := currentAccountProviderKind(getProviderKind)
 			localItems := localModelPickerItems(manager, providers)
 			items := make([]PickerOption, 0, 4+len(localItems))
-			section := "Claude Subscription"
-			if providerKind == "anthropic-api" {
-				section = "Anthropic API"
+			if providerKind != "" {
+				section := "Claude Subscription"
+				if providerKind == "anthropic-api" {
+					section = "Anthropic API"
+				}
+				items = append(items,
+					PickerOption{Label: section, Section: true},
+					PickerOption{Value: providerPickerValue(providerKind, "claude-opus-4-7"), Label: "Opus 4.7   — most capable"},
+					PickerOption{Value: providerPickerValue(providerKind, "claude-sonnet-4-6"), Label: "Sonnet 4.6 — balanced (default)"},
+					PickerOption{Value: providerPickerValue(providerKind, "claude-haiku-4-5-20251001"), Label: "Haiku 4.5  — fastest, cheapest"},
+				)
 			}
-			items = append(items,
-				PickerOption{Label: section, Section: true},
-				PickerOption{Value: providerPickerValue(providerKind, "claude-opus-4-7"), Label: "Opus 4.7   — most capable"},
-				PickerOption{Value: providerPickerValue(providerKind, "claude-sonnet-4-6"), Label: "Sonnet 4.6 — balanced (default)"},
-				PickerOption{Value: providerPickerValue(providerKind, "claude-haiku-4-5-20251001"), Label: "Haiku 4.5  — fastest, cheapest"},
-			)
 			items = append(items, localItems...)
 			return pickerResultItems("model", "Switch Model", currentModelValue(getModel(), providerKind), items)
 		}
@@ -163,6 +165,8 @@ func currentAccountProviderKind(getProviderKind func() string) string {
 	switch getProviderKind() {
 	case "anthropic-api":
 		return "anthropic-api"
+	case "":
+		return ""
 	default:
 		return "claude-subscription"
 	}
@@ -177,6 +181,9 @@ func providerPickerValue(kind, model string) string {
 
 func currentModelValue(model, kind string) string {
 	if strings.HasPrefix(model, "local:") {
+		return model
+	}
+	if kind == "" {
 		return model
 	}
 	return providerPickerValue(kind, model)

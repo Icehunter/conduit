@@ -73,6 +73,95 @@ func TestLoad_ProviderRoles(t *testing.T) {
 	}
 }
 
+func TestProviderForRoleSkipsDeletedAccountProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SaveConduitRawKey("providers", map[string]ActiveProviderSettings{
+		"claude-subscription.deleted@example.com.claude-sonnet-4-6": {
+			Kind:    "claude-subscription",
+			Account: "deleted@example.com",
+			Model:   "claude-sonnet-4-6",
+		},
+		"mcp.local-router": {
+			Kind:   "mcp",
+			Server: "local-router",
+			Model:  "qwen3-coder",
+		},
+	}); err != nil {
+		t.Fatalf("SaveConduitRawKey providers: %v", err)
+	}
+	if err := SaveConduitRawKey("roles", map[string]string{
+		RoleMain:    "claude-subscription.deleted@example.com.claude-sonnet-4-6",
+		RoleDefault: "mcp.local-router",
+	}); err != nil {
+		t.Fatalf("SaveConduitRawKey roles: %v", err)
+	}
+
+	merged, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if provider, ok := merged.ProviderForRole(RoleMain); ok {
+		t.Fatalf("main provider = %#v, want deleted account provider skipped", provider)
+	}
+	if provider, ok := merged.ProviderForRole(RoleDefault); !ok || provider.Kind != "mcp" {
+		t.Fatalf("default provider = %#v/%v, want mcp fallback still available", provider, ok)
+	}
+}
+
+func TestProviderForRoleKeepsSameEmailDifferentAccountKinds(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SaveConduitRawKey("accounts", map[string]any{
+		"active": "anthropic-console:same@example.com",
+		"accounts": map[string]any{
+			"claude-ai:same@example.com": map[string]any{
+				"email": "same@example.com",
+				"kind":  "claude-ai",
+			},
+			"anthropic-console:same@example.com": map[string]any{
+				"email": "same@example.com",
+				"kind":  "anthropic-console",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveConduitRawKey accounts: %v", err)
+	}
+	if err := SaveConduitRawKey("providers", map[string]ActiveProviderSettings{
+		"claude-subscription.same@example.com.claude-sonnet-4-6": {
+			Kind:    "claude-subscription",
+			Account: "same@example.com",
+			Model:   "claude-sonnet-4-6",
+		},
+		"anthropic-api.same@example.com.claude-sonnet-4-6": {
+			Kind:    "anthropic-api",
+			Account: "same@example.com",
+			Model:   "claude-sonnet-4-6",
+		},
+	}); err != nil {
+		t.Fatalf("SaveConduitRawKey providers: %v", err)
+	}
+	if err := SaveConduitRawKey("roles", map[string]string{
+		RoleMain:       "claude-subscription.same@example.com.claude-sonnet-4-6",
+		RoleBackground: "anthropic-api.same@example.com.claude-sonnet-4-6",
+	}); err != nil {
+		t.Fatalf("SaveConduitRawKey roles: %v", err)
+	}
+
+	merged, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if provider, ok := merged.ProviderForRole(RoleMain); !ok || provider.Kind != "claude-subscription" {
+		t.Fatalf("main provider = %#v/%v, want Claude provider", provider, ok)
+	}
+	if provider, ok := merged.ProviderForRole(RoleBackground); !ok || provider.Kind != "anthropic-api" {
+		t.Fatalf("background provider = %#v/%v, want Anthropic provider", provider, ok)
+	}
+}
+
 func TestSaveActiveProviderMirrorsDefaultRole(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

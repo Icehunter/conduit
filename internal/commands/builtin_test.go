@@ -112,6 +112,28 @@ func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 	}
 }
 
+func TestRegisterModelCommand_ModelsOmitsAccountSectionWithoutAccount(t *testing.T) {
+	r := New()
+	RegisterModelCommand(r, func() string { return "local:local-router" }, func(string) {}, func() string { return "" }, nil, nil)
+
+	result, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to be registered")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(result.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	for _, item := range got.Items {
+		if item.Section && (item.Label == "Claude Subscription" || item.Label == "Anthropic API") {
+			t.Fatalf("picker items include stale account section: %#v", got.Items)
+		}
+	}
+	if !got.Items[0].Section || got.Items[0].Label != "MCP local-router" {
+		t.Fatalf("first picker item = %#v, want MCP local-router section", got.Items[0])
+	}
+}
+
 func TestRegisterModelCommand_LocalSelectionSwitchesProvider(t *testing.T) {
 	r := New()
 	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, nil)

@@ -101,7 +101,7 @@ func (m Model) welcomeCard() Message {
 	p := m.cfg.Profile
 	fields := []string{
 		m.cfg.Version,
-		m.modelName,
+		m.activeModelDisplayName(),
 		cwd,
 		p.DisplayName,
 		p.Email,
@@ -125,6 +125,16 @@ func (m *Model) dismissWelcome() {
 	for i, msg := range m.messages {
 		if msg.WelcomeCard {
 			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *Model) refreshWelcomeCardMessage() {
+	for i, msg := range m.messages {
+		if msg.WelcomeCard {
+			m.messages[i] = m.welcomeCard()
+			m.refreshViewport()
 			return
 		}
 	}

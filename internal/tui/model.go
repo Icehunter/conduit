@@ -108,6 +108,7 @@ type Role int
 const (
 	RoleUser Role = iota
 	RoleAssistant
+	RoleLocal
 	RoleTool
 	RoleAssistantInfo
 	RoleError
@@ -145,6 +146,13 @@ type (
 		newHistory []api.Message
 		summary    string
 		err        error
+	}
+	localCallDoneMsg struct {
+		turnID int
+		call   commands.LocalCall
+		chat   bool
+		text   string
+		err    error
 	}
 	// loginStartMsg triggers the OAuth flow after the user picks a login method.
 	loginStartMsg struct{ claudeAI bool }
@@ -259,6 +267,20 @@ type Config struct {
 	SetTrusted func() error
 	// UsageStatusEnabled controls the conduit-only plan usage footer.
 	UsageStatusEnabled bool
+	// InitialLocalMode restores the hidden /local-mode compatibility bridge.
+	InitialLocalMode bool
+	// InitialLocalServer is the MCP server normal chat should route to when
+	// InitialLocalMode is enabled.
+	InitialLocalServer string
+	// InitialLocalDirectTool is the MCP tool used for normal local-mode chat.
+	InitialLocalDirectTool string
+	// InitialLocalImplementTool is the MCP tool used for scoped local diffs.
+	InitialLocalImplementTool string
+	// InitialActiveProvider is conduit's provider routing selector.
+	InitialActiveProvider *settings.ActiveProviderSettings
+	// InitialProviders/Roles are conduit's named provider role bindings.
+	InitialProviders map[string]settings.ActiveProviderSettings
+	InitialRoles     map[string]string
 	// FetchPlanUsage returns the current Claude plan usage windows.
 	FetchPlanUsage func(context.Context) (planusage.Info, error)
 }
@@ -338,6 +360,19 @@ type Model struct {
 
 	// fastMode is true when /fast is active (showing ⚡ badge).
 	fastMode bool
+
+	// activeProvider is conduit's provider routing selector. For now the TUI
+	// supports Claude subscription and MCP-backed private/local providers.
+	activeProvider *settings.ActiveProviderSettings
+	providers      map[string]settings.ActiveProviderSettings
+	roles          map[string]string
+
+	// localMode/local* are compatibility fields for the hidden /local-mode and
+	// /local debug commands while provider routing settles.
+	localMode          bool
+	localModeServer    string
+	localDirectTool    string
+	localImplementTool string
 
 	// modelName is the currently active model (can be changed via /model).
 	modelName string
@@ -481,9 +516,32 @@ func New(cfg Config) Model {
 		input:              ta,
 		working:            *workinganim.New(14, "Thinking", colorAccent, colorTool, colorDim, colorWindowBg),
 		modelName:          cfg.ModelName,
+		localMode:          cfg.InitialLocalMode,
+		localModeServer:    cfg.InitialLocalServer,
+		localDirectTool:    cfg.InitialLocalDirectTool,
+		localImplementTool: cfg.InitialLocalImplementTool,
 		historyIdx:         -1,
 		loginFlowMsgStart:  -1,
 		usageStatusEnabled: cfg.UsageStatusEnabled,
+		providers:          cloneProviderMap(cfg.InitialProviders),
+		roles:              cloneStringMap(cfg.InitialRoles),
+	}
+	if cfg.InitialActiveProvider != nil {
+		provider := *cfg.InitialActiveProvider
+		m.activeProvider = &provider
+		if provider.Kind == "mcp" {
+			m.localMode = true
+			if m.localModeServer == "" {
+				m.localModeServer = provider.Server
+			}
+			if m.localDirectTool == "" {
+				m.localDirectTool = provider.DirectTool
+			}
+			if m.localImplementTool == "" {
+				m.localImplementTool = provider.ImplementTool
+			}
+			m.ensureDefaultLocalTools()
+		}
 	}
 	if sc, err := buddy.Load(); err == nil && sc != nil {
 		m.companionName = sc.Name
@@ -562,6 +620,28 @@ func New(cfg Config) Model {
 	}
 
 	return m
+}
+
+func cloneProviderMap(in map[string]settings.ActiveProviderSettings) map[string]settings.ActiveProviderSettings {
+	if len(in) == 0 {
+		return map[string]settings.ActiveProviderSettings{}
+	}
+	out := make(map[string]settings.ActiveProviderSettings, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // Init starts the blink + working indicator tick. Also kicks off the MCP approval
@@ -986,6 +1066,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = nil
 			m.welcomeDismissed = false
 			m.messages = append(m.messages, m.welcomeCard())
+			if _, ok := m.activeMCPProvider(); !ok {
+				provider := claudeActiveProvider(m.modelName, m.cfg.Profile.Email)
+				m.setActiveProvider(provider)
+				if suffix := persistActiveProvider(provider); suffix != "" {
+					m.messages = append(m.messages, Message{Role: RoleError, Content: strings.TrimSpace(suffix)})
+				}
+			}
 			if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
 				m.planUsageFetching = true
 				return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
@@ -1071,6 +1158,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = msg.newHistory
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Conversation compacted. Summary:\n\n%s", msg.summary)})
 			m.tallyTokens()
+		}
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		m.input.Focus()
+		return m, nil
+
+	case localCallDoneMsg:
+		if msg.turnID != m.turnID {
+			return m, nil
+		}
+		m.running = false
+		m.cancelTurn = nil
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Local call failed: %v", msg.err)})
+			if msg.chat && len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
+				m.history = m.history[:len(m.history)-1]
+			}
+		} else {
+			label := msg.call.Server
+			if label == "" {
+				label = "local"
+			}
+			text := strings.TrimSpace(msg.text)
+			if text == "" {
+				text = "(empty local response)"
+			}
+			m.messages = append(m.messages, Message{Role: RoleLocal, Content: text, ToolName: label})
+			if msg.chat {
+				m.history = append(m.history, api.Message{
+					Role:         "assistant",
+					Content:      []api.ContentBlock{{Type: "text", Text: text}},
+					ProviderKind: "mcp",
+					Provider:     label,
+				})
+				m.persistNewMessages(m.history)
+			}
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -1180,11 +1303,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case setPermissionModeMsg:
-		m.permissionMode = msg.mode
-		if m.cfg.Gate != nil {
-			m.cfg.Gate.SetMode(msg.mode)
-		}
-		m.syncLive()
+		m.applyPermissionMode(msg.mode)
 		return m, nil
 
 	case setModelNameMsg:
@@ -1475,14 +1594,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		default:
 			m.permissionMode = permissions.ModeDefault
 		}
-		if m.cfg.Gate != nil {
-			m.cfg.Gate.SetMode(m.permissionMode)
-		}
-		// Persist to ~/.claude/settings.json so the Config tool and any
-		// re-read of permissions.defaultMode (e.g. from agents/subprocesses)
-		// see the cycled mode immediately.
-		_ = settings.SavePermissionsField("defaultMode", string(m.permissionMode))
-		m.syncLive()
+		m.applyPermissionMode(m.permissionMode)
 		switch m.permissionMode {
 		case permissions.ModeAcceptEdits:
 			m.flashMsg = "⏵⏵ accept edits on (shift+tab to cycle)"
@@ -1737,7 +1849,8 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 
 		// Reject messages when not authenticated.
-		if m.noAuth {
+		activeMCP, usingMCPProvider := m.activeMCPProvider()
+		if m.noAuth && !usingMCPProvider {
 			m.messages = append(m.messages, Message{
 				Role:    RoleError,
 				Content: "Not logged in. Use /login to sign in first.",
@@ -1757,6 +1870,48 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.historyIdx = -1
 		m.historyDraft = ""
 		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+		if usingMCPProvider {
+			apiText := m.expandPastePlaceholders(text)
+			m.pastedBlocks = nil
+			m.pendingImages = nil
+			m.pendingPDFs = nil
+			userContent := m.userTextContent(apiText)
+			m.history = append(m.history, api.Message{
+				Role:    "user",
+				Content: userContent,
+			})
+			call := commands.NewLocalDirectCallWithTool(activeMCP.Server, activeMCP.DirectTool, localPromptFromContent(userContent))
+			m.running = true
+			m.cancelled = false
+			m.streaming = ""
+			m.apiRetryStatus = ""
+			m.turnStarted = time.Now()
+			m.refreshViewport()
+			m.vp.GotoBottom()
+			m.turnID++
+			turnID := m.turnID
+			ctx, cancel := context.WithCancel(context.Background())
+			m.cancelTurn = cancel
+			manager := m.cfg.MCPManager
+			if manager == nil {
+				m.running = false
+				m.cancelTurn = nil
+				m.messages = append(m.messages, Message{Role: RoleError, Content: "Local provider unavailable: MCP manager is not configured."})
+				m.refreshViewport()
+				return m, nil, true
+			}
+			input, err := json.Marshal(call.Arguments)
+			if err != nil {
+				m.running = false
+				m.cancelTurn = nil
+				m.messages = append(m.messages, Message{Role: RoleError, Content: "Local provider input invalid: " + err.Error()})
+				m.refreshViewport()
+				return m, nil, true
+			}
+			return m, func() tea.Msg {
+				return runLocalCall(ctx, manager, call, input, turnID, true)
+			}, true
+		}
 		// Expand paste placeholders before sending to the API.
 		// The textarea holds "[Pasted text #N +X lines]" tokens; the agent
 		// receives the raw pasted content. After expansion, clear the map.
@@ -1788,28 +1943,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			})
 		}
 		m.pendingPDFs = nil
-		// Process @file mentions: inject referenced file/dir contents as
-		// additional blocks before the user's message text. PDFs become
-		// type=document blocks; everything else becomes type=text.
-		if cwd, err := os.Getwd(); err == nil {
-			for _, ref := range attach.ProcessAtMentions(apiText, cwd) {
-				if ref.IsPDF {
-					userContent = append(userContent, api.ContentBlock{
-						Type: "document",
-						Source: &api.ImageSource{
-							Type:      "base64",
-							MediaType: "application/pdf",
-							Data:      ref.PDFData,
-						},
-					})
-				} else {
-					userContent = append(userContent, api.ContentBlock{
-						Type: "text",
-						Text: attach.FormatAtResult(ref),
-					})
-				}
-			}
-		}
+		userContent = append(userContent, m.atMentionContent(apiText)...)
 		userContent = append(userContent, api.ContentBlock{Type: "text", Text: apiText})
 		m.history = append(m.history, api.Message{
 			Role:    "user",
@@ -1862,6 +1996,48 @@ func (m Model) expandPastePlaceholders(s string) string {
 		}
 		return tok
 	})
+}
+
+func (m Model) userTextContent(text string) []api.ContentBlock {
+	content := m.atMentionContent(text)
+	content = append(content, api.ContentBlock{Type: "text", Text: text})
+	return content
+}
+
+func (m Model) atMentionContent(text string) []api.ContentBlock {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	var content []api.ContentBlock
+	for _, ref := range attach.ProcessAtMentions(text, cwd) {
+		if ref.IsPDF {
+			content = append(content, api.ContentBlock{
+				Type: "document",
+				Source: &api.ImageSource{
+					Type:      "base64",
+					MediaType: "application/pdf",
+					Data:      ref.PDFData,
+				},
+			})
+			continue
+		}
+		content = append(content, api.ContentBlock{
+			Type: "text",
+			Text: attach.FormatAtResult(ref),
+		})
+	}
+	return content
+}
+
+func localPromptFromContent(content []api.ContentBlock) string {
+	var parts []string
+	for _, block := range content {
+		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // renderCommandPicker renders the slash command picker dropdown.
@@ -2133,6 +2309,11 @@ func (m Model) acceptAtMatch() Model {
 		return m
 	}
 	chosen := m.atMatches[m.atSelected]
+	cwd, _ := os.Getwd()
+	isDir := false
+	if info, err := os.Stat(filepath.Join(cwd, chosen)); err == nil && info.IsDir() {
+		isDir = true
+	}
 	val := m.input.Value()
 	// Find the @ token at the end and replace it.
 	idx := strings.LastIndexAny(val, " \t\n")
@@ -2140,11 +2321,22 @@ func (m Model) acceptAtMatch() Model {
 	if idx >= 0 {
 		prefix = val[:idx+1]
 	}
-	// Construct the replacement: @path + space (so user can keep typing).
-	replacement := "@" + chosen + " "
+	// Construct the replacement. Directories keep the picker open for nested
+	// selection; files add a trailing space so the user can keep typing.
+	replacementPath := chosen
+	if isDir {
+		replacementPath = strings.TrimRight(chosen, string(os.PathSeparator)) + string(os.PathSeparator)
+	}
+	replacement := "@" + replacementPath
+	if !isDir {
+		replacement += " "
+	}
 	// Quote paths with spaces.
-	if strings.Contains(chosen, " ") {
-		replacement = `@"` + chosen + `" `
+	if strings.Contains(replacementPath, " ") {
+		replacement = `@"` + replacementPath + `"`
+		if !isDir {
+			replacement += " "
+		}
 	}
 	m.input.SetValue(prefix + replacement)
 	m.input.CursorEnd()
@@ -2152,6 +2344,9 @@ func (m Model) acceptAtMatch() Model {
 	m.atSelected = 0
 	m.atQuery = ""
 	m.atCwd = ""
+	if isDir {
+		return m.updateAtMatches()
+	}
 	return m
 }
 
@@ -2160,7 +2355,7 @@ func (m Model) acceptAtMatch() Model {
 func searchFiles(dir, query string, max int) []string {
 	// Try fd (fast, respects .gitignore).
 	if _, err := exec.LookPath("fd"); err == nil {
-		args := []string{"--type", "f", "--type", "d", "--max-results", fmt.Sprintf("%d", max)}
+		args := []string{"--type", "f", "--type", "d", "--full-path", "--max-results", fmt.Sprintf("%d", max)}
 		if query != "" {
 			args = append(args, query)
 		}
@@ -2210,7 +2405,11 @@ func searchFiles(dir, query string, max int) []string {
 		if d.IsDir() && depth >= 3 {
 			return filepath.SkipDir
 		}
-		if queryLow == "" || strings.Contains(strings.ToLower(name), queryLow) {
+		haystack := strings.ToLower(name)
+		if strings.Contains(query, "/") || strings.Contains(query, string(os.PathSeparator)) {
+			haystack = strings.ToLower(rel)
+		}
+		if queryLow == "" || strings.Contains(haystack, queryLow) {
 			paths = append(paths, rel)
 		}
 		return nil
@@ -2315,7 +2514,11 @@ func historyToDisplayMessages(msgs []api.Message) []Message {
 			}
 			content = stripCompanionMarkerGlobal(content)
 			if content != "" {
-				out = append(out, Message{Role: RoleAssistant, Content: content})
+				if apiMsg.ProviderKind == "mcp" || apiMsg.Provider != "" {
+					out = append(out, Message{Role: RoleLocal, Content: content, ToolName: apiMsg.Provider})
+				} else {
+					out = append(out, Message{Role: RoleAssistant, Content: content})
+				}
 			}
 		}
 		appendText := func(s string) {
@@ -2389,6 +2592,9 @@ func historyToDisplayMessage(msg api.Message) Message {
 	// Strip companion markers ([Name: ...]) stored from previous sessions.
 	content := text.String()
 	content = stripCompanionMarkerGlobal(content)
+	if msg.ProviderKind == "mcp" || msg.Provider != "" {
+		return Message{Role: RoleLocal, Content: content, ToolName: msg.Provider}
+	}
 	return Message{Role: RoleAssistant, Content: content}
 }
 
@@ -2483,10 +2689,78 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		return m, tea.Quit
 	case "model":
 		m.modelName = res.Model
+		provider := claudeActiveProvider(res.Model, m.cfg.Profile.Email)
+		m.setActiveProvider(provider)
+		persistSuffix := persistActiveProvider(provider)
 		m.cfg.Loop.SetModel(res.Model)
 		m.syncLive()
+		m.refreshWelcomeCardMessage()
 		if res.Text != "" {
-			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text + persistSuffix})
+		}
+		m.refreshViewport()
+		return m, nil
+	case "provider-switch":
+		if res.Provider == nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Provider switch payload missing."})
+			m.refreshViewport()
+			return m, nil
+		}
+		role := res.Role
+		if role == "" {
+			role = settings.RoleDefault
+		}
+		switch res.Provider.Kind {
+		case "mcp":
+			server := res.Provider.Server
+			if server == "" {
+				server = "local-router"
+			}
+			model := res.Provider.Model
+			if model == "" {
+				model = m.localModelName(server)
+			}
+			provider := *res.Provider
+			provider.Server = server
+			provider.Model = model
+			if role == settings.RoleDefault {
+				m.setActiveProvider(provider)
+			}
+			suffix := m.persistProviderForRole(role, provider)
+			m.applyEffectiveProviderForMode()
+			m.syncLive()
+			m.refreshWelcomeCardMessage()
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Set %s provider to local %s · %s%s", role, model, server, suffix)})
+		default:
+			model := res.Provider.Model
+			if model == "" {
+				model = res.Model
+			}
+			if model == "" {
+				model = m.modelName
+			}
+			provider := *res.Provider
+			provider.Model = model
+			if provider.Account == "" {
+				provider.Account = m.cfg.Profile.Email
+			}
+			if role == settings.RoleDefault {
+				m.modelName = model
+				m.setActiveProvider(provider)
+				m.cfg.Loop.SetModel(model)
+			}
+			suffix := m.persistProviderForRole(role, provider)
+			m.applyEffectiveProviderForMode()
+			m.syncLive()
+			m.refreshWelcomeCardMessage()
+			msg := ""
+			if role == settings.RoleDefault {
+				msg = res.Text
+			}
+			if msg == "" {
+				msg = fmt.Sprintf("Set %s provider to %s", role, model)
+			}
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: msg + suffix})
 		}
 		m.refreshViewport()
 		return m, nil
@@ -2515,6 +2789,98 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			}
 			return compactDoneMsg{newHistory: result.NewHistory, summary: result.Summary}
 		}
+	case "local-call":
+		if m.running {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Local call unavailable while another turn is running."})
+			m.refreshViewport()
+			return m, nil
+		}
+		if m.cfg.MCPManager == nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Local call unavailable: MCP manager is not configured."})
+			m.refreshViewport()
+			return m, nil
+		}
+		var call commands.LocalCall
+		if err := json.Unmarshal([]byte(res.Text), &call); err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Local call payload invalid: " + err.Error()})
+			m.refreshViewport()
+			return m, nil
+		}
+		input, err := json.Marshal(call.Arguments)
+		if err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Local call input invalid: " + err.Error()})
+			m.refreshViewport()
+			return m, nil
+		}
+		m.dismissWelcome()
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Calling local provider %s…", call.Server)})
+		m.running = true
+		m.cancelled = false
+		m.streaming = ""
+		m.apiRetryStatus = ""
+		m.turnStarted = time.Now()
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		m.turnID++
+		turnID := m.turnID
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelTurn = cancel
+		manager := m.cfg.MCPManager
+		return m, func() tea.Msg {
+			return runLocalCall(ctx, manager, call, input, turnID, false)
+		}
+	case "local-mode":
+		parts := strings.SplitN(res.Text, "\t", 2)
+		action := ""
+		server := ""
+		if len(parts) > 0 {
+			action = parts[0]
+		}
+		if len(parts) > 1 {
+			server = parts[1]
+		}
+		switch action {
+		case "off":
+			provider := claudeActiveProvider(m.modelName, m.cfg.Profile.Email)
+			m.setActiveProvider(provider)
+			suffix := persistActiveProvider(provider)
+			m.syncLive()
+			m.refreshWelcomeCardMessage()
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Local mode off. Normal chat routes to Claude." + suffix})
+		case "on":
+			if server == "" {
+				server = "local-router"
+			}
+			m.ensureDefaultLocalTools()
+			provider := m.mcpActiveProvider(server)
+			m.setActiveProvider(provider)
+			suffix := persistActiveProvider(provider)
+			m.syncLive()
+			m.refreshWelcomeCardMessage()
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.%s", server, suffix)})
+		default:
+			if _, ok := m.activeMCPProvider(); ok {
+				provider := claudeActiveProvider(m.modelName, m.cfg.Profile.Email)
+				m.setActiveProvider(provider)
+				suffix := persistActiveProvider(provider)
+				m.syncLive()
+				m.refreshWelcomeCardMessage()
+				m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Local mode off. Normal chat routes to Claude." + suffix})
+			} else {
+				if server == "" {
+					server = "local-router"
+				}
+				m.ensureDefaultLocalTools()
+				provider := m.mcpActiveProvider(server)
+				m.setActiveProvider(provider)
+				suffix := persistActiveProvider(provider)
+				m.syncLive()
+				m.refreshWelcomeCardMessage()
+				m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.%s", server, suffix)})
+			}
+		}
+		m.refreshViewport()
+		return m, nil
 	case "prompt":
 		// Inject text as a user turn and kick off an agent run — same as
 		// typing the prompt in the input box, but sourced from a slash command.
@@ -2748,7 +3114,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			switch id {
 			case "defaultPermissionMode":
 				if s, ok := value.(string); ok {
-					_ = settings.SavePermissionsField("defaultMode", permModeStoredVal(s))
+					_ = settings.SaveConduitPermissionsField("defaultMode", permModeStoredVal(s))
 					return
 				}
 			case "notifChannel":
@@ -2793,20 +3159,20 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		}
-		// Position cursor on the current value if present.
-		sel := 0
-		for i, it := range payload.Items {
-			if it.Value == payload.Current {
-				sel = i
-				break
-			}
+		current := payload.Current
+		role := settings.RoleDefault
+		if res.Model == "model" {
+			current = m.providerValueForRole(role)
 		}
+		// Position cursor on the current value if present.
+		sel := selectedPickerIndex(payload.Items, current)
 		m.picker = &pickerState{
 			kind:     res.Model,
 			title:    payload.Title,
 			items:    payload.Items,
 			selected: sel,
-			current:  payload.Current,
+			current:  current,
+			role:     role,
 		}
 		m.refreshViewport()
 		return m, nil
@@ -2974,6 +3340,275 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+}
+
+func runLocalCall(ctx context.Context, manager *mcp.Manager, call commands.LocalCall, input []byte, turnID int, chat bool) tea.Msg {
+	result, err := manager.CallTool(ctx, call.Tool, input)
+	if err != nil {
+		return localCallDoneMsg{turnID: turnID, call: call, chat: chat, err: err}
+	}
+	var parts []string
+	for _, block := range result.Content {
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	text := strings.Join(parts, "\n")
+	if result.IsError {
+		if text == "" {
+			text = "local tool returned an error"
+		}
+		return localCallDoneMsg{turnID: turnID, call: call, chat: chat, err: errors.New(text)}
+	}
+	return localCallDoneMsg{turnID: turnID, call: call, chat: chat, text: text}
+}
+
+func persistClaudeActiveProvider(model, account string) string {
+	value := settings.ActiveProviderSettings{
+		Kind:    "claude-subscription",
+		Model:   model,
+		Account: account,
+	}
+	return persistActiveProvider(value)
+}
+
+func claudeActiveProvider(model, account string) settings.ActiveProviderSettings {
+	return settings.ActiveProviderSettings{
+		Kind:    "claude-subscription",
+		Model:   model,
+		Account: account,
+	}
+}
+
+func persistActiveProvider(value settings.ActiveProviderSettings) string {
+	if err := settings.SaveActiveProvider(value); err != nil {
+		return fmt.Sprintf(" (failed to persist active provider: %v)", err)
+	}
+	return ""
+}
+
+func (m *Model) persistProviderForRole(role string, value settings.ActiveProviderSettings) string {
+	if role == "" {
+		role = settings.RoleDefault
+	}
+	key := settings.ProviderKey(value)
+	if m.providers == nil {
+		m.providers = map[string]settings.ActiveProviderSettings{}
+	}
+	if m.roles == nil {
+		m.roles = map[string]string{}
+	}
+	m.providers[key] = value
+	m.roles[role] = key
+	if err := settings.SaveRoleProvider(role, value); err != nil {
+		return fmt.Sprintf(" (failed to persist %s provider: %v)", role, err)
+	}
+	return ""
+}
+
+func (m *Model) setActiveProvider(value settings.ActiveProviderSettings) {
+	provider := value
+	m.activeProvider = &provider
+	switch provider.Kind {
+	case "mcp":
+		m.localMode = true
+		m.localModeServer = provider.Server
+		m.localDirectTool = provider.DirectTool
+		m.localImplementTool = provider.ImplementTool
+		m.ensureDefaultLocalTools()
+	default:
+		m.localMode = false
+		m.localModeServer = ""
+	}
+}
+
+func (m *Model) applyPermissionMode(mode permissions.Mode) {
+	m.permissionMode = mode
+	if m.cfg.Gate != nil {
+		m.cfg.Gate.SetMode(mode)
+	}
+	_ = settings.SaveConduitPermissionsField("defaultMode", string(mode))
+	m.applyEffectiveProviderForMode()
+	m.syncLive()
+	m.refreshWelcomeCardMessage()
+}
+
+func (m *Model) applyEffectiveProviderForMode() {
+	provider, ok := m.providerForCurrentMode()
+	if !ok || provider.Kind == "mcp" || provider.Model == "" || m.cfg.Loop == nil {
+		return
+	}
+	m.cfg.Loop.SetModel(provider.Model)
+}
+
+func (m Model) currentProviderRole() string {
+	switch m.permissionMode {
+	case permissions.ModePlan:
+		return settings.RolePlanning
+	case permissions.ModeAcceptEdits, permissions.ModeBypassPermissions:
+		return settings.RoleMain
+	default:
+		return settings.RoleDefault
+	}
+}
+
+func (m Model) providerForCurrentMode() (settings.ActiveProviderSettings, bool) {
+	return m.providerForRole(m.currentProviderRole())
+}
+
+func (m Model) providerForRole(role string) (settings.ActiveProviderSettings, bool) {
+	if role == "" {
+		role = settings.RoleDefault
+	}
+	if ref := m.roles[role]; ref != "" {
+		if provider, ok := m.providers[ref]; ok {
+			return provider, true
+		}
+	}
+	if role == settings.RoleDefault && m.activeProvider != nil {
+		return *m.activeProvider, true
+	}
+	return settings.ActiveProviderSettings{}, false
+}
+
+func (m Model) mcpActiveProvider(server string) settings.ActiveProviderSettings {
+	directTool := m.localDirectTool
+	if directTool == "" {
+		directTool = "local_direct"
+	}
+	implementTool := m.localImplementTool
+	if implementTool == "" {
+		implementTool = "local_implement"
+	}
+	return settings.ActiveProviderSettings{
+		Kind:          "mcp",
+		Server:        server,
+		Model:         m.localModelName(server),
+		DirectTool:    directTool,
+		ImplementTool: implementTool,
+	}
+}
+
+func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
+	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == "mcp" {
+		if provider.Server == "" {
+			provider.Server = "local-router"
+		}
+		if provider.DirectTool == "" {
+			provider.DirectTool = "local_direct"
+		}
+		if provider.ImplementTool == "" {
+			provider.ImplementTool = "local_implement"
+		}
+		if provider.Model == "" {
+			provider.Model = m.localModelName(provider.Server)
+		}
+		return provider, true
+	}
+	if m.currentProviderRole() == settings.RoleDefault && m.localMode {
+		server := m.localModeServer
+		if server == "" {
+			server = "local-router"
+		}
+		directTool := m.localDirectTool
+		if directTool == "" {
+			directTool = "local_direct"
+		}
+		implementTool := m.localImplementTool
+		if implementTool == "" {
+			implementTool = "local_implement"
+		}
+		return settings.ActiveProviderSettings{
+			Kind:          "mcp",
+			Server:        server,
+			Model:         m.localModelName(server),
+			DirectTool:    directTool,
+			ImplementTool: implementTool,
+		}, true
+	}
+	return settings.ActiveProviderSettings{}, false
+}
+
+func (m Model) providerValueForRole(role string) string {
+	if role == "" {
+		role = settings.RoleDefault
+	}
+	if ref := m.roles[role]; ref != "" {
+		if provider, ok := m.providers[ref]; ok {
+			return providerPickerValue(provider)
+		}
+	}
+	if role == settings.RoleDefault && m.activeProvider != nil {
+		return providerPickerValue(*m.activeProvider)
+	}
+	return ""
+}
+
+func providerPickerValue(provider settings.ActiveProviderSettings) string {
+	if provider.Kind == "mcp" {
+		server := provider.Server
+		if server == "" {
+			server = "local-router"
+		}
+		return "local:" + server
+	}
+	return provider.Model
+}
+
+func (m *Model) ensureDefaultLocalTools() {
+	if m.localDirectTool == "" {
+		m.localDirectTool = "local_direct"
+	}
+	if m.localImplementTool == "" {
+		m.localImplementTool = "local_implement"
+	}
+}
+
+func (m Model) activeModelDisplayName() string {
+	provider, ok := m.activeMCPProvider()
+	if !ok {
+		if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != "mcp" && provider.Model != "" {
+			return provider.Model
+		}
+		return m.modelName
+	}
+	server := provider.Server
+	if server == "" {
+		server = "local-router"
+	}
+	model := provider.Model
+	if model == "" {
+		model = m.localModelName(server)
+	}
+	if model == "" || model == server {
+		return "local " + server
+	}
+	return fmt.Sprintf("local %s · %s", model, server)
+}
+
+func (m Model) effectiveAssistantModelName() string {
+	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != "mcp" && provider.Model != "" {
+		return provider.Model
+	}
+	return m.modelName
+}
+
+func (m Model) localModelName(server string) string {
+	if m.cfg.MCPManager != nil {
+		for _, srv := range m.cfg.MCPManager.Servers() {
+			if srv == nil || srv.Name != server {
+				continue
+			}
+			if model := srv.Config.Env["LOCAL_LLM_MODEL"]; model != "" {
+				return model
+			}
+			break
+		}
+	}
+	if server == "local-router" {
+		return "qwen3-coder"
+	}
+	return server
 }
 
 // CostSummary returns a human-readable cost/token summary for the /cost command.
@@ -3151,12 +3786,13 @@ func (m *Model) appendAssistantInfo(turnCostDelta float64) {
 	if !m.turnStarted.IsZero() {
 		duration = time.Since(m.turnStarted).Round(time.Second)
 	}
-	if duration <= 0 && turnCostDelta <= 0 && m.modelName == "" {
+	modelName := m.effectiveAssistantModelName()
+	if duration <= 0 && turnCostDelta <= 0 && modelName == "" {
 		return
 	}
 	m.messages = append(m.messages, Message{
 		Role:              RoleAssistantInfo,
-		AssistantModel:    shortModelName(m.modelName),
+		AssistantModel:    shortModelName(modelName),
 		AssistantDuration: duration,
 		AssistantCost:     turnCostDelta,
 	})
@@ -3523,6 +4159,13 @@ func (m Model) renderUsageFooter(width int) string {
 	if width < 20 {
 		width = 20
 	}
+	if _, ok := m.activeMCPProvider(); ok {
+		provider := m.activeModelDisplayName()
+		line := surfaceSpaces(1) + styleStatus.Width(8).Render("Provider") + surfaceSpaces(2) + styleStatus.Render(provider)
+		return padStatusLine(m.renderContextUsageWindow(), width) + "\n" +
+			padStatusLine(line, width) + "\n" +
+			padStatusLine("", width)
+	}
 	rateLimited := !m.planUsageBackoff.IsZero() && time.Now().Before(m.planUsageBackoff)
 	hasCachedData := !m.planUsage.FiveHour.ResetsAt.IsZero() || !m.planUsage.SevenDay.ResetsAt.IsZero()
 	if m.planUsageErr != "" && !hasCachedData {
@@ -3784,7 +4427,12 @@ func (m *Model) syncLive() {
 	if m.cfg.Live == nil {
 		return
 	}
-	m.cfg.Live.SetModelName(m.modelName)
+	m.cfg.Live.SetModelName(m.activeModelDisplayName())
+	if provider, ok := m.activeMCPProvider(); ok {
+		m.cfg.Live.SetLocalMode(true, provider.Server)
+	} else {
+		m.cfg.Live.SetLocalMode(false, "")
+	}
 	m.cfg.Live.SetPermissionMode(m.permissionMode)
 	m.cfg.Live.SetTokens(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
 	m.cfg.Live.SetRateLimitWarning(m.rateLimitWarning)

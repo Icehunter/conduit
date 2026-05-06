@@ -115,6 +115,20 @@ type RunOptions struct {
 	InitialOutputStyle string
 	// InitialUsageStatusEnabled controls the conduit-only plan usage footer.
 	InitialUsageStatusEnabled bool
+	// InitialLocalMode restores the hidden /local-mode compatibility bridge.
+	InitialLocalMode bool
+	// InitialLocalServer is the MCP server normal chat should route to when
+	// InitialLocalMode is enabled.
+	InitialLocalServer string
+	// InitialLocalDirectTool is the MCP tool used for normal local-mode chat.
+	InitialLocalDirectTool string
+	// InitialLocalImplementTool is the MCP tool used for scoped local diffs.
+	InitialLocalImplementTool string
+	// InitialActiveProvider is the provider shape loaded from conduit.json.
+	InitialActiveProvider *settings.ActiveProviderSettings
+	// InitialProviders/Roles are conduit's named provider role bindings.
+	InitialProviders map[string]settings.ActiveProviderSettings
+	InitialRoles     map[string]string
 	// FetchPlanUsage returns the current Claude plan usage windows. Nil disables
 	// fetching even if the footer setting is enabled.
 	FetchPlanUsage func(context.Context) (planusage.Info, error)
@@ -162,11 +176,33 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		agent.CoordinatorMCPNames = names
 	}
 
+	// Session state shared between commands and the TUI model.
+	// live is a thread-safe bag updated by Model.syncLive() on every relevant
+	// state change; command callbacks read from it so they see current values.
+	live := &LiveState{}
+	live.SetModelName(modelName) // seed with startup value
+	live.SetLocalMode(runOpts.InitialLocalMode, runOpts.InitialLocalServer)
+	usageStatusEnabled := runOpts.InitialUsageStatusEnabled
+
+	// modelPtr is still used for methods that can only run inside the event loop
+	// (TasksSummary, LastThinking, CopyLastResponse — they read m.messages).
+	var modelPtr *Model
+
 	reg := commands.New()
 	commands.RegisterBuiltins(reg)
 	commands.RegisterModelCommand(reg,
-		func() string { return internalmodel.Resolve() },
+		func() string {
+			if enabled, server := live.LocalMode(); enabled {
+				if server == "" {
+					server = "local-router"
+				}
+				return "local:" + server
+			}
+			return internalmodel.Resolve()
+		},
 		func(name string) { loop.SetModel(name) },
+		runOpts.MCPManager,
+		runOpts.InitialProviders,
 	)
 	commands.RegisterCompactCommand(reg)
 	commands.RegisterPermissionsCommand(reg, opts.gate)
@@ -177,6 +213,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterTerminalSetupCommand(reg)
 	commands.RegisterPromptCommands(reg)
 	commands.RegisterMCPCommand(reg, runOpts.MCPManager)
+	commands.RegisterLocalCommands(reg, runOpts.MCPManager, runOpts.InitialActiveProvider, runOpts.InitialProviders)
 	commands.RegisterRTKCommands(reg)
 	commands.RegisterBuddyCommand(reg, func() string {
 		// Use email as stable user ID for companion generation.
@@ -199,16 +236,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 
 	sessionStart := time.Now()
 
-	// Session state shared between commands and the TUI model.
-	// live is a thread-safe bag updated by Model.syncLive() on every relevant
-	// state change; command callbacks read from it so they see current values.
-	live := &LiveState{}
-	live.SetModelName(modelName) // seed with startup value
-	usageStatusEnabled := runOpts.InitialUsageStatusEnabled
-
-	// modelPtr is still used for methods that can only run inside the event loop
-	// (TasksSummary, LastThinking, CopyLastResponse — they read m.messages).
-	var modelPtr *Model
 	state := &commands.SessionState{
 		GetCost: func() string {
 			if modelPtr == nil {
@@ -449,26 +476,33 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	apiClient := opts.apiClient
 
 	cfg := Config{
-		Version:            version,
-		ModelName:          modelName,
-		Loop:               loop,
-		Program:            &prog,
-		Commands:           reg,
-		APIClient:          apiClient,
-		MCPManager:         runOpts.MCPManager,
-		Gate:               opts.gate,
-		AuthErr:            runOpts.AuthErr,
-		Profile:            runOpts.Profile,
-		Session:            runOpts.Session,
-		ResumedHistory:     runOpts.ResumedHistory,
-		Resumed:            runOpts.Resumed,
-		LoadAuth:           runOpts.LoadAuth,
-		NewAPIClient:       runOpts.NewAPIClient,
-		Live:               live,
-		NeedsTrust:         runOpts.NeedsTrust,
-		SetTrusted:         runOpts.SetTrusted,
-		UsageStatusEnabled: runOpts.InitialUsageStatusEnabled,
-		FetchPlanUsage:     runOpts.FetchPlanUsage,
+		Version:                   version,
+		ModelName:                 modelName,
+		Loop:                      loop,
+		Program:                   &prog,
+		Commands:                  reg,
+		APIClient:                 apiClient,
+		MCPManager:                runOpts.MCPManager,
+		Gate:                      opts.gate,
+		AuthErr:                   runOpts.AuthErr,
+		Profile:                   runOpts.Profile,
+		Session:                   runOpts.Session,
+		ResumedHistory:            runOpts.ResumedHistory,
+		Resumed:                   runOpts.Resumed,
+		LoadAuth:                  runOpts.LoadAuth,
+		NewAPIClient:              runOpts.NewAPIClient,
+		Live:                      live,
+		NeedsTrust:                runOpts.NeedsTrust,
+		SetTrusted:                runOpts.SetTrusted,
+		UsageStatusEnabled:        runOpts.InitialUsageStatusEnabled,
+		InitialLocalMode:          runOpts.InitialLocalMode,
+		InitialLocalServer:        runOpts.InitialLocalServer,
+		InitialLocalDirectTool:    runOpts.InitialLocalDirectTool,
+		InitialLocalImplementTool: runOpts.InitialLocalImplementTool,
+		InitialActiveProvider:     runOpts.InitialActiveProvider,
+		InitialProviders:          runOpts.InitialProviders,
+		InitialRoles:              runOpts.InitialRoles,
+		FetchPlanUsage:            runOpts.FetchPlanUsage,
 	}
 	// Seed session ID into LiveState once it's known.
 	if runOpts.Session != nil {
@@ -534,6 +568,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 
 	// Wire EnterPlanMode — asks user consent via the permission prompt machinery.
 	if runOpts.EnterPlan != nil {
+		runOpts.EnterPlan.CurrentMode = func() permissions.Mode {
+			return live.PermissionMode()
+		}
 		runOpts.EnterPlan.AskEnter = func(ctx context.Context) bool {
 			reply := make(chan permissionReply, 1)
 			prog.Send(permissionAskMsg{
@@ -559,7 +596,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			reply := make(chan permissionReply, 1)
 			prog.Send(permissionAskMsg{
 				toolName:  "ExitPlanMode",
-				toolInput: "Approve this implementation plan?\n\n" + plan,
+				toolInput: "Approve this implementation plan and switch to auto mode?\n\n" + plan,
 				reply:     reply,
 			})
 			select {
@@ -620,7 +657,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 }
 
 // logoutCredentials removes the active account's token from the keychain
-// and clears it from accounts.json.
+// and clears it from conduit.json account metadata.
 func logoutCredentials() error {
 	store := defaultSecureStorage()
 	email := auth.ActiveEmail()

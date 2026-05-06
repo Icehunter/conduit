@@ -64,7 +64,7 @@ func EnsureFresh(ctx context.Context, s secure.Storage, c *TokenClient, email st
 	if fresh.RefreshToken == "" {
 		fresh.RefreshToken = p.RefreshToken
 	}
-	// Only write the keychain entry; accounts.json was already set up at login.
+	// Only write the keychain entry; account metadata was already set up at login.
 	if err := saveToken(s, fresh, email); err != nil {
 		return PersistedTokens{}, err
 	}

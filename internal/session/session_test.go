@@ -109,6 +109,36 @@ func TestExtractTitle_Truncated(t *testing.T) {
 	}
 }
 
+func TestAppendMessagePreservesProviderMetadata(t *testing.T) {
+	s := newTestSession(t)
+	msg := api.Message{
+		Role:         "assistant",
+		Content:      []api.ContentBlock{{Type: "text", Text: "local answer"}},
+		ProviderKind: "mcp",
+		Provider:     "local-router",
+	}
+	if err := s.AppendMessage(msg); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	msgs, err := s.LoadMessages()
+	if err != nil {
+		t.Fatalf("LoadMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("LoadMessages len = %d, want 1", len(msgs))
+	}
+	if msgs[0].ProviderKind != "mcp" || msgs[0].Provider != "local-router" {
+		t.Fatalf("provider metadata = %q/%q, want mcp/local-router", msgs[0].ProviderKind, msgs[0].Provider)
+	}
+	data, err := json.Marshal(msgs[0])
+	if err != nil {
+		t.Fatalf("marshal message: %v", err)
+	}
+	if strings.Contains(string(data), "provider") || strings.Contains(string(data), "local-router") {
+		t.Fatalf("provider metadata leaked into API message JSON: %s", data)
+	}
+}
+
 func TestExtractTitle_CustomTitle(t *testing.T) {
 	s := newTestSession(t)
 	_ = s.SetTitle("My Custom Title")

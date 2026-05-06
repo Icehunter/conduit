@@ -38,6 +38,27 @@ func TestEnterPlanMode_DeniedByUser(t *testing.T) {
 	}
 }
 
+func TestEnterPlanMode_AlreadyPlanSkipsPrompt(t *testing.T) {
+	var asked bool
+	tool := &EnterPlanMode{
+		CurrentMode: func() permissions.Mode { return permissions.ModePlan },
+		AskEnter: func(ctx context.Context) bool {
+			asked = true
+			return false
+		},
+	}
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Errorf("unexpected error: %v", res.Content)
+	}
+	if asked {
+		t.Error("AskEnter should not be called when already in plan mode")
+	}
+}
+
 func TestEnterPlanMode_Metadata(t *testing.T) {
 	tool := &EnterPlanMode{}
 	if tool.Name() != "EnterPlanMode" {
@@ -55,7 +76,7 @@ func TestEnterPlanMode_Metadata(t *testing.T) {
 	}
 }
 
-func TestExitPlanMode_ApprovedRestoresDefault(t *testing.T) {
+func TestExitPlanMode_ApprovedEnablesAutoMode(t *testing.T) {
 	var got permissions.Mode
 	tool := &ExitPlanMode{
 		SetMode:    func(m permissions.Mode) { got = m },
@@ -68,8 +89,8 @@ func TestExitPlanMode_ApprovedRestoresDefault(t *testing.T) {
 	if res.IsError {
 		t.Errorf("unexpected error: %v", res.Content)
 	}
-	if got != permissions.ModeDefault {
-		t.Errorf("mode = %v; want ModeDefault", got)
+	if got != permissions.ModeBypassPermissions {
+		t.Errorf("mode = %v; want ModeBypassPermissions", got)
 	}
 }
 

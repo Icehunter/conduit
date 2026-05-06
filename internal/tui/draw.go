@@ -48,7 +48,9 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	}
 	if picker != "" {
 		spec := floatingPickerSpec
-		if m.commandPickerActive() {
+		if m.picker != nil && m.picker.kind == "model" {
+			spec = floatingModelPickerSpec
+		} else if m.commandPickerActive() {
 			spec = floatingCommandSpec
 		}
 		drawPickerAboveInput(scr, layout, picker, spec)

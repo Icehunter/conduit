@@ -86,6 +86,12 @@ func (td ToolDef) MarshalJSON() ([]byte, error) {
 type Message struct {
 	Role    string         `json:"role"` // "user" | "assistant"
 	Content []ContentBlock `json:"content"`
+
+	// ProviderKind/Provider are conduit-only transcript metadata. They are
+	// deliberately excluded from API JSON so resumed local/provider turns stay
+	// renderable without sending private routing metadata upstream.
+	ProviderKind string `json:"-"`
+	Provider     string `json:"-"`
 }
 
 // ContentBlock is one block of content in a message.

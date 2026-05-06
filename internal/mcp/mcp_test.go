@@ -42,6 +42,7 @@ func TestLoadConfigsNoError(t *testing.T) {
 func TestLoadConfigsPicksUpTopLevelClaudeMcpServers(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("CONDUIT_CONFIG_DIR", t.TempDir())
 	path := filepath.Join(dir, ".claude.json")
 	if err := os.WriteFile(path, []byte(`{
   "mcpServers": {
@@ -68,6 +69,57 @@ func TestLoadConfigsPicksUpTopLevelClaudeMcpServers(t *testing.T) {
 	}
 	if cfg.Command != "node" || len(cfg.Args) != 1 || cfg.Env["QWEN_MODEL"] != "qwen3-coder" {
 		t.Fatalf("server config not preserved: %+v", cfg)
+	}
+}
+
+func TestLoadConfigsPicksUpConduitMCPOverlay(t *testing.T) {
+	claudeDir := t.TempDir()
+	conduitDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+
+	claudePath := filepath.Join(claudeDir, ".claude.json")
+	if err := os.WriteFile(claudePath, []byte(`{
+  "mcpServers": {
+    "local-router": {
+      "command": "node",
+      "args": ["/tmp/claude-server.js"],
+      "env": {"LOCAL_LLM_MODEL": "old"}
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conduitPath := filepath.Join(conduitDir, "mcp.json")
+	if err := os.WriteFile(conduitPath, []byte(`{
+  "mcpServers": {
+    "local-router": {
+      "command": "node",
+      "args": ["/tmp/conduit-server.js"],
+      "env": {"LOCAL_LLM_MODEL": "qwen3-coder"}
+    },
+    "extra-router": {
+      "command": "python",
+      "args": ["server.py"]
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgs, err := LoadConfigs("/tmp/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := cfgs["local-router"]
+	if local.Scope != "conduit" || local.Source != conduitPath {
+		t.Fatalf("local-router source/scope = %q/%q, want conduit overlay", local.Source, local.Scope)
+	}
+	if len(local.Args) != 1 || local.Args[0] != "/tmp/conduit-server.js" || local.Env["LOCAL_LLM_MODEL"] != "qwen3-coder" {
+		t.Fatalf("local-router was not overridden by conduit config: %+v", local)
+	}
+	if extra := cfgs["extra-router"]; extra.Scope != "conduit" || extra.Command != "python" {
+		t.Fatalf("extra-router = %+v, want conduit python server", extra)
 	}
 }
 

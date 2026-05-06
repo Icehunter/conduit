@@ -3,7 +3,7 @@ package auth
 // Multi-account support.
 //
 // Each account's token is stored in the platform keychain under the key
-// "oauth-tokens-<email>". ~/.claude/accounts.json tracks which accounts
+// "oauth-tokens-<email>". ~/.conduit/conduit.json tracks which accounts
 // exist and which is currently active.
 
 import (
@@ -24,13 +24,17 @@ type AccountEntry struct {
 	AddedAt time.Time `json:"added_at"`
 }
 
-// AccountStore is the shape of ~/.claude/accounts.json.
+// AccountStore is the shape of the "accounts" object in ~/.conduit/conduit.json.
 type AccountStore struct {
 	Active   string                  `json:"active"`
 	Accounts map[string]AccountEntry `json:"accounts"`
 }
 
-func accountsPath() (string, error) {
+func accountsPath() string {
+	return settings.ConduitSettingsPath()
+}
+
+func legacyAccountsPath() (string, error) {
 	dir := settings.ClaudeDir()
 	if dir == "" {
 		return "", fmt.Errorf("accounts: cannot determine claude dir")
@@ -38,23 +42,27 @@ func accountsPath() (string, error) {
 	return filepath.Join(dir, "accounts.json"), nil
 }
 
-// LoadAccountStore reads ~/.claude/accounts.json. Returns an empty store if
-// the file doesn't exist yet.
+// LoadAccountStore reads the "accounts" object from ~/.conduit/conduit.json.
+// Returns an empty store if the file or key doesn't exist yet.
 func LoadAccountStore() (AccountStore, error) {
-	p, err := accountsPath()
-	if err != nil {
-		return AccountStore{}, err
-	}
+	p := accountsPath()
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return AccountStore{Accounts: map[string]AccountEntry{}}, nil
+			return loadOrImportLegacyAccountStore()
 		}
 		return AccountStore{}, fmt.Errorf("accounts: read: %w", err)
 	}
-	var s AccountStore
-	if err := json.Unmarshal(data, &s); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return AccountStore{}, fmt.Errorf("accounts: parse: %w", err)
+	}
+	if len(raw["accounts"]) == 0 {
+		return loadOrImportLegacyAccountStore()
+	}
+	var s AccountStore
+	if err := json.Unmarshal(raw["accounts"], &s); err != nil {
+		return AccountStore{}, fmt.Errorf("accounts: parse accounts: %w", err)
 	}
 	if s.Accounts == nil {
 		s.Accounts = map[string]AccountEntry{}
@@ -62,15 +70,46 @@ func LoadAccountStore() (AccountStore, error) {
 	return s, nil
 }
 
-// SaveAccountStore writes the account store to ~/.claude/accounts.json.
+func loadOrImportLegacyAccountStore() (AccountStore, error) {
+	legacy, err := loadLegacyAccountStore()
+	if err != nil {
+		return AccountStore{Accounts: map[string]AccountEntry{}}, nil
+	}
+	if legacy.Accounts == nil {
+		legacy.Accounts = map[string]AccountEntry{}
+	}
+	if legacy.Active == "" && len(legacy.Accounts) == 0 {
+		return legacy, nil
+	}
+	_ = saveAccountStore(legacy)
+	return legacy, nil
+}
+
+func loadLegacyAccountStore() (AccountStore, error) {
+	p, err := legacyAccountsPath()
+	if err != nil {
+		return AccountStore{}, err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return AccountStore{}, err
+	}
+	var s AccountStore
+	if err := json.Unmarshal(data, &s); err != nil {
+		return AccountStore{}, err
+	}
+	if s.Accounts == nil {
+		s.Accounts = map[string]AccountEntry{}
+	}
+	return s, nil
+}
+
+// SaveAccountStore writes the account store to ~/.conduit/conduit.json.
 // Exported so the TUI account panel can remove accounts without a full delete.
 func SaveAccountStore(s AccountStore) error { return saveAccountStore(s) }
 
 func saveAccountStore(s AccountStore) error {
-	p, err := accountsPath()
-	if err != nil {
-		return err
-	}
+	p := accountsPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
@@ -82,15 +121,10 @@ func saveAccountStore(s AccountStore) error {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("accounts: read existing: %w", err)
 	}
-	active, err := json.Marshal(s.Active)
-	if err != nil {
-		return fmt.Errorf("accounts: marshal active: %w", err)
-	}
-	accounts, err := json.Marshal(s.Accounts)
+	accounts, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("accounts: marshal accounts: %w", err)
 	}
-	raw["active"] = active
 	raw["accounts"] = accounts
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
@@ -105,7 +139,7 @@ func keyForEmail(email string) string {
 }
 
 // SaveForEmail writes the token to the platform keychain under the email-
-// scoped key and registers the account in accounts.json as active.
+// scoped key and registers the account in conduit.json as active.
 func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
 	if email == "" {
 		return fmt.Errorf("accounts: email required")
@@ -116,7 +150,7 @@ func SaveForEmail(s secure.Storage, p PersistedTokens, email string) error {
 	return registerAccount(email)
 }
 
-// saveToken writes the token to the keychain only (no accounts.json).
+// saveToken writes the token to the keychain only (no account metadata).
 // Used internally by EnsureFresh to persist refreshed tokens.
 func saveToken(s secure.Storage, p PersistedTokens, email string) error {
 	buf, err := json.Marshal(p)
@@ -129,7 +163,7 @@ func saveToken(s secure.Storage, p PersistedTokens, email string) error {
 	return nil
 }
 
-// registerAccount adds the email to accounts.json and sets it as active.
+// registerAccount adds the email to conduit.json and sets it as active.
 func registerAccount(email string) error {
 	store, _ := LoadAccountStore()
 	if store.Accounts == nil {
@@ -158,7 +192,7 @@ func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 	return p, nil
 }
 
-// DeleteForEmail removes an account's token and accounts.json entry.
+// DeleteForEmail removes an account's token and conduit.json entry.
 func DeleteForEmail(s secure.Storage, email string) error {
 	_ = s.Delete(Service, keyForEmail(email))
 	store, err := LoadAccountStore()

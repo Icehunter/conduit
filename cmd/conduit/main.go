@@ -54,6 +54,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/filewritetool"
 	"github.com/icehunter/conduit/internal/tools/globtool"
 	"github.com/icehunter/conduit/internal/tools/greptool"
+	"github.com/icehunter/conduit/internal/tools/localimplementtool"
 	lsptool "github.com/icehunter/conduit/internal/tools/lsp"
 	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
 	"github.com/icehunter/conduit/internal/tools/mcpresourcetool"
@@ -203,7 +204,7 @@ type registryOpts struct {
 }
 
 // buildRegistry builds the tool registry, including MCP server tools.
-func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *registryOpts) *tool.Registry {
+func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *registryOpts, activeProvider *settings.ActiveProviderSettings) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
 	reg.Register(fileedittool.New())
@@ -228,6 +229,9 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(&configtool.ConfigTool{})
 	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
 	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
+	if cfg, ok := localimplementtool.ResolveConfig(mcpManager, activeProvider); ok {
+		reg.Register(localimplementtool.New(mcpManager, cfg))
+	}
 	// Interactive tools — callbacks are wired by the TUI after prog.Start().
 	if rOpts != nil && rOpts.enterWorktree != nil {
 		reg.Register(rOpts.enterWorktree)
@@ -445,8 +449,34 @@ func runREPL(continueMode bool, resumeID string) error {
 		theme.SetOverrides(s.ThemeOverrides)
 	}
 
-	// Apply model from settings.json if no env/runtime override is set.
-	if s.Model != "" {
+	initialLocalMode := false
+	initialLocalServer := ""
+	initialLocalDirectTool := ""
+	initialLocalImplementTool := ""
+	defaultProvider, _ := s.ProviderForRole(settings.RoleDefault)
+	implementProvider, _ := s.ProviderForRole(settings.RoleImplement)
+	if defaultProvider != nil && defaultProvider.Kind == "mcp" {
+		initialLocalMode = true
+		initialLocalServer = defaultProvider.Server
+		initialLocalDirectTool = defaultProvider.DirectTool
+		initialLocalImplementTool = defaultProvider.ImplementTool
+	}
+	if initialLocalMode && initialLocalServer == "" {
+		initialLocalServer = "local-router"
+	}
+	if initialLocalMode && initialLocalDirectTool == "" {
+		initialLocalDirectTool = "local_direct"
+	}
+	if initialLocalMode && initialLocalImplementTool == "" {
+		initialLocalImplementTool = "local_implement"
+	}
+
+	// Apply the default provider's Claude/API-shaped model first. MCP-backed
+	// providers are restored through conduit's local routing path instead.
+	switch {
+	case defaultProvider != nil && defaultProvider.Kind != "mcp" && defaultProvider.Model != "":
+		internalmodel.SetDefault(defaultProvider.Model)
+	case s.Model != "" && !strings.HasPrefix(s.Model, "local:"):
 		internalmodel.SetDefault(s.Model)
 	}
 
@@ -508,7 +538,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		}, OriginalCwd: cwd},
 	}
 
-	reg := buildRegistry(c, mcpManager, lspManager, rOpts)
+	reg := buildRegistry(c, mcpManager, lspManager, rOpts, implementProvider)
 	modelName := internalmodel.Resolve()
 
 	// Build MCP server instructions block from connected servers that returned
@@ -674,6 +704,13 @@ func runREPL(continueMode bool, resumeID string) error {
 		AskUser:                   rOpts.askUser,
 		InitialOutputStyle:        s.OutputStyle,
 		InitialUsageStatusEnabled: usageStatusEnabled,
+		InitialLocalMode:          initialLocalMode,
+		InitialLocalServer:        initialLocalServer,
+		InitialLocalDirectTool:    initialLocalDirectTool,
+		InitialLocalImplementTool: initialLocalImplementTool,
+		InitialActiveProvider:     defaultProvider,
+		InitialProviders:          s.Providers,
+		InitialRoles:              s.Roles,
 		PluginDirs:                pluginDirs,
 		FetchPlanUsage: func(ctx context.Context) (planusage.Info, error) {
 			tok, err := loadAuth(ctx)
@@ -746,7 +783,7 @@ func runPrint(args []string) error {
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 	c := newAPIClient(bearer)
-	reg := buildRegistry(c, nil, lsp.NewManager(), nil)
+	reg := buildRegistry(c, nil, lsp.NewManager(), nil, nil)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{

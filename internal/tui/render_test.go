@@ -1,18 +1,338 @@
 package tui
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // plainText strips ANSI escapes so substring assertions don't fail when
 // lipgloss v2 emits per-rune styling that interleaves with the text.
 func plainText(s string) string { return ansi.Strip(s) }
+
+func TestRenderWelcomeSectionDoesNotLeakANSI(t *testing.T) {
+	out := renderWelcomeSection("Session", 40)
+	plain := plainText(out)
+	if strings.Contains(plain, "[38;") || strings.Contains(plain, "[m") {
+		t.Fatalf("welcome section leaked raw ANSI: %q", plain)
+	}
+	if !strings.Contains(plain, "Session") || !strings.Contains(plain, "─") {
+		t.Fatalf("welcome section missing label/rule: %q", plain)
+	}
+}
+
+func TestWelcomeCardUsesLocalModeDisplay(t *testing.T) {
+	m := Model{cfg: Config{Version: "test"}, modelName: "claude-sonnet-4-6", localMode: true, localModeServer: "local-router"}
+	msg := m.welcomeCard()
+	if !strings.Contains(msg.Content, "local qwen3-coder · local-router") {
+		t.Fatalf("welcome card content = %q, want local model display", msg.Content)
+	}
+}
+
+func TestWelcomeCardUsesActiveMCPProviderDisplay(t *testing.T) {
+	m := Model{
+		cfg:       Config{Version: "test"},
+		modelName: "claude-sonnet-4-6",
+		activeProvider: &settings.ActiveProviderSettings{
+			Kind:       "mcp",
+			Server:     "local-router",
+			Model:      "qwen3-coder",
+			DirectTool: "local_direct",
+		},
+	}
+	msg := m.welcomeCard()
+	if !strings.Contains(msg.Content, "local qwen3-coder · local-router") {
+		t.Fatalf("welcome card content = %q, want active MCP provider display", msg.Content)
+	}
+}
+
+func TestPlanModeUsesPlanningProvider(t *testing.T) {
+	m := Model{
+		modelName:          "claude-sonnet-4-6",
+		permissionMode:     permissions.ModePlan,
+		activeProvider:     &settings.ActiveProviderSettings{Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+		providers:          map[string]settings.ActiveProviderSettings{"mcp.plan-router": {Kind: "mcp", Server: "plan-router", Model: "planner"}},
+		roles:              map[string]string{settings.RolePlanning: "mcp.plan-router"},
+		localDirectTool:    "local_direct",
+		localImplementTool: "local_implement",
+	}
+	provider, ok := m.activeMCPProvider()
+	if !ok {
+		t.Fatal("activeMCPProvider should use planning role in plan mode")
+	}
+	if provider.Server != "plan-router" {
+		t.Fatalf("server = %q, want plan-router", provider.Server)
+	}
+	if got := m.activeModelDisplayName(); !strings.Contains(got, "local planner · plan-router") {
+		t.Fatalf("display = %q, want planning provider display", got)
+	}
+}
+
+func TestPermissionModeChangeUpdatesLoopModel(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "claude-sonnet-4-6"})
+	m := Model{
+		cfg:            Config{Loop: loop},
+		modelName:      "claude-sonnet-4-6",
+		activeProvider: &settings.ActiveProviderSettings{Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+		providers: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7"},
+		},
+		roles: map[string]string{
+			settings.RoleMain:     "claude-subscription.claude-sonnet-4-6",
+			settings.RolePlanning: "claude-subscription.claude-opus-4-7",
+		},
+		permissionMode: permissions.ModeDefault,
+	}
+
+	m.applyPermissionMode(permissions.ModePlan)
+	if loop.Model() != "claude-opus-4-7" {
+		t.Fatalf("loop model = %q, want planning model", loop.Model())
+	}
+	if got := m.activeModelDisplayName(); got != "claude-opus-4-7" {
+		t.Fatalf("display model = %q, want planning model", got)
+	}
+
+	m.applyPermissionMode(permissions.ModeBypassPermissions)
+	if loop.Model() != "claude-sonnet-4-6" {
+		t.Fatalf("loop model = %q, want main model after auto mode", loop.Model())
+	}
+}
+
+func TestModeRoleRoutingDefaultVsMain(t *testing.T) {
+	m := Model{
+		modelName:      "claude-sonnet-4-6",
+		activeProvider: &settings.ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+		providers: map[string]settings.ActiveProviderSettings{
+			"mcp.local-router":                      {Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+		},
+		roles: map[string]string{
+			settings.RoleDefault: "mcp.local-router",
+			settings.RoleMain:    "claude-subscription.claude-sonnet-4-6",
+		},
+	}
+
+	m.permissionMode = permissions.ModeDefault
+	if got := m.activeModelDisplayName(); got != "local qwen3-coder · local-router" {
+		t.Fatalf("default mode display = %q, want local default provider", got)
+	}
+
+	m.permissionMode = permissions.ModeBypassPermissions
+	if got := m.activeModelDisplayName(); got != "claude-sonnet-4-6" {
+		t.Fatalf("auto mode display = %q, want main provider", got)
+	}
+}
+
+func TestPermissionModeChangeRefreshesWelcomeViewport(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "claude-sonnet-4-6"})
+	m := New(Config{
+		Version:   "test",
+		ModelName: "claude-sonnet-4-6",
+		Loop:      loop,
+		InitialActiveProvider: &settings.ActiveProviderSettings{
+			Kind:  "claude-subscription",
+			Model: "claude-sonnet-4-6",
+		},
+		InitialProviders: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
+			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7"},
+		},
+		InitialRoles: map[string]string{
+			settings.RoleMain:     "claude-subscription.claude-sonnet-4-6",
+			settings.RolePlanning: "claude-subscription.claude-opus-4-7",
+		},
+	})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = updated.(Model)
+
+	m.applyPermissionMode(permissions.ModePlan)
+	if out := plainText(m.vp.View()); !strings.Contains(out, "claude-opus-4-7") {
+		t.Fatalf("welcome viewport did not refresh to planning model: %q", out)
+	}
+
+	m.applyPermissionMode(permissions.ModeBypassPermissions)
+	if out := plainText(m.vp.View()); !strings.Contains(out, "claude-sonnet-4-6") {
+		t.Fatalf("welcome viewport did not refresh back to main model: %q", out)
+	}
+}
+
+func TestModelPickerTabCyclesProviderRoles(t *testing.T) {
+	m := Model{
+		providers: map[string]settings.ActiveProviderSettings{
+			"mcp.local-router": {Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+		},
+		roles: map[string]string{settings.RoleBackground: "mcp.local-router"},
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			current:  "claude-sonnet-4-6",
+			selected: 0,
+			items: []pickerItem{
+				{Value: "claude-sonnet-4-6", Label: "Sonnet"},
+				{Value: "local:local-router", Label: "qwen3-coder"},
+			},
+		},
+	}
+	updated, _ := m.handlePickerKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	if updated.picker.role != settings.RoleMain {
+		t.Fatalf("role = %q, want main", updated.picker.role)
+	}
+	updated, _ = updated.handlePickerKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	if updated.picker.role != settings.RoleBackground {
+		t.Fatalf("role after second tab = %q, want background", updated.picker.role)
+	}
+	if updated.picker.current != "local:local-router" {
+		t.Fatalf("current = %q, want local role provider", updated.picker.current)
+	}
+}
+
+func TestRenderUsageFooterLocalModeOmitsClaudeResets(t *testing.T) {
+	m := Model{usageStatusEnabled: true, localMode: true, localModeServer: "local-router"}
+	out := plainText(m.renderUsageFooter(80))
+	if strings.Contains(out, "unknown") || strings.Contains(out, "tomorrow") {
+		t.Fatalf("local usage footer should not show Claude reset text: %q", out)
+	}
+	if !strings.Contains(out, "Provider") || !strings.Contains(out, "local qwen3-coder") {
+		t.Fatalf("local usage footer missing provider row: %q", out)
+	}
+}
+
+func TestLocalPromptFromContentIncludesAtMentionContent(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.WriteFile(filepath.Join(dir, "model.go"), []byte("package tui\n\nfunc RealFunction() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Model{}
+	content := m.userTextContent("what functions are in @./model.go?")
+	prompt := localPromptFromContent(content)
+	if !strings.Contains(prompt, `<file_content path="model.go">`) || !strings.Contains(prompt, "func RealFunction()") {
+		t.Fatalf("local prompt = %q, want expanded @file content", prompt)
+	}
+	if !strings.Contains(prompt, "what functions are in @./model.go?") {
+		t.Fatalf("local prompt = %q, want original prompt", prompt)
+	}
+}
+
+func TestAcceptAtMatchDirectoryKeepsPickerOpenForNestedPath(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "tui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "tui", "model.go"), []byte("package tui\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(Config{})
+	m.input.SetValue("@internal")
+	m.atMatches = []string{"internal"}
+	m = m.acceptAtMatch()
+	if got, want := m.input.Value(), "@internal/"; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+	if len(m.atMatches) == 0 {
+		t.Fatal("directory completion should keep nested @ picker matches open")
+	}
+}
+
+func TestLocalProviderChatResultAppendsAssistantHistory(t *testing.T) {
+	m := New(Config{})
+	m.turnID = 7
+	m.running = true
+	m.history = []api.Message{{
+		Role:    "user",
+		Content: []api.ContentBlock{{Type: "text", Text: "hello"}},
+	}}
+
+	updated, _ := m.Update(localCallDoneMsg{
+		turnID: 7,
+		chat:   true,
+		call:   commands.LocalCall{Server: "local-router"},
+		text:   "hi from local",
+	})
+	got := updated.(Model)
+	if len(got.history) != 2 || got.history[1].Role != "assistant" || got.history[1].Content[0].Text != "hi from local" {
+		t.Fatalf("history = %#v, want local assistant response appended", got.history)
+	}
+	if got.history[1].ProviderKind != "mcp" || got.history[1].Provider != "local-router" {
+		t.Fatalf("provider metadata = %q/%q, want mcp/local-router", got.history[1].ProviderKind, got.history[1].Provider)
+	}
+	if len(got.messages) == 0 || got.messages[len(got.messages)-1].Role != RoleLocal {
+		t.Fatalf("messages = %#v, want rendered local message", got.messages)
+	}
+}
+
+func TestHistoryToDisplayMessagesRestoresLocalProvider(t *testing.T) {
+	msgs := historyToDisplayMessages([]api.Message{{
+		Role:         "assistant",
+		Content:      []api.ContentBlock{{Type: "text", Text: "package main\n\nfunc main() {}"}},
+		ProviderKind: "mcp",
+		Provider:     "local-router",
+	}})
+	if len(msgs) != 1 || msgs[0].Role != RoleLocal || msgs[0].ToolName != "local-router" {
+		t.Fatalf("messages = %#v, want restored local provider display", msgs)
+	}
+}
+
+func TestPersistClaudeActiveProviderUpdatesAccount(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", dir)
+
+	if suffix := persistClaudeActiveProvider("claude-sonnet-4-6", "first@example.com"); suffix != "" {
+		t.Fatalf("persist first returned suffix %q", suffix)
+	}
+	if suffix := persistClaudeActiveProvider("claude-sonnet-4-6", "second@example.com"); suffix != "" {
+		t.Fatalf("persist second returned suffix %q", suffix)
+	}
+
+	data, err := os.ReadFile(settings.ConduitSettingsPath())
+	if err != nil {
+		t.Fatalf("read conduit settings: %v", err)
+	}
+	var raw struct {
+		ActiveProvider settings.ActiveProviderSettings `json:"activeProvider"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if raw.ActiveProvider.Account != "second@example.com" {
+		t.Fatalf("account = %q, want second@example.com", raw.ActiveProvider.Account)
+	}
+}
 
 func TestRenderMarkdown_Heading1(t *testing.T) {
 	out := plainText(renderMarkdown("# Hello World", 80))
@@ -148,6 +468,30 @@ func TestRenderMessage_AssistantInfo(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("assistant info missing %q: %q", want, out)
 		}
+	}
+}
+
+func TestRenderMessage_LocalOutputUsesLocalLabelAndFormatsCode(t *testing.T) {
+	out := plainText(renderMessage(Message{
+		Role:     RoleLocal,
+		ToolName: "local-router",
+		Content:  "package main\n\nfunc main() {}\n",
+	}, 80, false))
+
+	for _, want := range []string{"Local local-router", "package main", "func main"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("local render missing %q: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "Claude") {
+		t.Fatalf("local render should not use Claude label: %q", out)
+	}
+}
+
+func TestFormatLocalOutput_Diff(t *testing.T) {
+	out := formatLocalOutput("--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n")
+	if !strings.HasPrefix(out, "```diff\n") {
+		t.Fatalf("local diff output should be fenced as diff: %q", out)
 	}
 }
 

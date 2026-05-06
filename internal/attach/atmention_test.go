@@ -16,6 +16,7 @@ func TestExtractAtMentions_Basic(t *testing.T) {
 		{`check @"my file.txt"`, []string{`@"my file.txt"`}},
 		{"@src/main.go#L10-20", []string{"@src/main.go#L10-20"}},
 		{"@file.go#L5", []string{"@file.go#L5"}},
+		{"what is in @file.go?", []string{"@file.go"}},
 		{"a @foo @bar", []string{"@foo", "@bar"}},
 		{"@foo @foo", []string{"@foo"}}, // dedup
 		{`no mentions here`, nil},

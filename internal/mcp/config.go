@@ -58,6 +58,8 @@ func globalClaudeFile() string {
 //  1. user   — ~/.claude.json → mcpServers  (global)
 //  2. local  — ~/.claude.json → projects[cwd].mcpServers  (per-project)
 //  3. project — every .mcp.json from filesystem root down to cwd (closer wins)
+//  4. plugin — enabled plugin .mcp.json files
+//  5. conduit — ~/.conduit/mcp.json
 //
 // Mirrors getMcpConfigsByScope() in src/services/mcp/config.ts.
 func LoadConfigs(cwd string) (map[string]ServerConfig, error) {
@@ -108,7 +110,36 @@ func LoadConfigs(cwd string) (map[string]ServerConfig, error) {
 	// These show as scope "plugin" in the manager.
 	loadPluginMCPServers(merged)
 
+	// 5. Conduit global MCP config. This is conduit's own overlay and wins
+	// over Claude/project/plugin sources when server names collide.
+	loadConduitMCPServers(merged)
+
 	return merged, nil
+}
+
+func conduitMCPFile() string {
+	dir := os.Getenv("CONDUIT_CONFIG_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return filepath.Join(".conduit", "mcp.json")
+		}
+		dir = filepath.Join(home, ".conduit")
+	}
+	return filepath.Join(dir, "mcp.json")
+}
+
+func loadConduitMCPServers(merged map[string]ServerConfig) {
+	path := conduitMCPFile()
+	cfg, err := loadMcpFile(path)
+	if err != nil {
+		return
+	}
+	for name, srv := range cfg.McpServers {
+		srv.Source = path
+		srv.Scope = "conduit"
+		merged[name] = srv
+	}
 }
 
 // loadPluginMCPServers reads each enabled, installed plugin's .mcp.json and

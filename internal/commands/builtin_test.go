@@ -78,7 +78,7 @@ func TestRegisterBuiltins_CommandPickerCommand(t *testing.T) {
 
 func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 	r := New()
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {})
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil)
 
 	result, ok := r.Dispatch("/models")
 	if !ok {
@@ -89,6 +89,299 @@ func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 	}
 	if result.Model != "model" {
 		t.Errorf("result model = %q, want 'model'", result.Model)
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(result.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	if len(got.Items) < 6 {
+		t.Fatalf("picker items len = %d, want grouped Claude and MCP items", len(got.Items))
+	}
+	if !got.Items[0].Section || got.Items[0].Label != "Claude Subscription" {
+		t.Fatalf("first picker item = %#v, want Claude Subscription section", got.Items[0])
+	}
+	foundMCPSection := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "MCP local-router" {
+			foundMCPSection = true
+			break
+		}
+	}
+	if !foundMCPSection {
+		t.Fatalf("picker items missing MCP local-router section: %#v", got.Items)
+	}
+}
+
+func TestRegisterModelCommand_LocalSelectionSwitchesProvider(t *testing.T) {
+	r := New()
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil)
+
+	result, ok := r.Dispatch("/model local")
+	if !ok {
+		t.Fatal("expected /model local to dispatch")
+	}
+	if result.Type != "provider-switch" || result.Provider == nil {
+		t.Fatalf("/model local = %#v", result)
+	}
+	if result.Provider.Kind != "mcp" || result.Provider.Server != "local-router" || result.Provider.DirectTool != "local_direct" {
+		t.Fatalf("provider = %#v, want local-router MCP provider", result.Provider)
+	}
+}
+
+func TestRegisterModelCommand_ConfiguredLocalTargets(t *testing.T) {
+	r := New()
+	providers := map[string]settings.ActiveProviderSettings{
+		"mcp.fast-router": {
+			Kind:          "mcp",
+			Server:        "fast-router",
+			Model:         "llama-fast",
+			DirectTool:    "direct",
+			ImplementTool: "implement",
+		},
+	}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, providers)
+
+	result, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(result.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	found := false
+	for _, item := range got.Items {
+		if item.Value == "local:fast-router" && item.Label == "llama-fast" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("picker items missing configured fast-router: %#v", got.Items)
+	}
+
+	result, ok = r.Dispatch("/model local:fast-router")
+	if !ok {
+		t.Fatal("expected /model local:fast-router to dispatch")
+	}
+	if result.Provider == nil || result.Provider.Server != "fast-router" || result.Provider.DirectTool != "direct" || result.Provider.ImplementTool != "implement" {
+		t.Fatalf("provider = %#v, want configured fast-router provider", result.Provider)
+	}
+}
+
+func TestRegisterModelCommand_ClaudeSelectionSwitchesProvider(t *testing.T) {
+	r := New()
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil)
+
+	result, ok := r.Dispatch("/model opus")
+	if !ok {
+		t.Fatal("expected /model opus to dispatch")
+	}
+	if result.Type != "provider-switch" || result.Provider == nil {
+		t.Fatalf("/model opus = %#v", result)
+	}
+	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-4-7" {
+		t.Fatalf("provider = %#v, want Claude Opus provider", result.Provider)
+	}
+}
+
+func TestRegisterModelCommand_RoleSelection(t *testing.T) {
+	r := New()
+	called := false
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) { called = true }, nil, nil)
+
+	result, ok := r.Dispatch("/model --role planning opus")
+	if !ok {
+		t.Fatal("expected /model --role planning opus to dispatch")
+	}
+	if result.Role != settings.RolePlanning {
+		t.Fatalf("role = %q, want planning", result.Role)
+	}
+	if result.Provider == nil || result.Provider.Model != "claude-opus-4-7" {
+		t.Fatalf("provider = %#v, want opus provider", result.Provider)
+	}
+	if called {
+		t.Fatal("non-main role selection should not switch the live model")
+	}
+}
+
+func TestRegisterLocalCommands_DefaultDirect(t *testing.T) {
+	r := New()
+	RegisterLocalCommands(r, nil, nil, nil)
+
+	result, ok := r.Dispatch("/local explain this")
+	if !ok {
+		t.Fatal("expected /local to dispatch")
+	}
+	if result.Type != "local-call" {
+		t.Fatalf("result type = %q, want local-call", result.Type)
+	}
+	var call LocalCall
+	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
+		t.Fatalf("unmarshal local call: %v", err)
+	}
+	if call.Server != "local-router" {
+		t.Errorf("server = %q, want local-router", call.Server)
+	}
+	if call.Tool != "mcp__local_router__local_direct" {
+		t.Errorf("tool = %q, want direct local router tool", call.Tool)
+	}
+	if call.Arguments["prompt"] != "explain this" {
+		t.Errorf("prompt = %#v, want explain this", call.Arguments["prompt"])
+	}
+	if call.Arguments["mode"] != "direct" || call.Arguments["include_review_reminder"] != false {
+		t.Errorf("direct args = %#v", call.Arguments)
+	}
+}
+
+func TestRegisterLocalCommands_DefaultImplementDiff(t *testing.T) {
+	r := New()
+	RegisterLocalCommands(r, nil, nil, nil)
+
+	result, ok := r.Dispatch("/local-implement fix parser")
+	if !ok {
+		t.Fatal("expected /local-implement to dispatch")
+	}
+	if result.Type != "local-call" {
+		t.Fatalf("result type = %q, want local-call", result.Type)
+	}
+	var call LocalCall
+	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
+		t.Fatalf("unmarshal local call: %v", err)
+	}
+	if call.Tool != "mcp__local_router__local_implement" {
+		t.Errorf("tool = %q, want implement local router tool", call.Tool)
+	}
+	if call.Arguments["prompt"] != "fix parser" {
+		t.Errorf("prompt = %#v, want fix parser", call.Arguments["prompt"])
+	}
+	if call.Arguments["output_format"] != "diff" || call.Arguments["include_review_reminder"] != false {
+		t.Errorf("implement args = %#v", call.Arguments)
+	}
+}
+
+func TestRegisterLocalCommands_LocalMode(t *testing.T) {
+	r := New()
+	RegisterLocalCommands(r, nil, nil, nil)
+
+	result, ok := r.Dispatch("/local-mode on")
+	if !ok {
+		t.Fatal("expected /local-mode to dispatch")
+	}
+	if result.Type != "local-mode" || result.Text != "on\tlocal-router" {
+		t.Fatalf("local-mode on = %#v", result)
+	}
+
+	result, ok = r.Dispatch("/local-mode off")
+	if !ok {
+		t.Fatal("expected /local-mode off to dispatch")
+	}
+	if result.Type != "local-mode" || result.Text != "off\t" {
+		t.Fatalf("local-mode off = %#v", result)
+	}
+}
+
+func TestRegisterLocalCommands_HiddenFromDiscovery(t *testing.T) {
+	r := New()
+	RegisterLocalCommands(r, nil, nil, nil)
+
+	for _, cmd := range r.All() {
+		if strings.HasPrefix(cmd.Name, "local") {
+			t.Fatalf("local debug command should be hidden from discovery: %#v", cmd)
+		}
+	}
+	if _, ok := r.Dispatch("/local still works"); !ok {
+		t.Fatal("hidden /local should still dispatch")
+	}
+}
+
+func TestRegisterLocalCommands_UsesActiveMCPProvider(t *testing.T) {
+	r := New()
+	provider := &settings.ActiveProviderSettings{
+		Kind:          "mcp",
+		Server:        "gpu-router",
+		DirectTool:    "chat",
+		ImplementTool: "diff",
+		Model:         "deepseek-coder",
+	}
+	RegisterLocalCommands(r, nil, provider, nil)
+
+	result, ok := r.Dispatch("/local explain this")
+	if !ok {
+		t.Fatal("expected /local to dispatch")
+	}
+	var call LocalCall
+	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
+		t.Fatalf("unmarshal local call: %v", err)
+	}
+	if call.Server != "gpu-router" || call.Tool != "mcp__gpu_router__chat" {
+		t.Fatalf("direct call = %#v", call)
+	}
+
+	result, ok = r.Dispatch("/local-implement fix parser")
+	if !ok {
+		t.Fatal("expected /local-implement to dispatch")
+	}
+	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
+		t.Fatalf("unmarshal implement call: %v", err)
+	}
+	if call.Server != "gpu-router" || call.Tool != "mcp__gpu_router__diff" {
+		t.Fatalf("implement call = %#v", call)
+	}
+
+	result, ok = r.Dispatch("/local-mode on")
+	if !ok {
+		t.Fatal("expected /local-mode to dispatch")
+	}
+	if result.Type != "local-mode" || result.Text != "on\tgpu-router" {
+		t.Fatalf("local-mode on = %#v", result)
+	}
+}
+
+func TestRegisterLocalCommands_ConfiguredTargets(t *testing.T) {
+	r := New()
+	providers := map[string]settings.ActiveProviderSettings{
+		"mcp.fast-router": {
+			Kind:          "mcp",
+			Server:        "fast-router",
+			Model:         "llama-fast",
+			DirectTool:    "direct",
+			ImplementTool: "implement",
+		},
+	}
+	RegisterLocalCommands(r, nil, nil, providers)
+
+	result, ok := r.Dispatch("/local list")
+	if !ok {
+		t.Fatal("expected /local list to dispatch")
+	}
+	if result.Type != "text" || !strings.Contains(result.Text, "fast-router") || !strings.Contains(result.Text, "configured") {
+		t.Fatalf("/local list = %#v, want configured fast-router", result)
+	}
+
+	result, ok = r.Dispatch("/local fast-router explain this")
+	if !ok {
+		t.Fatal("expected /local fast-router to dispatch")
+	}
+	var call LocalCall
+	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
+		t.Fatalf("unmarshal direct call: %v", err)
+	}
+	if call.Server != "fast-router" || call.Tool != "mcp__fast_router__direct" || call.Arguments["prompt"] != "explain this" {
+		t.Fatalf("direct call = %#v", call)
+	}
+}
+
+func TestRegisterAccountCommand_AccountsAlias(t *testing.T) {
+	r := New()
+	RegisterAccountCommand(r)
+
+	result, ok := r.Dispatch("/accounts")
+	if !ok {
+		t.Fatal("expected /accounts to dispatch")
+	}
+	if result.Type != "settings-panel" || result.Text != "accounts" {
+		t.Fatalf("result = %#v, want accounts settings panel", result)
 	}
 }
 

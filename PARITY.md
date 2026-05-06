@@ -52,7 +52,7 @@
 | Auth file descriptor tokens | `utils/authFileDescriptor.ts` | — | ❌ | ⬛ | CCR container only (FD pipe across tmux boundaries) |
 | Portable auth | `utils/authPortable.ts` | — | ❌ | ⬛ | macOS Keychain removal utility; not needed |
 | Profile fetch (name, email) | `utils/auth.ts` | `1220.js` | `internal/profile/profile.go` | ✅ | |
-| Multi-account support | `utils/auth.ts` | — | `internal/auth/accounts.go` | ✅ | `~/.claude/accounts.json` + per-email keychain keys; `/login` registers account; `/login --switch <email>` activates; `/logout` removes active; `loadAuth` uses active email; backwards-compatible with legacy single-account key |
+| Multi-account support | `utils/auth.ts` | — | `internal/auth/accounts.go` | ✅ | `~/.conduit/conduit.json` `accounts` metadata + per-email keychain keys; imports legacy `~/.claude/accounts.json`; `/login` registers account; `/login --switch <email>` activates; `/logout` removes active; `loadAuth` uses active email; backwards-compatible with legacy single-account key |
 | Token revocation | `utils/auth.ts` | — | `internal/auth/persist.go` Delete | ✅ | Local keychain clear; Anthropic OAuth has no public RFC 7009 endpoint — server-side revoke is through the console |
 | JWT utils (bridge auth) | `bridge/jwtUtils.ts` | — | ❌ | ⬛ | Bridge-only |
 | Trusted device auth | `bridge/trustedDevice.ts` | — | ❌ | ⬛ | Bridge-only |
@@ -134,7 +134,7 @@
 | ConfigTool | `tools/ConfigTool/` | — | `internal/tools/configtool/` | ✅ | get/set model, modes, allow/deny, env |
 | EnterPlanMode | `tools/EnterPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskEnter callback, sets plan mode |
 | EnterWorktree | `tools/EnterWorktreeTool/` | — | `internal/tools/worktreeTool/` | ✅ | git worktree add, switches cwd |
-| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskApprove callback, resets mode |
+| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskApprove callback, switches to auto mode after approval |
 | ExitWorktree | `tools/ExitWorktreeTool/` | — | `internal/tools/worktreeTool/` | ✅ | keep/remove action, branch cleanup |
 | FileEditTool | `tools/FileEditTool/` | — | `internal/tools/fileedittool/` | ✅ | |
 | FileReadTool | `tools/FileReadTool/` | — | `internal/tools/filereadtool/` | ✅ | |
@@ -142,6 +142,7 @@
 | GlobTool | `tools/GlobTool/` | — | `internal/tools/globtool/` | ✅ | |
 | GrepTool | `tools/GrepTool/` | — | `internal/tools/greptool/` | ✅ | rg backend |
 | ListMcpResources | `tools/ListMcpResourcesTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Lists from all connected servers |
+| LocalImplement | — | — | `internal/tools/localimplementtool/` | ✅ | conduit-only wrapper; exposes configured MCP `local_implement` as a bounded implementation offload tool |
 | LSPTool | `tools/LSPTool/` | — | `internal/tools/lsp/`, `internal/lsp/` | ✅ | hover, definition, references, diagnostics; JSON-RPC/stdio; auto-detects gopls/typescript-language-server/pylsp/rust-analyzer |
 | McpAuthTool | `tools/McpAuthTool/` | — | `internal/tools/mcpauthtool/` + `internal/commands/mcp.go` | ✅ | Per-server pseudo-tool registered for needs-auth servers (mcp__<name>__authenticate) + manual /mcp auth <name> |
 | MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
@@ -245,7 +246,7 @@
 | /help | `commands/help/` | `internal/commands/builtin.go` | ✅ | |
 | /clear | `commands/clear/` | `internal/commands/builtin.go` | ✅ | |
 | /exit | `commands/exit/` | `internal/commands/misc.go` | ✅ | |
-| /model | `commands/model/` | `internal/commands/builtin.go` | ✅ | |
+| /model | `commands/model/` | `internal/commands/builtin.go` | ✅ | grouped provider picker; emits provider-switch for Claude subscription and MCP providers; persists conduit `activeProvider` and mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles |
 | /compact | `commands/compact/` | `internal/commands/builtin.go` | ✅ | |
 | /permissions | `commands/permissions/` | `internal/commands/builtin.go` | ✅ | |
 | /hooks | `commands/hooks/` | `internal/commands/builtin.go` | ✅ | |
@@ -302,6 +303,10 @@
 | /copy | `commands/copy/` | `internal/commands/session.go` | ✅ | Copies last response to clipboard |
 | /search | — | `internal/commands/session.go` | ✅ | conduit-only; scans JSONL transcripts |
 | /pr-comments | `commands/pr_comments/` | `internal/commands/session.go` | ✅ | conduit-only; PR review workflow |
+| /local | — | `internal/commands/local.go` | ✅ | hidden conduit-only debug command; direct active MCP provider call |
+| /local-implement | — | `internal/commands/local.go` | ✅ | hidden conduit-only debug command; bounded private/local implementation draft with diff output |
+| /local-mode | — | `internal/commands/local.go` | ✅ | hidden conduit-only compatibility command; toggles `activeProvider` between Claude and MCP |
+| /accounts | — | `internal/commands/accounts.go` | ✅ | conduit-only alias for `/account` settings panel |
 | /passes | `commands/passes/` | ❌ | ⬛ | Anthropic referral/rewards system; not in OAuth Max scope |
 | /rate-limit-options | `commands/rate-limit-options/` | ❌ | ⬛ | Billing dialog (upgrade/extra-usage); Anthropic billing API required |
 | /release-notes | `commands/release-notes/` | ❌ | ⬛ | Anthropic-internal |
@@ -318,7 +323,7 @@
 | HTTP/SSE transport | `services/mcp/` | `0154.js` | `internal/mcp/client.go` | ✅ | |
 | Tool discovery & proxy | `services/mcp/`, `tools/MCPTool/` | `0402.js` | `internal/tools/mcptool/` | ✅ | |
 | Config loading (claude.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | |
-| Config loading (.mcp.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | |
+| Config loading (.mcp.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | Includes conduit `~/.conduit/mcp.json` overlay after Claude/project/plugin sources |
 | Plugin MCP server registration | `services/mcp/` | — | `internal/mcp/manager.go` `SyncPluginServers` | ✅ | |
 | Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
 | MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | `internal/mcp/manager.go`, `internal/tui/model.go`, `internal/commands/mcp.go` | ✅ | Project-scope (.mcp.json) servers gated on user approval; startup picker offers Yes/Yes-All/No; persisted to settings.json (enabledMcpjsonServers / disabledMcpjsonServers / enableAllProjectMcpServers) |
@@ -426,7 +431,7 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Settings load (global + project) | `utils/config.ts` (1817 LOC) | `0628.js` | `internal/settings/settings.go` | ✅ | |
+| Settings load (global + project) | `utils/config.ts` (1817 LOC) | `0628.js` | `internal/settings/settings.go` | ✅ | Loads Claude-compatible settings plus conduit-only `~/.conduit/conduit.json` overlay for provider roles and active permission mode |
 | Settings merge (global → project) | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | |
 | Hook settings parsing | `schemas/hooks.ts` | — | `internal/settings/settings.go` | ✅ | |
 | Plugin enable/disable | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | |

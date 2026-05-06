@@ -4,6 +4,7 @@
 //  1. ~/.claude/settings.json          (user global)
 //  2. <project>/.claude/settings.json  (project shared)
 //  3. <project>/.claude/settings.local.json (project local, gitignored)
+//  4. ~/.conduit/conduit.json          (conduit-only user overlay)
 //
 // Mirrors src/utils/config.ts and src/utils/settings/settings.ts.
 package settings
@@ -85,6 +86,15 @@ type Settings struct {
 	EnableAllProjectMcpServers bool     `json:"enableAllProjectMcpServers,omitempty"`
 	// Model is the preferred model name (e.g. "claude-opus-4-7").
 	Model string `json:"model,omitempty"`
+	// ActiveProvider is conduit's provider routing selector. It is intentionally
+	// richer than "model" so API-key, OAuth/subscription, and MCP-backed
+	// providers can carry their own auth and transport fields.
+	ActiveProvider *ActiveProviderSettings `json:"activeProvider,omitempty"`
+	// Providers is conduit's named provider registry. Roles reference these
+	// keys so main/planning/background/implement can choose independently.
+	Providers map[string]ActiveProviderSettings `json:"providers,omitempty"`
+	// Roles maps role names such as "default" or "implement" to provider keys.
+	Roles map[string]string `json:"roles,omitempty"`
 	// OutputStyle is the active output style name, persisted across sessions.
 	OutputStyle string `json:"outputStyle,omitempty"`
 	// Theme is the active palette name (dark|light|dark-daltonized|
@@ -123,6 +133,12 @@ type Merged struct {
 	AdditionalDirs []string
 	// Model is the preferred model override from settings (last layer wins).
 	Model string
+	// ActiveProvider is the effective conduit provider routing selector.
+	ActiveProvider *ActiveProviderSettings
+	// Providers is the merged conduit provider registry.
+	Providers map[string]ActiveProviderSettings
+	// Roles maps role names to provider keys.
+	Roles map[string]string
 	// OutputStyle is the active output style name (last layer wins).
 	OutputStyle string
 	// Theme is the active palette name (last layer wins).
@@ -141,6 +157,25 @@ type Merged struct {
 	EnableAllProjectMcpServers bool
 }
 
+// ActiveProviderSettings stores conduit's provider routing selector.
+type ActiveProviderSettings struct {
+	Kind          string `json:"kind"`
+	Model         string `json:"model,omitempty"`
+	Account       string `json:"account,omitempty"`
+	Credential    string `json:"credential,omitempty"`
+	Server        string `json:"server,omitempty"`
+	DirectTool    string `json:"directTool,omitempty"`
+	ImplementTool string `json:"implementTool,omitempty"`
+}
+
+const (
+	RoleDefault    = "default"
+	RoleMain       = "main"
+	RolePlanning   = "planning"
+	RoleBackground = "background"
+	RoleImplement  = "implement"
+)
+
 // Load reads and merges settings from all layers for the given cwd.
 func Load(cwd string) (*Merged, error) {
 	return loadPaths(settingsFiles(cwd))
@@ -151,6 +186,8 @@ func loadPaths(paths []string) (*Merged, error) {
 	merged := &Merged{
 		DefaultMode: "default",
 		Env:         make(map[string]string),
+		Providers:   make(map[string]ActiveProviderSettings),
+		Roles:       make(map[string]string),
 	}
 	for _, path := range paths {
 		s, err := readFile(path)
@@ -170,6 +207,16 @@ func loadPaths(paths []string) (*Merged, error) {
 		}
 		if s.Model != "" {
 			merged.Model = s.Model
+		}
+		if s.ActiveProvider != nil {
+			cp := *s.ActiveProvider
+			merged.ActiveProvider = &cp
+		}
+		for k, v := range s.Providers {
+			merged.Providers[k] = v
+		}
+		for k, v := range s.Roles {
+			merged.Roles[k] = v
 		}
 		if s.OutputStyle != "" {
 			merged.OutputStyle = s.OutputStyle
@@ -218,6 +265,7 @@ func settingsFiles(cwd string) []string {
 			filepath.Join(cwd, ".claude", "settings.local.json"),
 		)
 	}
+	paths = append(paths, ConduitSettingsPath())
 	return paths
 }
 
@@ -243,6 +291,21 @@ func mergeHooks(dst, src *HooksSettings) {
 // UserSettingsPath returns the path to the user-global settings file.
 func UserSettingsPath() string {
 	return filepath.Join(claudeDir(), "settings.json")
+}
+
+// ConduitSettingsPath returns conduit's private user settings overlay. Values
+// here load after Claude-compatible settings and should only be written by
+// conduit-specific features.
+func ConduitSettingsPath() string {
+	dir := os.Getenv("CONDUIT_CONFIG_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return filepath.Join(".conduit", "conduit.json")
+		}
+		dir = filepath.Join(home, ".conduit")
+	}
+	return filepath.Join(dir, "conduit.json")
 }
 
 // SaveOutputStyle persists the active output style name to the user settings file.
@@ -416,19 +479,33 @@ func SavePermissionsField(field string, value interface{}) error {
 	if field == "" {
 		return fmt.Errorf("settings: SavePermissionsField: field is required")
 	}
-	path := UserSettingsPath()
+	return savePermissionsField(UserSettingsPath(), "SavePermissionsField", field, value)
+}
+
+// SaveConduitPermissionsField updates a single sub-field under "permissions"
+// in ~/.conduit/conduit.json. Conduit-owned runtime preferences, such as the
+// active permission mode, should use this overlay instead of mutating Claude
+// Code's settings.json.
+func SaveConduitPermissionsField(field string, value interface{}) error {
+	if field == "" {
+		return fmt.Errorf("settings: SaveConduitPermissionsField: field is required")
+	}
+	return savePermissionsField(ConduitSettingsPath(), "SaveConduitPermissionsField", field, value)
+}
+
+func savePermissionsField(path, op, field string, value interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("settings: SavePermissionsField: mkdir: %w", err)
+		return fmt.Errorf("settings: %s: mkdir: %w", op, err)
 	}
 	raw, err := readRawObject(path)
 	if err != nil {
-		return fmt.Errorf("settings: SavePermissionsField: read: %w", err)
+		return fmt.Errorf("settings: %s: read: %w", op, err)
 	}
 
 	perms := make(map[string]json.RawMessage)
 	if r, ok := raw["permissions"]; ok && len(r) > 0 {
 		if err := json.Unmarshal(r, &perms); err != nil {
-			return fmt.Errorf("settings: SavePermissionsField: parse permissions: %w", err)
+			return fmt.Errorf("settings: %s: parse permissions: %w", op, err)
 		}
 	}
 
@@ -437,7 +514,7 @@ func SavePermissionsField(field string, value interface{}) error {
 	} else {
 		encoded, err := json.Marshal(value)
 		if err != nil {
-			return fmt.Errorf("settings: SavePermissionsField: marshal value: %w", err)
+			return fmt.Errorf("settings: %s: marshal value: %w", op, err)
 		}
 		perms[field] = encoded
 	}
@@ -447,17 +524,17 @@ func SavePermissionsField(field string, value interface{}) error {
 	} else {
 		encoded, err := json.Marshal(perms)
 		if err != nil {
-			return fmt.Errorf("settings: SavePermissionsField: marshal permissions: %w", err)
+			return fmt.Errorf("settings: %s: marshal permissions: %w", op, err)
 		}
 		raw["permissions"] = encoded
 	}
 
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
-		return fmt.Errorf("settings: SavePermissionsField: marshal settings: %w", err)
+		return fmt.Errorf("settings: %s: marshal settings: %w", op, err)
 	}
 	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
-		return fmt.Errorf("settings: SavePermissionsField: write: %w", err)
+		return fmt.Errorf("settings: %s: write: %w", op, err)
 	}
 	return nil
 }
@@ -466,6 +543,125 @@ func SavePermissionsField(field string, value interface{}) error {
 // raw-map preservation so no other fields are disturbed.
 func SaveRawKey(key string, value interface{}) error {
 	path := UserSettingsPath()
+	return saveRawKey(path, key, value)
+}
+
+// SaveConduitRawKey persists a conduit-only key/value to ~/.conduit/conduit.json
+// using raw-map preservation so no other fields are disturbed.
+func SaveConduitRawKey(key string, value interface{}) error {
+	path := ConduitSettingsPath()
+	return saveRawKey(path, key, value)
+}
+
+// ProviderForRole resolves a named role to a provider. The legacy
+// activeProvider field remains the fallback for main so existing configs keep
+// working while roles/providers land.
+func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
+	if m == nil {
+		return nil, false
+	}
+	if role == "" {
+		role = RoleDefault
+	}
+	if ref := m.Roles[role]; ref != "" {
+		if provider, ok := m.Providers[ref]; ok {
+			cp := provider
+			return &cp, true
+		}
+	}
+	if role == RoleDefault && m.ActiveProvider != nil {
+		cp := *m.ActiveProvider
+		return &cp, true
+	}
+	return nil, false
+}
+
+// SaveActiveProvider persists the active default provider and mirrors it into
+// providers + roles.default.
+func SaveActiveProvider(value ActiveProviderSettings) error {
+	return SaveRoleProvider(RoleDefault, value)
+}
+
+// SaveRoleProvider persists a provider and assigns it to role. For default it
+// also updates activeProvider for compatibility with older config readers.
+func SaveRoleProvider(role string, value ActiveProviderSettings) error {
+	path := ConduitSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := readRawObject(path)
+	if err != nil {
+		return err
+	}
+
+	active, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if role == "" {
+		role = RoleDefault
+	}
+	if role == RoleDefault {
+		raw["activeProvider"] = active
+	}
+
+	providers := map[string]ActiveProviderSettings{}
+	if existing := raw["providers"]; len(existing) > 0 {
+		_ = json.Unmarshal(existing, &providers)
+	}
+	key := ProviderKey(value)
+	providers[key] = value
+	encodedProviders, err := json.Marshal(providers)
+	if err != nil {
+		return err
+	}
+	raw["providers"] = encodedProviders
+
+	roles := map[string]string{}
+	if existing := raw["roles"]; len(existing) > 0 {
+		_ = json.Unmarshal(existing, &roles)
+	}
+	roles[role] = key
+	encodedRoles, err := json.Marshal(roles)
+	if err != nil {
+		return err
+	}
+	raw["roles"] = encodedRoles
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(out, '\n'), 0o644)
+}
+
+// ProviderKey returns a deterministic config key for a provider.
+func ProviderKey(value ActiveProviderSettings) string {
+	kind := value.Kind
+	if kind == "" {
+		kind = "provider"
+	}
+	switch value.Kind {
+	case "mcp":
+		if value.Server != "" {
+			return kind + "." + value.Server
+		}
+	case "claude-subscription":
+		if value.Model != "" {
+			return kind + "." + value.Model
+		}
+	default:
+		if value.Credential != "" {
+			return kind + "." + value.Credential
+		}
+		if value.Model != "" {
+			return kind + "." + value.Model
+		}
+	}
+	return kind + ".default"
+}
+
+func saveRawKey(path, key string, value interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

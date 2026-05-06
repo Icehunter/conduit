@@ -21,9 +21,10 @@ type floatingSpec struct {
 }
 
 var (
-	floatingPickerSpec  = floatingSpec{minWidth: 52, maxWidth: 96, minHeight: 5, maxHeight: 18}
-	floatingCommandSpec = floatingSpec{minWidth: 72, maxWidth: 120, minHeight: 18, maxHeight: 18}
-	floatingModalSpec   = floatingSpec{minWidth: 56, maxWidth: 100, minHeight: 7, maxHeight: 22}
+	floatingPickerSpec      = floatingSpec{minWidth: 52, maxWidth: 96, minHeight: 5, maxHeight: 18}
+	floatingModelPickerSpec = floatingSpec{minWidth: 86, maxWidth: 132, minHeight: 20, maxHeight: 28}
+	floatingCommandSpec     = floatingSpec{minWidth: 72, maxWidth: 120, minHeight: 18, maxHeight: 18}
+	floatingModalSpec       = floatingSpec{minWidth: 56, maxWidth: 100, minHeight: 7, maxHeight: 22}
 )
 
 func floatingWindowStyle() lipgloss.Style {
@@ -161,6 +162,9 @@ func decorateFloatingHeader(content string, outerWidth int) string {
 		return content
 	}
 	title := lines[0]
+	if strings.Contains(title, "////") {
+		return content
+	}
 	titleW := lipgloss.Width(title)
 	fillW := innerW - titleW - 2
 	if fillW < 6 {

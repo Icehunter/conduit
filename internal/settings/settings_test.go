@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,112 @@ func projectPaths(dir string) []string {
 	return []string{
 		filepath.Join(dir, ".claude", "settings.json"),
 		filepath.Join(dir, ".claude", "settings.local.json"),
+	}
+}
+
+func TestLoad_ConduitSettingsOverrideClaudeSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	project := filepath.Join(dir, "project")
+	writeSettings(t, project, "settings.json", Settings{Model: "claude-sonnet-4-6"})
+	if err := SaveConduitRawKey("model", "claude-opus-4-7"); err != nil {
+		t.Fatalf("SaveConduitRawKey model: %v", err)
+	}
+	if err := SaveConduitRawKey("activeProvider", ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"}); err != nil {
+		t.Fatalf("SaveConduitRawKey activeProvider: %v", err)
+	}
+
+	merged, err := Load(project)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if merged.Model != "claude-opus-4-7" {
+		t.Fatalf("Model = %q, want conduit overlay value", merged.Model)
+	}
+	if merged.ActiveProvider == nil || merged.ActiveProvider.Kind != "mcp" || merged.ActiveProvider.Server != "local-router" {
+		t.Fatalf("ActiveProvider = %#v, want mcp local-router", merged.ActiveProvider)
+	}
+}
+
+func TestLoad_ProviderRoles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	project := filepath.Join(dir, "project")
+	writeSettings(t, project, "settings.json", Settings{
+		Providers: map[string]ActiveProviderSettings{
+			"local.qwen": {Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+		},
+		Roles: map[string]string{RoleImplement: "local.qwen"},
+	})
+
+	merged, err := Load(project)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	provider, ok := merged.ProviderForRole(RoleImplement)
+	if !ok {
+		t.Fatal("ProviderForRole(implement) not found")
+	}
+	if provider.Kind != "mcp" || provider.Server != "local-router" {
+		t.Fatalf("provider = %#v, want local qwen", provider)
+	}
+}
+
+func TestSaveActiveProviderMirrorsDefaultRole(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	value := ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"}
+	if err := SaveActiveProvider(value); err != nil {
+		t.Fatalf("SaveActiveProvider: %v", err)
+	}
+	merged, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defaultProvider, ok := merged.ProviderForRole(RoleDefault)
+	if !ok {
+		t.Fatal("default provider not found")
+	}
+	if defaultProvider.Kind != "mcp" || defaultProvider.Server != "local-router" {
+		t.Fatalf("default provider = %#v, want local-router", defaultProvider)
+	}
+	key := ProviderKey(value)
+	if merged.Roles[RoleDefault] != key {
+		t.Fatalf("roles.default = %q, want %q", merged.Roles[RoleDefault], key)
+	}
+	if got := merged.Providers[key]; got.Server != "local-router" {
+		t.Fatalf("providers[%q] = %#v", key, got)
+	}
+}
+
+func TestSaveConduitRawKey_DoesNotWriteClaudeSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SaveRawKey("model", "claude-sonnet-4-6"); err != nil {
+		t.Fatalf("SaveRawKey: %v", err)
+	}
+	if err := SaveConduitRawKey("activeProvider", ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"}); err != nil {
+		t.Fatalf("SaveConduitRawKey: %v", err)
+	}
+
+	claudeData, err := os.ReadFile(UserSettingsPath())
+	if err != nil {
+		t.Fatalf("read Claude settings: %v", err)
+	}
+	if strings.Contains(string(claudeData), "activeProvider") {
+		t.Fatalf("Claude settings should not contain activeProvider: %s", claudeData)
+	}
+
+	conduitData, err := os.ReadFile(ConduitSettingsPath())
+	if err != nil {
+		t.Fatalf("read conduit settings: %v", err)
+	}
+	if !strings.Contains(string(conduitData), "activeProvider") {
+		t.Fatalf("Conduit settings should contain activeProvider: %s", conduitData)
 	}
 }
 
@@ -169,6 +276,31 @@ func TestSavePermissionsField_CreatesPermissionsObject(t *testing.T) {
 	_ = json.Unmarshal(perms, &p)
 	if p["defaultMode"] != "acceptEdits" {
 		t.Errorf("defaultMode = %v", p["defaultMode"])
+	}
+}
+
+func TestSaveConduitPermissionsField_WritesConduitOverlay(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+
+	if err := SaveConduitPermissionsField("defaultMode", "plan"); err != nil {
+		t.Fatalf("SaveConduitPermissionsField: %v", err)
+	}
+
+	if _, err := os.Stat(UserSettingsPath()); !os.IsNotExist(err) {
+		t.Fatalf("Claude settings should not be written, stat err=%v", err)
+	}
+	data, err := os.ReadFile(ConduitSettingsPath())
+	if err != nil {
+		t.Fatalf("read conduit settings: %v", err)
+	}
+	var got Settings
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Permissions.DefaultMode != "plan" {
+		t.Errorf("defaultMode = %q, want plan", got.Permissions.DefaultMode)
 	}
 }
 

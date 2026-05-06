@@ -16,6 +16,7 @@ import (
 const (
 	prefixYou    = "› You"
 	prefixClaude = "‹ Claude"
+	prefixLocal  = "‹ Local"
 
 	// outerPad is spaces on each side of all viewport content.
 	outerPad = 0
@@ -48,6 +49,14 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		}
 		body := renderMarkdown(content, inner)
 		return pad + styleClaudePrefix.Render(prefixClaude) + "\n" + indentLines(body, pad)
+
+	case RoleLocal:
+		label := prefixLocal
+		if msg.ToolName != "" {
+			label += " " + msg.ToolName
+		}
+		body := renderMarkdown(formatLocalOutput(msg.Content), inner)
+		return pad + styleToolBadge.Render(label) + "\n" + indentLines(body, pad)
 
 	case RoleAssistantInfo:
 		return pad + renderAssistantInfo(msg, inner)
@@ -134,6 +143,45 @@ func renderAssistantInfo(msg Message, width int) string {
 	}
 	line := strings.Join(parts, styleStatus.Render(" · "))
 	return styleStatus.Width(width).Render(surfaceSpaces(2) + line)
+}
+
+func formatLocalOutput(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || strings.Contains(trimmed, "```") {
+		return text
+	}
+	lang := localOutputLang(trimmed)
+	if lang == "" {
+		return text
+	}
+	return "```" + lang + "\n" + trimmed + "\n```"
+}
+
+func localOutputLang(text string) string {
+	first := firstNonEmptyLine(text)
+	switch {
+	case strings.HasPrefix(first, "diff --git ") ||
+		strings.HasPrefix(first, "--- ") ||
+		strings.HasPrefix(first, "+++ ") ||
+		strings.HasPrefix(first, "@@ "):
+		return "diff"
+	case strings.HasPrefix(first, "package "):
+		return "go"
+	case strings.HasPrefix(first, "func ") && strings.Contains(text, "{"):
+		return "go"
+	case strings.HasPrefix(first, "import ") && strings.Contains(text, "func "):
+		return "go"
+	}
+	return ""
+}
+
+func firstNonEmptyLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func renderToolMessage(msg Message, width int, verbose bool) string {
@@ -525,7 +573,7 @@ func renderWelcomeSection(label string, width int) string {
 		ruleW = 0
 	}
 	return brandGradientText(label+" ") +
-		ornamentGradientText(ornamentGradientText(strings.Repeat("─", ruleW)))
+		ornamentGradientText(strings.Repeat("─", ruleW))
 }
 
 func renderSlashFill(width int) string {

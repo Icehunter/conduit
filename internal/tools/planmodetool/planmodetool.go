@@ -25,6 +25,9 @@ const (
 type EnterPlanMode struct {
 	// SetMode changes the active permission mode (nil = no-op).
 	SetMode func(permissions.Mode)
+	// CurrentMode returns the active permission mode. When already in plan mode,
+	// EnterPlanMode should be seamless and not prompt again.
+	CurrentMode func() permissions.Mode
 	// AskEnter, when non-nil, prompts the user for approval before entering.
 	// Returns true if the user consents.
 	AskEnter func(ctx context.Context) bool
@@ -39,7 +42,8 @@ func (t *EnterPlanMode) IsReadOnly(_ json.RawMessage) bool        { return true 
 func (t *EnterPlanMode) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *EnterPlanMode) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
-	if t.AskEnter != nil && !t.AskEnter(ctx) {
+	alreadyPlan := t.CurrentMode != nil && t.CurrentMode() == permissions.ModePlan
+	if !alreadyPlan && t.AskEnter != nil && !t.AskEnter(ctx) {
 		return tool.ErrorResult("User declined to enter plan mode."), nil
 	}
 	if t.SetMode != nil {
@@ -60,6 +64,9 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 type ExitPlanMode struct {
 	// SetMode changes the active permission mode (nil = no-op).
 	SetMode func(permissions.Mode)
+	// ApprovedMode is the permission mode to enter after the user approves the
+	// plan. Defaults to bypassPermissions, which is displayed as auto mode.
+	ApprovedMode permissions.Mode
 	// AskApprove, when non-nil, shows the plan to the user and returns true if
 	// they approve. When nil, the plan is auto-approved.
 	AskApprove func(ctx context.Context, plan string) bool
@@ -99,11 +106,14 @@ func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 	}
 
 	if t.SetMode != nil {
-		// Restore default mode after plan approval.
-		t.SetMode(permissions.ModeDefault)
+		mode := t.ApprovedMode
+		if mode == "" {
+			mode = permissions.ModeBypassPermissions
+		}
+		t.SetMode(mode)
 	}
 
-	return tool.TextResult("Plan approved. You may now begin implementation. Follow the plan you presented and write the necessary code."), nil
+	return tool.TextResult("Plan approved. Auto mode is enabled; you may now begin implementation. Follow the plan you presented and write the necessary code."), nil
 }
 
 const enterDescription = `Requests permission to enter plan mode for complex tasks requiring exploration and design. Use proactively before non-trivial implementation. In plan mode you explore the codebase with read-only tools and design an approach. When ready, use ExitPlanMode to present your plan for user approval.`

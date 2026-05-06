@@ -737,9 +737,10 @@ func (m Model) renderSettingsPanel() string {
 	title := panelTitle("Settings")
 	tabs := settingsColorTabs(settingsTabNames, int(p.tab))
 
-	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 4
-	ornW = max(min(0, ornW), 12)
-
+	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
+	if ornW < 6 {
+		ornW = 6
+	}
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 	sb.WriteString("\n\n")
 

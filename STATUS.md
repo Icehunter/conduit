@@ -83,6 +83,7 @@ Last updated: 2026-05-05
 | SleepTool | ✅ | internal/tools/sleeptool/ |
 | TodoWriteTool | ✅ | internal/tools/todowritetool/ |
 | AgentTool | ✅ | internal/tools/agenttool/ |
+| LocalImplement | ✅ | conduit-only wrapper: lets the main agent offload bounded diff drafts to configured MCP `local_implement` |
 | LSPTool | ✅ | internal/tools/lsp/; hover, definition, references, diagnostics |
 | MCPTool | ✅ | internal/tools/mcptool/ |
 | REPLTool | ✅ | node/python3/bash via temp file (no shell injection) |
@@ -119,12 +120,13 @@ Last updated: 2026-05-05
 | /commands | ✅ | opens slash command picker |
 | /clear | ✅ | |
 | /exit, /quit | ✅ | |
-| /model | ✅ | lists and switches models |
+| /model | ✅ | grouped provider picker; switches Claude/MCP via `activeProvider`, mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles |
 | /models | ✅ | alias for /model picker |
 | /compact | ✅ | calls Haiku to summarize |
 | /permissions | ✅ | shows gate state |
 | /hooks | ✅ | shows configured hooks |
 | /login | ✅ | inline OAuth picker |
+| /account, /accounts | ✅ | settings accounts panel alias; account metadata stored in `~/.conduit/conduit.json` |
 | /logout | ✅ | clears keychain |
 | /cost | ✅ | tokens + estimated cost |
 | /diff | ✅ | git diff --stat |
@@ -158,6 +160,9 @@ Last updated: 2026-05-05
 | /mcp | ✅ | internal/commands/mcp.go |
 | /agents | ✅ | lists active sub-agents |
 | /skills | ✅ | internal/commands/skills.go |
+| /local | ✅ | hidden debug command: calls active MCP provider direct tool without changing default provider |
+| /local-implement | ✅ | hidden debug command: calls active MCP provider implement tool with `output_format=diff` |
+| /local-mode | ✅ | hidden compatibility command: toggles `activeProvider` between Claude and MCP |
 
 ---
 
@@ -193,17 +198,17 @@ Last updated: 2026-05-05
 
 ---
 
-## M7 — MCP host 🔲
+## M7 — MCP host ✅
 
 | Component | Status |
 |-----------|--------|
-| stdio transport | 🔲 |
-| SSE transport | 🔲 |
-| HTTP transport | 🔲 |
-| Connection manager | 🔲 |
-| OAuth for MCP servers | 🔲 |
-| Server discovery | 🔲 |
-| /mcp command | 🔲 |
+| stdio transport | ✅ |
+| SSE transport | ✅ |
+| HTTP transport | ✅ |
+| Connection manager | ✅ |
+| OAuth for MCP servers | ✅ |
+| Server discovery | ✅ Claude/project/plugin + Conduit `~/.conduit/mcp.json` overlay |
+| /mcp command | ✅ |
 
 ---
 
@@ -261,7 +266,7 @@ Descoped for now — not part of the "orchestration and brains" core.
 | Workspace trust dialog | ✅ | `internal/tui/trust_panel.go` — mirrors decoded/5053.js |
 | Trust ancestor walk | ✅ | Parent trust implies child; CLAUDE_CODE_SANDBOXED bypass |
 | `SuggestRule` path traversal hardening | ✅ | `filepath.Clean` before glob computation |
-| `permissionMode` display synced from gate | ✅ | Fixed in `tui.New()` — shows correct mode from settings.json |
+| `permissionMode` display synced from gate | ✅ | Fixed in `tui.New()`; Conduit writes active mode to `~/.conduit/conduit.json` and mode changes re-resolve role provider/model |
 | Message assembly conformance test | ✅ | `TestLoop_MessageAssembly_ToolUseResultPairing` |
 | Ask-mode permission flow test | ✅ | `TestLoop_AskMode_AlwaysAllowAddsSessionRule` |
 | PostToolUse hook conformance tests | ✅ | Output field, non-matching skip |

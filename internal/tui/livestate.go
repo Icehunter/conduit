@@ -10,18 +10,20 @@ import (
 // command callbacks need to access from outside the Bubble Tea event loop.
 // All methods are safe to call from any goroutine.
 type LiveState struct {
-	mu             sync.RWMutex
-	modelName      string
-	permissionMode permissions.Mode
-	inputTokens    int
-	outputTokens   int
-	costUSD        float64
-	sessionID      string
-	rateLimitWarn  string
-	fastMode       bool
-	effortLevel    string    // "low" | "normal" | "high" | "max" | ""
-	turnCosts      []float64 // per-turn cost deltas, most-recent last
-	sessionFile    string    // current session JSONL path (updated on resume)
+	mu              sync.RWMutex
+	modelName       string
+	permissionMode  permissions.Mode
+	inputTokens     int
+	outputTokens    int
+	costUSD         float64
+	sessionID       string
+	rateLimitWarn   string
+	fastMode        bool
+	localMode       bool
+	localModeServer string
+	effortLevel     string    // "low" | "normal" | "high" | "max" | ""
+	turnCosts       []float64 // per-turn cost deltas, most-recent last
+	sessionFile     string    // current session JSONL path (updated on resume)
 }
 
 func (s *LiveState) SetModelName(name string) {
@@ -96,6 +98,19 @@ func (s *LiveState) FastMode() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.fastMode
+}
+
+func (s *LiveState) SetLocalMode(enabled bool, server string) {
+	s.mu.Lock()
+	s.localMode = enabled
+	s.localModeServer = server
+	s.mu.Unlock()
+}
+
+func (s *LiveState) LocalMode() (enabled bool, server string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.localMode, s.localModeServer
 }
 
 func (s *LiveState) SetEffortLevel(level string) {

@@ -60,9 +60,12 @@ func ExtractAtMentions(text string) []AtMention {
 
 	// Regular unquoted paths.
 	for _, m := range regularAtRe.FindAllStringSubmatch(text, -1) {
-		raw := m[1]
+		raw := trimTrailingAtPunctuation(m[1])
 		if strings.HasPrefix(raw, "\"") {
 			continue // handled above
+		}
+		if raw == "" {
+			continue
 		}
 		key := "@" + raw
 		if seen[key] {
@@ -73,6 +76,17 @@ func ExtractAtMentions(text string) []AtMention {
 		out = append(out, AtMention{Original: key, Path: path, LineStart: ls, LineEnd: le})
 	}
 	return out
+}
+
+func trimTrailingAtPunctuation(raw string) string {
+	for len(raw) > 1 {
+		last := raw[len(raw)-1]
+		if !strings.ContainsRune(".,;:!?", rune(last)) {
+			break
+		}
+		raw = raw[:len(raw)-1]
+	}
+	return raw
 }
 
 // parseLineRange splits "file.go#L10-20" into path, lineStart, lineEnd.

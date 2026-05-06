@@ -17,11 +17,12 @@ import (
 
 const testEmail = "test@example.com"
 
-// isolateClaudeDir redirects ~/.claude writes (accounts.json) to a temp dir
+// isolateClaudeDir redirects config writes to temp dirs
 // so tests don't pollute the real user's active account setting.
 func isolateClaudeDir(t *testing.T) {
 	t.Helper()
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	t.Setenv("CONDUIT_CONFIG_DIR", t.TempDir())
 }
 
 func TestDeleteForEmail_RemovesTokens(t *testing.T) {
@@ -75,19 +76,16 @@ func TestSaveLoadForEmail_RoundTrip(t *testing.T) {
 
 func TestSaveAccountStore_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing.T) {
 	isolateClaudeDir(t)
-	path, err := accountsPath()
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := accountsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	before := []byte(`{"active":"old@example.com","accounts":{},"external":{"keep":true}}`)
+	before := []byte(`{"accounts":{"active":"old@example.com","accounts":{}},"external":{"keep":true}}`)
 	if err := os.WriteFile(path, before, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	err = SaveAccountStore(AccountStore{
+	err := SaveAccountStore(AccountStore{
 		Active: "new@example.com",
 		Accounts: map[string]AccountEntry{
 			"new@example.com": {
@@ -114,6 +112,13 @@ func TestSaveAccountStore_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing
 	if !external["keep"] {
 		t.Fatalf("external field not preserved: %s", raw["external"])
 	}
+	var accounts AccountStore
+	if err := json.Unmarshal(raw["accounts"], &accounts); err != nil {
+		t.Fatal(err)
+	}
+	if accounts.Active != "new@example.com" {
+		t.Fatalf("active = %q, want new@example.com", accounts.Active)
+	}
 
 	bad := []byte(`{"active":`)
 	if err := os.WriteFile(path, bad, 0o600); err != nil {
@@ -128,6 +133,51 @@ func TestSaveAccountStore_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing
 	}
 	if string(unchanged) != string(bad) {
 		t.Fatalf("invalid accounts file was overwritten: %q", unchanged)
+	}
+}
+
+func TestLoadAccountStore_ImportsLegacyClaudeAccounts(t *testing.T) {
+	isolateClaudeDir(t)
+	legacyPath, err := legacyAccountsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := AccountStore{
+		Active: "legacy@example.com",
+		Accounts: map[string]AccountEntry{
+			"legacy@example.com": {
+				Email:   "legacy@example.com",
+				AddedAt: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	legacyData, _ := json.Marshal(legacy)
+	if err := os.WriteFile(legacyPath, legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadAccountStore()
+	if err != nil {
+		t.Fatalf("LoadAccountStore: %v", err)
+	}
+	if got.Active != legacy.Active || got.Accounts["legacy@example.com"].Email != "legacy@example.com" {
+		t.Fatalf("imported account store = %#v", got)
+	}
+
+	conduitPath := accountsPath()
+	data, err := os.ReadFile(conduitPath)
+	if err != nil {
+		t.Fatalf("read conduit config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw["accounts"]) == 0 {
+		t.Fatalf("conduit config missing accounts after import: %s", data)
 	}
 }
 

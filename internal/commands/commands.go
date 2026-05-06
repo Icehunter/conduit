@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // Result is what a command returns to the TUI.
@@ -20,14 +22,20 @@ type Result struct {
 	Text string
 	// Model is the new model name (for Type=="model").
 	Model string
+	// Provider is the selected provider (for Type=="provider-switch").
+	Provider *settings.ActiveProviderSettings
+	// Role is the provider role being changed (main, implement, planning,
+	// background). Empty means main for compatibility.
+	Role string
 }
 
 // PickerOption is one row in the small generic picker overlay used by
 // /theme, /model, and /output-style. Exported because the TUI parses
 // these via JSON (see model.go renderPicker).
 type PickerOption struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
+	Value   string `json:"value"`
+	Label   string `json:"label"`
+	Section bool   `json:"section,omitempty"`
 }
 
 // pickerPayload is the JSON wire format for picker Result.Text.
@@ -54,6 +62,10 @@ func pickerResult(kind, title, current string, values []string, labels ...[]stri
 		}
 		items[i] = PickerOption{Value: v, Label: label}
 	}
+	return pickerResultItems(kind, title, current, items)
+}
+
+func pickerResultItems(kind, title, current string, items []PickerOption) Result {
 	data, err := json.Marshal(pickerPayload{Title: title, Current: current, Items: items})
 	if err != nil {
 		return Result{Type: "error", Text: "picker: " + err.Error()}
@@ -68,6 +80,7 @@ type Handler func(args string) Result
 type Command struct {
 	Name        string
 	Description string
+	Hidden      bool
 	Handler     Handler
 }
 
@@ -110,6 +123,9 @@ func (r *Registry) Dispatch(input string) (Result, bool) {
 func (r *Registry) All() []Command {
 	out := make([]Command, 0, len(r.cmds))
 	for _, c := range r.cmds {
+		if c.Hidden {
+			continue
+		}
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

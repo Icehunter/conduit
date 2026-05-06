@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/coordinator"
+	"github.com/icehunter/conduit/internal/mcp"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
@@ -46,29 +47,88 @@ func RegisterBuiltins(r *Registry) {
 }
 
 // RegisterModelCommand adds /model with the current model name and a setter.
-func RegisterModelCommand(r *Registry, getModel func() string, setModel func(string)) {
+func RegisterModelCommand(
+	r *Registry,
+	getModel func() string,
+	setModel func(string),
+	manager *mcp.Manager,
+	providers map[string]settings.ActiveProviderSettings,
+) {
 	modelHandler := func(args string) Result {
 		args = strings.TrimSpace(args)
-		if args == "" {
-			values := []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
-			labels := []string{
-				"Opus 4.7   — most capable",
-				"Sonnet 4.6 — balanced (default)",
-				"Haiku 4.5  — fastest, cheapest",
+		role := settings.RoleDefault
+		if strings.HasPrefix(args, "--role ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(args, "--role "))
+			parts := strings.SplitN(rest, " ", 2)
+			if len(parts) > 0 && parts[0] != "" {
+				role = normalizeProviderRole(parts[0])
 			}
-			return pickerResult("model", "Pick a model", getModel(), values, labels)
+			args = ""
+			if len(parts) > 1 {
+				args = strings.TrimSpace(parts[1])
+			}
+		}
+		if args == "" {
+			localItems := localModelPickerItems(manager, providers)
+			items := make([]PickerOption, 0, 4+len(localItems))
+			items = append(items,
+				PickerOption{Label: "Claude Subscription", Section: true},
+				PickerOption{Value: "claude-opus-4-7", Label: "Opus 4.7   — most capable"},
+				PickerOption{Value: "claude-sonnet-4-6", Label: "Sonnet 4.6 — balanced (default)"},
+				PickerOption{Value: "claude-haiku-4-5-20251001", Label: "Haiku 4.5  — fastest, cheapest"},
+			)
+			items = append(items, localItems...)
+			return pickerResultItems("model", "Switch Model", getModel(), items)
+		}
+		if args == "local" {
+			args = "local:" + defaultLocalServer
+		}
+		if strings.HasPrefix(args, "local:") {
+			server := strings.TrimSpace(strings.TrimPrefix(args, "local:"))
+			if server == "" {
+				server = defaultLocalServer
+			}
+			provider := configuredMCPProviderForServer(providers, server)
+			if provider == nil {
+				provider = &settings.ActiveProviderSettings{
+					Kind:          "mcp",
+					Server:        server,
+					Model:         localModelName(manager, server),
+					DirectTool:    defaultLocalDirectTool,
+					ImplementTool: defaultLocalImplementTool,
+				}
+			}
+			if provider.Model == "" {
+				provider.Model = localModelName(manager, server)
+			}
+			if provider.DirectTool == "" {
+				provider.DirectTool = defaultLocalDirectTool
+			}
+			if provider.ImplementTool == "" {
+				provider.ImplementTool = defaultLocalImplementTool
+			}
+			return Result{
+				Type:     "provider-switch",
+				Role:     role,
+				Provider: provider,
+			}
 		}
 		// Normalise shorthand names.
 		name := resolveModelName(args)
-		setModel(name)
-		internalmodel.SetOverride(name)
-		// Persist so the choice survives restart. Best-effort — surface
-		// the failure in the message rather than swallowing it.
-		suffix := ""
-		if err := settings.SaveRawKey("model", name); err != nil {
-			suffix = fmt.Sprintf(" (failed to persist: %v)", err)
+		if role == settings.RoleDefault {
+			setModel(name)
+			internalmodel.SetOverride(name)
 		}
-		return Result{Type: "model", Model: name, Text: fmt.Sprintf("Switched to %s%s", name, suffix)}
+		return Result{
+			Type:  "provider-switch",
+			Model: name,
+			Role:  role,
+			Text:  fmt.Sprintf("Switched to %s", name),
+			Provider: &settings.ActiveProviderSettings{
+				Kind:  "claude-subscription",
+				Model: name,
+			},
+		}
 	}
 	r.Register(Command{
 		Name:        "model",
@@ -80,6 +140,23 @@ func RegisterModelCommand(r *Registry, getModel func() string, setModel func(str
 		Description: "Open the model picker",
 		Handler:     modelHandler,
 	})
+}
+
+func normalizeProviderRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case settings.RoleDefault:
+		return settings.RoleDefault
+	case settings.RoleMain:
+		return settings.RoleMain
+	case settings.RoleBackground, "bg":
+		return settings.RoleBackground
+	case settings.RolePlanning, "plan":
+		return settings.RolePlanning
+	case settings.RoleImplement, "implementation":
+		return settings.RoleImplement
+	default:
+		return settings.RoleDefault
+	}
 }
 
 // RegisterCompactCommand adds /compact that callers implement by returning Type=="compact".

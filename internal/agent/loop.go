@@ -183,6 +183,11 @@ func (l *Loop) SetModel(name string) {
 	l.cfg.Model = name
 }
 
+// Model returns the model configured for new requests.
+func (l *Loop) Model() string {
+	return l.cfg.Model
+}
+
 // SetThinkingBudget updates the thinking budget for subsequent requests.
 // Set to 0 to disable thinking. Used by /effort command.
 func (l *Loop) SetThinkingBudget(budget int) {

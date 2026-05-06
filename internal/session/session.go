@@ -38,6 +38,10 @@ type Entry struct {
 	// Mode is set on type="session_settings" entries to persist session-level
 	// settings (e.g. "coordinator" or "normal") across resume.
 	Mode string `json:"mode,omitempty"`
+	// ProviderKind/Provider are conduit-only display metadata for provider
+	// routed turns. The embedded API message remains Anthropic-compatible.
+	ProviderKind string `json:"providerKind,omitempty"`
+	Provider     string `json:"provider,omitempty"`
 }
 
 // Session manages the JSONL transcript for one conversation.
@@ -134,7 +138,12 @@ func (s *Session) AppendMessage(msg api.Message) error {
 	if err != nil {
 		return err
 	}
-	return s.Append(Entry{Type: "message", Message: raw})
+	return s.Append(Entry{
+		Type:         "message",
+		Message:      raw,
+		ProviderKind: msg.ProviderKind,
+		Provider:     msg.Provider,
+	})
 }
 
 // SetTitle persists a human-readable conversation title.
@@ -330,7 +339,7 @@ func entryAPIMessage(entry Entry) (api.Message, bool) {
 	if len(blocks) == 0 {
 		return api.Message{}, false
 	}
-	return api.Message{Role: role, Content: blocks}, true
+	return api.Message{Role: role, Content: blocks, ProviderKind: entry.ProviderKind, Provider: entry.Provider}, true
 }
 
 func parseContentBlocks(raw json.RawMessage) []api.ContentBlock {

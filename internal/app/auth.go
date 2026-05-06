@@ -1,0 +1,140 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/secure"
+)
+
+// NewAPIClient builds a configured API client using persisted account
+// credentials. Claude.ai uses OAuth bearer auth; Anthropic Console uses the
+// minted API key when available.
+func NewAPIClient(tok auth.PersistedTokens, wireVersion string) *api.Client {
+	entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
+	if entrypoint == "" {
+		entrypoint = "sdk-cli"
+	}
+	ua := fmt.Sprintf("claude-cli/%s (external, %s)", wireVersion, entrypoint)
+	authToken := tok.AccessToken
+	apiKey := ""
+	if auth.InferAccountKind(tok) == auth.AccountKindAnthropicConsole && tok.APIKey != "" {
+		authToken = ""
+		apiKey = tok.APIKey
+	}
+	betaHeaders := []string{
+		"claude-code-20250219",
+		"oauth-2025-04-20",
+		"interleaved-thinking-2025-05-14",
+		"context-management-2025-06-27",
+		"prompt-caching-scope-2026-01-05",
+		"advisor-tool-2026-03-01",
+		"advanced-tool-use-2025-11-20",
+		"effort-2025-11-24",
+		"cache-diagnosis-2026-04-07",
+	}
+	if apiKey != "" {
+		betaHeaders = removeString(betaHeaders, "oauth-2025-04-20")
+	}
+	cfg := api.Config{
+		BaseURL:     auth.ProdConfig.BaseAPIURL,
+		AuthToken:   authToken,
+		APIKey:      apiKey,
+		BetaHeaders: betaHeaders,
+		SessionID:   NewSessionID(),
+		UserAgent:   ua,
+		ExtraHeaders: map[string]string{
+			"anthropic-dangerous-direct-browser-access": "true",
+			"X-Stainless-Retry-Count":                   "0",
+			"X-Stainless-Timeout":                       "600",
+		},
+	}
+	// Use a proxy-aware transport when HTTPS_PROXY / HTTP_PROXY env vars are set.
+	return api.NewClientWithProxy(cfg)
+}
+
+func removeString(values []string, target string) []string {
+	out := values[:0]
+	for _, value := range values {
+		if value != target {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func FillProfileAccountFallback(p *profile.Info) {
+	if p == nil || p.Email != "" {
+		return
+	}
+	active := auth.ActiveEmail()
+	if active == "" {
+		return
+	}
+	store, err := auth.ListAccounts()
+	if err != nil {
+		return
+	}
+	if entry, ok := store.Accounts[active]; ok {
+		if p.DisplayName == "" {
+			p.DisplayName = entry.DisplayName
+		}
+		p.Email = entry.Email
+		if p.OrganizationName == "" {
+			p.OrganizationName = entry.OrganizationName
+		}
+		if p.SubscriptionType == "" {
+			p.SubscriptionType = entry.SubscriptionType
+		}
+		return
+	}
+	for _, entry := range store.Accounts {
+		if entry.Email != "" && active == entry.Email {
+			p.Email = entry.Email
+			return
+		}
+	}
+}
+
+func SaveProfileAccountMetadata(p profile.Info, kind string) {
+	if p.Email == "" {
+		return
+	}
+	_ = auth.SaveAccountProfile(p.Email, kind, p.DisplayName, p.OrganizationName, p.SubscriptionType)
+}
+
+func RefreshClaudeAccountProfiles(ctx context.Context) {
+	store, err := auth.ListAccounts()
+	if err != nil {
+		return
+	}
+	secureStore := secure.NewDefault()
+	tc := auth.NewTokenClient(auth.ProdConfig, nil)
+	for id, entry := range store.Accounts {
+		if entry.Kind != auth.AccountKindClaudeAI || entry.Email == "" {
+			continue
+		}
+		tok, err := auth.EnsureFresh(ctx, secureStore, tc, id, time.Now(), 5*time.Minute)
+		if err != nil || tok.AccessToken == "" {
+			continue
+		}
+		p, _ := profile.Fetch(ctx, tok.AccessToken)
+		if p.Email == "" {
+			p.Email = entry.Email
+		}
+		SaveProfileAccountMetadata(p, auth.AccountKindClaudeAI)
+	}
+}
+
+// LoadAuth loads and refreshes tokens for the active account.
+func LoadAuth(ctx context.Context) (auth.PersistedTokens, error) {
+	store := secure.NewDefault()
+	cfg := auth.ProdConfig
+	tc := auth.NewTokenClient(cfg, nil)
+	return auth.EnsureFresh(ctx, store, tc, auth.ActiveEmail(), time.Now(), 5*time.Minute)
+}

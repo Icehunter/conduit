@@ -6,8 +6,11 @@ the port harder to compare with the TypeScript source.
 
 ## Top Level
 
-- `cmd/conduit/` is the binary entrypoint. It wires flags, startup, auth, tool
-  registration, and REPL/print modes.
+- `cmd/conduit/` is the binary entrypoint. It owns flag parsing and the REPL /
+  print-mode control flow.
+- `internal/app/` owns startup composition helpers used by the entrypoint:
+  API client construction, auth/profile refresh helpers, tool registry
+  construction, metadata, and session id generation.
 - `internal/agent/` owns the main query loop, tool orchestration, compaction,
   and agent events.
 - `internal/api/` owns Anthropic wire format, streaming, retry, proxy, and rate

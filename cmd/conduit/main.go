@@ -26,6 +26,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/app"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/claudemd"
@@ -45,32 +46,12 @@ import (
 	"github.com/icehunter/conduit/internal/sessionmem"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
-	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
-	"github.com/icehunter/conduit/internal/tools/configtool"
-	"github.com/icehunter/conduit/internal/tools/fileedittool"
-	"github.com/icehunter/conduit/internal/tools/filereadtool"
-	"github.com/icehunter/conduit/internal/tools/filewritetool"
-	"github.com/icehunter/conduit/internal/tools/globtool"
-	"github.com/icehunter/conduit/internal/tools/greptool"
-	"github.com/icehunter/conduit/internal/tools/localimplementtool"
-	lsptool "github.com/icehunter/conduit/internal/tools/lsp"
-	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
-	"github.com/icehunter/conduit/internal/tools/mcpresourcetool"
-	"github.com/icehunter/conduit/internal/tools/mcptool"
-	"github.com/icehunter/conduit/internal/tools/notebookedittool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
-	"github.com/icehunter/conduit/internal/tools/repltool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
-	"github.com/icehunter/conduit/internal/tools/sleeptool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
-	"github.com/icehunter/conduit/internal/tools/tasktool"
-	"github.com/icehunter/conduit/internal/tools/todowritetool"
-	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
-	"github.com/icehunter/conduit/internal/tools/webfetchtool"
-	"github.com/icehunter/conduit/internal/tools/websearchtool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	"github.com/icehunter/conduit/internal/tui"
 )
@@ -128,257 +109,6 @@ func run() error {
 	}
 }
 
-// newAPIClient builds a configured API client using the persisted account
-// credentials. Claude.ai uses OAuth bearer auth; Anthropic Console uses the
-// minted API key when available.
-func newAPIClient(tok auth.PersistedTokens) *api.Client {
-	entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
-	if entrypoint == "" {
-		entrypoint = "sdk-cli"
-	}
-	ua := fmt.Sprintf("claude-cli/%s (external, %s)", Version, entrypoint)
-	authToken := tok.AccessToken
-	apiKey := ""
-	if auth.InferAccountKind(tok) == auth.AccountKindAnthropicConsole && tok.APIKey != "" {
-		authToken = ""
-		apiKey = tok.APIKey
-	}
-	betaHeaders := []string{
-		"claude-code-20250219",
-		"oauth-2025-04-20",
-		"interleaved-thinking-2025-05-14",
-		"context-management-2025-06-27",
-		"prompt-caching-scope-2026-01-05",
-		"advisor-tool-2026-03-01",
-		"advanced-tool-use-2025-11-20",
-		"effort-2025-11-24",
-		"cache-diagnosis-2026-04-07",
-	}
-	if apiKey != "" {
-		betaHeaders = removeString(betaHeaders, "oauth-2025-04-20")
-	}
-	cfg := api.Config{
-		BaseURL:     auth.ProdConfig.BaseAPIURL,
-		AuthToken:   authToken,
-		APIKey:      apiKey,
-		BetaHeaders: betaHeaders,
-		SessionID:   newSessionID(),
-		UserAgent:   ua,
-		ExtraHeaders: map[string]string{
-			"anthropic-dangerous-direct-browser-access": "true",
-			"X-Stainless-Retry-Count":                   "0",
-			"X-Stainless-Timeout":                       "600",
-		},
-	}
-	// Use a proxy-aware transport when HTTPS_PROXY / HTTP_PROXY env vars are set.
-	return api.NewClientWithProxy(cfg)
-}
-
-func removeString(values []string, target string) []string {
-	out := values[:0]
-	for _, value := range values {
-		if value != target {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
-func fillProfileAccountFallback(p *profile.Info) {
-	if p == nil || p.Email != "" {
-		return
-	}
-	active := auth.ActiveEmail()
-	if active == "" {
-		return
-	}
-	store, err := auth.ListAccounts()
-	if err != nil {
-		return
-	}
-	if entry, ok := store.Accounts[active]; ok {
-		if p.DisplayName == "" {
-			p.DisplayName = entry.DisplayName
-		}
-		p.Email = entry.Email
-		if p.OrganizationName == "" {
-			p.OrganizationName = entry.OrganizationName
-		}
-		if p.SubscriptionType == "" {
-			p.SubscriptionType = entry.SubscriptionType
-		}
-		return
-	}
-	for _, entry := range store.Accounts {
-		if entry.Email != "" && active == entry.Email {
-			p.Email = entry.Email
-			return
-		}
-	}
-}
-
-func saveProfileAccountMetadata(p profile.Info, kind string) {
-	if p.Email == "" {
-		return
-	}
-	_ = auth.SaveAccountProfile(p.Email, kind, p.DisplayName, p.OrganizationName, p.SubscriptionType)
-}
-
-func refreshClaudeAccountProfiles(ctx context.Context) {
-	store, err := auth.ListAccounts()
-	if err != nil {
-		return
-	}
-	secureStore := secure.NewDefault()
-	tc := auth.NewTokenClient(auth.ProdConfig, nil)
-	for id, entry := range store.Accounts {
-		if entry.Kind != auth.AccountKindClaudeAI || entry.Email == "" {
-			continue
-		}
-		tok, err := auth.EnsureFresh(ctx, secureStore, tc, id, time.Now(), 5*time.Minute)
-		if err != nil || tok.AccessToken == "" {
-			continue
-		}
-		p, _ := profile.Fetch(ctx, tok.AccessToken)
-		if p.Email == "" {
-			p.Email = entry.Email
-		}
-		saveProfileAccountMetadata(p, auth.AccountKindClaudeAI)
-	}
-}
-
-// loadAuth loads and refreshes tokens for the active account.
-func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
-	store := secure.NewDefault()
-	cfg := auth.ProdConfig
-	tc := auth.NewTokenClient(cfg, nil)
-	return auth.EnsureFresh(ctx, store, tc, auth.ActiveEmail(), time.Now(), 5*time.Minute)
-}
-
-// buildSkillEntries converts loaded plugin commands + bundled skills into
-// SkillEntry values for the system prompt skill listing.
-func buildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
-	var entries []agent.SkillEntry
-	// Bundled built-in skills first.
-	loader := plugins.NewSkillLoader(ps)
-	for _, cmd := range loader.BundledCommands() {
-		entries = append(entries, agent.SkillEntry{
-			Name:        "/" + cmd.QualifiedName,
-			Description: cmd.Description,
-		})
-	}
-	// Plugin commands.
-	for _, p := range ps {
-		for _, cmd := range p.Commands {
-			entries = append(entries, agent.SkillEntry{
-				Name:        cmd.QualifiedName,
-				Description: cmd.Description,
-			})
-		}
-	}
-	return entries
-}
-
-// registryOpts holds optional callbacks wired after the TUI program starts.
-// These are nil in --print mode (no interactive terminal).
-type registryOpts struct {
-	enterPlan     *planmodetool.EnterPlanMode
-	exitPlan      *planmodetool.ExitPlanMode
-	askUser       *askusertool.AskUserQuestion
-	synthetic     *syntheticoutputtool.SyntheticOutput
-	enterWorktree *worktreetool.EnterWorktree
-	exitWorktree  *worktreetool.ExitWorktree
-}
-
-// buildRegistry builds the tool registry, including MCP server tools.
-func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *registryOpts, implementProvider func() *settings.ActiveProviderSettings) *tool.Registry {
-	reg := tool.NewRegistry()
-	reg.Register(bashtool.New())
-	reg.Register(fileedittool.New())
-	reg.Register(filereadtool.New())
-	reg.Register(filewritetool.New())
-	reg.Register(globtool.New())
-	reg.Register(greptool.New())
-	reg.Register(notebookedittool.New())
-	reg.Register(repltool.New())
-	reg.Register(sleeptool.New())
-	reg.Register(tasktool.NewCreate())
-	reg.Register(tasktool.NewGet())
-	reg.Register(tasktool.NewList())
-	reg.Register(tasktool.NewUpdate())
-	reg.Register(tasktool.NewOutput())
-	reg.Register(tasktool.NewStop())
-	reg.Register(todowritetool.New())
-	reg.Register(toolsearchtool.New(reg))
-	reg.Register(webfetchtool.New())
-	reg.Register(websearchtool.New(client))
-	reg.Register(lsptool.New(lspManager))
-	reg.Register(&configtool.ConfigTool{})
-	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
-	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
-	if _, ok := localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider)); ok {
-		reg.Register(localimplementtool.NewDynamic(mcpManager, func() (localimplementtool.Config, bool) {
-			return localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider))
-		}))
-	}
-	// Interactive tools — callbacks are wired by the TUI after prog.Start().
-	if rOpts != nil && rOpts.enterWorktree != nil {
-		reg.Register(rOpts.enterWorktree)
-		reg.Register(rOpts.exitWorktree)
-	}
-	if rOpts != nil {
-		reg.Register(rOpts.enterPlan)
-		reg.Register(rOpts.exitPlan)
-		reg.Register(rOpts.askUser)
-		reg.Register(rOpts.synthetic)
-	}
-	// Register MCP server tools (if any servers are configured).
-	if mcpManager != nil {
-		mcptool.RegisterAll(reg, mcpManager)
-		// For each HTTP/SSE server in the StatusNeedsAuth state, register
-		// the per-server pseudo-tool so the model can trigger OAuth
-		// itself (mirrors src/tools/McpAuthTool/createMcpAuthTool).
-		urls := make(map[string]string)
-		for _, srv := range mcpManager.Servers() {
-			if srv.Status == mcp.StatusNeedsAuth && srv.Config.URL != "" {
-				urls[srv.Name] = srv.Config.URL
-			}
-		}
-		mcpauthtool.RegisterPending(reg, mcpManager, urls)
-	}
-	return reg
-}
-
-func resolveImplementProvider(fn func() *settings.ActiveProviderSettings) *settings.ActiveProviderSettings {
-	if fn == nil {
-		return nil
-	}
-	return fn()
-}
-
-func claudeRoleModel(cwd, role, fallback string) string {
-	latest, err := settings.Load(cwd)
-	if err != nil {
-		return fallback
-	}
-	provider, ok := latest.ProviderForRole(role)
-	if !ok || provider == nil || provider.Kind == "mcp" || provider.Model == "" {
-		return fallback
-	}
-	return provider.Model
-}
-
-// buildMetadata returns the API metadata block.
-func buildMetadata() map[string]any {
-	deviceID := os.Getenv("CLAUDE_CODE_DEVICE_ID")
-	if deviceID == "" {
-		deviceID = "00000000000000000000000000000000"
-	}
-	accountUUID := os.Getenv("CLAUDE_CODE_ACCOUNT_UUID")
-	sessionID := newSessionID()
-	return agent.BuildMetadata(deviceID, accountUUID, sessionID)
-}
-
 // runREPL launches the full-screen Bubble Tea TUI.
 // If credentials are absent or invalid the TUI still starts — it shows a
 // "not logged in" welcome message and the user can /login from within.
@@ -412,20 +142,20 @@ func runREPL(continueMode bool, resumeID string) error {
 	}()
 
 	// Try auth — failure is not fatal here. The TUI handles the no-auth state.
-	tok, authErr := loadAuth(ctx)
+	tok, authErr := app.LoadAuth(ctx)
 
 	// Fetch profile info in the background; non-fatal if unavailable.
 	var prof profile.Info
 	if authErr == nil && tok.AccessToken != "" {
 		prof, _ = profile.Fetch(ctx, tok.AccessToken)
-		fillProfileAccountFallback(&prof)
-		saveProfileAccountMetadata(prof, auth.InferAccountKind(tok))
+		app.FillProfileAccountFallback(&prof)
+		app.SaveProfileAccountMetadata(prof, auth.InferAccountKind(tok))
 	}
-	refreshClaudeAccountProfiles(ctx)
+	app.RefreshClaudeAccountProfiles(ctx)
 
 	// Session persistence — create or resume.
 	cwd, _ := os.Getwd()
-	sessionID := newSessionID()
+	sessionID := app.NewSessionID()
 	var resumedHistory []api.Message
 
 	if resumeID != "" {
@@ -613,7 +343,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 
 	// Build skill listing for the system prompt.
-	skillEntries := buildSkillEntries(loadedPlugins)
+	skillEntries := app.BuildSkillEntries(loadedPlugins)
 
 	// Load auto-memory: ensure the directory exists and build the full memory
 	// system-prompt block (type taxonomy + MEMORY.md content).
@@ -625,27 +355,27 @@ func runREPL(continueMode bool, resumeID string) error {
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 
-	c := newAPIClient(tok)
+	c := app.NewAPIClient(tok, Version)
 
 	// Build interactive-tool stubs with nil callbacks; the TUI wires the real
 	// callbacks after prog.Start() via the same send-to-channel pattern used
 	// by SetAskPermission. Nil callbacks produce graceful error results.
-	rOpts := &registryOpts{
-		enterPlan: &planmodetool.EnterPlanMode{},
-		exitPlan:  &planmodetool.ExitPlanMode{},
-		askUser:   &askusertool.AskUserQuestion{},
-		synthetic: &syntheticoutputtool.SyntheticOutput{},
-		enterWorktree: &worktreetool.EnterWorktree{GetCwd: func() string {
+	rOpts := &app.RegistryOpts{
+		EnterPlan: &planmodetool.EnterPlanMode{},
+		ExitPlan:  &planmodetool.ExitPlanMode{},
+		AskUser:   &askusertool.AskUserQuestion{},
+		Synthetic: &syntheticoutputtool.SyntheticOutput{},
+		EnterWorktree: &worktreetool.EnterWorktree{GetCwd: func() string {
 			d, _ := os.Getwd()
 			return d
 		}},
-		exitWorktree: &worktreetool.ExitWorktree{GetCwd: func() string {
+		ExitWorktree: &worktreetool.ExitWorktree{GetCwd: func() string {
 			d, _ := os.Getwd()
 			return d
 		}, OriginalCwd: cwd},
 	}
 
-	reg := buildRegistry(c, mcpManager, lspManager, rOpts, func() *settings.ActiveProviderSettings {
+	reg := app.BuildRegistry(c, mcpManager, lspManager, rOpts, func() *settings.ActiveProviderSettings {
 		latest, err := settings.Load(cwd)
 		if err != nil {
 			return implementProvider
@@ -736,7 +466,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		ThinkingBudget:    thinkingBudget(),
 		NotifyOnComplete:  true,
 		BackgroundModel: func() string {
-			return claudeRoleModel(cwd, settings.RoleBackground, compact.DefaultModel)
+			return app.ClaudeRoleModel(cwd, settings.RoleBackground, compact.DefaultModel)
 		},
 		OnFileAccess: func(op, path string) {
 			if sess != nil {
@@ -819,9 +549,9 @@ func runREPL(continueMode bool, resumeID string) error {
 		ResumedHistory:            resumedHistory,
 		Resumed:                   continueMode && len(resumedHistory) > 0,
 		MCPManager:                mcpManager,
-		EnterPlan:                 rOpts.enterPlan,
-		ExitPlan:                  rOpts.exitPlan,
-		AskUser:                   rOpts.askUser,
+		EnterPlan:                 rOpts.EnterPlan,
+		ExitPlan:                  rOpts.ExitPlan,
+		AskUser:                   rOpts.AskUser,
 		InitialOutputStyle:        s.OutputStyle,
 		InitialUsageStatusEnabled: usageStatusEnabled,
 		InitialLocalMode:          initialLocalMode,
@@ -846,18 +576,18 @@ func runREPL(continueMode bool, resumeID string) error {
 			return planusage.Fetch(ctx, tok.AccessToken)
 		},
 		LoadAuth: func(ctx context.Context) (auth.PersistedTokens, *profile.Info, error) {
-			tok, err := loadAuth(ctx)
+			tok, err := app.LoadAuth(ctx)
 			if err != nil {
 				return auth.PersistedTokens{}, nil, err
 			}
 			p, _ := profile.Fetch(ctx, tok.AccessToken)
-			fillProfileAccountFallback(&p)
-			saveProfileAccountMetadata(p, auth.InferAccountKind(tok))
-			refreshClaudeAccountProfiles(ctx)
+			app.FillProfileAccountFallback(&p)
+			app.SaveProfileAccountMetadata(p, auth.InferAccountKind(tok))
+			app.RefreshClaudeAccountProfiles(ctx)
 			return tok, &p, nil
 		},
 		NewAPIClient: func(tok auth.PersistedTokens) *api.Client {
-			return newAPIClient(tok)
+			return app.NewAPIClient(tok, Version)
 		},
 		NeedsTrust: needsTrust,
 		SetTrusted: func() error {
@@ -890,27 +620,27 @@ func runPrint(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	p, err := loadAuth(ctx)
+	p, err := app.LoadAuth(ctx)
 	if err != nil {
 		return fmt.Errorf("authentication: %w (use /login inside the REPL to sign in)", err)
 	}
 
 	cwd, _ := os.Getwd()
 	loadedPlugins, _ := plugins.LoadAll(cwd)
-	skillEntries := buildSkillEntries(loadedPlugins)
+	skillEntries := app.BuildSkillEntries(loadedPlugins)
 	_ = memdir.EnsureDir(cwd)
 	mem := memdir.BuildPrompt(cwd)
 	claudeMdFiles, _ := claudemd.Load(cwd)
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
-	c := newAPIClient(p)
-	reg := buildRegistry(c, nil, lsp.NewManager(), nil, nil)
+	c := app.NewAPIClient(p, Version)
+	reg := app.BuildRegistry(c, nil, lsp.NewManager(), nil, nil)
 	modelName := internalmodel.Resolve()
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:           modelName,
 		MaxTokens:       internalmodel.MaxTokens,
 		System:          agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
-		Metadata:        buildMetadata(),
+		Metadata:        app.BuildMetadata(),
 		MaxTurns:        10,
 		BackgroundModel: func() string { return compact.DefaultModel },
 	})

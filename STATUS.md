@@ -37,7 +37,7 @@ Last updated: 2026-05-05
 | FileEditTool | ✅ | internal/tools/fileedittool/ |
 | GrepTool | ✅ | internal/tools/greptool/ |
 | GlobTool | ✅ | internal/tools/globtool/ |
-| Cost tracker | ✅ | tallied in internal/tui/live_state.go |
+| Cost tracker | ✅ | tallied in internal/tui/model.go (tallyTokens/syncLive) |
 
 ---
 
@@ -263,7 +263,7 @@ Descoped for now — not part of the "orchestration and brains" core.
 | Component | Status | Notes |
 |-----------|--------|-------|
 | `~/.claude.json` global config | ✅ | `internal/globalconfig/` — trust state, numStartups |
-| Workspace trust dialog | ✅ | `internal/tui/trust_panel.go` — mirrors decoded/5053.js |
+| Workspace trust dialog | ✅ | `internal/tui/trustpanel.go` — mirrors decoded/5053.js |
 | Trust ancestor walk | ✅ | Parent trust implies child; CLAUDE_CODE_SANDBOXED bypass |
 | `SuggestRule` path traversal hardening | ✅ | `filepath.Clean` before glob computation |
 | `permissionMode` display synced from gate | ✅ | Fixed in `tui.New()`; Conduit writes active mode to `~/.conduit/conduit.json` and mode changes re-resolve role provider/model |

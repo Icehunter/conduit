@@ -35,31 +35,32 @@ state and helper methods can move between files without creating import cycles.
 - `model.go` contains the core model/config/message types, constructor, and
   `Init`.
 - `update.go` contains the primary Bubble Tea message dispatch.
-- `key_handler.go` contains key dispatch, text submission, attachment sending,
+- `keyhandler.go` contains key dispatch, text submission, attachment sending,
   and interrupt/scrollback shortcuts.
-- `command_results.go` applies slash-command results to TUI state.
+- `commandresults.go` applies slash-command results to TUI state.
 - `providers.go` resolves Claude/API/MCP provider state and role-specific model
   routing.
-- `agent_events.go` maps streamed agent events into display messages.
-- `layout_view.go`, `usage_footer.go`, `coordinator_footer.go`, and `paint.go`
+- `agentevents.go` maps streamed agent events into display messages.
+- `layoutview.go`, `usagefooter.go`, `coordinatorfooter.go`, and `paint.go`
   handle frame layout and footer rendering.
-- `attachments_picker.go` handles paste expansion, at-mentions, slash command
+- `attachmentspicker.go` handles paste expansion, at-mentions, slash command
   picker rendering, and file completion.
 - `history.go` converts API history into display messages and persists/export
   helpers.
-- `settings_panel.go` handles settings panel navigation, status, and config.
-- `settings_stats.go` handles settings stats rendering, usage, charts, and
+- `settingspanel.go` handles settings panel navigation, status, and config.
+- `settingsstats.go` handles settings stats rendering, usage, charts, and
   factoids using data loaded by `internal/sessionstats/`.
-- `plugin_panel.go` defines plugin panel state, with data loading, key handling,
-  and rendering split into `plugin_panel_data.go`, `plugin_panel_keys.go`, and
-  `plugin_panel_render.go`.
-- `*_panel.go` files implement individual full-screen or floating panels.
+- `pluginpanel.go` defines plugin panel state, with data loading, key handling,
+  and rendering split into `pluginpaneldata.go`, `pluginpanelkeys.go`, and
+  `pluginpanelrender.go`.
+- `*panel.go` files implement individual full-screen or floating panels.
 
 ## Naming
 
-Use snake_case file names. Package directories should be all lowercase. Avoid
-mixed forms such as `settingspanel.go` or `worktreeTool/`; those make searches
-and imports needlessly uneven.
+Use all-lowercase concatenated file names — no underscores in regular `.go` files.
+The sole exceptions are Go's built-in conventions: `_test.go` (test files) and
+`_<goos>.go` / `_<goarch>.go` build-constraint suffixes (`_unix.go`, `_windows.go`).
+Package directories should also be all lowercase with no underscores.
 
 When a file move changes a path referenced by `PARITY.md` or `STATUS.md`, update
 the relevant row in the same change.

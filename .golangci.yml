@@ -78,7 +78,7 @@ linters:
     rules:
       # websocket.Dial's second return is not a plain HTTP response body;
       # coder/websocket manages its lifetime internally.
-      - path: "internal/mcp/client_ws.go"
+      - path: "internal/mcp/clientws.go"
         linters: [bodyclose]
       # Test helpers — errcheck/noctx/bodyclose are intentionally relaxed in tests.
       - path: ".*_test\\.go"

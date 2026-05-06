@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/planusage"
+	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -287,6 +290,127 @@ func TestModelPickerFiltersDeletedAccountProviders(t *testing.T) {
 	}
 	if !items[0].Section || items[0].Label != "MCP local-router" || items[1].Value != "local:local-router" {
 		t.Fatalf("items = %#v, want stale account section filtered", items)
+	}
+}
+
+func TestPlanUsageFetchUsesCurrentRoleProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	saveTestClaudeAccount(t, "work@example.com")
+	if err := settings.SaveConduitRawKey("accounts", map[string]any{
+		"active": "claude-ai:work@example.com",
+		"accounts": map[string]any{
+			"claude-ai:work@example.com": map[string]any{
+				"email": "work@example.com",
+				"kind":  "claude-ai",
+			},
+			"claude-ai:personal@example.com": map[string]any{
+				"email": "personal@example.com",
+				"kind":  "claude-ai",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save accounts: %v", err)
+	}
+	var got settings.ActiveProviderSettings
+	m := Model{
+		usageStatusEnabled: true,
+		permissionMode:     permissions.ModePlan,
+		cfg: Config{
+			FetchPlanUsage: func(_ context.Context, provider settings.ActiveProviderSettings) (planusage.Info, error) {
+				got = provider
+				return planusage.Info{}, nil
+			},
+		},
+		providers: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.work@example.com.claude-sonnet-4-6":     {Kind: "claude-subscription", Account: "work@example.com", Model: "claude-sonnet-4-6"},
+			"claude-subscription.personal@example.com.claude-sonnet-4-6": {Kind: "claude-subscription", Account: "personal@example.com", Model: "claude-sonnet-4-6"},
+		},
+		roles: map[string]string{
+			settings.RoleMain:     "claude-subscription.work@example.com.claude-sonnet-4-6",
+			settings.RolePlanning: "claude-subscription.personal@example.com.claude-sonnet-4-6",
+		},
+	}
+	_, cmd := m.startPlanUsageFetch()
+	if cmd == nil {
+		t.Fatal("startPlanUsageFetch returned nil command")
+	}
+	_ = cmd()
+	if got.Account != "personal@example.com" || got.Model != "claude-sonnet-4-6" {
+		t.Fatalf("usage provider = %#v, want planning personal provider", got)
+	}
+}
+
+func TestWelcomeCardUsesRoleAccountMetadata(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	if err := settings.SaveConduitRawKey("accounts", map[string]any{
+		"active": "claude-ai:work@example.com",
+		"accounts": map[string]any{
+			"claude-ai:work@example.com": map[string]any{
+				"email":             "work@example.com",
+				"kind":              "claude-ai",
+				"subscription_type": "Claude Team",
+			},
+			"claude-ai:personal@example.com": map[string]any{
+				"email":             "personal@example.com",
+				"kind":              "claude-ai",
+				"subscription_type": "Claude Max",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save accounts: %v", err)
+	}
+	m := Model{
+		cfg:            Config{Version: "test", Profile: profile.Info{Email: "personal@example.com", SubscriptionType: "Claude Max"}},
+		permissionMode: permissions.ModeDefault,
+		providers: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.work@example.com.claude-sonnet-4-6": {Kind: "claude-subscription", Account: "work@example.com", Model: "claude-sonnet-4-6"},
+		},
+		roles: map[string]string{settings.RoleDefault: "claude-subscription.work@example.com.claude-sonnet-4-6"},
+	}
+	msg := m.welcomeCard()
+	if !strings.Contains(msg.Content, "Claude Team") {
+		t.Fatalf("welcome card = %q, want work account Claude Team metadata", msg.Content)
+	}
+	if strings.Contains(msg.Content, "Claude Max") {
+		t.Fatalf("welcome card leaked active profile metadata: %q", msg.Content)
+	}
+}
+
+func TestWelcomeCardDoesNotBorrowProfileForDifferentRoleAccount(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	if err := settings.SaveConduitRawKey("accounts", map[string]any{
+		"active": "claude-ai:personal@example.com",
+		"accounts": map[string]any{
+			"claude-ai:work@example.com": map[string]any{
+				"email": "work@example.com",
+				"kind":  "claude-ai",
+			},
+			"claude-ai:personal@example.com": map[string]any{
+				"email":             "personal@example.com",
+				"kind":              "claude-ai",
+				"subscription_type": "Claude Max",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save accounts: %v", err)
+	}
+	m := Model{
+		cfg:            Config{Version: "test", Profile: profile.Info{Email: "personal@example.com", SubscriptionType: "Claude Max"}},
+		permissionMode: permissions.ModePlan,
+		providers: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.work@example.com.claude-opus-4-7": {Kind: "claude-subscription", Account: "work@example.com", Model: "claude-opus-4-7"},
+		},
+		roles: map[string]string{settings.RolePlanning: "claude-subscription.work@example.com.claude-opus-4-7"},
+	}
+	msg := m.welcomeCard()
+	if !strings.Contains(msg.Content, "work@example.com") {
+		t.Fatalf("welcome card = %q, want work account email", msg.Content)
+	}
+	if strings.Contains(msg.Content, "Claude Max") {
+		t.Fatalf("welcome card borrowed personal profile metadata: %q", msg.Content)
 	}
 }
 

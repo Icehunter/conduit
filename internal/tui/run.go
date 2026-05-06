@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,22 +70,55 @@ func SummarizeMessages(history []api.Message, n int) string {
 	return sb.String()
 }
 
-func activeAccountProviderKind() string {
+func configuredAccountProviders() []settings.ActiveProviderSettings {
 	email := auth.ActiveEmail()
-	if email == "" {
-		return ""
-	}
 	store, err := auth.ListAccounts()
 	if err != nil {
-		return ""
+		return nil
 	}
-	if entry, ok := store.Accounts[email]; ok && entry.Kind == auth.AccountKindAnthropicConsole {
+	var providers []settings.ActiveProviderSettings
+	seen := map[string]bool{}
+	addProvider := func(entry auth.AccountEntry) {
+		kind := accountProviderKind(entry.Kind)
+		if kind == "" || entry.Email == "" {
+			return
+		}
+		key := kind + "\x00" + entry.Email
+		if seen[key] {
+			return
+		}
+		providers = append(providers, settings.ActiveProviderSettings{
+			Kind:    kind,
+			Account: entry.Email,
+		})
+		seen[key] = true
+	}
+	if entry, ok := store.Accounts[email]; ok {
+		addProvider(entry)
+	}
+	var entries []auth.AccountEntry
+	for _, entry := range store.Accounts {
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		left := accountProviderKind(entries[i].Kind) + "\x00" + entries[i].Email
+		right := accountProviderKind(entries[j].Kind) + "\x00" + entries[j].Email
+		return left < right
+	})
+	for _, entry := range entries {
+		addProvider(entry)
+	}
+	return providers
+}
+
+func accountProviderKind(accountKind string) string {
+	if accountKind == auth.AccountKindAnthropicConsole {
 		return "anthropic-api"
 	}
-	if _, ok := store.Accounts[email]; !ok {
-		return ""
+	if accountKind == "" || accountKind == auth.AccountKindClaudeAI {
+		return "claude-subscription"
 	}
-	return "claude-subscription"
+	return ""
 }
 
 // altScreenExit/clearScreen are ANSI sequences for terminal cleanup.
@@ -148,9 +182,10 @@ type RunOptions struct {
 	// InitialProviders/Roles are conduit's named provider role bindings.
 	InitialProviders map[string]settings.ActiveProviderSettings
 	InitialRoles     map[string]string
-	// FetchPlanUsage returns the current Claude plan usage windows. Nil disables
-	// fetching even if the footer setting is enabled.
-	FetchPlanUsage func(context.Context) (planusage.Info, error)
+	// FetchPlanUsage returns the current Claude plan usage windows for the
+	// selected provider/account. Nil disables fetching even if the footer
+	// setting is enabled.
+	FetchPlanUsage func(context.Context, settings.ActiveProviderSettings) (planusage.Info, error)
 
 	// PluginDirs is the list of installed plugin root directories, used to
 	// load plugin-provided output styles (lowest priority — overridden by user/project).
@@ -220,7 +255,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return internalmodel.Resolve()
 		},
 		func(name string) { loop.SetModel(name) },
-		activeAccountProviderKind,
+		configuredAccountProviders,
 		runOpts.MCPManager,
 		runOpts.InitialProviders,
 	)

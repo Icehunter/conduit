@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -21,9 +22,12 @@ import (
 
 // AccountEntry holds metadata for one stored account.
 type AccountEntry struct {
-	Email   string    `json:"email"`
-	Kind    string    `json:"kind,omitempty"`
-	AddedAt time.Time `json:"added_at"`
+	Email            string    `json:"email"`
+	Kind             string    `json:"kind,omitempty"`
+	DisplayName      string    `json:"display_name,omitempty"`
+	OrganizationName string    `json:"organization_name,omitempty"`
+	SubscriptionType string    `json:"subscription_type,omitempty"`
+	AddedAt          time.Time `json:"added_at"`
 }
 
 // AccountStore is the shape of the "accounts" object in ~/.conduit/conduit.json.
@@ -95,7 +99,11 @@ func LoadAccountStore() (AccountStore, error) {
 	if s.Accounts == nil {
 		s.Accounts = map[string]AccountEntry{}
 	}
-	return normalizeAccountStore(s), nil
+	normalized := normalizeAccountStore(s)
+	if !reflect.DeepEqual(s, normalized) {
+		_ = saveAccountStore(normalized)
+	}
+	return normalized, nil
 }
 
 func loadOrImportLegacyAccountStore() (AccountStore, error) {
@@ -266,6 +274,29 @@ func registerAccount(email, kind string) error {
 	return saveAccountStore(store)
 }
 
+func SaveAccountProfile(email, kind, displayName, organizationName, subscriptionType string) error {
+	store, err := LoadAccountStore()
+	if err != nil {
+		return err
+	}
+	id := AccountID(kind, email)
+	entry, ok := store.Accounts[id]
+	if !ok {
+		entry = AccountEntry{Email: email, Kind: kind, AddedAt: time.Now()}
+	}
+	if displayName != "" {
+		entry.DisplayName = displayName
+	}
+	if organizationName != "" {
+		entry.OrganizationName = organizationName
+	}
+	if subscriptionType != "" {
+		entry.SubscriptionType = subscriptionType
+	}
+	store.Accounts[id] = entry
+	return saveAccountStore(store)
+}
+
 // LoadForEmail loads and decodes the token for the given email.
 func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 	if email == "" {
@@ -273,8 +304,8 @@ func LoadForEmail(s secure.Storage, email string) (PersistedTokens, error) {
 	}
 	kind, resolvedEmail := resolveAccountRef(email)
 	raw, err := s.Get(Service, keyForEmailKind(resolvedEmail, kind))
-	if err != nil && !strings.Contains(email, ":") {
-		raw, err = s.Get(Service, keyForEmail(email))
+	if err != nil {
+		raw, err = s.Get(Service, keyForEmail(resolvedEmail))
 	}
 	if err != nil {
 		return PersistedTokens{}, err

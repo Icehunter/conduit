@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,6 +244,70 @@ func TestLoadAccountStore_ImportsLegacyClaudeAccounts(t *testing.T) {
 	}
 	if len(raw["accounts"]) == 0 {
 		t.Fatalf("conduit config missing accounts after import: %s", data)
+	}
+}
+
+func TestLoadAccountStore_MigratesEmailOnlyConduitAccounts(t *testing.T) {
+	isolateClaudeDir(t)
+	path := accountsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"accounts":{"active":"legacy@example.com","accounts":{"legacy@example.com":{"email":"legacy@example.com","added_at":"2026-05-01T12:00:00Z"}}}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadAccountStore()
+	if err != nil {
+		t.Fatalf("LoadAccountStore: %v", err)
+	}
+	id := AccountID(AccountKindClaudeAI, "legacy@example.com")
+	if got.Active != id {
+		t.Fatalf("active = %q, want %q", got.Active, id)
+	}
+	if got.Accounts[id].Email != "legacy@example.com" || got.Accounts[id].Kind != AccountKindClaudeAI {
+		t.Fatalf("accounts = %#v, want normalized legacy account", got.Accounts)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), id) {
+		t.Fatalf("migration was not persisted: %s", after)
+	}
+}
+
+func TestLoadForEmailFallsBackToLegacyTokenKey(t *testing.T) {
+	isolateClaudeDir(t)
+	store := secure.NewMemoryStorage()
+	legacy := PersistedTokens{AccessToken: "legacy-token", AccountKind: AccountKindClaudeAI}
+	buf, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(Service, keyForEmail("legacy@example.com"), buf); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAccountStore(AccountStore{
+		Active: AccountID(AccountKindClaudeAI, "legacy@example.com"),
+		Accounts: map[string]AccountEntry{
+			AccountID(AccountKindClaudeAI, "legacy@example.com"): {
+				Email:   "legacy@example.com",
+				Kind:    AccountKindClaudeAI,
+				AddedAt: time.Now(),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveAccountStore: %v", err)
+	}
+
+	got, err := LoadForEmail(store, AccountID(AccountKindClaudeAI, "legacy@example.com"))
+	if err != nil {
+		t.Fatalf("LoadForEmail: %v", err)
+	}
+	if got.AccessToken != "legacy-token" {
+		t.Fatalf("access token = %q, want legacy-token", got.AccessToken)
 	}
 }
 

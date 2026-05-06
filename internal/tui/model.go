@@ -163,8 +163,14 @@ type (
 	}
 	// loginBrowserFailMsg is sent when the browser fails to open.
 	loginBrowserFailMsg struct{ err error }
-	// loginDoneMsg is sent when the OAuth flow completes.
-	loginDoneMsg struct{ err error }
+	// loginDoneMsg is sent when the OAuth flow completes and live credentials
+	// have been reloaded.
+	loginDoneMsg struct {
+		client  *api.Client
+		profile *profile.Info
+		tokens  auth.PersistedTokens
+		err     error
+	}
 	// authReloadMsg is sent after loginDone to deliver the refreshed API client + profile.
 	authReloadMsg struct {
 		client  *api.Client
@@ -284,8 +290,9 @@ type Config struct {
 	InitialRoles     map[string]string
 	// BackgroundModel returns the model for helper calls such as /compact.
 	BackgroundModel func() string
-	// FetchPlanUsage returns the current Claude plan usage windows.
-	FetchPlanUsage func(context.Context) (planusage.Info, error)
+	// FetchPlanUsage returns the current Claude plan usage windows for a
+	// provider/account that supports plan usage.
+	FetchPlanUsage func(context.Context, settings.ActiveProviderSettings) (planusage.Info, error)
 }
 
 // Model is the Bubble Tea model.
@@ -360,6 +367,7 @@ type Model struct {
 	planUsageFetching  bool
 	planUsageCachedAt  time.Time // when the last successful fetch completed
 	planUsageBackoff   time.Time // don't issue another fetch before this time
+	planUsageProvider  string
 
 	// fastMode is true when /fast is active (showing ⚡ badge).
 	fastMode bool
@@ -605,9 +613,14 @@ func New(cfg Config) Model {
 	// Seed plan usage from disk cache so the footer shows immediately on
 	// startup and multiple instances don't all hammer the API at once.
 	if m.usageStatusEnabled {
-		if entry, err := planusage.LoadCache(settings.ClaudeDir()); err == nil && !entry.CachedAt.IsZero() {
+		cacheKey := ""
+		if provider, ok := m.planUsageProviderSettings(); ok {
+			cacheKey = settings.ProviderKey(provider)
+		}
+		if entry, err := planusage.LoadCacheForKey(settings.ClaudeDir(), cacheKey); err == nil && !entry.CachedAt.IsZero() {
 			m.planUsage = entry.Info
 			m.planUsageCachedAt = entry.CachedAt
+			m.planUsageProvider = cacheKey
 			if !entry.BackoffUntil.IsZero() && time.Now().Before(entry.BackoffUntil) {
 				m.planUsageBackoff = entry.BackoffUntil
 			}
@@ -665,7 +678,11 @@ func (m Model) Init() tea.Cmd {
 	if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
 		if (m.planUsageCachedAt.IsZero() || time.Since(m.planUsageCachedAt) >= planUsageRefreshInterval) &&
 			!time.Now().Before(m.planUsageBackoff) {
-			cmds = append(cmds, fetchPlanUsageCmd(m.cfg.FetchPlanUsage))
+			m2, cmd := m.startPlanUsageFetch()
+			m = m2
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		} else {
 			cmds = append(cmds, planUsageTick())
 		}
@@ -677,19 +694,45 @@ type buddyTickMsg struct{}
 
 const planUsageRefreshInterval = 60 * time.Second
 
-func fetchPlanUsageCmd(fetch func(context.Context) (planusage.Info, error)) tea.Cmd {
+func fetchPlanUsageCmd(fetch func(context.Context, settings.ActiveProviderSettings) (planusage.Info, error), provider settings.ActiveProviderSettings) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		info, err := fetch(ctx)
+		info, err := fetch(ctx, provider)
 		return planUsageMsg{info: info, err: err}
 	}
 }
 
+func (m Model) startPlanUsageFetch() (Model, tea.Cmd) {
+	if !m.usageStatusEnabled || m.cfg.FetchPlanUsage == nil {
+		return m, nil
+	}
+	provider, ok := m.planUsageProviderSettings()
+	if !ok {
+		m.planUsageFetching = false
+		m.planUsageErr = ""
+		m.planUsage = planusage.Info{}
+		m.planUsageCachedAt = time.Time{}
+		m.planUsageBackoff = time.Time{}
+		return m, nil
+	}
+	m.planUsageFetching = true
+	m.planUsageProvider = settings.ProviderKey(provider)
+	return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage, provider)
+}
+
+func (m Model) planUsageProviderSettings() (settings.ActiveProviderSettings, bool) {
+	provider, ok := m.providerForCurrentMode()
+	if !ok || provider.Kind != "claude-subscription" || provider.Account == "" {
+		return settings.ActiveProviderSettings{}, false
+	}
+	return provider, true
+}
+
 // savePlanUsageCacheCmd persists the cache entry to disk as a fire-and-forget
 // Cmd — failures are silently dropped (non-fatal).
-func savePlanUsageCacheCmd(dir string, entry planusage.CacheEntry) tea.Cmd {
+func savePlanUsageCacheCmd(dir, key string, entry planusage.CacheEntry) tea.Cmd {
 	return func() tea.Msg {
-		_ = planusage.SaveCache(dir, entry)
+		_ = planusage.SaveCacheForKey(dir, key, entry)
 		return nil
 	}
 }
@@ -895,7 +938,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				CachedAt:     m.planUsageCachedAt,
 				BackoffUntil: m.planUsageBackoff,
 			}
-			saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), entry)
+			saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), m.planUsageProvider, entry)
 			if m.usageStatusEnabled {
 				return m, tea.Batch(planUsageTick(), saveCacheCmd)
 			}
@@ -909,7 +952,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Info:     m.planUsage,
 			CachedAt: m.planUsageCachedAt,
 		}
-		saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), entry)
+		saveCacheCmd := savePlanUsageCacheCmd(settings.ClaudeDir(), m.planUsageProvider, entry)
 		if m.usageStatusEnabled {
 			return m, tea.Batch(planUsageTick(), saveCacheCmd)
 		}
@@ -922,8 +965,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if time.Now().Before(m.planUsageBackoff) {
 			return m, planUsageTick()
 		}
-		m.planUsageFetching = true
-		return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
+		return m.startPlanUsageFetch()
 
 	case agentDoneMsg:
 		if msg.turnID != m.turnID {
@@ -996,10 +1038,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginStartMsg:
 		useClaudeAI := msg.claudeAI
 		prog := *m.cfg.Program
+		loadAuth := m.cfg.LoadAuth
+		newAPIClient := m.cfg.NewAPIClient
 		return m, func() tea.Msg {
 			display := &tuiLoginDisplay{prog: prog}
-			err := runLoginFlow(useClaudeAI, display)
-			return loginDoneMsg{err: err}
+			if err := runLoginFlow(useClaudeAI, display); err != nil {
+				prog.Send(loginDoneMsg{err: err})
+				return nil
+			}
+			if loadAuth != nil && newAPIClient != nil {
+				tok, prof, err := loadAuth(context.Background())
+				if err != nil {
+					prog.Send(loginDoneMsg{err: fmt.Errorf("reload credentials: %w", err)})
+					return nil
+				}
+				prog.Send(loginDoneMsg{client: newAPIClient(tok), profile: prof, tokens: tok})
+				return nil
+			}
+			prog.Send(loginDoneMsg{})
+			return nil
 		}
 
 	case loginURLMsg:
@@ -1040,20 +1097,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loginFlowMsgStart = -1
 		m.noAuth = false
-		// Reload credentials, swap the API client, then show the welcome card.
-		if m.cfg.LoadAuth != nil && m.cfg.NewAPIClient != nil && m.cfg.Loop != nil {
-			return m, func() tea.Msg {
-				ctx := context.Background()
-				tok, prof, err := m.cfg.LoadAuth(ctx)
-				if err != nil {
-					return authReloadMsg{err: err}
+		if msg.client != nil && m.cfg.Loop != nil {
+			m.cfg.Loop.SetClient(msg.client)
+			if msg.profile != nil {
+				m.cfg.Profile = *msg.profile
+			}
+			m.messages = nil
+			m.history = nil
+			m.welcomeDismissed = false
+			if _, ok := m.activeMCPProvider(); !ok {
+				provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email, msg.tokens)
+				m.setActiveProvider(provider)
+				if suffix := persistActiveProvider(provider); suffix != "" {
+					m.messages = append(m.messages, Message{Role: RoleError, Content: strings.TrimSpace(suffix)})
 				}
-				return authReloadMsg{client: m.cfg.NewAPIClient(tok), profile: prof, tokens: tok}
 			}
 		}
 		m.messages = append(m.messages, m.welcomeCard())
 		m.refreshViewport()
 		m.vp.GotoBottom()
+		if msg.client != nil && m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
+			return m.startPlanUsageFetch()
+		}
 		return m, nil
 
 	case authReloadMsg:
@@ -1077,8 +1142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
-				m.planUsageFetching = true
-				return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
+				return m.startPlanUsageFetch()
 			}
 		}
 		m.refreshViewport()
@@ -1114,7 +1178,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.refreshViewport()
-		return m, nil
+		return m.startPlanUsageFetch()
 
 	case commandsLoginMsg:
 		// Trigger login flow from account panel "+ Add account" action.
@@ -1307,7 +1371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case setPermissionModeMsg:
 		m.applyPermissionMode(msg.mode)
-		return m, nil
+		return m.startPlanUsageFetch()
 
 	case setModelNameMsg:
 		m.modelName = msg.name
@@ -1608,7 +1672,8 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		default:
 			m.flashMsg = "default mode (shift+tab to cycle)"
 		}
-		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		m2, usageCmd := m.startPlanUsageFetch()
+		return m2, tea.Batch(usageCmd, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} })), true
 
 	case "tab", "esc":
 		// Clear pending images and paste placeholders on Esc.
@@ -2702,7 +2767,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text + persistSuffix})
 		}
 		m.refreshViewport()
-		return m, nil
+		return m.startPlanUsageFetch()
 	case "provider-switch":
 		if res.Provider == nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: "Provider switch payload missing."})
@@ -2769,7 +2834,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: msg + suffix})
 		}
 		m.refreshViewport()
-		return m, nil
+		return m.startPlanUsageFetch()
 	case "compact":
 		if m.cfg.APIClient == nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: "Compact unavailable: no API client."})
@@ -2946,7 +3011,7 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.planUsageFetching = true
 			m.refreshViewport()
 			if m.cfg.FetchPlanUsage != nil {
-				return m, fetchPlanUsageCmd(m.cfg.FetchPlanUsage)
+				return m.startPlanUsageFetch()
 			}
 			m.planUsageFetching = false
 			m.planUsageErr = "plan usage fetcher unavailable"
@@ -3593,6 +3658,8 @@ func (m Model) modelPickerItemAvailable(item pickerItem) bool {
 	switch {
 	case strings.HasPrefix(item.Value, "local:"):
 		return true
+	case strings.HasPrefix(item.Value, "provider:"):
+		return true
 	case strings.HasPrefix(item.Value, "anthropic-api:"):
 		return m.anyAccountForProviderKind("anthropic-api")
 	case strings.HasPrefix(item.Value, "claude-subscription:"):
@@ -3697,9 +3764,15 @@ func providerPickerValue(provider settings.ActiveProviderSettings) string {
 		return "local:" + server
 	}
 	if provider.Kind == "anthropic-api" {
+		if provider.Account != "" {
+			return "provider:" + settings.ProviderKey(provider)
+		}
 		return "anthropic-api:" + provider.Model
 	}
 	if provider.Kind == "claude-subscription" {
+		if provider.Account != "" {
+			return "provider:" + settings.ProviderKey(provider)
+		}
 		return "claude-subscription:" + provider.Model
 	}
 	return provider.Model
@@ -4330,6 +4403,12 @@ func (m Model) renderUsageFooter(width int) string {
 	}
 	providerLine := m.renderProviderUsageWindow()
 	if _, ok := m.activeMCPProvider(); ok {
+		return padStatusLine(m.renderContextUsageWindow(), width) + "\n" +
+			padStatusLine(providerLine, width) + "\n" +
+			padStatusLine("", width) + "\n" +
+			padStatusLine("", width)
+	}
+	if _, ok := m.planUsageProviderSettings(); !ok {
 		return padStatusLine(m.renderContextUsageWindow(), width) + "\n" +
 			padStatusLine(providerLine, width) + "\n" +
 			padStatusLine("", width) + "\n" +

@@ -190,6 +190,31 @@ func TestSaveActiveProviderMirrorsDefaultRole(t *testing.T) {
 	}
 }
 
+func TestSaveRoleProvider_ClaudeAccountScopedRole(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	value := ActiveProviderSettings{
+		Kind:    "claude-subscription",
+		Account: "personal@example.com",
+		Model:   "claude-opus-4-7",
+	}
+	if err := SaveRoleProvider(RolePlanning, value); err != nil {
+		t.Fatalf("SaveRoleProvider: %v", err)
+	}
+	merged, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	key := "claude-subscription.personal@example.com.claude-opus-4-7"
+	if merged.Roles[RolePlanning] != key {
+		t.Fatalf("roles.planning = %q, want %q", merged.Roles[RolePlanning], key)
+	}
+	if got := merged.Providers[key]; got.Account != "personal@example.com" || got.Model != "claude-opus-4-7" {
+		t.Fatalf("providers[%q] = %#v, want account-scoped Claude provider", key, got)
+	}
+}
+
 func TestProviderKey_AnthropicAPIIncludesAccount(t *testing.T) {
 	value := ActiveProviderSettings{
 		Kind:    "anthropic-api",
@@ -197,6 +222,17 @@ func TestProviderKey_AnthropicAPIIncludesAccount(t *testing.T) {
 		Model:   "claude-sonnet-4-6",
 	}
 	if got, want := ProviderKey(value), "anthropic-api.api@example.com.claude-sonnet-4-6"; got != want {
+		t.Fatalf("ProviderKey = %q, want %q", got, want)
+	}
+}
+
+func TestProviderKey_ClaudeSubscriptionIncludesAccount(t *testing.T) {
+	value := ActiveProviderSettings{
+		Kind:    "claude-subscription",
+		Account: "max@example.com",
+		Model:   "claude-sonnet-4-6",
+	}
+	if got, want := ProviderKey(value), "claude-subscription.max@example.com.claude-sonnet-4-6"; got != want {
 		t.Fatalf("ProviderKey = %q, want %q", got, want)
 	}
 }

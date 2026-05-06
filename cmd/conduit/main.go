@@ -184,6 +184,69 @@ func removeString(values []string, target string) []string {
 	return out
 }
 
+func fillProfileAccountFallback(p *profile.Info) {
+	if p == nil || p.Email != "" {
+		return
+	}
+	active := auth.ActiveEmail()
+	if active == "" {
+		return
+	}
+	store, err := auth.ListAccounts()
+	if err != nil {
+		return
+	}
+	if entry, ok := store.Accounts[active]; ok {
+		if p.DisplayName == "" {
+			p.DisplayName = entry.DisplayName
+		}
+		p.Email = entry.Email
+		if p.OrganizationName == "" {
+			p.OrganizationName = entry.OrganizationName
+		}
+		if p.SubscriptionType == "" {
+			p.SubscriptionType = entry.SubscriptionType
+		}
+		return
+	}
+	for _, entry := range store.Accounts {
+		if entry.Email != "" && active == entry.Email {
+			p.Email = entry.Email
+			return
+		}
+	}
+}
+
+func saveProfileAccountMetadata(p profile.Info, kind string) {
+	if p.Email == "" {
+		return
+	}
+	_ = auth.SaveAccountProfile(p.Email, kind, p.DisplayName, p.OrganizationName, p.SubscriptionType)
+}
+
+func refreshClaudeAccountProfiles(ctx context.Context) {
+	store, err := auth.ListAccounts()
+	if err != nil {
+		return
+	}
+	secureStore := secure.NewDefault()
+	tc := auth.NewTokenClient(auth.ProdConfig, nil)
+	for id, entry := range store.Accounts {
+		if entry.Kind != auth.AccountKindClaudeAI || entry.Email == "" {
+			continue
+		}
+		tok, err := auth.EnsureFresh(ctx, secureStore, tc, id, time.Now(), 5*time.Minute)
+		if err != nil || tok.AccessToken == "" {
+			continue
+		}
+		p, _ := profile.Fetch(ctx, tok.AccessToken)
+		if p.Email == "" {
+			p.Email = entry.Email
+		}
+		saveProfileAccountMetadata(p, auth.AccountKindClaudeAI)
+	}
+}
+
 // loadAuth loads and refreshes tokens for the active account.
 func loadAuth(ctx context.Context) (auth.PersistedTokens, error) {
 	store := secure.NewDefault()
@@ -355,7 +418,10 @@ func runREPL(continueMode bool, resumeID string) error {
 	var prof profile.Info
 	if authErr == nil && tok.AccessToken != "" {
 		prof, _ = profile.Fetch(ctx, tok.AccessToken)
+		fillProfileAccountFallback(&prof)
+		saveProfileAccountMetadata(prof, auth.InferAccountKind(tok))
 	}
+	refreshClaudeAccountProfiles(ctx)
 
 	// Session persistence — create or resume.
 	cwd, _ := os.Getwd()
@@ -766,8 +832,14 @@ func runREPL(continueMode bool, resumeID string) error {
 		InitialProviders:          s.Providers,
 		InitialRoles:              s.Roles,
 		PluginDirs:                pluginDirs,
-		FetchPlanUsage: func(ctx context.Context) (planusage.Info, error) {
-			tok, err := loadAuth(ctx)
+		FetchPlanUsage: func(ctx context.Context, provider settings.ActiveProviderSettings) (planusage.Info, error) {
+			if provider.Kind != "claude-subscription" || provider.Account == "" {
+				return planusage.Info{}, fmt.Errorf("plan usage unsupported for provider %q", provider.Kind)
+			}
+			store := secure.NewDefault()
+			cfg := auth.ProdConfig
+			tc := auth.NewTokenClient(cfg, nil)
+			tok, err := auth.EnsureFresh(ctx, store, tc, auth.AccountID(auth.AccountKindClaudeAI, provider.Account), time.Now(), 5*time.Minute)
 			if err != nil {
 				return planusage.Info{}, err
 			}
@@ -779,6 +851,9 @@ func runREPL(continueMode bool, resumeID string) error {
 				return auth.PersistedTokens{}, nil, err
 			}
 			p, _ := profile.Fetch(ctx, tok.AccessToken)
+			fillProfileAccountFallback(&p)
+			saveProfileAccountMetadata(p, auth.InferAccountKind(tok))
+			refreshClaudeAccountProfiles(ctx)
 			return tok, &p, nil
 		},
 		NewAPIClient: func(tok auth.PersistedTokens) *api.Client {

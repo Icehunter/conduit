@@ -19,10 +19,19 @@ type CacheEntry struct {
 	BackoffUntil time.Time `json:"backoff_until,omitempty"`
 }
 
+type Store struct {
+	Default  CacheEntry            `json:"default,omitempty"`
+	Accounts map[string]CacheEntry `json:"accounts,omitempty"`
+}
+
 // LoadCache reads the cache file from dir. Returns a zero-value CacheEntry
 // (not an error) when the file is missing or corrupt — callers should treat a
 // zero CachedAt as "no cache".
 func LoadCache(dir string) (CacheEntry, error) {
+	return LoadCacheForKey(dir, "")
+}
+
+func LoadCacheForKey(dir, key string) (CacheEntry, error) {
 	data, err := os.ReadFile(filepath.Join(dir, cacheFile))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -30,16 +39,49 @@ func LoadCache(dir string) (CacheEntry, error) {
 		}
 		return CacheEntry{}, fmt.Errorf("planusage: read cache: %w", err)
 	}
-	var entry CacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
+	if key == "" {
+		var entry CacheEntry
+		if err := json.Unmarshal(data, &entry); err == nil && !entry.CachedAt.IsZero() {
+			return entry, nil
+		}
+	}
+	var store Store
+	if err := json.Unmarshal(data, &store); err != nil {
 		return CacheEntry{}, fmt.Errorf("planusage: decode cache: %w", err)
 	}
-	return entry, nil
+	if key != "" && store.Accounts != nil {
+		return store.Accounts[key], nil
+	}
+	return store.Default, nil
 }
 
 // SaveCache writes entry to dir atomically (temp file + rename).
 func SaveCache(dir string, entry CacheEntry) error {
-	data, err := json.Marshal(entry)
+	return SaveCacheForKey(dir, "", entry)
+}
+
+func SaveCacheForKey(dir, key string, entry CacheEntry) error {
+	if key != "" {
+		store := Store{Accounts: map[string]CacheEntry{}}
+		data, err := os.ReadFile(filepath.Join(dir, cacheFile))
+		if err == nil && len(data) > 0 {
+			_ = json.Unmarshal(data, &store)
+			if store.Accounts == nil {
+				var legacy CacheEntry
+				if err := json.Unmarshal(data, &legacy); err == nil && !legacy.CachedAt.IsZero() {
+					store.Default = legacy
+				}
+				store.Accounts = map[string]CacheEntry{}
+			}
+		}
+		store.Accounts[key] = entry
+		return writeCache(dir, store)
+	}
+	return writeCache(dir, entry)
+}
+
+func writeCache(dir string, value any) error {
+	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("planusage: encode cache: %w", err)
 	}

@@ -6,6 +6,10 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // loginPromptState holds the /login account picker state.
@@ -45,10 +49,8 @@ func (m Model) handleLoginKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Opening browser to sign in…"})
 		m.refreshViewport()
 		useClaudeAI := opt.claudeAI
-		prog := *m.cfg.Program
 		return m, func() tea.Msg {
-			prog.Send(loginStartMsg{claudeAI: useClaudeAI})
-			return nil
+			return loginStartMsg{claudeAI: useClaudeAI}
 		}
 	case "esc", "ctrl+c":
 		m.loginPrompt = nil
@@ -99,6 +101,23 @@ func (m Model) renderLoginPicker() string {
 func (m Model) welcomeCard() Message {
 	cwd, _ := os.Getwd()
 	p := m.cfg.Profile
+	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == "claude-subscription" && provider.Account != "" {
+		if p.Email != provider.Account {
+			p = profile.Info{Email: provider.Account}
+		}
+		if entry, ok := accountEntryForProvider(provider); ok {
+			p.Email = entry.Email
+			if entry.DisplayName != "" {
+				p.DisplayName = entry.DisplayName
+			}
+			if entry.OrganizationName != "" {
+				p.OrganizationName = entry.OrganizationName
+			}
+			if entry.SubscriptionType != "" {
+				p.SubscriptionType = entry.SubscriptionType
+			}
+		}
+	}
 	fields := []string{
 		m.cfg.Version,
 		m.activeModelDisplayName(),
@@ -113,6 +132,19 @@ func (m Model) welcomeCard() Message {
 		WelcomeCard: true,
 		Content:     strings.Join(fields, "\t"),
 	}
+}
+
+func accountEntryForProvider(provider settings.ActiveProviderSettings) (auth.AccountEntry, bool) {
+	store, err := auth.LoadAccountStore()
+	if err != nil {
+		return auth.AccountEntry{}, false
+	}
+	for _, entry := range store.Accounts {
+		if entry.Email == provider.Account && tuiProviderKindMatchesAccount(provider.Kind, entry.Kind) {
+			return entry, true
+		}
+	}
+	return auth.AccountEntry{}, false
 }
 
 // dismissWelcome removes the welcome card from the message list the first time

@@ -13,7 +13,8 @@ import (
 const Service = "com.icehunter.conduit"
 
 // PersistKey is the base keychain item name prefix for OAuth tokens.
-// Per-account entries use "oauth-tokens-<email>".
+// Per-account entries use "oauth-tokens-<kind>:<email>".
+// Legacy "oauth-tokens-<email>" entries are still read for migration.
 const PersistKey = "oauth-tokens"
 
 // PersistedTokens is the stored token shape: network tokens plus a

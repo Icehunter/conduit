@@ -114,7 +114,7 @@ func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 
 func TestRegisterModelCommand_ModelsOmitsAccountSectionWithoutAccount(t *testing.T) {
 	r := New()
-	RegisterModelCommand(r, func() string { return "local:local-router" }, func(string) {}, func() string { return "" }, nil, nil)
+	RegisterModelCommand(r, func() string { return "local:local-router" }, func(string) {}, func() []settings.ActiveProviderSettings { return nil }, nil, nil)
 
 	result, ok := r.Dispatch("/models")
 	if !ok {
@@ -213,7 +213,9 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 		r,
 		func() string { return "claude-sonnet-4-6" },
 		func(string) {},
-		func() string { return "anthropic-api" },
+		func() []settings.ActiveProviderSettings {
+			return []settings.ActiveProviderSettings{{Kind: "anthropic-api", Account: "api@example.com"}}
+		},
 		nil,
 		nil,
 	)
@@ -225,7 +227,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-4-7" {
+	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-4-7" || result.Provider.Account != "api@example.com" {
 		t.Fatalf("provider = %#v, want Anthropic API Opus provider", result.Provider)
 	}
 
@@ -237,11 +239,123 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
 		t.Fatalf("unmarshal picker: %v", err)
 	}
-	if !got.Items[0].Section || got.Items[0].Label != "Anthropic API" {
+	if !got.Items[0].Section || got.Items[0].Label != "Anthropic API · api@example.com" {
 		t.Fatalf("first picker item = %#v, want Anthropic API section", got.Items[0])
 	}
-	if got.Items[1].Value != "anthropic-api:claude-opus-4-7" {
-		t.Fatalf("first model value = %q, want anthropic-api prefix", got.Items[1].Value)
+	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-opus-4-7" {
+		t.Fatalf("first model value = %q, want provider key", got.Items[1].Value)
+	}
+}
+
+func TestRegisterModelCommand_ModelsShowsAllConfiguredAccountProviders(t *testing.T) {
+	r := New()
+	RegisterModelCommand(
+		r,
+		func() string { return "claude-sonnet-4-6" },
+		func(string) {},
+		func() []settings.ActiveProviderSettings {
+			return []settings.ActiveProviderSettings{
+				{Kind: "anthropic-api", Account: "api@example.com"},
+				{Kind: "claude-subscription", Account: "claude@example.com"},
+			}
+		},
+		nil,
+		nil,
+	)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	foundAnthropic := false
+	foundClaude := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "Anthropic API · api@example.com" {
+			foundAnthropic = true
+		}
+		if item.Section && item.Label == "Claude Subscription · claude@example.com" {
+			foundClaude = true
+		}
+	}
+	if !foundAnthropic || !foundClaude {
+		t.Fatalf("picker sections anthropic=%v claude=%v items=%#v", foundAnthropic, foundClaude, got.Items)
+	}
+}
+
+func TestRegisterModelCommand_ModelsShowsMultipleClaudeAccounts(t *testing.T) {
+	r := New()
+	RegisterModelCommand(
+		r,
+		func() string { return "claude-sonnet-4-6" },
+		func(string) {},
+		func() []settings.ActiveProviderSettings {
+			return []settings.ActiveProviderSettings{
+				{Kind: "claude-subscription", Account: "work@example.com"},
+				{Kind: "claude-subscription", Account: "personal@example.com"},
+			}
+		},
+		nil,
+		nil,
+	)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	foundWork := false
+	foundPersonal := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "Claude Subscription · work@example.com" {
+			foundWork = true
+		}
+		if item.Section && item.Label == "Claude Subscription · personal@example.com" {
+			foundPersonal = true
+		}
+	}
+	if !foundWork || !foundPersonal {
+		t.Fatalf("picker sections work=%v personal=%v items=%#v", foundWork, foundPersonal, got.Items)
+	}
+}
+
+func TestRegisterModelCommand_ProviderKeySelectionCarriesAccount(t *testing.T) {
+	r := New()
+	RegisterModelCommand(
+		r,
+		func() string { return "claude-sonnet-4-6" },
+		func(string) {},
+		func() []settings.ActiveProviderSettings {
+			return []settings.ActiveProviderSettings{
+				{Kind: "claude-subscription", Account: "work@example.com"},
+				{Kind: "claude-subscription", Account: "personal@example.com"},
+			}
+		},
+		nil,
+		nil,
+	)
+
+	result, ok := r.Dispatch("/model --role planning provider:claude-subscription.personal@example.com.claude-opus-4-7")
+	if !ok {
+		t.Fatal("expected provider key selection to dispatch")
+	}
+	if result.Type != "provider-switch" || result.Provider == nil {
+		t.Fatalf("result = %#v, want provider-switch", result)
+	}
+	if result.Role != settings.RolePlanning {
+		t.Fatalf("role = %q, want planning", result.Role)
+	}
+	if result.Provider.Kind != "claude-subscription" || result.Provider.Account != "personal@example.com" || result.Provider.Model != "claude-opus-4-7" {
+		t.Fatalf("provider = %#v, want personal Claude Opus", result.Provider)
+	}
+	if key := settings.ProviderKey(*result.Provider); key != "claude-subscription.personal@example.com.claude-opus-4-7" {
+		t.Fatalf("provider key = %q, want account-scoped key", key)
 	}
 }
 

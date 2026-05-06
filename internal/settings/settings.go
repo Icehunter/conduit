@@ -722,6 +722,9 @@ func ProviderKey(value ActiveProviderSettings) string {
 			return kind + "." + value.Server
 		}
 	case "claude-subscription":
+		if value.Account != "" && value.Model != "" {
+			return kind + "." + value.Account + "." + value.Model
+		}
 		if value.Model != "" {
 			return kind + "." + value.Model
 		}

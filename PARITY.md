@@ -222,7 +222,7 @@
 | Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
 | Doctor screen | `screens/Doctor.tsx` | — | `/doctor` → doctor-panel overlay | ✅ | Full-screen checklist panel with ✅/❌ icons, binary path, OS/arch; q/Esc closes |
-| Stats screen | `components/Stats.tsx` | — | `internal/tui/settings_panel.go`, `internal/tui/settings_stats.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
+| Stats screen | `components/Stats.tsx` | — | `internal/tui/settings_panel.go`, `internal/tui/settings_stats.go`, `internal/sessionstats/` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
 | Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | ✅ | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge, message count, preview panel showing age+count+title of selected session. Tag tabs descoped (no tag-based grouping in CC external build). |
 | Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command → search-panel overlay | ✅ | Navigable search results panel; j/k navigation; Enter loads matching session; grouped by session title+age; ripgrep code-search panel descoped |
 | Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑/↓/jk Enter; current marked ● |

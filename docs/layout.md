@@ -19,6 +19,9 @@ the port harder to compare with the TypeScript source.
 - `internal/tools/` contains one package per Claude-compatible tool. Package
   directories use lowercase names ending in `tool` when that mirrors an upstream
   tool name.
+- `internal/sessionstats/` loads Claude/conduit session usage stats from the
+  stats cache or JSONL transcripts. TUI code renders these stats but does not
+  scan the filesystem directly.
 - `internal/tui/` owns Bubble Tea state, update dispatch, layout, panels, and
   terminal rendering.
 - `internal/rtk/` owns all in-process command-output filtering. Do not trim
@@ -42,7 +45,8 @@ state and helper methods can move between files without creating import cycles.
 - `history.go` converts API history into display messages and persists/export
   helpers.
 - `settings_panel.go` handles settings panel navigation, status, and config.
-- `settings_stats.go` handles settings stats, usage, charts, and JSONL scanning.
+- `settings_stats.go` handles settings stats rendering, usage, charts, and
+  factoids using data loaded by `internal/sessionstats/`.
 - `*_panel.go` files implement individual full-screen or floating panels.
 
 ## Naming

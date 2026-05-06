@@ -28,6 +28,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/sessionstats"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 )
@@ -180,14 +181,14 @@ func newSettingsPanel(
 	p.rebuildConfigItems()
 	p.applyFilter()
 	cmd := func() tea.Msg {
-		return settingsStatsMsg{stats: loadAllStats(0), days: 0}
+		return settingsStatsMsg{stats: sessionstats.LoadAll(0), days: 0}
 	}
 	return p, cmd
 }
 
 func loadStatsCmd(days int) tea.Cmd {
 	return func() tea.Msg {
-		return settingsStatsMsg{stats: loadAllStats(days), days: days}
+		return settingsStatsMsg{stats: sessionstats.LoadAll(days), days: days}
 	}
 }
 

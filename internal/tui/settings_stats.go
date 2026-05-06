@@ -1,50 +1,23 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"image/color"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/guptarohit/asciigraph"
+
+	"github.com/icehunter/conduit/internal/sessionstats"
 )
 
 // ── Stats tab ─────────────────────────────────────────────────────────────────
 
-// dailyModelEntry mirrors DailyModelTokens from the cache — one entry per active day.
-type dailyModelEntry struct {
-	date          string
-	tokensByModel map[string]int
-}
-
-type sessionStats struct {
-	totalSessions    int
-	totalMessages    int
-	totalInputTok    int
-	totalOutputTok   int
-	totalCostUSD     float64
-	modelUsage       map[string]modelUsageStats
-	dailyCounts      map[string]int    // day → message count
-	dailyTokens      map[string]int    // day → total tokens (all models)
-	dailyModelTokens []dailyModelEntry // ordered by date — for per-model chart
-	longestStreak    int
-	currentStreak    int
-	mostActiveDay    string
-	longestSession   time.Duration
-	rangeStart       time.Time // earliest date in the loaded range
-	totalDaysRange   int       // calendar days from rangeStart to today
-}
-
-type modelUsageStats struct {
-	inputTokens  int
-	outputTokens int
-	sessions     int
-}
+type dailyModelEntry = sessionstats.DailyModelEntry
+type sessionStats = sessionstats.Stats
+type modelUsageStats = sessionstats.ModelUsage
 
 // modelRow is a model name + usage pair used for chart and breakdown rendering.
 type modelRow struct {
@@ -83,13 +56,13 @@ func (m Model) renderSettingsStats(sb *strings.Builder, p *settingsPanelState, i
 }
 
 func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, innerW int) {
-	if stats.totalSessions == 0 {
+	if stats.TotalSessions == 0 {
 		sb.WriteString(stylePickerDesc.Render("  No sessions found."))
 		return
 	}
 
 	// 7-row GitHub-style heatmap.
-	buildHeatmap(sb, stats.dailyCounts, innerW)
+	buildHeatmap(sb, stats.DailyCounts, innerW)
 	sb.WriteByte('\n')
 
 	dim := stylePickerDesc
@@ -98,21 +71,21 @@ func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, inn
 	// Favorite model by output tokens.
 	favModel := ""
 	favTok := 0
-	for model, u := range stats.modelUsage {
-		if u.outputTokens > favTok {
-			favTok = u.outputTokens
+	for model, u := range stats.ModelUsage {
+		if u.OutputTokens > favTok {
+			favTok = u.OutputTokens
 			favModel = model
 		}
 	}
-	totalTok := stats.totalInputTok + stats.totalOutputTok
+	totalTok := stats.TotalInputTok + stats.TotalOutputTok
 
 	// Layout matches screenshot: label left-aligned, value accent, 2 columns per row.
 	type col struct{ label, value string }
 	rows := [][2]col{
 		{{"Favorite model", shortModelName(favModel)}, {"Total tokens", formatNum(totalTok)}},
-		{{"Sessions", fmt.Sprintf("%d", stats.totalSessions)}, {"Longest session", formatDur(stats.longestSession)}},
-		{{"Active days", activeDaysLabel(stats)}, {"Longest streak", fmt.Sprintf("%d days", stats.longestStreak)}},
-		{{"Most active day", stats.mostActiveDay}, {"Current streak", fmt.Sprintf("%d days", stats.currentStreak)}},
+		{{"Sessions", fmt.Sprintf("%d", stats.TotalSessions)}, {"Longest session", formatDur(stats.LongestSession)}},
+		{{"Active days", activeDaysLabel(stats)}, {"Longest streak", fmt.Sprintf("%d days", stats.LongestStreak)}},
+		{{"Most active day", stats.MostActiveDay}, {"Current streak", fmt.Sprintf("%d days", stats.CurrentStreak)}},
 	}
 	// Fixed column widths: left col = 38 visible chars, right col fills the rest.
 	// Using a fixed left-column width ensures right column values align regardless
@@ -138,22 +111,22 @@ func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, inn
 }
 
 func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, innerW int) {
-	if len(stats.modelUsage) == 0 {
+	if len(stats.ModelUsage) == 0 {
 		sb.WriteString(stylePickerDesc.Render("  No model usage data found."))
 		return
 	}
 
 	var rows []modelRow
 	total := 0
-	for k, v := range stats.modelUsage {
+	for k, v := range stats.ModelUsage {
 		if k == "<synthetic>" {
 			continue
 		}
 		rows = append(rows, modelRow{k, v})
-		total += v.inputTokens + v.outputTokens
+		total += v.InputTokens + v.OutputTokens
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].u.inputTokens+rows[i].u.outputTokens > rows[j].u.inputTokens+rows[j].u.outputTokens
+		return rows[i].u.InputTokens+rows[i].u.OutputTokens > rows[j].u.InputTokens+rows[j].u.OutputTokens
 	})
 
 	// Model colors — shared by chart legend and 2-column breakdown below.
@@ -168,12 +141,12 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 
 	// Tokens per Day chart using asciigraph (top 3 models as separate colored series).
 	sb.WriteString(fgOnBg(colorFg).Bold(true).Render("  Tokens per Day") + "\n")
-	buildTokensLineChart(sb, stats.dailyModelTokens, rows, modelColors, innerW)
+	buildTokensLineChart(sb, stats.DailyModelTokens, rows, modelColors, innerW)
 	sb.WriteByte('\n')
 
 	colW := (innerW - 2) / 2
 	renderModelEntry := func(idx int, r modelRow) (line1, line2 string) {
-		tot := r.u.inputTokens + r.u.outputTokens
+		tot := r.u.InputTokens + r.u.OutputTokens
 		pct := 0
 		if total > 0 {
 			pct = tot * 100 / total
@@ -183,7 +156,7 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 		name := fgOnBg(colorFg).Bold(true).Render(shortModelName(r.name))
 		line1 = dot + surfaceSpaces(1) + name + surfaceSpaces(1) + stylePickerDesc.Render(fmt.Sprintf("(%d%%)", pct))
 		line2 = stylePickerDesc.Render(fmt.Sprintf("    In: %s · Out: %s",
-			formatNum(r.u.inputTokens), formatNum(r.u.outputTokens)))
+			formatNum(r.u.InputTokens), formatNum(r.u.OutputTokens)))
 		return
 	}
 
@@ -309,454 +282,6 @@ func renderLimitBar(label string, pctUsed, remaining, limit, innerW int) string 
 	bar := style.Render(strings.Repeat("█", filled)) +
 		stylePickerDesc.Render(strings.Repeat("░", barW-filled))
 	return fmt.Sprintf("  %-14s %s %d%%  (%d / %d)\n", label+":", bar, 100-pctUsed, remaining, limit)
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Stats loading — reads ~/.claude/stats-cache.json (maintained by Claude Code),
-// falls back to JSONL scanning only when the cache is absent.
-// ──────────────────────────────────────────────────────────────────────────────
-
-// statsCacheFile is the shape of ~/.claude/stats-cache.json written by Claude Code.
-type statsCacheFile struct {
-	Version          int    `json:"version"`
-	LastComputedDate string `json:"lastComputedDate"`
-	TotalSessions    int    `json:"totalSessions"`
-	TotalMessages    int    `json:"totalMessages"`
-	FirstSessionDate string `json:"firstSessionDate"`
-	LongestSession   struct {
-		Duration int64 `json:"duration"` // milliseconds
-	} `json:"longestSession"`
-	DailyActivity []struct {
-		Date         string `json:"date"`
-		MessageCount int    `json:"messageCount"`
-		SessionCount int    `json:"sessionCount"`
-	} `json:"dailyActivity"`
-	DailyModelTokens []struct {
-		Date          string         `json:"date"`
-		TokensByModel map[string]int `json:"tokensByModel"`
-	} `json:"dailyModelTokens"`
-	ModelUsage map[string]struct {
-		InputTokens  int `json:"inputTokens"`
-		OutputTokens int `json:"outputTokens"`
-	} `json:"modelUsage"`
-	HourCounts map[string]int `json:"hourCounts"`
-}
-
-func loadAllStats(days int) sessionStats {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return sessionStats{}
-	}
-
-	// Try the stats cache first.
-	cachePath := filepath.Join(home, ".claude", "stats-cache.json")
-	if data, err := os.ReadFile(cachePath); err == nil {
-		var cache statsCacheFile
-		if json.Unmarshal(data, &cache) == nil && cache.TotalSessions > 0 {
-			return statsFromCache(&cache, days)
-		}
-	}
-
-	// Fallback: scan JSONL files.
-	return scanAllJSONL(home, days)
-}
-
-// statsFromCache converts a statsCacheFile into sessionStats, optionally filtering
-// to the most recent `days` days (0 = all time).
-func statsFromCache(cache *statsCacheFile, days int) sessionStats {
-	cutoff := time.Time{}
-	if days > 0 {
-		cutoff = time.Now().AddDate(0, 0, -days)
-	}
-
-	out := sessionStats{
-		modelUsage:  map[string]modelUsageStats{},
-		dailyCounts: map[string]int{},
-		dailyTokens: map[string]int{},
-	}
-
-	// Pre-sort DailyModelTokens by date for ordered chart series.
-	sortedDMT := make([]struct {
-		Date          string
-		TokensByModel map[string]int
-	}, len(cache.DailyModelTokens))
-	for i, e := range cache.DailyModelTokens {
-		sortedDMT[i].Date = e.Date
-		sortedDMT[i].TokensByModel = e.TokensByModel
-	}
-	sort.Slice(sortedDMT, func(i, j int) bool {
-		return sortedDMT[i].Date < sortedDMT[j].Date
-	})
-
-	if cache.LongestSession.Duration > 0 {
-		out.longestSession = time.Duration(cache.LongestSession.Duration) * time.Millisecond
-	}
-
-	if cutoff.IsZero() {
-		out.totalSessions = cache.TotalSessions
-		out.totalMessages = cache.TotalMessages
-	}
-
-	// DailyActivity → dailyCounts + filtered totals.
-	for _, da := range cache.DailyActivity {
-		t, err := time.Parse("2006-01-02", da.Date)
-		if err != nil {
-			continue
-		}
-		if !cutoff.IsZero() && t.Before(cutoff) {
-			continue
-		}
-		out.dailyCounts[da.Date] = da.MessageCount
-		if !cutoff.IsZero() {
-			out.totalSessions += da.SessionCount
-			out.totalMessages += da.MessageCount
-		}
-	}
-
-	// DailyModelTokens → dailyTokens + per-model filtered combined totals + chart series.
-	filteredModelCombined := map[string]int{} // model → combined tok in filtered range
-	for _, dmt := range sortedDMT {
-		t, err := time.Parse("2006-01-02", dmt.Date)
-		if err != nil {
-			continue
-		}
-		if !cutoff.IsZero() && t.Before(cutoff) {
-			continue
-		}
-		dayTotal := 0
-		for model, tok := range dmt.TokensByModel {
-			dayTotal += tok
-			if !cutoff.IsZero() {
-				filteredModelCombined[model] += tok
-			}
-		}
-		out.dailyTokens[dmt.Date] = dayTotal
-		out.dailyModelTokens = append(out.dailyModelTokens, dailyModelEntry{
-			date:          dmt.Date,
-			tokensByModel: dmt.TokensByModel,
-		})
-	}
-
-	// All-time: use modelUsage directly (has input+output split).
-	if cutoff.IsZero() {
-		for model, u := range cache.ModelUsage {
-			out.modelUsage[model] = modelUsageStats{
-				inputTokens:  u.InputTokens,
-				outputTokens: u.OutputTokens,
-			}
-			out.totalInputTok += u.InputTokens
-			out.totalOutputTok += u.OutputTokens
-		}
-	} else {
-		// Filtered range: dailyModelTokens has combined totals only.
-		// Derive input/output split using the all-time ratio from modelUsage.
-		for model, combined := range filteredModelCombined {
-			var inTok, outTok int
-			if u, ok := cache.ModelUsage[model]; ok {
-				allTotal := u.InputTokens + u.OutputTokens
-				if allTotal > 0 {
-					// Apply same in/out ratio as all-time.
-					inTok = combined * u.InputTokens / allTotal
-					outTok = combined - inTok
-				} else {
-					outTok = combined
-				}
-			} else {
-				outTok = combined
-			}
-			out.modelUsage[model] = modelUsageStats{
-				inputTokens:  inTok,
-				outputTokens: outTok,
-			}
-			out.totalInputTok += inTok
-			out.totalOutputTok += outTok
-		}
-	}
-
-	// Set rangeStart: earliest date in scope.
-	if cutoff.IsZero() {
-		// All time: use firstSessionDate from cache.
-		if cache.FirstSessionDate != "" {
-			if t, err := time.Parse(time.RFC3339Nano, cache.FirstSessionDate); err == nil {
-				out.rangeStart = t.UTC().Truncate(24 * time.Hour)
-			}
-		}
-	} else {
-		out.rangeStart = cutoff.UTC().Truncate(24 * time.Hour)
-	}
-
-	out.longestStreak, out.currentStreak = computeStreaks(out.dailyCounts)
-	out.mostActiveDay = mostActiveDay(out.dailyCounts)
-	if !out.rangeStart.IsZero() {
-		today := time.Now().UTC().Truncate(24 * time.Hour)
-		out.totalDaysRange = int(today.Sub(out.rangeStart).Hours()/24) + 1
-	}
-	return out
-}
-
-// scanAllJSONL is the fallback when no stats cache exists.
-func scanAllJSONL(home string, days int) sessionStats {
-	projectsBase := filepath.Join(home, ".claude", "projects")
-	projectDirs, err := os.ReadDir(projectsBase)
-	if err != nil {
-		return sessionStats{}
-	}
-
-	cutoff := time.Time{}
-	if days > 0 {
-		cutoff = time.Now().AddDate(0, 0, -days)
-	}
-
-	out := sessionStats{
-		modelUsage:  map[string]modelUsageStats{},
-		dailyCounts: map[string]int{},
-		dailyTokens: map[string]int{},
-	}
-
-	for _, pd := range projectDirs {
-		if !pd.IsDir() {
-			continue
-		}
-		dirPath := filepath.Join(projectsBase, pd.Name())
-		files, err := os.ReadDir(dirPath)
-		if err != nil {
-			continue
-		}
-		for _, e := range files {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-				continue
-			}
-			if days > 0 {
-				info, err2 := e.Info()
-				if err2 != nil || info.ModTime().Before(cutoff) {
-					continue
-				}
-			}
-			scanJSONL(filepath.Join(dirPath, e.Name()), &out, cutoff)
-		}
-	}
-
-	// Set rangeStart for the JSONL fallback.
-	if !cutoff.IsZero() {
-		out.rangeStart = cutoff.UTC().Truncate(24 * time.Hour)
-	} else if len(out.dailyCounts) > 0 {
-		var earliest string
-		for d := range out.dailyCounts {
-			if earliest == "" || d < earliest {
-				earliest = d
-			}
-		}
-		if t, err := time.Parse("2006-01-02", earliest); err == nil {
-			out.rangeStart = t.UTC()
-		}
-	}
-
-	out.longestStreak, out.currentStreak = computeStreaks(out.dailyCounts)
-	out.mostActiveDay = mostActiveDay(out.dailyCounts)
-	if !out.rangeStart.IsZero() {
-		today := time.Now().UTC().Truncate(24 * time.Hour)
-		out.totalDaysRange = int(today.Sub(out.rangeStart).Hours()/24) + 1
-	}
-	return out
-}
-
-func scanJSONL(path string, out *sessionStats, cutoff time.Time) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	out.totalSessions++
-	sessionStart := time.Time{}
-	sessionEnd := time.Time{}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var entry struct {
-			Type      string          `json:"type"`
-			Timestamp string          `json:"timestamp"`
-			Ts        int64           `json:"ts"`
-			Message   json.RawMessage `json:"message"`
-		}
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-
-		ts := time.Time{}
-		if entry.Ts > 0 {
-			ts = time.UnixMilli(entry.Ts)
-		} else if entry.Timestamp != "" {
-			ts, _ = time.Parse(time.RFC3339Nano, entry.Timestamp)
-		}
-
-		if !cutoff.IsZero() && !ts.IsZero() && ts.Before(cutoff) {
-			continue
-		}
-
-		if !ts.IsZero() {
-			if sessionStart.IsZero() {
-				sessionStart = ts
-			}
-			sessionEnd = ts
-		}
-
-		if entry.Type == "cost" && len(entry.Message) > 0 {
-			var cost struct {
-				InputTokens  int     `json:"inputTokens"`
-				OutputTokens int     `json:"outputTokens"`
-				CostUSD      float64 `json:"costUSD"`
-			}
-			if json.Unmarshal(entry.Message, &cost) == nil {
-				out.totalInputTok += cost.InputTokens
-				out.totalOutputTok += cost.OutputTokens
-				out.totalCostUSD += cost.CostUSD
-			}
-			continue
-		}
-
-		var (
-			role   string
-			model  string
-			inTok  int
-			outTok int
-		)
-
-		parseMsg := func(raw json.RawMessage) {
-			var msg struct {
-				Role  string `json:"role"`
-				Model string `json:"model"`
-				Usage struct {
-					InputTokens  int `json:"input_tokens"`
-					OutputTokens int `json:"output_tokens"`
-				} `json:"usage"`
-			}
-			if json.Unmarshal(raw, &msg) == nil {
-				if msg.Role != "" {
-					role = msg.Role
-				}
-				if msg.Model != "" {
-					model = msg.Model
-				}
-				inTok = msg.Usage.InputTokens
-				outTok = msg.Usage.OutputTokens
-			}
-		}
-
-		switch entry.Type {
-		case "user":
-			role = "user"
-		case "assistant":
-			role = "assistant"
-			if len(entry.Message) > 0 {
-				parseMsg(entry.Message)
-				role = "assistant"
-			}
-		case "message":
-			if len(entry.Message) > 0 {
-				parseMsg(entry.Message)
-			}
-		default:
-			continue
-		}
-
-		if role != "user" && role != "assistant" {
-			continue
-		}
-
-		out.totalMessages++
-		if !ts.IsZero() {
-			out.dailyCounts[ts.Format("2006-01-02")]++
-		}
-
-		if role == "assistant" && model != "" && model != "<synthetic>" && (inTok > 0 || outTok > 0) {
-			mu := out.modelUsage[model]
-			mu.inputTokens += inTok
-			mu.outputTokens += outTok
-			mu.sessions++
-			out.modelUsage[model] = mu
-			out.totalInputTok += inTok
-			out.totalOutputTok += outTok
-			if !ts.IsZero() {
-				out.dailyTokens[ts.Format("2006-01-02")] += inTok + outTok
-			}
-		}
-	}
-
-	if !sessionStart.IsZero() && !sessionEnd.IsZero() {
-		dur := sessionEnd.Sub(sessionStart)
-		if dur > out.longestSession {
-			out.longestSession = dur
-		}
-	}
-}
-
-func computeStreaks(dailyCounts map[string]int) (longest, current int) {
-	if len(dailyCounts) == 0 {
-		return
-	}
-	var days []string
-	for d := range dailyCounts {
-		days = append(days, d)
-	}
-	sort.Strings(days)
-
-	streak := 1
-	for i := 1; i < len(days); i++ {
-		prev, _ := time.Parse("2006-01-02", days[i-1])
-		curr, _ := time.Parse("2006-01-02", days[i])
-		if curr.Sub(prev) == 24*time.Hour {
-			streak++
-		} else {
-			if streak > longest {
-				longest = streak
-			}
-			streak = 1
-		}
-	}
-	if streak > longest {
-		longest = streak
-	}
-
-	// Current streak counting back from today or yesterday.
-	for _, startOffset := range []int{0, 1} {
-		start := time.Now().AddDate(0, 0, -startOffset).Format("2006-01-02")
-		if _, ok := dailyCounts[start]; !ok {
-			continue
-		}
-		cur := 1
-		for i := startOffset + 1; ; i++ {
-			day := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
-			if _, ok := dailyCounts[day]; ok {
-				cur++
-			} else {
-				break
-			}
-		}
-		current = cur
-		break
-	}
-	return longest, current
-}
-
-func mostActiveDay(dailyCounts map[string]int) string {
-	best, bestCount := "", 0
-	for d, c := range dailyCounts {
-		if c > bestCount {
-			bestCount = c
-			best = d
-		}
-	}
-	if best == "" {
-		return "—"
-	}
-	t, err := time.Parse("2006-01-02", best)
-	if err != nil {
-		return best
-	}
-	return t.Format("Jan 2")
 }
 
 // buildHeatmap writes a 7-row × N-week GitHub-style activity heatmap.
@@ -987,7 +512,7 @@ func buildTokensLineChart(sb *strings.Builder, dailyModelTokens []dailyModelEntr
 		data := make([]float64, len(recentData))
 		hasData := false
 		for j, day := range recentData {
-			v := day.tokensByModel[r.name]
+			v := day.TokensByModel[r.name]
 			data[j] = float64(v)
 			if v > 0 {
 				hasData = true
@@ -1066,7 +591,7 @@ func generateChartXLabels(data []dailyModelEntry, yAxisOffset int) string {
 		if idx >= len(data) {
 			idx = len(data) - 1
 		}
-		t, err := time.Parse("2006-01-02", data[idx].date)
+		t, err := time.Parse("2006-01-02", data[idx].Date)
 		if err != nil {
 			continue
 		}
@@ -1110,7 +635,7 @@ var literaryTokenCounts = []struct {
 }
 
 func buildFactoid(stats *sessionStats) string {
-	totalTok := stats.totalInputTok + stats.totalOutputTok
+	totalTok := stats.TotalInputTok + stats.TotalOutputTok
 
 	// Literary comparison: find the best-fit book.
 	if totalTok > 5_000 {
@@ -1132,12 +657,12 @@ func buildFactoid(stats *sessionStats) string {
 	}
 
 	switch {
-	case stats.currentStreak >= 7:
-		return fmt.Sprintf("You're on a %d-day streak! Keep it up!", stats.currentStreak)
-	case stats.totalSessions >= 100:
-		return fmt.Sprintf("Over %d sessions — you're a power user!", stats.totalSessions)
-	case stats.longestStreak >= 5:
-		return fmt.Sprintf("Your longest streak was %d days.", stats.longestStreak)
+	case stats.CurrentStreak >= 7:
+		return fmt.Sprintf("You're on a %d-day streak! Keep it up!", stats.CurrentStreak)
+	case stats.TotalSessions >= 100:
+		return fmt.Sprintf("Over %d sessions — you're a power user!", stats.TotalSessions)
+	case stats.LongestStreak >= 5:
+		return fmt.Sprintf("Your longest streak was %d days.", stats.LongestStreak)
 	default:
 		return ""
 	}
@@ -1148,9 +673,9 @@ func buildFactoid(stats *sessionStats) string {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func activeDaysLabel(stats *sessionStats) string {
-	active := len(stats.dailyCounts)
-	if stats.totalDaysRange > 0 {
-		return fmt.Sprintf("%d/%d", active, stats.totalDaysRange)
+	active := len(stats.DailyCounts)
+	if stats.TotalDaysRange > 0 {
+		return fmt.Sprintf("%d/%d", active, stats.TotalDaysRange)
 	}
 	return fmt.Sprintf("%d", active)
 }

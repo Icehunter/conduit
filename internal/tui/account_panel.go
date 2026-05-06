@@ -158,7 +158,7 @@ func (p *accountPanelState) openDetail(id string) {
 	p.view = accountViewDetail
 }
 
-// ── Key handler (called by settingspanel when tab == Accounts) ───────────────
+// ── Key handler (called by settings_panel when tab == Accounts) ──────────────
 
 // handleAccountsTabKey handles keys for the Accounts tab embedded in the
 // settings panel. Esc and left/right are handled by the caller before this
@@ -226,7 +226,7 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// ── Renderer (called by settingspanel for the Accounts tab body) ─────────────
+// ── Renderer (called by settings_panel for the Accounts tab body) ────────────
 
 func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState, _, _ int) {
 	if p.accts == nil {

@@ -1,4 +1,4 @@
-package worktreeTool
+package worktreetool
 
 import (
 	"context"

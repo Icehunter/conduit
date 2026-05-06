@@ -37,7 +37,7 @@ Last updated: 2026-05-05
 | FileEditTool | ✅ | internal/tools/fileedittool/ |
 | GrepTool | ✅ | internal/tools/greptool/ |
 | GlobTool | ✅ | internal/tools/globtool/ |
-| Cost tracker | ✅ | tallied in model.go |
+| Cost tracker | ✅ | tallied in internal/tui/live_state.go |
 
 ---
 

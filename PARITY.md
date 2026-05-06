@@ -100,7 +100,7 @@
 | Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
 | Micro-compaction | `services/compact/microCompact.ts` | — | `internal/microcompact/microcompact.go` | ✅ | Time-based path: when last assistant >60min old, replace older tool_results with `[Old tool result content cleared]`, keep last 5. Cache-editing path is Anthropic-internal. |
 | Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ⬛ | GrowthBook-gated (`tengu_sm_compact`+`tengu_session_memory`); see FEATURE_FLAGS.md |
-| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go`, `internal/tui/livestate.go`, `internal/agent/loop.go` | ✅ | Shows ctx%; auto-compact fires at 80% of MaxTokens |
+| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/live_state.go`, `internal/tui/livestate.go`, `internal/agent/loop.go` | ✅ | Shows ctx%; auto-compact fires at 80% of MaxTokens |
 | Extended thinking / effort modes | `utils/effort.ts` | — | `internal/model/model.go`, `internal/agent/loop.go` | ✅ | ThinkingBudgets map; /effort low\|medium\|high\|max; CLAUDE_THINKING_BUDGET env |
 | Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
 | Stop hooks (clean shutdown) | `query/stopHooks.ts` | — | `internal/hooks/hooks.go` `RunStop` | ✅ | |
@@ -133,9 +133,9 @@
 | BriefTool | `tools/BriefTool/` | — | ❌ | ⬛ | KAIROS-gated (GrowthBook build flag) |
 | ConfigTool | `tools/ConfigTool/` | — | `internal/tools/configtool/` | ✅ | get/set model, modes, allow/deny, env |
 | EnterPlanMode | `tools/EnterPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskEnter callback, sets plan mode |
-| EnterWorktree | `tools/EnterWorktreeTool/` | — | `internal/tools/worktreeTool/` | ✅ | git worktree add, switches cwd |
+| EnterWorktree | `tools/EnterWorktreeTool/` | — | `internal/tools/worktreetool/` | ✅ | git worktree add, switches cwd |
 | ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskApprove callback, switches to auto mode after approval |
-| ExitWorktree | `tools/ExitWorktreeTool/` | — | `internal/tools/worktreeTool/` | ✅ | keep/remove action, branch cleanup |
+| ExitWorktree | `tools/ExitWorktreeTool/` | — | `internal/tools/worktreetool/` | ✅ | keep/remove action, branch cleanup |
 | FileEditTool | `tools/FileEditTool/` | — | `internal/tools/fileedittool/` | ✅ | |
 | FileReadTool | `tools/FileReadTool/` | — | `internal/tools/filereadtool/` | ✅ | |
 | FileWriteTool | `tools/FileWriteTool/` | — | `internal/tools/filewritetool/` | ✅ | |
@@ -200,29 +200,29 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go` | ✅ | Bubble Tea vs React/Ink |
+| Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go`, `internal/tui/layout_view.go` | ✅ | Bubble Tea vs React/Ink |
 | Message display (streaming) | `components/Messages.tsx` | — | `internal/tui/render.go` | ✅ | |
 | Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | ✅ | Full GFM: tables, headings, task lists, strikethrough, blockquotes, italic |
 | Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | ✅ | Chroma-based; functionally equivalent to Prism.js (different library, same result) |
 | Spinner / thinking indicator | `components/Spinner.tsx` | — | `internal/tui/model.go` | ✅ | |
-| Status bar | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Status bar | `components/StatusLine.tsx` | — | `internal/tui/layout_view.go`, `internal/tui/usage_footer.go` | ✅ | |
 | Permission mode badge | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Input box (textarea) | `components/PromptInput/` | — | `internal/tui/model.go` | ✅ | |
 | Input history (up/down) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
-| Slash command picker | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Slash command picker | `screens/REPL.tsx` | — | `internal/tui/attachments_picker.go` | ✅ | |
 | Tab completion | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Session resume picker | `screens/ResumeConversation.tsx` | — | `internal/tui/model.go` | ✅ | |
 | MCP panel | — | — | `internal/tui/model.go` (panel) | ✅ | conduit-only |
-| Plugin panel (full) | `commands/plugin/` | — | `internal/tui/pluginpanel.go` | ✅ | conduit-only |
+| Plugin panel (full) | `commands/plugin/` | — | `internal/tui/plugin_panel.go` | ✅ | conduit-only |
 | Login flow UI | `components/ConsoleOAuthFlow.tsx` | — | `internal/tui/login.go` | ✅ | Browser-launch OAuth flow with URL fallback and code-paste option; no CSS animations (N/A in terminal) |
-| Cost display | `components/Stats.tsx` | — | `internal/tui/model.go` + `/cost` | ✅ | Status bar (cumulative $X.XX) + /cost shows input/output tokens, total cost, per-turn breakdown |
+| Cost display | `components/Stats.tsx` | — | `internal/tui/summaries.go`, `internal/tui/live_state.go` + `/cost` | ✅ | Status bar (cumulative $X.XX) + /cost shows input/output tokens, total cost, per-turn breakdown |
 | Context visualization | `components/ContextVisualization.tsx` | — | `/context` command | ✅ | Bar chart of tokens: system/history/tools/remaining |
 | Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | ✅ | Bubble Tea viewport with sticky-bottom; no DOM virtualization needed for terminal rendering |
 | Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
 | Doctor screen | `screens/Doctor.tsx` | — | `/doctor` → doctor-panel overlay | ✅ | Full-screen checklist panel with ✅/❌ icons, binary path, OS/arch; q/Esc closes |
-| Stats screen | `components/Stats.tsx` | — | `internal/tui/settingspanel.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
+| Stats screen | `components/Stats.tsx` | — | `internal/tui/settings_panel.go`, `internal/tui/settings_stats.go` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |
 | Log selector | `components/LogSelector.tsx` | — | `internal/tui/model.go` (resumePrompt) | ✅ | Session picker with live fuzzy filter, j/k navigation, Esc-to-clear, count badge, message count, preview panel showing age+count+title of selected session. Tag tabs descoped (no tag-based grouping in CC external build). |
 | Global search dialog | `components/GlobalSearchDialog.tsx` | — | `/search` command → search-panel overlay | ✅ | Navigable search results panel; j/k navigation; Enter loads matching session; grouped by session title+age; ripgrep code-search panel descoped |
 | Model picker dialog | `components/ModelPicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /model with no args opens picker; ↑/↓/jk Enter; current marked ● |
@@ -230,7 +230,7 @@
 | Output style picker | `components/OutputStylePicker.tsx` | — | `internal/tui/model.go` (pickerState) | ✅ | /output-style with no args opens picker |
 | Feedback dialog | `components/Feedback.tsx` | — | ❌ | ⬛ | Anthropic-internal |
 | Onboarding flow | `components/Onboarding.tsx` | — | `internal/tui/model.go` (onboardingState) | ✅ | First-run welcome overlay shows once: auth status, key commands, Enter to dismiss; persisted via settings.onboardingComplete |
-| Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
+| Coordinator agent status | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/coordinator_footer.go` | ✅ | Footer panel below input shows in-progress tasks + elapsed time; 1s tick refreshes only while active |
 | Vim mode | `vim/` (5 files, 1513 LOC) | — | ❌ | ⬛ | Large effort (1513 LOC); niche use case; deferred |
 | Custom keybindings | `keybindings/` (14 files) | — | `internal/keybindings/` | ✅ | Full MVP: parser, resolver, JSON loader, defaults, TUI hookup. `command:*` actions execute slash commands; chat/select/confirm actions wired. Single-keystroke only; chords deferred. |
 | Image paste | `utils/imagePaste.ts` | — | `internal/attach/clipboard.go` + resize | ✅ | Image paste ✅; PDF paste ✅ via `internal/attach/pdf.go` (clipboard PDF type + Finder file URI fallback) |
@@ -496,7 +496,7 @@
 | Team discovery | `utils/teamDiscovery.ts` | — | ❌ | ⬛ | Team feature |
 | ULTRAPLAN | `services/ultraplan/` | — | ❌ | ⬛ | Depends on bridge + remote |
 | Agent listing delta | `utils/agentContext.ts` | — | ❌ | ⬛ | AsyncLocalStorage analytics context; Anthropic-internal |
-| Coordinator agent status UI | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/model.go` (renderCoordinatorPanel) | ✅ | Footer panel below input shows in-progress tasks with elapsed time; 1s tick refreshes only while active tasks exist |
+| Coordinator agent status UI | `components/CoordinatorAgentStatus.tsx` | — | `internal/tui/coordinator_footer.go` | ✅ | Footer panel below input shows in-progress tasks with elapsed time; 1s tick refreshes only while active tasks exist |
 
 ---
 

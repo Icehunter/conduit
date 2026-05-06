@@ -71,7 +71,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
 	"github.com/icehunter/conduit/internal/tools/webfetchtool"
 	"github.com/icehunter/conduit/internal/tools/websearchtool"
-	"github.com/icehunter/conduit/internal/tools/worktreeTool"
+	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	"github.com/icehunter/conduit/internal/tui"
 )
 
@@ -286,8 +286,8 @@ type registryOpts struct {
 	exitPlan      *planmodetool.ExitPlanMode
 	askUser       *askusertool.AskUserQuestion
 	synthetic     *syntheticoutputtool.SyntheticOutput
-	enterWorktree *worktreeTool.EnterWorktree
-	exitWorktree  *worktreeTool.ExitWorktree
+	enterWorktree *worktreetool.EnterWorktree
+	exitWorktree  *worktreetool.ExitWorktree
 }
 
 // buildRegistry builds the tool registry, including MCP server tools.
@@ -635,11 +635,11 @@ func runREPL(continueMode bool, resumeID string) error {
 		exitPlan:  &planmodetool.ExitPlanMode{},
 		askUser:   &askusertool.AskUserQuestion{},
 		synthetic: &syntheticoutputtool.SyntheticOutput{},
-		enterWorktree: &worktreeTool.EnterWorktree{GetCwd: func() string {
+		enterWorktree: &worktreetool.EnterWorktree{GetCwd: func() string {
 			d, _ := os.Getwd()
 			return d
 		}},
-		exitWorktree: &worktreeTool.ExitWorktree{GetCwd: func() string {
+		exitWorktree: &worktreetool.ExitWorktree{GetCwd: func() string {
 			d, _ := os.Getwd()
 			return d
 		}, OriginalCwd: cwd},

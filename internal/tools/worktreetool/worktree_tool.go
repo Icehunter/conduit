@@ -1,11 +1,11 @@
-// Package worktreeTool implements EnterWorktree and ExitWorktree tools.
+// Package worktreetool implements EnterWorktree and ExitWorktree tools.
 //
 // EnterWorktree creates a new git worktree and switches the session's working
 // directory into it. ExitWorktree removes or keeps the worktree and restores
 // the original working directory.
 //
 // Port of src/tools/EnterWorktreeTool/ and src/tools/ExitWorktreeTool/.
-package worktreeTool
+package worktreetool
 
 import (
 	"context"

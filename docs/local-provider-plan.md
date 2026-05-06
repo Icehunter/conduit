@@ -392,6 +392,8 @@ Initial implementation:
   server exposing `local_implement`.
 - It prefers `roles.implement`, otherwise falls back to a connected
   `local-router`/first available `local_implement` server.
+- It resolves `roles.implement` dynamically for each tool description and
+  execution, so Ctrl+M Implement role changes take effect without restart.
 - It sends a bounded prompt to the MCP tool with `output_format=diff` and
   `include_review_reminder=false`.
 - It returns draft output as normal tool output for the main agent to review.

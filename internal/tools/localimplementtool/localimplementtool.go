@@ -31,10 +31,14 @@ type Config struct {
 	Model         string
 }
 
+// ConfigResolver returns the current local implementation target.
+type ConfigResolver func() (Config, bool)
+
 // Tool asks a local/private model for a bounded implementation draft.
 type Tool struct {
-	caller Caller
-	cfg    Config
+	caller  Caller
+	cfg     Config
+	resolve ConfigResolver
 }
 
 // New returns a LocalImplement tool for cfg.
@@ -48,16 +52,28 @@ func New(caller Caller, cfg Config) *Tool {
 	return &Tool{caller: caller, cfg: cfg}
 }
 
+// NewDynamic returns a LocalImplement tool whose target is resolved whenever
+// the tool is described or executed. This lets role changes in conduit.json
+// take effect without rebuilding the registry.
+func NewDynamic(caller Caller, resolve ConfigResolver) *Tool {
+	return &Tool{caller: caller, resolve: resolve}
+}
+
 func (*Tool) Name() string { return toolName }
 
 func (t *Tool) Description() string {
-	target := t.cfg.Server
-	if t.cfg.Model != "" {
-		target = t.cfg.Model + " on " + t.cfg.Server
+	cfg, ok := t.config()
+	target := "the configured implement role"
+	if ok {
+		target = cfg.Server
+		if cfg.Model != "" {
+			target = cfg.Model + " on " + cfg.Server
+		}
 	}
 	return "Offload a small, bounded implementation draft to the configured local/private model (" + target + "). " +
 		"Use this when a local model can draft a focused diff or code change from explicit requirements and supplied context. " +
 		"Read any required files first and include the relevant context in the prompt. " +
+		"Ask for a unified diff when changing existing files, include non-goals, and keep the request narrow. " +
 		"The tool returns a draft diff or implementation text only; review it before applying changes. " +
 		"Do not use it for broad architecture, ambiguous product decisions, or work that requires hidden conversation context."
 }
@@ -104,6 +120,10 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if strings.TrimSpace(in.Prompt) == "" {
 		return tool.ErrorResult("prompt is required"), nil
 	}
+	cfg, ok := t.config()
+	if !ok {
+		return tool.ErrorResult("LocalImplement unavailable: no connected MCP server exposes local_implement."), nil
+	}
 
 	prompt := buildPrompt(in)
 	args := map[string]any{
@@ -116,7 +136,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult(fmt.Sprintf("invalid local implement payload: %v", err)), nil
 	}
 
-	qualified := mcp.ToolNamePrefix(t.cfg.Server) + t.cfg.ImplementTool
+	qualified := mcp.ToolNamePrefix(cfg.Server) + cfg.ImplementTool
 	result, err := t.caller.CallTool(ctx, qualified, payload)
 	if err != nil {
 		return tool.ErrorResult(err.Error()), nil
@@ -132,6 +152,32 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		text = "(empty local implement response)"
 	}
 	return tool.TextResult(text), nil
+}
+
+func (t *Tool) config() (Config, bool) {
+	if t.resolve != nil {
+		cfg, ok := t.resolve()
+		if ok {
+			if cfg.Server == "" {
+				cfg.Server = defaultServer
+			}
+			if cfg.ImplementTool == "" {
+				cfg.ImplementTool = defaultImplementTool
+			}
+			return cfg, true
+		}
+	}
+	if t.cfg.Server == "" && t.cfg.ImplementTool == "" && t.cfg.Model == "" {
+		return Config{}, false
+	}
+	cfg := t.cfg
+	if cfg.Server == "" {
+		cfg.Server = defaultServer
+	}
+	if cfg.ImplementTool == "" {
+		cfg.ImplementTool = defaultImplementTool
+	}
+	return cfg, true
 }
 
 func buildPrompt(in input) string {

@@ -64,3 +64,26 @@ func TestExecuteRejectsEmptyPrompt(t *testing.T) {
 		t.Fatalf("result = %+v, want prompt required tool error", res)
 	}
 }
+
+func TestDynamicConfigResolverIsUsedForDescriptionAndExecute(t *testing.T) {
+	caller := &fakeCaller{res: mcp.CallResult{Content: []mcp.ContentBlock{{Type: "text", Text: "diff"}}}}
+	cfg := Config{Server: "first-router", ImplementTool: "local_implement", Model: "first-model"}
+	lt := NewDynamic(caller, func() (Config, bool) {
+		return cfg, true
+	})
+
+	if desc := lt.Description(); !strings.Contains(desc, "first-model on first-router") {
+		t.Fatalf("description = %q, want first target", desc)
+	}
+	cfg = Config{Server: "second-router", ImplementTool: "local_implement", Model: "second-model"}
+	res, err := lt.Execute(context.Background(), json.RawMessage(`{"prompt":"implement x"}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("Execute returned tool error: %+v", res)
+	}
+	if caller.name != "mcp__second_router__local_implement" {
+		t.Fatalf("called %q, want updated implement target", caller.name)
+	}
+}

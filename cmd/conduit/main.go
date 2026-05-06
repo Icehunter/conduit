@@ -204,7 +204,7 @@ type registryOpts struct {
 }
 
 // buildRegistry builds the tool registry, including MCP server tools.
-func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *registryOpts, activeProvider *settings.ActiveProviderSettings) *tool.Registry {
+func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *registryOpts, implementProvider func() *settings.ActiveProviderSettings) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(bashtool.New())
 	reg.Register(fileedittool.New())
@@ -229,8 +229,10 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(&configtool.ConfigTool{})
 	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
 	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
-	if cfg, ok := localimplementtool.ResolveConfig(mcpManager, activeProvider); ok {
-		reg.Register(localimplementtool.New(mcpManager, cfg))
+	if _, ok := localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider)); ok {
+		reg.Register(localimplementtool.NewDynamic(mcpManager, func() (localimplementtool.Config, bool) {
+			return localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider))
+		}))
 	}
 	// Interactive tools — callbacks are wired by the TUI after prog.Start().
 	if rOpts != nil && rOpts.enterWorktree != nil {
@@ -258,6 +260,13 @@ func buildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		mcpauthtool.RegisterPending(reg, mcpManager, urls)
 	}
 	return reg
+}
+
+func resolveImplementProvider(fn func() *settings.ActiveProviderSettings) *settings.ActiveProviderSettings {
+	if fn == nil {
+		return nil
+	}
+	return fn()
 }
 
 // buildMetadata returns the API metadata block.
@@ -538,7 +547,17 @@ func runREPL(continueMode bool, resumeID string) error {
 		}, OriginalCwd: cwd},
 	}
 
-	reg := buildRegistry(c, mcpManager, lspManager, rOpts, implementProvider)
+	reg := buildRegistry(c, mcpManager, lspManager, rOpts, func() *settings.ActiveProviderSettings {
+		latest, err := settings.Load(cwd)
+		if err != nil {
+			return implementProvider
+		}
+		provider, ok := latest.ProviderForRole(settings.RoleImplement)
+		if !ok {
+			return implementProvider
+		}
+		return provider
+	})
 	modelName := internalmodel.Resolve()
 
 	// Build MCP server instructions block from connected servers that returned

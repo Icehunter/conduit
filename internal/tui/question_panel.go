@@ -185,7 +185,7 @@ func (m Model) renderQuestionDialog() string {
 	// Question text.
 	sb.WriteString(styleStatusAccent.Render("◆ Question") + "\n\n")
 	// Wrap long question text at panel width.
-	qText := wordWrap(q.question, floatingInnerWidth(m.width, floatingModalSpec))
+	qText := wordWrap(q.question, floatingInnerWidth(m.width, floatingModalSpec)-floatingBodyPadX*6)
 	sb.WriteString(stylePickerItem.Render(qText) + "\n\n")
 
 	if q.textMode {

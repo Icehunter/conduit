@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -53,8 +54,20 @@ type Hook struct {
 
 // HookMatcher is a matcher + hooks pair.
 type HookMatcher struct {
-	Matcher string `json:"matcher"` // tool name or glob, "" = all
-	Hooks   []Hook `json:"hooks"`
+	Matcher    string `json:"matcher"` // tool name or glob, "" = all
+	Hooks      []Hook `json:"hooks"`
+	SourceFile string `json:"-"` // path of the settings file this came from; not serialized
+}
+
+// IsProjectLocal reports whether this matcher came from a project-scoped
+// settings file (i.e. <cwd>/.claude/settings.json or settings.local.json).
+// User-global hooks (~/.claude/settings.json, ~/.conduit/conduit.json) return false.
+func (h HookMatcher) IsProjectLocal(cwd string) bool {
+	if h.SourceFile == "" || cwd == "" {
+		return false
+	}
+	clauDir := filepath.Join(cwd, ".claude") + string(filepath.Separator)
+	return strings.HasPrefix(h.SourceFile, clauDir)
 }
 
 // HooksSettings is the hooks section.
@@ -196,6 +209,9 @@ func loadPaths(paths []string) (*Merged, error) {
 		if err != nil {
 			continue // missing or invalid file is skipped
 		}
+		// Tag every HookMatcher with the file it was loaded from so callers
+		// can distinguish project-local hooks from user-global ones.
+		tagHookSource(&s.Hooks, path)
 		merged.Allow = append(merged.Allow, s.Permissions.Allow...)
 		merged.Deny = append(merged.Deny, s.Permissions.Deny...)
 		merged.Ask = append(merged.Ask, s.Permissions.Ask...)
@@ -295,6 +311,45 @@ func mergeHooks(dst, src *HooksSettings) {
 	dst.PostToolUse = append(dst.PostToolUse, src.PostToolUse...)
 	dst.SessionStart = append(dst.SessionStart, src.SessionStart...)
 	dst.Stop = append(dst.Stop, src.Stop...)
+}
+
+// tagHookSource sets SourceFile on every HookMatcher in h to path.
+func tagHookSource(h *HooksSettings, path string) {
+	tag := func(ms []HookMatcher) []HookMatcher {
+		for i := range ms {
+			ms[i].SourceFile = path
+		}
+		return ms
+	}
+	h.PreToolUse = tag(h.PreToolUse)
+	h.PostToolUse = tag(h.PostToolUse)
+	h.SessionStart = tag(h.SessionStart)
+	h.Stop = tag(h.Stop)
+}
+
+// FilterUntrustedHooks returns a copy of h with project-local matchers removed
+// when trusted is false. When trusted is true or h is nil it returns h unchanged.
+// "Project-local" means the hook came from <cwd>/.claude/settings.json or
+// <cwd>/.claude/settings.local.json — not from user-global config.
+func FilterUntrustedHooks(h *HooksSettings, cwd string, trusted bool) *HooksSettings {
+	if trusted || h == nil || cwd == "" {
+		return h
+	}
+	filter := func(ms []HookMatcher) []HookMatcher {
+		out := make([]HookMatcher, 0, len(ms))
+		for _, m := range ms {
+			if !m.IsProjectLocal(cwd) {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return &HooksSettings{
+		PreToolUse:   filter(h.PreToolUse),
+		PostToolUse:  filter(h.PostToolUse),
+		SessionStart: filter(h.SessionStart),
+		Stop:         filter(h.Stop),
+	}
 }
 
 // UserSettingsPath returns the path to the user-global settings file.

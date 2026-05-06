@@ -443,7 +443,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		streamCtx := api.WithRetryHandler(ctx, func(ev api.RetryEvent) bool {
-			handler(LoopEvent{
+			// Fire on a goroutine so a slow/blocked TUI channel can't stall
+			// the retry sleep. EventAPIRetry is informational; order doesn't matter.
+			go handler(LoopEvent{
 				Type:         EventAPIRetry,
 				RetryAttempt: ev.Attempt,
 				RetryDelay:   ev.Delay,

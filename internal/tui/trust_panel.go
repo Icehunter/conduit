@@ -69,13 +69,14 @@ func (m Model) renderTrustDialog() string {
 	var sb strings.Builder
 	sb.WriteString(styleStatusAccent.Render("⚠  Workspace trust required") + "\n\n")
 
-	prompt := wordWrap(
-		"Quick safety check: Is this a project you created or one you trust? "+
-			"(Like your own code, a well-known open source project, or work from your team.) "+
-			"If not, take a moment to review what's in this folder first. "+
-			"conduit will be able to read, edit, and execute files here.",
-		floatingInnerWidth(m.width, floatingModalSpec),
-	)
+	promptText := "Quick safety check: Is this a project you created or one you trust? " +
+		"(Like your own code, a well-known open source project, or work from your team.) " +
+		"If not, take a moment to review what's in this folder first. " +
+		"conduit will be able to read, edit, and execute files here."
+
+	// Subtract body padding so wordWrap and floatingBodyStyle agree on line width.
+	wrapW := floatingInnerWidth(m.width, floatingModalSpec) - floatingBodyPadX*6
+	prompt := wordWrap(promptText, wrapW)
 	sb.WriteString(stylePickerItem.Render(prompt) + "\n\n")
 
 	options := []string{"Yes, I trust this folder", "No, exit"}

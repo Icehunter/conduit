@@ -634,6 +634,92 @@ func TestLoad_Hooks(t *testing.T) {
 	}
 }
 
+func TestHookMatcher_IsProjectLocal(t *testing.T) {
+	cwd := "/home/user/myproject"
+	cases := []struct {
+		source string
+		want   bool
+	}{
+		{filepath.Join(cwd, ".claude", "settings.json"), true},
+		{filepath.Join(cwd, ".claude", "settings.local.json"), true},
+		{"/home/user/.claude/settings.json", false}, // user-global
+		{"/home/user/.conduit/conduit.json", false}, // conduit global
+		{"", false}, // untagged
+		{"/other/project/.claude/settings.json", false}, // different project
+	}
+	for _, tc := range cases {
+		m := HookMatcher{SourceFile: tc.source}
+		got := m.IsProjectLocal(cwd)
+		if got != tc.want {
+			t.Errorf("IsProjectLocal(%q) for cwd=%q = %v; want %v", tc.source, cwd, got, tc.want)
+		}
+	}
+}
+
+func TestFilterUntrustedHooks_RemovesProjectLocal(t *testing.T) {
+	cwd := t.TempDir()
+	clauDir := filepath.Join(cwd, ".claude")
+	_ = os.MkdirAll(clauDir, 0755)
+
+	projectLocal := HookMatcher{
+		Matcher:    "",
+		SourceFile: filepath.Join(clauDir, "settings.local.json"),
+	}
+	userGlobal := HookMatcher{
+		Matcher:    "",
+		SourceFile: "/home/user/.claude/settings.json",
+	}
+	h := &HooksSettings{
+		PreToolUse:   []HookMatcher{projectLocal, userGlobal},
+		SessionStart: []HookMatcher{projectLocal},
+	}
+
+	// Untrusted — project-local hooks must be stripped.
+	filtered := FilterUntrustedHooks(h, cwd, false)
+	if len(filtered.PreToolUse) != 1 {
+		t.Errorf("untrusted: PreToolUse len = %d; want 1 (only user-global)", len(filtered.PreToolUse))
+	}
+	if filtered.PreToolUse[0].SourceFile != userGlobal.SourceFile {
+		t.Errorf("untrusted: remaining matcher should be user-global, got %q", filtered.PreToolUse[0].SourceFile)
+	}
+	if len(filtered.SessionStart) != 0 {
+		t.Errorf("untrusted: SessionStart len = %d; want 0", len(filtered.SessionStart))
+	}
+
+	// Trusted — all hooks pass through unchanged.
+	trusted := FilterUntrustedHooks(h, cwd, true)
+	if trusted != h {
+		t.Error("trusted: expected original pointer returned unchanged")
+	}
+}
+
+func TestFilterUntrustedHooks_NilSafe(t *testing.T) {
+	if got := FilterUntrustedHooks(nil, "/some/cwd", false); got != nil {
+		t.Errorf("nil input returned %v; want nil", got)
+	}
+}
+
+func TestLoadPaths_TagsHookSource(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, ".claude"), 0755)
+	writeSettings(t, dir, "settings.json", Settings{
+		Hooks: HooksSettings{
+			PreToolUse: []HookMatcher{{Matcher: ""}},
+		},
+	})
+	m, _ := loadPaths(projectPaths(dir))
+	if len(m.Hooks.PreToolUse) == 0 {
+		t.Fatal("expected at least one PreToolUse matcher")
+	}
+	src := m.Hooks.PreToolUse[0].SourceFile
+	if src == "" {
+		t.Error("SourceFile not tagged — should be set to the settings file path")
+	}
+	if !strings.Contains(src, ".claude") {
+		t.Errorf("SourceFile %q doesn't look like a .claude path", src)
+	}
+}
+
 func TestLoad_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dir, ".claude"), 0755)

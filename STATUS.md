@@ -273,7 +273,7 @@ Descoped for now — not part of the "orchestration and brains" core.
 | HTTP hook conformance tests | ✅ | `internal/hooks/hooks_http_test.go` — block/approve/server-error |
 | Async hook non-blocking test | ✅ | `TestRunHook_AsyncReturnsImmediately` |
 | Fuzz targets (permission rules, JSON-RPC) | 🔲 | SSE parser fuzz exists; others deferred |
-| Trust-gating for hooks/plugins at load time | 🔲 | Dialog currently blocks agent start; hooks load unconditionally |
+| Trust-gating for hooks/plugins at load time | ✅ | `settings.FilterUntrustedHooks` strips project-local hooks when cwd is untrusted; applied in main.go before loop + TUI start |
 
 ---
 

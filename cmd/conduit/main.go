@@ -471,7 +471,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		System:            systemBlocks,
 		MaxTurns:          50,
 		Gate:              gate,
-		Hooks:             &s.Hooks,
+		Hooks:             settings.FilterUntrustedHooks(&s.Hooks, cwd, !needsTrust),
 		SessionID:         sessionID,
 		Cwd:               cwd,
 		AutoCompact:       true,
@@ -560,7 +560,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// drainable at shutdown instead of leaking as untracked goroutines.
 	hooks.DefaultAsyncGroup = hooks.NewAsyncGroup(ctx)
 
-	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, &s.Hooks, tui.RunOptions{
+	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, settings.FilterUntrustedHooks(&s.Hooks, cwd, !needsTrust), tui.RunOptions{
 		AuthErr:                   authErr,
 		Profile:                   prof,
 		Session:                   sess,

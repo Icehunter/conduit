@@ -28,20 +28,6 @@ func panelTitle(s string) string {
 		Render(s)
 }
 
-func chromeTab(label string, active bool) string {
-	if active {
-		return lipgloss.NewStyle().
-			Foreground(colorWindowTitle).
-			Background(colorWindowBg).
-			Bold(true).
-			Render(label)
-	}
-	return lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Background(colorWindowBg).
-		Render(label)
-}
-
 func panelRule(width int) string {
 	if width <= 0 {
 		return ""

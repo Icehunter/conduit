@@ -19,41 +19,54 @@ func (m Model) renderPluginPanel() string {
 	if w < 10 {
 		w = 10
 	}
-	panelH := m.panelHeight()
+	panelH := pluginPanelHeight(m.panelHeight())
 	// lipgloss v2's Width() is total block width (including border + padding).
-	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
-	innerW := w - 2
+	// Outer style: Width(w), border 1 each side (2), padding 2 each side (4)
+	// → content area = w - 6.
+	innerW := w - 4
 
 	var sb strings.Builder
 
-	// Title bar with tabs.
-	var tabParts []string
-	for i, name := range pluginTabNames {
-		tabParts = append(tabParts, chromeTab(name, pluginPanelTab(i) == p.tab))
+	title := panelTitle("Plugins")
+	tabs := settingsColorTabs(pluginTabNames, int(p.tab))
+	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
+	if ornW < 6 {
+		ornW = 6
 	}
-	sb.WriteString(strings.Join(tabParts, stylePickerDesc.Render(" | ")))
-	sb.WriteByte('\n')
-	sb.WriteString(panelRule(innerW - 4))
+	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 	sb.WriteString("\n\n")
 
-	// Inner content height: panelH minus border(2) minus padding(2) minus title(1) minus separator(1) minus blank(1) = panelH - 5
-	contentH := panelH - 7
+	contentH := panelH - 3
 	if contentH < 4 {
 		contentH = 4
 	}
 
+	var body strings.Builder
 	switch p.view {
 	case pluginViewList:
-		m.renderPluginList(&sb, p, innerW, contentH)
+		m.renderPluginList(&body, p, innerW, contentH)
 	case pluginViewDetail:
-		m.renderPluginDetail(&sb, p, innerW)
+		m.renderPluginDetail(&body, p, innerW)
 	case pluginViewMCPOpts:
-		m.renderPluginMCPOpts(&sb, p)
+		m.renderPluginMCPOpts(&body, p)
 	case pluginViewAddMkt:
-		m.renderPluginAddMkt(&sb, p, innerW)
+		m.renderPluginAddMkt(&body, p, innerW)
 	}
+	bodyText := padPluginPanelBody(body.String(), contentH)
+	sb.WriteString(bodyText)
 
 	return panelFrameStyle(w, panelH).Render(sb.String())
+}
+
+func pluginPanelHeight(available int) int {
+	if available < 1 {
+		return 1
+	}
+	const preferred = 24
+	if available < preferred {
+		return available
+	}
+	return preferred
 }
 
 func (m Model) renderPluginList(sb *strings.Builder, p *pluginPanelState, innerW, contentH int) {
@@ -61,12 +74,19 @@ func (m Model) renderPluginList(sb *strings.Builder, p *pluginPanelState, innerW
 	case pluginTabDiscover:
 		m.renderDiscoverTab(sb, p, innerW, contentH)
 	case pluginTabInstalled:
-		m.renderInstalledTab(sb, p)
+		m.renderInstalledTab(sb, p, contentH)
 	case pluginTabMarketplaces:
-		m.renderMarketplacesTab(sb, p)
+		m.renderMarketplacesTab(sb, p, contentH)
 	case pluginTabErrors:
-		m.renderErrorsTab(sb, p)
+		m.renderErrorsTab(sb, p, contentH)
 	}
+}
+
+func padPluginPanelBody(body string, targetHeight int) string {
+	for lipgloss.Height(body) < targetHeight {
+		body += "\n"
+	}
+	return body
 }
 
 func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, innerW, contentH int) {
@@ -180,12 +200,30 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 	sb.WriteString("\n" + stylePickerDesc.Render(footer))
 }
 
-func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState) {
+func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState, contentH int) {
 	if len(p.installedItems) == 0 {
 		sb.WriteString(stylePickerDesc.Render("No plugins installed.\nUse /plugin marketplace add <source> then /plugin install <name>."))
 		return
 	}
-	for i, item := range p.installedItems {
+	available := contentH - 2
+	if available < 1 {
+		available = 1
+	}
+	total := len(p.installedItems)
+	start := p.selected - available/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + available
+	if end > total {
+		end = total
+		start = end - available
+		if start < 0 {
+			start = 0
+		}
+	}
+	for i := start; i < end; i++ {
+		item := p.installedItems[i]
 		cursor := "  "
 		nameStyle := stylePickerItem
 		if i == p.selected {
@@ -214,10 +252,14 @@ func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState) {
 				cursor, nameStyle.Render(item.name), item.version, enabled)
 		}
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("Enter detail/MCP opts · ←→ tabs · Esc close"))
+	footer := "Enter detail/MCP opts · ←→ tabs · Esc close"
+	if total > available {
+		footer = fmt.Sprintf("↑/↓ scroll (%d–%d/%d) · %s", start+1, end, total, footer)
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render(footer))
 }
 
-func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState) {
+func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState, contentH int) {
 	// "+ Add Marketplace" always first.
 	addCursor := "  "
 	addStyle := stylePickerItem
@@ -227,7 +269,26 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState) {
 	}
 	fmt.Fprintf(sb, "%s%s\n\n", addCursor, addStyle.Render("+ Add Marketplace"))
 
-	for i, item := range p.marketplaceItems {
+	maxItems := (contentH - 4) / 2
+	if maxItems < 1 {
+		maxItems = 1
+	}
+	total := len(p.marketplaceItems)
+	start := p.selected - 1 - maxItems/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxItems
+	if end > total {
+		end = total
+		start = end - maxItems
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	for i := start; i < end; i++ {
+		item := p.marketplaceItems[i]
 		row := i + 1 // +1 for Add row
 		cursor := "  "
 		nameStyle := stylePickerItem
@@ -245,16 +306,32 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState) {
 	if len(p.marketplaceItems) == 0 {
 		sb.WriteString(stylePickerDesc.Render("No marketplaces configured."))
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("Enter add/manage · ←→ tabs · Esc close"))
+	footer := "Enter add/manage · ←→ tabs · Esc close"
+	if total > maxItems {
+		footer = fmt.Sprintf("↑/↓ scroll (%d–%d/%d) · %s", start+1, end, total, footer)
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render(footer))
 }
 
-func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState) {
+func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState, contentH int) {
 	if len(p.errors) == 0 {
 		sb.WriteString(stylePickerDesc.Render("No errors."))
 		return
 	}
-	for _, e := range p.errors {
+	maxItems := contentH - 1
+	if maxItems < 1 {
+		maxItems = 1
+	}
+	total := len(p.errors)
+	end := total
+	if end > maxItems {
+		end = maxItems
+	}
+	for _, e := range p.errors[:end] {
 		sb.WriteString(fgOnBg(lipgloss.Color("1")).Render("✗ "+e) + "\n")
+	}
+	if total > end {
+		fmt.Fprintf(sb, "\n%s", stylePickerDesc.Render(fmt.Sprintf("%d more errors", total-end)))
 	}
 }
 

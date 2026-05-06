@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,6 +121,103 @@ func TestLoadConfigsPicksUpConduitMCPOverlay(t *testing.T) {
 	}
 	if extra := cfgs["extra-router"]; extra.Scope != "conduit" || extra.Command != "python" {
 		t.Fatalf("extra-router = %+v, want conduit python server", extra)
+	}
+}
+
+func TestLoadConfigsLoadsPluginMCPWhenEnabledSettingIsMissing(t *testing.T) {
+	claudeDir := t.TempDir()
+	conduitDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+
+	pluginDir := filepath.Join(claudeDir, "plugins", "cache", "context7")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, ".mcp.json"), []byte(`{
+  "mcpServers": {
+    "context7": {
+      "command": "node",
+      "args": ["server.js"]
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedPath := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
+	if err := os.WriteFile(installedPath, []byte(fmt.Sprintf(`{
+  "version": 2,
+  "plugins": {
+    "context7@claude-plugins-official": [
+      {"scope": "user", "installPath": %q, "version": "1.0.0"}
+    ]
+  }
+}`, pluginDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgs, err := LoadConfigs("/tmp/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok := cfgs["plugin:context7:context7"]
+	if !ok {
+		t.Fatal("plugin MCP server should load when enabledPlugins entry is missing")
+	}
+	if cfg.Scope != "plugin" || cfg.PluginName != "context7" {
+		t.Fatalf("plugin server metadata = scope %q plugin %q", cfg.Scope, cfg.PluginName)
+	}
+}
+
+func TestLoadConfigsSkipsPluginMCPWhenExplicitlyDisabled(t *testing.T) {
+	claudeDir := t.TempDir()
+	conduitDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+
+	pluginDir := filepath.Join(claudeDir, "plugins", "cache", "context7")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, ".mcp.json"), []byte(`{
+  "mcpServers": {
+    "context7": {
+      "command": "node",
+      "args": ["server.js"]
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedPath := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
+	if err := os.WriteFile(installedPath, []byte(fmt.Sprintf(`{
+  "version": 2,
+  "plugins": {
+    "context7@claude-plugins-official": [
+      {"scope": "user", "installPath": %q, "version": "1.0.0"}
+    ]
+  }
+}`, pluginDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(conduitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conduitDir, "conduit.json"), []byte(`{
+  "schemaVersion": 1,
+  "enabledPlugins": {
+    "context7@claude-plugins-official": false
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgs, err := LoadConfigs("/tmp/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfgs["plugin:context7:context7"]; ok {
+		t.Fatal("plugin MCP server should not load when explicitly disabled")
 	}
 }
 

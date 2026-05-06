@@ -164,17 +164,7 @@ func loadPluginMCPServers(merged map[string]ServerConfig) {
 	}
 
 	for pluginID, entries := range installed.Plugins {
-		// Check if this plugin is enabled (value must be truthy).
-		enabled := false
-		if v, ok := enabledPlugins[pluginID]; ok {
-			switch val := v.(type) {
-			case bool:
-				enabled = val
-			case []interface{}:
-				enabled = len(val) > 0
-			}
-		}
-		if !enabled {
+		if !pluginEnabledFromMap(pluginID, enabledPlugins) {
 			continue
 		}
 
@@ -207,6 +197,21 @@ func loadPluginMCPServers(merged map[string]ServerConfig) {
 			srv.PluginName = pluginName
 			merged[qualName] = srv
 		}
+	}
+}
+
+func pluginEnabledFromMap(pluginID string, enabledPlugins map[string]interface{}) bool {
+	v, ok := enabledPlugins[pluginID]
+	if !ok {
+		return true
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case []interface{}:
+		return len(val) > 0
+	default:
+		return true
 	}
 }
 

@@ -32,8 +32,11 @@ the port harder to compare with the TypeScript source.
 The TUI package intentionally stays a single package so unexported Bubble Tea
 state and helper methods can move between files without creating import cycles.
 
-- `model.go` contains the core model/config/message types, constructor, `Init`,
-  and primary `Update` dispatch.
+- `model.go` contains the core model/config/message types, constructor, and
+  `Init`.
+- `update.go` contains the primary Bubble Tea message dispatch.
+- `key_handler.go` contains key dispatch, text submission, attachment sending,
+  and interrupt/scrollback shortcuts.
 - `command_results.go` applies slash-command results to TUI state.
 - `providers.go` resolves Claude/API/MCP provider state and role-specific model
   routing.

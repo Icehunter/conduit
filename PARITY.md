@@ -200,7 +200,7 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go`, `internal/tui/layout_view.go` | ✅ | Bubble Tea vs React/Ink |
+| Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go`, `internal/tui/update.go`, `internal/tui/key_handler.go`, `internal/tui/layout_view.go` | ✅ | Bubble Tea vs React/Ink |
 | Message display (streaming) | `components/Messages.tsx` | — | `internal/tui/render.go` | ✅ | |
 | Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | ✅ | Full GFM: tables, headings, task lists, strikethrough, blockquotes, italic |
 | Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | ✅ | Chroma-based; functionally equivalent to Prism.js (different library, same result) |
@@ -208,9 +208,9 @@
 | Status bar | `components/StatusLine.tsx` | — | `internal/tui/layout_view.go`, `internal/tui/usage_footer.go` | ✅ | |
 | Permission mode badge | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Input box (textarea) | `components/PromptInput/` | — | `internal/tui/model.go` | ✅ | |
-| Input history (up/down) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Input history (up/down) | `screens/REPL.tsx` | — | `internal/tui/key_handler.go` | ✅ | |
 | Slash command picker | `screens/REPL.tsx` | — | `internal/tui/attachments_picker.go` | ✅ | |
-| Tab completion | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Tab completion | `screens/REPL.tsx` | — | `internal/tui/key_handler.go`, `internal/tui/attachments_picker.go` | ✅ | |
 | Session resume picker | `screens/ResumeConversation.tsx` | — | `internal/tui/model.go` | ✅ | |
 | MCP panel | — | — | `internal/tui/model.go` (panel) | ✅ | conduit-only |
 | Plugin panel (full) | `commands/plugin/` | — | `internal/tui/plugin_panel.go` | ✅ | conduit-only |
@@ -218,8 +218,8 @@
 | Cost display | `components/Stats.tsx` | — | `internal/tui/summaries.go`, `internal/tui/live_state.go` + `/cost` | ✅ | Status bar (cumulative $X.XX) + /cost shows input/output tokens, total cost, per-turn breakdown |
 | Context visualization | `components/ContextVisualization.tsx` | — | `/context` command | ✅ | Bar chart of tokens: system/history/tools/remaining |
 | Virtual message list / scroll | `components/VirtualMessageList.tsx` | — | `internal/tui/model.go` (viewport) | ✅ | Bubble Tea viewport with sticky-bottom; no DOM virtualization needed for terminal rendering |
-| Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
-| Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/model.go` | ✅ | |
+| Code copy (Ctrl+Y) | `screens/REPL.tsx` | — | `internal/tui/key_handler.go` | ✅ | |
+| Ctrl+C interrupt | `screens/REPL.tsx` | — | `internal/tui/key_handler.go`, `internal/tui/update.go` | ✅ | |
 | Flash messages | — | — | `internal/tui/model.go` | ✅ | conduit-only |
 | Doctor screen | `screens/Doctor.tsx` | — | `/doctor` → doctor-panel overlay | ✅ | Full-screen checklist panel with ✅/❌ icons, binary path, OS/arch; q/Esc closes |
 | Stats screen | `components/Stats.tsx` | — | `internal/tui/settings_panel.go`, `internal/tui/settings_stats.go`, `internal/sessionstats/` | ✅ | /stats opens Settings panel → Stats tab; Overview + Models + asciigraph chart |

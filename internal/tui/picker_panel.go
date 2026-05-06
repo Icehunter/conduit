@@ -139,7 +139,7 @@ func (m Model) renderModelPicker() string {
 	var sb strings.Builder
 	title := panelTitle("Switch Model")
 	tabs := renderProviderRoleTabs(p.role)
-	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 4
+	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
 	if ornW < 6 {
 		ornW = 6
 	}

@@ -50,10 +50,13 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 		spec := floatingPickerSpec
 		if m.picker != nil && m.picker.kind == "model" {
 			spec = floatingModelPickerSpec
+			drawFloating(scr, layout.panel, picker, spec, false)
 		} else if m.commandPickerActive() {
 			spec = floatingCommandSpec
+			drawPickerAboveInput(scr, layout, picker, spec)
+		} else {
+			drawPickerAboveInput(scr, layout, picker, spec)
 		}
-		drawPickerAboveInput(scr, layout, picker, spec)
 	}
 	if modal != "" {
 		drawFloating(scr, layout.panel, modal, floatingModalSpec, false)

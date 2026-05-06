@@ -23,8 +23,11 @@ func TestComputeLayout_ReservesInputAndFooterRows(t *testing.T) {
 	if layout.input.Min.Y <= layout.viewport.Max.Y {
 		t.Fatalf("input overlaps viewport: viewport=%v input=%v", layout.viewport, layout.input)
 	}
-	if layout.panel.Max.Y > layout.input.Min.Y {
-		t.Fatalf("panel overlaps bottom chrome: panel=%v input=%v", layout.panel, layout.input)
+	if layout.panel.Min.Y <= 0 || layout.panel.Max.Y >= m.height {
+		t.Fatalf("panel should keep top/bottom breathing room: panel=%v height=%d", layout.panel, m.height)
+	}
+	if layout.panel.Max.Y <= layout.input.Min.Y {
+		t.Fatalf("panel should float over bottom chrome when tall: panel=%v input=%v", layout.panel, layout.input)
 	}
 }
 

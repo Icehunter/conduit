@@ -56,7 +56,7 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 		drawPickerAboveInput(scr, layout, picker, spec)
 	}
 	if modal != "" {
-		drawFloating(scr, area, modal, floatingModalSpec, false)
+		drawFloating(scr, layout.panel, modal, floatingModalSpec, false)
 	}
 	if m.companionBubble != "" && panel == "" && picker == "" && modal == "" {
 		drawCompanionOverlay(scr, layout, m.renderCompanionBubble())

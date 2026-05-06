@@ -55,9 +55,13 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 		workingTop = area.Min.Y
 	}
 
-	panel := image.Rect(area.Min.X+6, area.Min.Y+2, area.Max.X-6, area.Max.Y-1)
+	panelBottom := inputTop
+	if panelBottom < area.Min.Y {
+		panelBottom = area.Min.Y
+	}
+	panel := image.Rect(area.Min.X+6, area.Min.Y+2, area.Max.X-6, panelBottom)
 	if panel.Dx() < 20 || panel.Dy() < 8 {
-		panel = image.Rect(area.Min.X, area.Min.Y, area.Max.X, area.Max.Y)
+		panel = image.Rect(area.Min.X, area.Min.Y, area.Max.X, panelBottom)
 	}
 
 	layout := uiLayout{
@@ -66,7 +70,7 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 		input:       image.Rect(area.Min.X, inputTop, area.Max.X, inputBottom),
 		coordinator: image.Rect(area.Min.X, inputBottom, area.Max.X, footerTop),
 		footer:      image.Rect(area.Min.X, footerTop, area.Max.X, area.Max.Y),
-		pickerArea:  image.Rect(area.Min.X, area.Min.Y, area.Max.X, inputTop),
+		pickerArea:  image.Rect(area.Min.X, area.Min.Y, area.Max.X, panelBottom),
 		panel:       panel,
 	}
 	if layout.viewport.Dy() < 1 {

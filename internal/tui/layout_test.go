@@ -23,6 +23,9 @@ func TestComputeLayout_ReservesInputAndFooterRows(t *testing.T) {
 	if layout.input.Min.Y <= layout.viewport.Max.Y {
 		t.Fatalf("input overlaps viewport: viewport=%v input=%v", layout.viewport, layout.input)
 	}
+	if layout.panel.Max.Y > layout.input.Min.Y {
+		t.Fatalf("panel overlaps bottom chrome: panel=%v input=%v", layout.panel, layout.input)
+	}
 }
 
 func TestView_DoesNotShrinkViewportForPicker(t *testing.T) {

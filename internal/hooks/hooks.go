@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -47,6 +48,12 @@ type HookInput struct {
 type HookOutput struct {
 	Decision string `json:"decision"` // "approve" | "block" | ""
 	Reason   string `json:"reason"`
+	// additionalContext is the top-level field used by Copilot CLI and SDK.
+	AdditionalContext string `json:"additionalContext"`
+	// hookSpecificOutput carries the Claude Code SessionStart context payload.
+	HookSpecificOutput struct {
+		AdditionalContext string `json:"additionalContext"`
+	} `json:"hookSpecificOutput"`
 }
 
 // Result is the outcome of running a hook set.
@@ -58,6 +65,9 @@ type Result struct {
 	// Approved is true if a hook returned decision=approve, bypassing further
 	// permission prompts for this tool call.
 	Approved bool
+	// AdditionalContext is text returned by a SessionStart hook to be injected
+	// into the conversation as a system-reminder on the first turn.
+	AdditionalContext string
 }
 
 // RunPreToolUse runs all PreToolUse hooks matching toolName.
@@ -82,9 +92,14 @@ func RunPostToolUse(ctx context.Context, hooks []settings.HookMatcher, sessionID
 }
 
 // RunSessionStart runs all SessionStart hooks. Results are advisory — never blocks.
-func RunSessionStart(ctx context.Context, hooks []settings.HookMatcher, sessionID string) {
+// Returns any additionalContext text collected from hook output, to be injected
+// into the first conversation turn as a <system-reminder>.
+// The event type "startup" is passed as the matcher token so that hooks with
+// matchers like "startup|clear|compact" fire correctly.
+func RunSessionStart(ctx context.Context, hooks []settings.HookMatcher, sessionID string) string {
 	input := HookInput{SessionID: sessionID}
-	runMatching(ctx, hooks, "", input)
+	r := runMatching(ctx, hooks, "startup", input)
+	return r.AdditionalContext
 }
 
 // RunStop runs all Stop hooks. Results are advisory — never blocks.
@@ -99,6 +114,7 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 		if !matchesTool(m.Matcher, toolName) {
 			continue
 		}
+		pluginRoot := m.PluginRoot
 		for _, hook := range m.Hooks {
 			if hook.Async {
 				// Fire-and-forget: run in background, never block the caller.
@@ -108,18 +124,19 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 				// goroutine tied to context.Background() — original behaviour.
 				h := hook
 				in := input
+				pr := pluginRoot
 				if DefaultAsyncGroup != nil {
 					DefaultAsyncGroup.Go(func(ctx context.Context) {
-						_ = dispatchHook(ctx, h, in)
+						_ = dispatchHook(ctx, h, in, pr)
 					})
 				} else {
 					go func() {
-						_ = dispatchHook(context.Background(), h, in)
+						_ = dispatchHook(context.Background(), h, in, pr)
 					}()
 				}
 				continue
 			}
-			r := dispatchHook(ctx, hook, input)
+			r := dispatchHook(ctx, hook, input, pluginRoot)
 			if r.Blocked {
 				// Block short-circuits all remaining hooks immediately.
 				return r
@@ -129,19 +146,27 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 				// specific matcher further down the list may still block.
 				result.Approved = true
 			}
+			// Accumulate additional context from SessionStart hooks.
+			if r.AdditionalContext != "" {
+				if result.AdditionalContext != "" {
+					result.AdditionalContext += "\n"
+				}
+				result.AdditionalContext += r.AdditionalContext
+			}
 		}
 	}
 	return result
 }
 
 // dispatchHook routes a hook to the appropriate runner based on its type.
-func dispatchHook(ctx context.Context, hook settings.Hook, input HookInput) Result {
+// pluginRoot is the plugin's install directory; non-empty for plugin-sourced hooks.
+func dispatchHook(ctx context.Context, hook settings.Hook, input HookInput, pluginRoot string) Result {
 	switch hook.Type {
 	case "command", "":
 		if hook.Command == "" {
 			return Result{}
 		}
-		return runHook(ctx, hook.Command, hookTimeout(hook.TimeoutSecs), input)
+		return runHook(ctx, hook.Command, hookTimeout(hook.TimeoutSecs), input, pluginRoot)
 	case "http":
 		return runHTTPHook(ctx, hook, input)
 	case "prompt":
@@ -154,17 +179,28 @@ func dispatchHook(ctx context.Context, hook settings.Hook, input HookInput) Resu
 }
 
 // matchesTool returns true if the matcher applies to toolName.
-// Empty matcher matches all tools; otherwise it's a tool name or glob.
+// Empty matcher matches all tools. Multiple alternatives separated by "|"
+// are evaluated as OR (e.g. "startup|clear|compact" for SessionStart event
+// types). Each alternative may be an exact name or a glob ("Bash*").
 func matchesTool(matcher, toolName string) bool {
 	if matcher == "" {
 		return true
 	}
-	if strings.Contains(matcher, "*") {
-		// Simple glob: "Bash*" matches "Bash", "BashTool", etc.
-		prefix := strings.TrimSuffix(matcher, "*")
-		return strings.HasPrefix(strings.ToLower(toolName), strings.ToLower(prefix))
+	for _, part := range strings.Split(matcher, "|") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "*") {
+			prefix := strings.TrimSuffix(part, "*")
+			if strings.HasPrefix(strings.ToLower(toolName), strings.ToLower(prefix)) {
+				return true
+			}
+		} else if strings.EqualFold(part, toolName) {
+			return true
+		}
 	}
-	return strings.EqualFold(matcher, toolName)
+	return false
 }
 
 // maxHookTimeout is the upper bound for any hook execution.
@@ -191,7 +227,9 @@ func hookTimeout(secs int) time.Duration {
 }
 
 // runHook executes a single hook command with JSON input on stdin.
-func runHook(ctx context.Context, command string, timeout time.Duration, input HookInput) Result {
+// pluginRoot is injected as CLAUDE_PLUGIN_ROOT in the subprocess environment
+// when non-empty, enabling plugin hooks to reference their own install path.
+func runHook(ctx context.Context, command string, timeout time.Duration, input HookInput, pluginRoot string) Result {
 	payload, _ := json.Marshal(input)
 
 	hctx, cancel := context.WithTimeout(ctx, timeout)
@@ -202,6 +240,9 @@ func runHook(ctx context.Context, command string, timeout time.Duration, input H
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if pluginRoot != "" {
+		cmd.Env = append(os.Environ(), "CLAUDE_PLUGIN_ROOT="+pluginRoot)
+	}
 
 	if err := cmd.Run(); err != nil {
 		// Non-zero exit: treat as block with the stderr as reason.
@@ -231,5 +272,11 @@ func runHook(ctx context.Context, command string, timeout time.Duration, input H
 	case "approve":
 		return Result{Approved: true}
 	}
-	return Result{}
+	// Collect additionalContext from either the top-level field (Copilot/SDK)
+	// or the nested hookSpecificOutput field (Claude Code SessionStart format).
+	addlCtx := directive.HookSpecificOutput.AdditionalContext
+	if addlCtx == "" {
+		addlCtx = directive.AdditionalContext
+	}
+	return Result{AdditionalContext: addlCtx}
 }

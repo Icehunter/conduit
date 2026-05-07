@@ -3,13 +3,16 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/icehunter/conduit/internal/agent"
@@ -115,6 +118,116 @@ func TestModelPickerVisibleLinesCapsTallTerminals(t *testing.T) {
 	}
 	if got := modelPickerVisibleLines(18); got != 8 {
 		t.Fatalf("visible lines = %d, want minimum 8", got)
+	}
+}
+
+func TestRenderCommandPickerTruncatesDescriptionsToSingleRows(t *testing.T) {
+	m := Model{width: 140, cmdSelected: 0}
+	m.input = textarea.New()
+	m.input.SetValue("/")
+	m.cmdMatches = []commands.Command{
+		{Name: "batch", Description: "Research and plan a large-scale mechanical change, then execute it across many files using parallel agents."},
+		{Name: "claude-code-setup:claude-automation-recommender", Description: "Analyze a codebase and recommend Claude Code automations (hooks, subagents, skills, plugins, MCP servers) that would improve the workflow."},
+	}
+
+	out := plainText(m.renderCommandPicker())
+	if strings.Contains(out, "parallel agents.") {
+		t.Fatalf("description was not truncated: %q", out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("picker should show ellipsis for truncated descriptions: %q", out)
+	}
+	if got := strings.Count(out, "/batch"); got != 1 {
+		t.Fatalf("/batch rendered %d times, want once: %q", got, out)
+	}
+	if !strings.Contains(out, "1-2 of 2") {
+		t.Fatalf("picker missing footer range: %q", out)
+	}
+	contentW := commandPickerContentWidth(m.width)
+	for _, line := range strings.Split(out, "\n")[1:] {
+		if got := lipgloss.Width(line); got > contentW {
+			t.Fatalf("line width = %d, want <= %d: %q", got, contentW, line)
+		}
+	}
+}
+
+func TestRenderCommandPickerPinsFooterToFixedBodyBottom(t *testing.T) {
+	m := Model{width: 140, cmdSelected: 0}
+	m.input = textarea.New()
+	m.input.SetValue("/")
+	m.cmdMatches = []commands.Command{
+		{Name: "help", Description: "Show keyboard shortcut help"},
+		{Name: "status", Description: "Show current session status"},
+	}
+
+	lines := strings.Split(plainText(m.renderCommandPicker()), "\n")
+	wantLines := 1 + commandPickerBodyLines()
+	if len(lines) != wantLines {
+		t.Fatalf("rendered line count = %d, want %d: %#v", len(lines), wantLines, lines)
+	}
+	if !strings.Contains(lines[len(lines)-1], "1-2 of 2") {
+		t.Fatalf("footer should be pinned to final body line: %#v", lines)
+	}
+	if strings.TrimSpace(lines[len(lines)-2]) != "" {
+		t.Fatalf("expected blank spacer line above footer: %#v", lines)
+	}
+}
+
+func TestCommandPickerRenderedWindowHeightStaysFixedAcrossScroll(t *testing.T) {
+	items := []commands.Command{
+		{Name: "copy", Description: "Copy the last assistant response to clipboard"},
+		{Name: "cost", Description: "Show total cost and per-turn breakdown for this session"},
+		{Name: "diff", Description: "Show git diff of files edited this session (or all changes when requested)"},
+		{Name: "frontend-design:frontend-design", Description: "Create distinctive, production-grade frontend interfaces with strong visual hierarchy and polished interaction details."},
+		{Name: "keybindings-help", Description: "Use when the user wants to customize keyboard shortcuts, inspect bindings, or understand conflicts."},
+		{Name: "login", Description: "Sign in or add an account (/login --switch <email> to switch accounts)."},
+		{Name: "very-long-command-name-that-should-not-wrap-past-the-description-column", Description: "This description is intentionally long enough to need truncation so the renderer proves it can hold a single physical row without bleeding."},
+		{Name: "status", Description: "Show current session status"},
+	}
+	heights := map[int]bool{}
+	for _, selected := range []int{0, 3, 6} {
+		m := Model{width: 140, cmdSelected: selected}
+		m.input = textarea.New()
+		m.input.SetValue("/")
+		m.cmdMatches = items
+		window := renderFloatingWindow(m.renderCommandPicker(), commandPickerOuterWidth(m.width), floatingCommandSpec.maxHeight)
+		heights[lipgloss.Height(window)] = true
+		if got := lipgloss.Height(window); got != floatingCommandSpec.maxHeight {
+			t.Fatalf("selected %d rendered height = %d, want %d", selected, got, floatingCommandSpec.maxHeight)
+		}
+	}
+	if len(heights) != 1 {
+		t.Fatalf("picker height changed across scroll positions: %#v", heights)
+	}
+}
+
+func TestCommandPickerUsesAvailableRowsButLeavesFooterSpacer(t *testing.T) {
+	items := make([]commands.Command, 0, commandPickerMaxItems+2)
+	for i := 0; i < commandPickerMaxItems+2; i++ {
+		items = append(items, commands.Command{
+			Name:        fmt.Sprintf("cmd-%02d", i),
+			Description: "Short description",
+		})
+	}
+	m := Model{width: 140, cmdSelected: 0}
+	m.input = textarea.New()
+	m.input.SetValue("/")
+	m.cmdMatches = items
+
+	lines := strings.Split(plainText(m.renderCommandPicker()), "\n")
+	if !strings.Contains(lines[len(lines)-1], "1-11 of 13") {
+		t.Fatalf("footer range = %q, want 1-11 of 13", lines[len(lines)-1])
+	}
+	if strings.TrimSpace(lines[len(lines)-2]) != "" {
+		t.Fatalf("expected one spacer row between list and footer: %#v", lines)
+	}
+}
+
+func TestCommandPickerContentWidthUsesSixColumnMargins(t *testing.T) {
+	got := commandPickerContentWidth(140)
+	want := 140 - commandPickerSideMargin*2 - floatingWindowStyle().GetHorizontalFrameSize() - floatingBodyPadX*2
+	if got != want {
+		t.Fatalf("content width = %d, want %d", got, want)
 	}
 }
 

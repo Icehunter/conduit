@@ -57,6 +57,7 @@ type HookMatcher struct {
 	Matcher    string `json:"matcher"` // tool name or glob, "" = all
 	Hooks      []Hook `json:"hooks"`
 	SourceFile string `json:"-"` // path of the settings file this came from; not serialized
+	PluginRoot string `json:"-"` // plugin install dir; non-empty for plugin-sourced hooks
 }
 
 // IsProjectLocal reports whether this matcher came from a project-scoped

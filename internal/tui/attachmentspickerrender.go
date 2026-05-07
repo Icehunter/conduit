@@ -9,81 +9,81 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+const (
+	commandPickerSideMargin   = 6
+	commandPickerMaxItems     = 11
+	commandPickerMaxDescRunes = 88
+	commandPickerSelectorW    = 2
+)
+
 // renderCommandPicker renders the slash command picker dropdown.
 func (m Model) renderCommandPicker() string {
-	const maxItems = 8
-
 	// The current query (text after "/").
 	query := strings.ToLower(strings.TrimPrefix(m.input.Value(), "/"))
+	bodyLines := commandPickerBodyLines()
 
 	// Compute visible window around the selected index.
-	start := m.cmdSelected - maxItems/2
+	start := m.cmdSelected - commandPickerMaxItems/2
 	if start < 0 {
 		start = 0
 	}
-	end := start + maxItems
+	end := start + commandPickerMaxItems
 	if end > len(m.cmdMatches) {
 		end = len(m.cmdMatches)
-		start = end - maxItems
+		start = end - commandPickerMaxItems
 		if start < 0 {
 			start = 0
 		}
 	}
 
-	contentW := floatingInnerWidth(m.width, floatingCommandSpec) - floatingBodyPadX*2
+	contentW := commandPickerContentWidth(m.width)
 	if contentW < 20 {
 		contentW = 20
 	}
 
 	if len(m.cmdMatches) == 0 {
-		var sb strings.Builder
-		sb.WriteString(styleStatusAccent.Render("Commands") + "\n\n")
+		lines := []string{}
 		displayQuery := strings.TrimPrefix(m.input.Value(), "/")
 		if displayQuery == "" {
-			sb.WriteString(stylePickerDesc.Render("Type to filter commands."))
+			lines = append(lines, stylePickerDesc.Render("Type to filter commands."))
 		} else {
-			sb.WriteString(stylePickerDesc.Render(fmt.Sprintf("No commands found for %q.", displayQuery)))
-			sb.WriteByte('\n')
-			sb.WriteString(stylePickerDesc.Render("Enter sends it as an unknown command · Esc closes"))
+			lines = append(lines,
+				stylePickerDesc.Render(fmt.Sprintf("No commands found for %q.", displayQuery)),
+			)
 		}
-		return sb.String()
+		return renderCommandPickerFrame(lines, commandPickerFooter(0, 0, 0), bodyLines, contentW)
 	}
 
 	// Compute name column width from the longest name across all matches so
 	// the column stays stable as the user scrolls through results.
 	nameColW := 0
 	for _, cmd := range m.cmdMatches {
-		n := len([]rune(cmd.Name)) + 1 // +1 for leading "/"
+		n := lipgloss.Width("/" + cmd.Name)
 		if n > nameColW {
 			nameColW = n
 		}
 	}
-	const minDescW = 20
+	const minDescW = 24
 	const gap = 2
-	if contentW < minDescW+gap+1 {
-		contentW = minDescW + gap + 1
+	if contentW < commandPickerSelectorW+minDescW+gap+1 {
+		contentW = commandPickerSelectorW + minDescW + gap + 1
 	}
-	if nameColW > contentW-minDescW-gap {
-		nameColW = contentW - minDescW - gap
+	maxNameW := contentW - commandPickerSelectorW - minDescW - gap
+	if nameColW > maxNameW {
+		nameColW = maxNameW
 	}
-	descMax := contentW - nameColW - gap
-	indent := strings.Repeat(" ", nameColW+gap)
+	descMax := contentW - commandPickerSelectorW - nameColW - gap
+	if descMax > commandPickerMaxDescRunes {
+		descMax = commandPickerMaxDescRunes
+	}
 
-	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render("Commands") + "\n\n")
+	lines := []string{}
 	for i := start; i < end; i++ {
-		if i > start {
-			sb.WriteByte('\n')
-		}
 		cmd := m.cmdMatches[i]
 
 		// Render name: "/" + name padded to nameColW.
 		rawName := "/" + cmd.Name
-		runes := []rune(rawName)
-		if len(runes) > nameColW {
-			runes = runes[:nameColW]
-		}
-		rawName = string(runes) + strings.Repeat(" ", nameColW-len(runes))
+		rawName = padPlainToWidth(truncatePlainToWidth(rawName, nameColW), nameColW)
 
 		prefix := "  "
 		var namePart string
@@ -94,47 +94,100 @@ func (m Model) renderCommandPicker() string {
 			namePart = highlightMatch(rawName, query, stylePickerItem, stylePickerHighlight)
 		}
 
-		// Word-wrap description so it flows to additional lines instead of being cut off.
-		descLines := cmdDescWrap(cmd.Description, descMax)
-		sb.WriteString(prefix + namePart + surfaceSpaces(gap) + highlightMatch(descLines[0], query, stylePickerDesc, stylePickerHighlight))
-		for _, dl := range descLines[1:] {
-			sb.WriteByte('\n')
-			sb.WriteString(surfaceSpaces(2+lipgloss.Width(indent)) + highlightMatch(dl, query, stylePickerDesc, stylePickerHighlight))
-		}
+		desc := truncatePlainToWidth(cmd.Description, descMax)
+		line := prefix + namePart + surfaceSpaces(gap) + highlightMatch(desc, query, stylePickerDesc, stylePickerHighlight)
+		lines = append(lines, line)
 	}
 
+	return renderCommandPickerFrame(lines, commandPickerFooter(start, end, len(m.cmdMatches)), bodyLines, contentW)
+}
+
+func commandPickerContentWidth(termWidth int) int {
+	outer := commandPickerOuterWidth(termWidth)
+	frame := floatingWindowStyle().GetHorizontalFrameSize()
+	inner := outer - frame - floatingBodyPadX*2
+	if inner < 1 {
+		return 1
+	}
+	return inner
+}
+
+func commandPickerOuterWidth(termWidth int) int {
+	if termWidth > commandPickerSideMargin*2+floatingCommandSpec.minWidth {
+		return termWidth - commandPickerSideMargin*2
+	}
+	return floatingOuterWidth(termWidth, floatingCommandSpec)
+}
+
+func commandPickerBodyLines() int {
+	frame := floatingWindowStyle().GetVerticalFrameSize()
+	innerH := floatingCommandSpec.maxHeight - frame
+	headerH := 1
+	lines := innerH - headerH - floatingBodyPadY*2
+	if lines < 1 {
+		return 1
+	}
+	return lines
+}
+
+func renderCommandPickerFrame(lines []string, footer string, bodyLines, contentW int) string {
+	if bodyLines < 1 {
+		bodyLines = 1
+	}
+	if len(lines) > bodyLines-1 {
+		lines = lines[:bodyLines-1]
+	}
+	for len(lines) < bodyLines-1 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, stylePickerDesc.Render(truncatePlainToWidth(footer, contentW)))
+
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Commands"))
+	sb.WriteByte('\n')
+	sb.WriteString(strings.Join(lines, "\n"))
 	return sb.String()
 }
 
-// cmdDescWrap splits a description into lines of at most maxW runes, breaking
-// on word boundaries. Always returns at least one element.
-func cmdDescWrap(s string, maxW int) []string {
-	if maxW <= 0 || len([]rune(s)) <= maxW {
-		return []string{s}
+func commandPickerFooter(start, end, total int) string {
+	if total <= 0 {
+		return "Enter sends unknown command · Esc closes"
 	}
-	var lines []string
-	words := strings.Fields(s)
-	var cur strings.Builder
-	for _, w := range words {
-		wlen := len([]rune(w))
-		if cur.Len() == 0 {
-			cur.WriteString(w)
-		} else if cur.Len()+1+wlen <= maxW {
-			cur.WriteByte(' ')
-			cur.WriteString(w)
-		} else {
-			lines = append(lines, cur.String())
-			cur.Reset()
-			cur.WriteString(w)
+	return fmt.Sprintf("↑/↓ select · Tab complete · Enter run · Esc close · %d-%d of %d", start+1, end, total)
+}
+
+func truncatePlainToWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	if maxWidth == 1 {
+		return "…"
+	}
+	target := maxWidth - 1
+	var out []rune
+	width := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if width+rw > target {
+			break
 		}
+		out = append(out, r)
+		width += rw
 	}
-	if cur.Len() > 0 {
-		lines = append(lines, cur.String())
+	return string(out) + "…"
+}
+
+func padPlainToWidth(s string, width int) string {
+	if width <= 0 {
+		return ""
 	}
-	if len(lines) == 0 {
-		return []string{s}
+	if w := lipgloss.Width(s); w < width {
+		return s + strings.Repeat(" ", width-w)
 	}
-	return lines
+	return s
 }
 
 // highlightMatch renders s with every case-insensitive occurrence of query

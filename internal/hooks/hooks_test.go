@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,21 +46,21 @@ func TestMatchesTool_Glob(t *testing.T) {
 }
 
 func TestRunHook_ZeroExit(t *testing.T) {
-	r := runHook(context.Background(), "true", maxHookTimeout, HookInput{})
+	r := runHook(context.Background(), "true", maxHookTimeout, HookInput{}, "")
 	if r.Blocked {
 		t.Errorf("zero-exit hook should not block; reason: %s", r.Reason)
 	}
 }
 
 func TestRunHook_NonZeroExit(t *testing.T) {
-	r := runHook(context.Background(), "false", maxHookTimeout, HookInput{})
+	r := runHook(context.Background(), "false", maxHookTimeout, HookInput{}, "")
 	if !r.Blocked {
 		t.Error("non-zero exit should block")
 	}
 }
 
 func TestRunHook_BlockDirective(t *testing.T) {
-	r := runHook(context.Background(), `echo '{"decision":"block","reason":"test"}'`, maxHookTimeout, HookInput{})
+	r := runHook(context.Background(), `echo '{"decision":"block","reason":"test"}'`, maxHookTimeout, HookInput{}, "")
 	if !r.Blocked {
 		t.Error("block directive should block")
 	}
@@ -69,7 +70,7 @@ func TestRunHook_BlockDirective(t *testing.T) {
 }
 
 func TestRunHook_ApproveDirective(t *testing.T) {
-	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, maxHookTimeout, HookInput{})
+	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, maxHookTimeout, HookInput{}, "")
 	if r.Blocked {
 		t.Error("approve directive should not block")
 	}
@@ -105,7 +106,7 @@ func TestRunPreToolUse_NonMatchingTool(t *testing.T) {
 }
 
 func TestRunHook_ApproveDirectiveSetsApproved(t *testing.T) {
-	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, maxHookTimeout, HookInput{})
+	r := runHook(context.Background(), `echo '{"decision":"approve"}'`, maxHookTimeout, HookInput{}, "")
 	if r.Blocked {
 		t.Error("approve should not block")
 	}
@@ -115,7 +116,7 @@ func TestRunHook_ApproveDirectiveSetsApproved(t *testing.T) {
 }
 
 func TestRunHook_NonJSONStdoutIsAdvisory(t *testing.T) {
-	r := runHook(context.Background(), `echo "some output"`, maxHookTimeout, HookInput{})
+	r := runHook(context.Background(), `echo "some output"`, maxHookTimeout, HookInput{}, "")
 	if r.Blocked || r.Approved {
 		t.Error("non-JSON stdout should be advisory only")
 	}
@@ -123,7 +124,7 @@ func TestRunHook_NonJSONStdoutIsAdvisory(t *testing.T) {
 
 func TestRunHook_StdinReceivesJSON(t *testing.T) {
 	// Hook reads stdin and exits non-zero if it doesn't contain session_id.
-	r := runHook(context.Background(), `grep -q '"session_id"' || exit 1`, maxHookTimeout, HookInput{SessionID: "test-session"})
+	r := runHook(context.Background(), `grep -q '"session_id"' || exit 1`, maxHookTimeout, HookInput{SessionID: "test-session"}, "")
 	if r.Blocked {
 		t.Errorf("hook should have found session_id in stdin: %s", r.Reason)
 	}
@@ -131,7 +132,9 @@ func TestRunHook_StdinReceivesJSON(t *testing.T) {
 
 func TestRunSessionStart_NoHooks(t *testing.T) {
 	// Must not panic with nil/empty matchers.
-	RunSessionStart(context.Background(), nil, "sess")
+	if ctx := RunSessionStart(context.Background(), nil, "sess"); ctx != "" {
+		t.Errorf("empty hook list should return empty context, got %q", ctx)
+	}
 	RunSessionStart(context.Background(), []settings.HookMatcher{}, "sess")
 }
 
@@ -143,6 +146,60 @@ func TestRunSessionStart_Fires(t *testing.T) {
 	}}
 	// Must not panic and must not return an error to caller.
 	RunSessionStart(context.Background(), matchers, "sess")
+}
+
+func TestRunSessionStart_MatchesStartupToken(t *testing.T) {
+	// Superpowers uses "startup|clear|compact" as the SessionStart matcher.
+	// RunSessionStart must pass "startup" so it fires.
+	out := filepath.Join(t.TempDir(), "fired.txt")
+	matchers := []settings.HookMatcher{{
+		Matcher: "startup|clear|compact",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "echo fired > '" + out + "'",
+		}},
+	}}
+	RunSessionStart(context.Background(), matchers, "sess")
+	if _, err := os.Stat(out); err != nil {
+		t.Error("SessionStart hook with matcher 'startup|clear|compact' did not fire")
+	}
+}
+
+func TestRunSessionStart_ReturnsAdditionalContext(t *testing.T) {
+	matchers := []settings.HookMatcher{{
+		Matcher: "",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: `echo '{"hookSpecificOutput":{"additionalContext":"hello from hook"}}'`,
+		}},
+	}}
+	got := RunSessionStart(context.Background(), matchers, "sess")
+	if got != "hello from hook" {
+		t.Errorf("AdditionalContext = %q; want %q", got, "hello from hook")
+	}
+}
+
+func TestMatchesTool_PipeAlternation(t *testing.T) {
+	tests := []struct {
+		matcher string
+		tool    string
+		want    bool
+	}{
+		{"startup|clear|compact", "startup", true},
+		{"startup|clear|compact", "clear", true},
+		{"startup|clear|compact", "compact", true},
+		{"startup|clear|compact", "stop", false},
+		{"startup|clear|compact", "", false},
+		{"Bash|Edit", "Bash", true},
+		{"Bash|Edit", "Edit", true},
+		{"Bash|Edit", "Grep", false},
+	}
+	for _, tt := range tests {
+		got := matchesTool(tt.matcher, tt.tool)
+		if got != tt.want {
+			t.Errorf("matchesTool(%q, %q) = %v; want %v", tt.matcher, tt.tool, got, tt.want)
+		}
+	}
 }
 
 func TestRunStop_NoHooks(t *testing.T) {
@@ -243,5 +300,23 @@ func TestRunHook_AsyncReturnsImmediately(t *testing.T) {
 
 	if elapsed > 150*time.Millisecond {
 		t.Errorf("async hook blocked caller for %v; want <150ms", elapsed)
+	}
+}
+
+func TestRunHook_InjectsPluginRoot(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "plugin_root.txt")
+	// The hook writes $CLAUDE_PLUGIN_ROOT to a file so we can read it back.
+	cmd := `echo "$CLAUDE_PLUGIN_ROOT" > '` + out + `'`
+	r := runHook(context.Background(), cmd, maxHookTimeout, HookInput{}, "/plugin/install/dir")
+	if r.Blocked {
+		t.Fatalf("hook blocked: %s", r.Reason)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("hook did not write output: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	if got != "/plugin/install/dir" {
+		t.Errorf("CLAUDE_PLUGIN_ROOT = %q; want /plugin/install/dir", got)
 	}
 }

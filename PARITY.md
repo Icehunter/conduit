@@ -350,6 +350,9 @@
 | Plugin MCP server sync | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
 | Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | LoadFromPluginDirs; merged at startup, plugin < user/project priority |
 | Plugin slash commands | `services/plugins/` | — | `internal/plugins/loader.go` | ✅ | |
+| Plugin skills (SKILL.md) | `skills/loadSkillsDir.ts` | — | `internal/plugins/loader.go` `loadSkills` + `internal/plugins/skills.go` | ✅ | skills/*/SKILL.md per-plugin; frontmatter description + tools enforced via Registry.Subset |
+| Plugin hooks (hooks.json) | `utils/plugins/pluginLoader.ts` | — | `internal/plugins/loader.go` `loadHooks` + `internal/plugins/hooks.go` | ✅ | CLAUDE_PLUGIN_ROOT injected into command subprocesses; plugin hooks trusted (not project-local) |
+| Plugin agents (agents/*.md) | `services/plugins/` | — | `internal/plugins/loader.go` `loadAgents` + `internal/plugins/agents.go` + `internal/tools/agenttool/` | ✅ | Task(subagent_type=…) dispatches to named agents; per-agent system prompt, model, tool allowlist |
 | Skill discovery from plugins | `skills/loadSkillsDir.ts` | — | `internal/tools/skilltool/` | ✅ | |
 | Bundled/built-in skills | `skills/bundledSkills.ts` | — | `internal/skills/bundled.go` | ✅ | /simplify (3-agent code review) and /remember (memory promotion review) |
 | Skill listing in system prompt | `skills/` | — | `internal/agent/systemprompt.go` | ✅ | |

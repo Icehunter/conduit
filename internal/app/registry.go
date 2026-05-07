@@ -34,19 +34,20 @@ import (
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 )
 
-// BuildSkillEntries converts loaded plugin commands + bundled skills into
-// SkillEntry values for the system prompt skill listing.
+// BuildSkillEntries converts loaded plugin commands, plugin skills, and
+// bundled skills into SkillEntry values for the system prompt skill listing.
 func BuildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
-	var entries []agent.SkillEntry
-	// Bundled built-in skills first.
 	loader := plugins.NewSkillLoader(ps)
+	var entries []agent.SkillEntry
+
+	// Bundled built-in skills first.
 	for _, cmd := range loader.BundledCommands() {
 		entries = append(entries, agent.SkillEntry{
 			Name:        "/" + cmd.QualifiedName,
 			Description: cmd.Description,
 		})
 	}
-	// Plugin commands.
+	// Plugin slash commands.
 	for _, p := range ps {
 		for _, cmd := range p.Commands {
 			entries = append(entries, agent.SkillEntry{
@@ -54,6 +55,13 @@ func BuildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
 				Description: cmd.Description,
 			})
 		}
+	}
+	// Plugin skills (SKILL.md).
+	for _, sk := range loader.PluginSkills() {
+		entries = append(entries, agent.SkillEntry{
+			Name:        sk.QualifiedName,
+			Description: sk.Description,
+		})
 	}
 	return entries
 }

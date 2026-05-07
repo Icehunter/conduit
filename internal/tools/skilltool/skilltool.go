@@ -37,6 +37,8 @@ type Command struct {
 	Description string
 	// Body is the markdown body (frontmatter stripped).
 	Body string
+	// Tools is the optional tool allowlist from frontmatter. Empty = inherit all tools.
+	Tools []string
 }
 
 // Loader discovers available skill commands. Implemented by the plugin loader.
@@ -50,13 +52,18 @@ type Loader interface {
 type Tool struct {
 	loader   Loader
 	runAgent func(ctx context.Context, prompt string) (string, error)
+	// runTools is an optional callback for tool-restricted execution. When non-nil
+	// and a skill specifies a tools allowlist, it is called instead of runAgent.
+	// tools is the resolved allowlist after alias normalisation.
+	runTools func(ctx context.Context, prompt string, tools []string) (string, error)
 }
 
 // New returns a SkillTool.
-// runAgent is a closure that runs a nested agent loop with the given prompt
-// as the first user message and returns the final assistant text.
-func New(loader Loader, runAgent func(ctx context.Context, prompt string) (string, error)) *Tool {
-	return &Tool{loader: loader, runAgent: runAgent}
+// runAgent runs an unrestricted nested agent loop. runTools is optional; when
+// provided it is called for skills that declare a tools allowlist, enabling
+// per-skill tool restriction (CC parity). Pass nil to disable restriction.
+func New(loader Loader, runAgent func(ctx context.Context, prompt string) (string, error), runTools func(ctx context.Context, prompt string, tools []string) (string, error)) *Tool {
+	return &Tool{loader: loader, runAgent: runAgent, runTools: runTools}
 }
 
 func (*Tool) Name() string { return "SkillTool" }
@@ -118,7 +125,13 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	prompt = strings.TrimSpace(prompt)
 
-	result, err := t.runAgent(ctx, prompt)
+	var result string
+	var err error
+	if len(cmd.Tools) > 0 && t.runTools != nil {
+		result, err = t.runTools(ctx, prompt, cmd.Tools)
+	} else {
+		result, err = t.runAgent(ctx, prompt)
+	}
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("skilltool: %v", err)), nil
 	}

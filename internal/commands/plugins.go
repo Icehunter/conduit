@@ -64,6 +64,34 @@ func RegisterPluginCommands(r *Registry, ps []*plugins.Plugin) {
 	}
 }
 
+// RegisterPluginSkillCommands registers slash commands for plugin-sourced
+// skills (skills/*/SKILL.md). Each skill is registered under its qualified
+// name ("pluginName:skillName") so it appears in the command picker and can
+// be invoked via /pluginName:skillName just like a plugin slash command.
+func RegisterPluginSkillCommands(r *Registry, ps []*plugins.Plugin) {
+	for _, p := range ps {
+		for _, sk := range p.Skills {
+			qualifiedName := sk.QualifiedName
+			description := sk.Description
+			body := sk.Body
+			if description == "" {
+				description = qualifiedName
+			}
+			r.Register(Command{
+				Name:        qualifiedName,
+				Description: description,
+				Handler: func(args string) Result {
+					text := body
+					if args != "" {
+						text = text + "\n\nArguments: " + args
+					}
+					return Result{Type: "prompt", Text: text}
+				},
+			})
+		}
+	}
+}
+
 // RegisterBundledSkillCommands registers slash commands for built-in skills
 // (/simplify, /remember, etc.). These run the skill body as a user prompt,
 // same flow as plugin slash commands.

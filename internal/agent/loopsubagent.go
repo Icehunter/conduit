@@ -10,6 +10,96 @@ import (
 	"github.com/icehunter/conduit/internal/coordinator"
 )
 
+// SubAgentSpec configures an optionally-specialised sub-agent run.
+// Zero value is equivalent to RunBackgroundAgent (no extra system, no model
+// override, no tool restriction).
+type SubAgentSpec struct {
+	// SystemPrompt is appended as an extra system block when non-empty.
+	SystemPrompt string
+	// Model overrides the child's model when non-empty.
+	Model string
+	// Tools is the tool allowlist. Empty/nil means inherit parent registry.
+	// Callers pass the canonical registry-key names (already alias-resolved).
+	Tools []string
+}
+
+// RunSubAgentTyped runs a nested agent loop with optional specialisation
+// (extra system prompt, model override, tool allowlist). It uses the
+// background model unless spec.Model overrides it.
+func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (string, error) {
+	model := l.BackgroundModel()
+	if spec.Model != "" {
+		model = spec.Model
+	}
+
+	l.mu.RLock()
+	childCfg := l.cfg
+	childClient := l.client
+	parentReg := l.reg
+	l.mu.RUnlock()
+
+	// Strip side-effect callbacks — same as runSubAgentWithModel.
+	childCfg.NotifyOnComplete = false
+	childCfg.OnEndTurn = nil
+	childCfg.OnCompact = nil
+	childCfg.OnFileAccess = nil
+	childCfg.Model = model
+
+	// Append agent-specific system block when provided.
+	if spec.SystemPrompt != "" {
+		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), api.SystemBlock{
+			Type: "text",
+			Text: spec.SystemPrompt,
+		})
+	}
+
+	// Build the child registry (restricted or full).
+	childReg := parentReg
+	if len(spec.Tools) > 0 {
+		childReg = parentReg.Subset(spec.Tools)
+	}
+
+	child := &Loop{client: childClient, reg: childReg, cfg: childCfg}
+
+	start := time.Now()
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: prompt}}},
+	}
+	history, err := child.Run(ctx, msgs, func(LoopEvent) {})
+
+	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
+
+	if coordinator.IsActive() {
+		if err != nil {
+			notif := coordinator.TaskNotification(
+				agentID, "failed",
+				fmt.Sprintf("Agent failed: %v", err),
+				"", 0, 0, time.Since(start).Milliseconds(),
+			)
+			return notif, nil
+		}
+		toolUses := countToolUses(history)
+		result := extractLastAssistantText(history)
+		notif := coordinator.TaskNotification(
+			agentID, "completed",
+			"Agent completed",
+			result, 0, toolUses, time.Since(start).Milliseconds(),
+		)
+		return notif, nil
+	}
+
+	if err != nil {
+		return "", err
+	}
+	return extractLastAssistantText(history), nil
+}
+
+// RunSubAgentWithTools is a convenience wrapper around RunSubAgentTyped that
+// only restricts the tool set, keeping the model and system prompt unchanged.
+func (l *Loop) RunSubAgentWithTools(ctx context.Context, prompt string, tools []string) (string, error) {
+	return l.RunSubAgentTyped(ctx, prompt, SubAgentSpec{Tools: tools})
+}
+
 // RunSubAgent runs a nested agent loop with the given prompt as the sole user
 // message. Used by callers that explicitly need the foreground model.
 // The sub-agent inherits the same tools and system prompt but starts

@@ -228,6 +228,9 @@ Last updated: 2026-05-05
 | MEMORY.md auto-memory | ✅ | ScanMemories, /memory list/show/scan |
 | Skill discovery + execution | ✅ | internal/tools/skilltool/ + internal/plugins/loader.go |
 | Plugin loader | ✅ | internal/plugins/loader.go — manifest loading, install, uninstall, enable/disable, MCP sync; Conduit-owned storage under ~/.conduit/plugins with Claude import/fallback |
+| Plugin skills (SKILL.md) | ✅ | internal/plugins/loader.go loadSkills + internal/plugins/skills.go — all skills/*/SKILL.md files from installed plugins loaded into SkillLoader; surfaced in system prompt; tools: frontmatter enforced |
+| Plugin hooks (hooks.json) | ✅ | internal/plugins/loader.go loadHooks + internal/plugins/hooks.go MergeHooksFrom — hooks/hooks.json merged into session hook list; CLAUDE_PLUGIN_ROOT injected into subprocess env |
+| Plugin agents (agents/*.md) | ✅ | internal/plugins/loader.go loadAgents + internal/plugins/agents.go + agenttool — Task subagent_type dispatches to named agents with system prompt, model override, and tool allowlist |
 
 ---
 

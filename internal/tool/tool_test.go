@@ -61,3 +61,41 @@ func TestErrorResult(t *testing.T) {
 		t.Errorf("res = %+v", res)
 	}
 }
+
+func TestSubset_FiltersToNamedTools(t *testing.T) {
+	r := NewRegistry()
+	r.Register(fakeTool{name: "FileReadTool"})
+	r.Register(fakeTool{name: "BashTool"})
+	r.Register(fakeTool{name: "GrepTool"})
+
+	sub := r.Subset([]string{"FileReadTool", "GrepTool"})
+	if _, ok := sub.Lookup("FileReadTool"); !ok {
+		t.Error("FileReadTool should be in subset")
+	}
+	if _, ok := sub.Lookup("GrepTool"); !ok {
+		t.Error("GrepTool should be in subset")
+	}
+	if _, ok := sub.Lookup("BashTool"); ok {
+		t.Error("BashTool should NOT be in subset")
+	}
+}
+
+func TestSubset_CaseInsensitive(t *testing.T) {
+	r := NewRegistry()
+	r.Register(fakeTool{name: "FileReadTool"})
+
+	sub := r.Subset([]string{"filereadtool"})
+	if _, ok := sub.Lookup("FileReadTool"); !ok {
+		t.Error("case-insensitive lookup should match FileReadTool")
+	}
+}
+
+func TestSubset_EmptyNamesReturnsEmpty(t *testing.T) {
+	r := NewRegistry()
+	r.Register(fakeTool{name: "a"})
+
+	sub := r.Subset(nil)
+	if len(sub.All()) != 0 {
+		t.Errorf("empty Subset should return empty registry; got %d tools", len(sub.All()))
+	}
+}

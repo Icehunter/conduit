@@ -58,8 +58,25 @@ func runPrint(args []string) error {
 		MaxTurns:        50,
 		BackgroundModel: func() string { return compact.DefaultModel },
 	})
-	reg.Register(agenttool.New(lp.RunBackgroundAgent))
-	reg.Register(skilltool.New(plugins.NewSkillLoader(loadedPlugins), lp.RunBackgroundAgent))
+	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
+	reg.Register(agenttool.New(
+		lp.RunBackgroundAgent,
+		agentRegistry,
+		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
+			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+				SystemPrompt: systemPrompt,
+				Model:        model,
+				Tools:        tools,
+			})
+		},
+	))
+	reg.Register(skilltool.New(
+		plugins.NewSkillLoader(loadedPlugins),
+		lp.RunBackgroundAgent,
+		func(ctx context.Context, prompt string, tools []string) (string, error) {
+			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+		},
+	))
 
 	_, err = lp.Run(ctx, []api.Message{{
 		Role:    "user",

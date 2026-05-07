@@ -283,9 +283,18 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	client := l.client
 	l.mu.RUnlock()
 
-	// Fire SessionStart hooks once before the first turn.
+	// Fire SessionStart hooks once before the first turn. Any additionalContext
+	// is appended as an extra system block for turn 0 only — matching CC's
+	// behaviour where hookSpecificOutput.additionalContext is injected at the
+	// system level so the model treats it with system-prompt authority.
+	var sessionReminderBlock *api.SystemBlock
 	if l.cfg.Hooks != nil && len(l.cfg.Hooks.SessionStart) > 0 {
-		hooks.RunSessionStart(ctx, l.cfg.Hooks.SessionStart, l.cfg.SessionID)
+		if addlCtx := hooks.RunSessionStart(ctx, l.cfg.Hooks.SessionStart, l.cfg.SessionID); addlCtx != "" {
+			sessionReminderBlock = &api.SystemBlock{
+				Type: "text",
+				Text: "<system-reminder>\n" + addlCtx + "\n</system-reminder>",
+			}
+		}
 	}
 	defer func() {
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.Stop) > 0 {
@@ -328,10 +337,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			}
 		}
 
+		reqSystem := system
+		if turn == 0 && sessionReminderBlock != nil {
+			reqSystem = append(append([]api.SystemBlock(nil), system...), *sessionReminderBlock)
+		}
 		req := &api.MessageRequest{
 			Model:     model,
 			MaxTokens: l.cfg.MaxTokens,
-			System:    system,
+			System:    reqSystem,
 			Messages:  msgs,
 			Stream:    true,
 			Tools:     tools,

@@ -9,6 +9,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 )
 
 // Tool is the contract every Claude Code tool implements.
@@ -115,6 +116,29 @@ func (r *Registry) All() []Tool {
 	out := make([]Tool, 0, len(r.tools))
 	for _, t := range r.tools {
 		out = append(out, t)
+	}
+	return out
+}
+
+// Subset returns a new Registry containing only the tools whose Name()
+// matches one of the provided names. Matching is case-insensitive.
+// names may use the CC plugin convention (e.g. "Read", "Bash") or the
+// internal tool name (e.g. "FileReadTool", "BashTool"); the alias map
+// in internal/tools/agenttool normalises these before calling Subset.
+// An empty or nil names slice returns an empty registry.
+func (r *Registry) Subset(names []string) *Registry {
+	if len(names) == 0 {
+		return NewRegistry()
+	}
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[strings.ToLower(n)] = true
+	}
+	out := NewRegistry()
+	for name, t := range r.tools {
+		if want[strings.ToLower(name)] {
+			out.Register(t)
+		}
 	}
 	return out
 }

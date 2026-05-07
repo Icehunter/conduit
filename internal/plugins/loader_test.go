@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 func TestLoadAllFromExternalSource(t *testing.T) {
@@ -281,5 +283,225 @@ func TestLoadKnownMarketplacesSelfHealsOfficialMarketplace(t *testing.T) {
 	}
 	if entry.Source.Repo != defaultMarketplaceSource {
 		t.Fatalf("Source.Repo = %q, want %q", entry.Source.Repo, defaultMarketplaceSource)
+	}
+}
+
+// --- Plugin skills, agents, hooks loading tests ---
+
+// makeTestPlugin builds a minimal plugin directory with the given name and
+// optional subdirectories, returning the dir path and a cleanup func.
+func makeTestPlugin(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	manifest := `{"name":"` + name + `","description":"test plugin"}`
+	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude-plugin", "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestLoadPlugin_LoadsSkills(t *testing.T) {
+	dir := makeTestPlugin(t, "myplugin")
+
+	skillDir := filepath.Join(dir, "skills", "my-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: my-skill\ndescription: Does something cool\ntools: Read, Bash\n---\n# Skill body\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := loadPlugin(dir)
+	if err != nil {
+		t.Fatalf("loadPlugin: %v", err)
+	}
+	if len(p.Skills) != 1 {
+		t.Fatalf("Skills count = %d; want 1", len(p.Skills))
+	}
+	sk := p.Skills[0]
+	if sk.Name != "my-skill" {
+		t.Errorf("Name = %q; want my-skill", sk.Name)
+	}
+	if sk.QualifiedName != "myplugin:my-skill" {
+		t.Errorf("QualifiedName = %q; want myplugin:my-skill", sk.QualifiedName)
+	}
+	if sk.Description != "Does something cool" {
+		t.Errorf("Description = %q; want %q", sk.Description, "Does something cool")
+	}
+	if len(sk.Tools) != 2 {
+		t.Errorf("Tools = %v; want [Read Bash]", sk.Tools)
+	}
+	if sk.Body != "# Skill body\n" {
+		t.Errorf("Body = %q", sk.Body)
+	}
+}
+
+func TestLoadPlugin_LoadsAgents(t *testing.T) {
+	dir := makeTestPlugin(t, "myplugin")
+
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: reviewer\ndescription: Reviews code\nmodel: opus\ntools: Read, Grep, Glob\n---\n# Agent body\n"
+	if err := os.WriteFile(filepath.Join(agentsDir, "reviewer.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := loadPlugin(dir)
+	if err != nil {
+		t.Fatalf("loadPlugin: %v", err)
+	}
+	if len(p.Agents) != 1 {
+		t.Fatalf("Agents count = %d; want 1", len(p.Agents))
+	}
+	ag := p.Agents[0]
+	if ag.Name != "reviewer" {
+		t.Errorf("Name = %q; want reviewer", ag.Name)
+	}
+	if ag.QualifiedName != "myplugin:reviewer" {
+		t.Errorf("QualifiedName = %q", ag.QualifiedName)
+	}
+	if ag.Description != "Reviews code" {
+		t.Errorf("Description = %q", ag.Description)
+	}
+	if ag.Model != "opus" {
+		t.Errorf("Model = %q; want opus", ag.Model)
+	}
+	if len(ag.Tools) != 3 {
+		t.Errorf("Tools = %v; want [Read Grep Glob]", ag.Tools)
+	}
+	if ag.Body != "# Agent body\n" {
+		t.Errorf("Body = %q", ag.Body)
+	}
+}
+
+func TestLoadPlugin_LoadsHooks(t *testing.T) {
+	dir := makeTestPlugin(t, "myplugin")
+
+	hooksDir := filepath.Join(dir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hooksJSON := `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"echo hello"}]}]}}`
+	if err := os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(hooksJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := loadPlugin(dir)
+	if err != nil {
+		t.Fatalf("loadPlugin: %v", err)
+	}
+	if len(p.Hooks.SessionStart) != 1 {
+		t.Fatalf("SessionStart matchers = %d; want 1", len(p.Hooks.SessionStart))
+	}
+	m := p.Hooks.SessionStart[0]
+	if m.PluginRoot != dir {
+		t.Errorf("PluginRoot = %q; want %q", m.PluginRoot, dir)
+	}
+	if len(m.Hooks) != 1 || m.Hooks[0].Command != "echo hello" {
+		t.Errorf("Hook = %+v", m.Hooks)
+	}
+}
+
+func TestSkillLoader_PluginSkillFound(t *testing.T) {
+	dir := makeTestPlugin(t, "sp")
+	skillDir := filepath.Join(dir, "skills", "brainstorm")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: brainstorm\ndescription: Brainstorm stuff\n---\n# Body\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, _ := loadPlugin(dir)
+	loader := NewSkillLoader([]*Plugin{p})
+
+	tests := []struct {
+		query string
+	}{
+		{"brainstorm"},
+		{"sp:brainstorm"},
+		{"/brainstorm"},
+		{"/sp:brainstorm"},
+	}
+	for _, tt := range tests {
+		cmd := loader.FindCommand(tt.query)
+		if cmd == nil {
+			t.Errorf("FindCommand(%q) = nil; want hit", tt.query)
+			continue
+		}
+		if cmd.Body != "# Body\n" {
+			t.Errorf("FindCommand(%q).Body = %q", tt.query, cmd.Body)
+		}
+	}
+}
+
+func TestAgentRegistry_FindAgent(t *testing.T) {
+	dir := makeTestPlugin(t, "toolkit")
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(agentsDir, "reviewer.md"),
+		[]byte("---\ndescription: Reviewer\n---\n# Body\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	p, _ := loadPlugin(dir)
+	reg := NewAgentRegistry([]*Plugin{p})
+
+	if reg.FindAgent("reviewer") == nil {
+		t.Error("FindAgent(bare name) = nil")
+	}
+	if reg.FindAgent("toolkit:reviewer") == nil {
+		t.Error("FindAgent(qualified) = nil")
+	}
+	if reg.FindAgent("missing") != nil {
+		t.Error("FindAgent(missing) should return nil")
+	}
+}
+
+func TestMergeHooksFrom_CombinesPluginAndBase(t *testing.T) {
+	dir := makeTestPlugin(t, "sp")
+	hooksDir := filepath.Join(dir, "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hooksJSON := `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"plugin-hook"}]}]}}`
+	if err := os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(hooksJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, _ := loadPlugin(dir)
+
+	base := &settings.HooksSettings{
+		SessionStart: []settings.HookMatcher{{
+			Matcher: "",
+			Hooks:   []settings.Hook{{Type: "command", Command: "base-hook"}},
+		}},
+	}
+
+	merged := MergeHooksFrom([]*Plugin{p}, base)
+	if len(merged.SessionStart) != 2 {
+		t.Fatalf("SessionStart matchers = %d; want 2", len(merged.SessionStart))
+	}
+	// Base hook comes first.
+	if merged.SessionStart[0].Hooks[0].Command != "base-hook" {
+		t.Errorf("first hook = %q; want base-hook", merged.SessionStart[0].Hooks[0].Command)
+	}
+	if merged.SessionStart[1].Hooks[0].Command != "plugin-hook" {
+		t.Errorf("second hook = %q; want plugin-hook", merged.SessionStart[1].Hooks[0].Command)
+	}
+	if merged.SessionStart[1].PluginRoot != dir {
+		t.Errorf("PluginRoot = %q; want %q", merged.SessionStart[1].PluginRoot, dir)
 	}
 }

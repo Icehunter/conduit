@@ -27,6 +27,12 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 )
 
+// hooksFile is the top-level wrapper for a plugin's hooks/hooks.json.
+// Real CC wraps the hooks under a "hooks" key: {"hooks": {"SessionStart": [...]}}.
+type hooksFile struct {
+	Hooks settings.HooksSettings `json:"hooks"`
+}
+
 // Manifest is the parsed .claude-plugin/plugin.json.
 type Manifest struct {
 	Name        string `json:"name"`
@@ -54,11 +60,36 @@ type CommandDef struct {
 	AllowedTools []string
 }
 
+// SkillDef is one skill defined by a plugin's skills/<name>/SKILL.md.
+type SkillDef struct {
+	PluginName    string
+	Name          string // base directory name (e.g. "using-superpowers")
+	QualifiedName string // "pluginName:name"
+	Description   string // from SKILL.md frontmatter
+	Body          string // SKILL.md content (frontmatter stripped)
+	Tools         []string
+	Dir           string // absolute path to the skill directory
+}
+
+// AgentDef is one sub-agent defined by a plugin's agents/<name>.md.
+type AgentDef struct {
+	PluginName    string
+	Name          string   // base filename without .md (e.g. "code-reviewer")
+	QualifiedName string   // "pluginName:name"
+	Description   string   // from frontmatter
+	Body          string   // markdown body — injected as sub-agent system prompt
+	Tools         []string // from frontmatter `tools:` (allowlist); empty = inherit all
+	Model         string   // from frontmatter `model:` (optional override)
+}
+
 // Plugin is a loaded plugin with its manifest and discovered content.
 type Plugin struct {
 	Dir      string
 	Manifest Manifest
 	Commands []CommandDef
+	Skills   []SkillDef
+	Agents   []AgentDef
+	Hooks    settings.HooksSettings
 }
 
 // installedPluginsFile is the subset of ~/.conduit/plugins/installed_plugins.json we need.
@@ -322,9 +353,7 @@ func loadPlugin(dir string) (*Plugin, error) {
 
 	p := &Plugin{Dir: dir, Manifest: manifest}
 
-	// Only commands/*.md are loaded. hooks/, agents/, skills/ subdirectories
-	// are intentionally ignored — dynamic code execution is not supported.
-	// Plugins that need runtime behavior must expose an MCP server instead.
+	// Load commands/*.md — slash commands exposed to the model.
 	cmdDir := filepath.Join(dir, "commands")
 	entries, _ := os.ReadDir(cmdDir)
 	for _, e := range entries {
@@ -341,7 +370,146 @@ func loadPlugin(dir string) (*Plugin, error) {
 		p.Commands = append(p.Commands, cmd)
 	}
 
+	// Load skills/*/SKILL.md — auto-triggered skills surfaced via SkillTool.
+	p.Skills = loadSkills(dir, manifest.Name)
+
+	// Load agents/*.md — named sub-agent definitions for Task(subagent_type=...).
+	p.Agents = loadAgents(dir, manifest.Name)
+
+	// Load hooks/hooks.json — session/tool hooks merged into the runtime hook list.
+	p.Hooks = loadHooks(dir)
+
 	return p, nil
+}
+
+// loadSkills walks <pluginDir>/skills/*/SKILL.md and returns one SkillDef per
+// skill directory. Frontmatter is parsed via extractFrontmatter.
+func loadSkills(pluginDir, pluginName string) []SkillDef {
+	skillsDir := filepath.Join(pluginDir, "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil
+	}
+	var skills []SkillDef
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		skillFile := filepath.Join(skillsDir, e.Name(), "SKILL.md")
+		content, err := os.ReadFile(skillFile)
+		if err != nil {
+			continue
+		}
+		fm, body, _ := extractFrontmatter(string(content))
+		sd := SkillDef{
+			PluginName:    pluginName,
+			Name:          e.Name(),
+			QualifiedName: pluginName + ":" + e.Name(),
+			Body:          body,
+			Dir:           filepath.Join(skillsDir, e.Name()),
+		}
+		if fm != nil {
+			sd.Description = fm["description"]
+			if raw, ok := fm["tools"]; ok && raw != "" {
+				sd.Tools = parseAllowedTools(raw)
+			}
+		}
+		skills = append(skills, sd)
+	}
+	return skills
+}
+
+// loadAgents walks <pluginDir>/agents/*.md and returns one AgentDef per file.
+func loadAgents(pluginDir, pluginName string) []AgentDef {
+	agentsDir := filepath.Join(pluginDir, "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		return nil
+	}
+	var agents []AgentDef
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		agentPath := filepath.Join(agentsDir, e.Name())
+		content, err := os.ReadFile(agentPath)
+		if err != nil {
+			continue
+		}
+		baseName := strings.TrimSuffix(e.Name(), ".md")
+		fm, body, _ := extractFrontmatter(string(content))
+		ad := AgentDef{
+			PluginName:    pluginName,
+			Name:          baseName,
+			QualifiedName: pluginName + ":" + baseName,
+			Body:          body,
+		}
+		if fm != nil {
+			ad.Description = fm["description"]
+			ad.Model = fm["model"]
+			if raw, ok := fm["tools"]; ok && raw != "" {
+				ad.Tools = parseAllowedTools(raw)
+			}
+		}
+		agents = append(agents, ad)
+	}
+	return agents
+}
+
+// loadHooks parses <pluginDir>/hooks/hooks.json into a HooksSettings.
+// Each matcher is tagged with PluginRoot so the hook runner can inject
+// CLAUDE_PLUGIN_ROOT into subprocess environments.
+// Hook scripts are made executable so sh -c can run them directly — plugin
+// install may copy files without preserving the source execute bits.
+func loadHooks(pluginDir string) settings.HooksSettings {
+	hooksDir := filepath.Join(pluginDir, "hooks")
+	hooksPath := filepath.Join(hooksDir, "hooks.json")
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		return settings.HooksSettings{}
+	}
+	var f hooksFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return settings.HooksSettings{}
+	}
+	// Ensure all files in hooks/ are executable so sh can invoke them directly.
+	ensureHookScriptsExecutable(hooksDir)
+	// Tag every matcher with the plugin root directory so the hook runner can
+	// inject CLAUDE_PLUGIN_ROOT into subprocess environments.
+	tag := func(ms []settings.HookMatcher) []settings.HookMatcher {
+		for i := range ms {
+			ms[i].PluginRoot = pluginDir
+			ms[i].SourceFile = hooksPath
+		}
+		return ms
+	}
+	f.Hooks.PreToolUse = tag(f.Hooks.PreToolUse)
+	f.Hooks.PostToolUse = tag(f.Hooks.PostToolUse)
+	f.Hooks.SessionStart = tag(f.Hooks.SessionStart)
+	f.Hooks.Stop = tag(f.Hooks.Stop)
+	return f.Hooks
+}
+
+// ensureHookScriptsExecutable chmod +x's every non-JSON file in a hooks dir.
+// Plugin installers may copy files without preserving execute bits.
+func ensureHookScriptsExecutable(hooksDir string) {
+	entries, err := os.ReadDir(hooksDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(hooksDir, e.Name())
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.Mode()&0o111 == 0 {
+			_ = os.Chmod(path, info.Mode()|0o111) //nolint:gosec // chmod on user-owned plugin scripts
+		}
+	}
 }
 
 // parseCommandFile parses a command markdown file, extracting frontmatter.

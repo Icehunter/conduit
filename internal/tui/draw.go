@@ -52,8 +52,7 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 			spec = floatingModelPickerSpec
 			drawFloating(scr, layout.panel, picker, spec, false)
 		} else if m.commandPickerActive() {
-			spec = floatingCommandSpec
-			drawPickerAboveInput(scr, layout, picker, spec)
+			drawCommandPickerAboveInput(scr, layout, picker)
 		} else {
 			drawPickerAboveInput(scr, layout, picker, spec)
 		}
@@ -92,6 +91,18 @@ func drawPickerAboveInput(scr uv.Screen, layout uiLayout, rendered string, spec 
 	drawFloating(scr, area, rendered, spec, true)
 }
 
+func drawCommandPickerAboveInput(scr uv.Screen, layout uiLayout, rendered string) {
+	if rendered == "" {
+		return
+	}
+	area := image.Rect(layout.pickerArea.Min.X, layout.pickerArea.Min.Y, layout.pickerArea.Max.X, layout.input.Min.Y)
+	if area.Dx() > commandPickerSideMargin*2+floatingCommandSpec.minWidth {
+		area.Min.X += commandPickerSideMargin
+		area.Max.X -= commandPickerSideMargin
+	}
+	drawFloatingExactWidth(scr, area, rendered, floatingCommandSpec, true)
+}
+
 func drawCompanionOverlay(scr uv.Screen, layout uiLayout, rendered string) {
 	if rendered == "" {
 		return
@@ -119,6 +130,25 @@ func drawFloating(scr uv.Screen, area image.Rectangle, content string, spec floa
 	}
 	width := floatingOuterWidth(area.Dx(), spec)
 	height := floatingOuterHeight(content, area.Dy(), spec)
+	rendered := renderFloatingWindow(content, width, height)
+	drawFloatingRenderedAt(scr, area, rendered, above)
+}
+
+func drawFloatingExactWidth(scr uv.Screen, area image.Rectangle, content string, spec floatingSpec, above bool) {
+	if area.Empty() || content == "" {
+		return
+	}
+	width := area.Dx()
+	if width < 1 {
+		width = 1
+	}
+	height := spec.maxHeight
+	if height <= 0 || height > area.Dy() {
+		height = area.Dy()
+	}
+	if height < 1 {
+		height = 1
+	}
 	rendered := renderFloatingWindow(content, width, height)
 	drawFloatingRenderedAt(scr, area, rendered, above)
 }

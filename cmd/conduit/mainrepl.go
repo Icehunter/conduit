@@ -449,6 +449,9 @@ func runREPL(continueMode bool, resumeID string) error {
 		}
 	}
 
+	// Merge plugin hooks with user/project hooks before filtering for trust.
+	mergedHooks := plugins.MergeHooksFrom(loadedPlugins, &s.Hooks)
+
 	var lp *agent.Loop
 	lp = agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:             modelName,
@@ -456,7 +459,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		System:            systemBlocks,
 		MaxTurns:          50,
 		Gate:              gate,
-		Hooks:             settings.FilterUntrustedHooks(&s.Hooks, cwd, !needsTrust),
+		Hooks:             settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust),
 		SessionID:         sessionID,
 		Cwd:               cwd,
 		AutoCompact:       true,
@@ -537,15 +540,32 @@ func runREPL(continueMode bool, resumeID string) error {
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.
-	reg.Register(agenttool.New(lp.RunBackgroundAgent))
+	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
+	reg.Register(agenttool.New(
+		lp.RunBackgroundAgent,
+		agentRegistry,
+		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
+			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+				SystemPrompt: systemPrompt,
+				Model:        model,
+				Tools:        tools,
+			})
+		},
+	))
 	skillLoader := plugins.NewSkillLoader(loadedPlugins)
-	reg.Register(skilltool.New(skillLoader, lp.RunBackgroundAgent))
+	reg.Register(skilltool.New(
+		skillLoader,
+		lp.RunBackgroundAgent,
+		func(ctx context.Context, prompt string, tools []string) (string, error) {
+			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+		},
+	))
 
 	// Wire a session-scoped async group so async hooks are cancellable and
 	// drainable at shutdown instead of leaking as untracked goroutines.
 	hooks.DefaultAsyncGroup = hooks.NewAsyncGroup(ctx)
 
-	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, settings.FilterUntrustedHooks(&s.Hooks, cwd, !needsTrust), tui.RunOptions{
+	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust), tui.RunOptions{
 		AuthErr:                   authErr,
 		Profile:                   prof,
 		Session:                   sess,

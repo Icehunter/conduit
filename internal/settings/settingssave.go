@@ -44,7 +44,10 @@ func RemovePlugin(pluginID string) error {
 // server. Choices: "yes" → add to enabledMcpjsonServers; "yes_all" → set
 // enableAllProjectMcpServers=true and add to enabled; "no" → add to
 // disabledMcpjsonServers. Idempotent; preserves all other settings keys.
-func ApproveMcpjsonServer(name, choice string) error {
+func ApproveMcpjsonServer(name, choice string, cwd ...string) error {
+	if len(cwd) > 0 && cwd[0] != "" {
+		return SaveConduitProjectMcpjsonApproval(cwd[0], name, choice)
+	}
 	path := ConduitSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

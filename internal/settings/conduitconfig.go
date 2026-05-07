@@ -15,10 +15,13 @@ const currentConduitConfigSchemaVersion = 1
 // source, not a live dependency after first load.
 type ConduitConfig struct {
 	SchemaVersion int `json:"schemaVersion,omitempty"`
+	NumStartups   int `json:"numStartups,omitempty"`
 
 	Permissions Permissions       `json:"permissions,omitempty"`
 	Hooks       HooksSettings     `json:"hooks,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
+
+	Projects map[string]map[string]json.RawMessage `json:"projects,omitempty"`
 
 	EnabledPlugins     map[string]bool `json:"enabledPlugins,omitempty"`
 	OnboardingComplete bool            `json:"onboardingComplete,omitempty"`

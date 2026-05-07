@@ -226,7 +226,7 @@ Last updated: 2026-05-05
 | Session title persistence (/rename) | ✅ | shown in status bar; /rename persists |
 | MEMORY.md auto-memory | ✅ | ScanMemories, /memory list/show/scan |
 | Skill discovery + execution | ✅ | internal/tools/skilltool/ + internal/plugins/loader.go |
-| Plugin loader | ✅ | internal/plugins/loader.go — manifest loading, install, uninstall, enable/disable, MCP sync |
+| Plugin loader | ✅ | internal/plugins/loader.go — manifest loading, install, uninstall, enable/disable, MCP sync; Conduit-owned storage under ~/.conduit/plugins with Claude import/fallback |
 
 ---
 
@@ -263,7 +263,7 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| `~/.claude.json` global config | ✅ | `internal/globalconfig/` — trust state, numStartups |
+| Conduit global/project state | ✅ | `internal/globalconfig/` + `~/.conduit/conduit.json` — trust state, numStartups |
 | Workspace trust dialog | ✅ | `internal/tui/trustpanel.go` — mirrors decoded/5053.js |
 | Trust ancestor walk | ✅ | Parent trust implies child; CLAUDE_CODE_SANDBOXED bypass |
 | `SuggestRule` path traversal hardening | ✅ | `filepath.Clean` before glob computation |

@@ -453,10 +453,7 @@ func TestApproveMcpjsonServer_RoundTrip(t *testing.T) {
 	if err := ApproveMcpjsonServer("foo", "yes"); err != nil {
 		t.Fatalf("approve yes: %v", err)
 	}
-	merged, err := loadPaths([]string{ConduitSettingsPath()})
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
+	merged := loadPaths([]string{ConduitSettingsPath()})
 	if !contains(merged.EnabledMcpjsonServers, "foo") {
 		t.Errorf("expected 'foo' in EnabledMcpjsonServers; got %v", merged.EnabledMcpjsonServers)
 	}
@@ -465,7 +462,7 @@ func TestApproveMcpjsonServer_RoundTrip(t *testing.T) {
 	if err := ApproveMcpjsonServer("foo", "no"); err != nil {
 		t.Fatalf("approve no: %v", err)
 	}
-	merged, _ = loadPaths([]string{ConduitSettingsPath()})
+	merged = loadPaths([]string{ConduitSettingsPath()})
 	if contains(merged.EnabledMcpjsonServers, "foo") {
 		t.Errorf("'foo' should have been removed from enabled; got %v", merged.EnabledMcpjsonServers)
 	}
@@ -481,12 +478,37 @@ func TestApproveMcpjsonServer_YesAllSetsFlag(t *testing.T) {
 	if err := ApproveMcpjsonServer("bar", "yes_all"); err != nil {
 		t.Fatalf("approve yes_all: %v", err)
 	}
-	merged, _ := loadPaths([]string{ConduitSettingsPath()})
+	merged := loadPaths([]string{ConduitSettingsPath()})
 	if !merged.EnableAllProjectMcpServers {
 		t.Errorf("EnableAllProjectMcpServers should be true after yes_all")
 	}
 	if !contains(merged.EnabledMcpjsonServers, "bar") {
 		t.Errorf("'bar' should also be in EnabledMcpjsonServers; got %v", merged.EnabledMcpjsonServers)
+	}
+}
+
+func TestApproveMcpjsonServer_ProjectScoped(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	cwdA := filepath.Join(dir, "project-a")
+	cwdB := filepath.Join(dir, "project-b")
+
+	if err := ApproveMcpjsonServer("srv", "yes", cwdA); err != nil {
+		t.Fatalf("approve project: %v", err)
+	}
+	a, err := Load(cwdA)
+	if err != nil {
+		t.Fatalf("Load project A: %v", err)
+	}
+	if !contains(a.EnabledMcpjsonServers, "srv") {
+		t.Fatalf("project A enabled = %v, want srv", a.EnabledMcpjsonServers)
+	}
+	b, err := Load(cwdB)
+	if err != nil {
+		t.Fatalf("Load project B: %v", err)
+	}
+	if contains(b.EnabledMcpjsonServers, "srv") {
+		t.Fatalf("project B unexpectedly inherited approval: %v", b.EnabledMcpjsonServers)
 	}
 }
 
@@ -710,10 +732,7 @@ func TestSettingsWrites_DoNotOverwriteInvalidJSON(t *testing.T) {
 
 func TestLoad_Empty(t *testing.T) {
 	dir := t.TempDir()
-	m, err := loadPaths(projectPaths(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := loadPaths(projectPaths(dir))
 	if m.DefaultMode != "default" {
 		t.Errorf("DefaultMode = %q", m.DefaultMode)
 	}
@@ -730,7 +749,7 @@ func TestLoad_ProjectSettings(t *testing.T) {
 			Deny:  []string{"Bash(rm *)"},
 		},
 	})
-	m, _ := loadPaths(projectPaths(dir))
+	m := loadPaths(projectPaths(dir))
 	if len(m.Allow) != 1 || m.Allow[0] != "Bash(git status)" {
 		t.Errorf("allow not loaded; got %v", m.Allow)
 	}
@@ -747,7 +766,7 @@ func TestLoad_LocalOverridesProject(t *testing.T) {
 	writeSettings(t, dir, "settings.local.json", Settings{
 		Permissions: Permissions{DefaultMode: "bypassPermissions"},
 	})
-	m, _ := loadPaths(projectPaths(dir))
+	m := loadPaths(projectPaths(dir))
 	if m.DefaultMode != "bypassPermissions" {
 		t.Errorf("local should override project; got %q", m.DefaultMode)
 	}
@@ -761,7 +780,7 @@ func TestLoad_MergesAllowLists(t *testing.T) {
 	writeSettings(t, dir, "settings.local.json", Settings{
 		Permissions: Permissions{Allow: []string{"Bash(git status)"}},
 	})
-	m, _ := loadPaths(projectPaths(dir))
+	m := loadPaths(projectPaths(dir))
 	if len(m.Allow) != 2 {
 		t.Errorf("expected 2 allow entries; got %v", m.Allow)
 	}
@@ -777,7 +796,7 @@ func TestLoad_Hooks(t *testing.T) {
 			}},
 		},
 	})
-	m, _ := loadPaths(projectPaths(dir))
+	m := loadPaths(projectPaths(dir))
 	if len(m.Hooks.PreToolUse) != 1 {
 		t.Errorf("expected 1 PreToolUse matcher; got %v", m.Hooks.PreToolUse)
 	}
@@ -856,7 +875,7 @@ func TestLoadPaths_TagsHookSource(t *testing.T) {
 			PreToolUse: []HookMatcher{{Matcher: ""}},
 		},
 	})
-	m, _ := loadPaths(projectPaths(dir))
+	m := loadPaths(projectPaths(dir))
 	if len(m.Hooks.PreToolUse) == 0 {
 		t.Fatal("expected at least one PreToolUse matcher")
 	}
@@ -873,10 +892,7 @@ func TestLoad_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dir, ".claude"), 0755)
 	_ = os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), []byte("{bad json}"), 0644)
-	m, err := loadPaths(projectPaths(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := loadPaths(projectPaths(dir))
 	if len(m.Allow) != 0 {
 		t.Error("invalid file should be skipped")
 	}

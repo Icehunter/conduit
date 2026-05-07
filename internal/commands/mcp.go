@@ -163,7 +163,7 @@ func RegisterMCPApproveCommand(r *Registry, manager *mcp.Manager, cwd string) {
 				return Result{Type: "error", Text: "Usage: /mcp-approve <name> <yes|yes_all|no>"}
 			}
 			name, choice := parts[0], parts[1]
-			if err := settings.ApproveMcpjsonServer(name, choice); err != nil {
+			if err := settings.ApproveMcpjsonServer(name, choice, cwd); err != nil {
 				return Result{Type: "error", Text: fmt.Sprintf("mcp-approve: %v", err)}
 			}
 			if (choice == "yes" || choice == "yes_all") && manager != nil {

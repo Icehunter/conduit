@@ -103,9 +103,9 @@ type RunOptions struct {
 	PluginDirs []string
 
 	// NeedsTrust is true when the current directory hasn't been accepted in
-	// ~/.claude.json. The TUI shows the trust dialog before any agent turn.
+	// Conduit-owned trust state. The TUI shows the trust dialog before any agent turn.
 	NeedsTrust bool
-	// SetTrusted persists workspace trust acceptance to ~/.claude.json.
+	// SetTrusted persists workspace trust acceptance.
 	SetTrusted func() error
 }
 

@@ -32,6 +32,9 @@ Conduit-owned writes now go to `~/.conduit/conduit.json` for:
 - usage footer toggle
 - onboarding completion
 - MCP project-server approval state
+- MCP disabled server state
+- workspace trust state
+- startup counter
 - plugin enabled state
 - `/config` reads and writes
 
@@ -88,37 +91,34 @@ session files into Conduit's project store.
 
 ### 2. Untangle Plugin Storage
 
-Plugin enabled state is now Conduit-owned, but install/cache directories still
-lean Claude-compatible.
+Status: implemented with fully separate `~/.conduit/plugins` storage.
 
-Decide between:
-
-- shared plugin storage with Claude Code for compatibility
-- fully separate `~/.conduit/plugins`
-
-If fully separate, migrate:
+Conduit now owns:
 
 - `installed_plugins.json`
-- known marketplaces
+- `known_marketplaces.json`
+- `install-counts-cache.json`
 - plugin cache directories
-- plugin MCP discovery
-- plugin install/uninstall commands
+- marketplace materialization directories
+- plugin MCP discovery inputs
+- plugin install/uninstall command writes
+
+When `~/.conduit/plugins` does not exist, Conduit imports the legacy
+`~/.claude/plugins` tree once and rewrites registry paths that pointed inside
+Claude's plugin directory to the matching Conduit-owned paths. Legacy manually
+dropped `~/.claude/plugins/<name>` directories remain a read-only fallback so
+existing local plugin experiments still load until copied or installed through
+Conduit.
 
 ### 3. Finish Trust and MCP State Separation
 
-MCP project-server approval state now writes to Conduit config, but trust/global
-MCP mechanics still have Claude-era assumptions in comments and some paths.
+Status: implemented for workspace trust, startup count, MCP disabled server
+state, and project-scoped MCP `.mcp.json` approval state.
 
-Move or design:
-
-- workspace trust state
-- disabled MCP server state
-- per-project MCP approval records
-
-Likely destination:
-
-- user-global state in `~/.conduit/conduit.json`
-- project-specific state under `~/.conduit/projects/<sanitized-cwd>/state.json`
+These values now live in `~/.conduit/conduit.json` under
+`projects[abs-cwd]`. Claude's `~/.claude.json` is read only as an import or
+compatibility fallback for existing trust/disabled state; Conduit writes do not
+modify it.
 
 ### 4. Stronger Provider Schema
 
@@ -174,8 +174,10 @@ migrations and config validation much easier.
 
 ## Suggested Next Slice
 
-Untangle plugin storage and remaining trust/MCP state.
+Untangle plugin storage.
 
-Session/project state is no longer the largest source of Claude-owned writes;
-the next storage boundary is deciding which plugin install/cache data should
-remain shared with Claude Code and which data should become Conduit-owned.
+Session/project state, trust/MCP runtime state, and plugin install/cache state
+are now Conduit-owned. The next boundary is provider schema validation and UI
+follow-through: make provider definitions strongly typed, reject broken role
+references early, and finish visible Conduit-owned path labels in settings and
+config surfaces.

@@ -341,11 +341,11 @@
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |
 |---------|-----------|-----------------|--------------|--------|-------|
-| Plugin manifest loading | `types/plugin.ts`, `services/plugins/` | `2484.js` | `internal/plugins/loader.go` | ✅ | |
-| Plugin installation (git clone) | `commands/plugin/` | — | `internal/plugins/install.go` | ✅ | |
-| Plugin uninstallation | `commands/plugin/` | — | `internal/plugins/install.go` | ✅ | |
-| Marketplace discovery | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | |
-| Install counts (GitHub stats) | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | |
+| Plugin manifest loading | `types/plugin.ts`, `services/plugins/` | `2484.js` | `internal/plugins/loader.go` | ✅ | Conduit-owned `~/.conduit/plugins`; imports legacy Claude plugin storage if Conduit storage is absent |
+| Plugin installation (git clone) | `commands/plugin/` | — | `internal/plugins/install.go` | ✅ | Writes install registry/cache under `~/.conduit/plugins` |
+| Plugin uninstallation | `commands/plugin/` | — | `internal/plugins/install.go` | ✅ | Writes install registry/cache under `~/.conduit/plugins` |
+| Marketplace discovery | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | `known_marketplaces.json` lives under `~/.conduit/plugins` |
+| Install counts (GitHub stats) | `commands/plugin/` | — | `internal/plugins/discover.go` | ✅ | Cache lives under `~/.conduit/plugins` |
 | Plugin enable/disable | `services/plugins/` | — | `internal/settings/settings.go` | ✅ | |
 | Plugin MCP server sync | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
 | Plugin output styles | `utils/plugins/loadPluginOutputStyles.ts` | — | `internal/outputstyles/outputstyles.go` | ✅ | LoadFromPluginDirs; merged at startup, plugin < user/project priority |

@@ -30,13 +30,14 @@ type InstalledPluginsV2 struct {
 	Plugins map[string][]PluginInstallationEntry `json:"plugins"`
 }
 
-// installedPluginsPath returns the path to installed_plugins.json.
+// installedPluginsPath returns the path to Conduit's installed_plugins.json.
 func installedPluginsPath() string {
 	return filepath.Join(pluginsDir(), "installed_plugins.json")
 }
 
 // LoadInstalledPlugins reads installed_plugins.json and returns the V2 data.
 func LoadInstalledPlugins() (*InstalledPluginsV2, error) {
+	ensurePluginStorageImported()
 	data, err := os.ReadFile(installedPluginsPath())
 	if err != nil {
 		if os.IsNotExist(err) {

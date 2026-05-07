@@ -29,7 +29,9 @@ func (m Model) renderPanel() string {
 	var sb strings.Builder
 
 	// Panel title — always shown.
-	sb.WriteString(panelTitle("MCP") + "  " + panelRule(innerW-7) + "\n\n")
+	title := panelTitle("MCP")
+	ornW := innerW - lipgloss.Width(title) - 6
+	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + "\n\n")
 
 	switch p.view {
 	case panelViewList:
@@ -53,7 +55,7 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {
 	switch p.tab {
 	case panelTabMCP:
 		if len(p.mcpItems) == 0 {
-			sb.WriteString(stylePickerDesc.Render("No MCP servers configured.\nAdd servers to ~/.claude.json under \"mcpServers\"."))
+			sb.WriteString(stylePickerDesc.Render("No MCP servers configured.\nAdd servers to ~/.conduit/mcp.json under \"mcpServers\"."))
 			return
 		}
 		sb.WriteString(styleStatusAccent.Render("Manage MCP servers") + "\n")

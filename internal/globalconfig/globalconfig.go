@@ -1,23 +1,18 @@
-// Package globalconfig manages ~/.claude.json — the global per-installation
-// config that stores per-project trust state and startup counters.
+// Package globalconfig manages Conduit's global per-installation state:
+// per-project trust state and startup counters in ~/.conduit/conduit.json.
 //
-// Mirrors the shape used by Claude Code v2.1.126:
-//   - decoded/2126.js (IsTrusted logic, ancestor walk)
-//   - decoded/2127.js (per-project config defaults)
-//   - decoded/0635.js (config file path: CLAUDE_CONFIG_DIR or ~/.claude.json)
-//
-// This file is distinct from ~/.claude/settings.json (permission rules,
-// hooks, env vars). ~/.claude.json is the global config; settings.json
-// files are per-layer (user/project/local) permission config.
+// Claude's ~/.claude.json is read only as an import fallback for existing
+// trust decisions; Conduit never writes to it.
 package globalconfig
 
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // ProjectConfig is the per-directory entry stored under projects[<cwd>].
@@ -26,7 +21,7 @@ type ProjectConfig struct {
 	HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted,omitempty"`
 }
 
-// GlobalConfig is the shape of ~/.claude.json.
+// GlobalConfig is the global-state subset of ~/.conduit/conduit.json.
 type GlobalConfig struct {
 	Projects    map[string]*ProjectConfig `json:"projects,omitempty"`
 	NumStartups int                       `json:"numStartups,omitempty"`
@@ -34,11 +29,12 @@ type GlobalConfig struct {
 
 var mu sync.Mutex
 
-// configPath returns the path to ~/.claude.json.
-// Resolution mirrors decoded/0635.js:
-//   - If CLAUDE_CONFIG_DIR is set → $CLAUDE_CONFIG_DIR/.claude.json
-//   - Otherwise → $HOME/.claude.json
+// configPath returns the path to Conduit's state/config file.
 func configPath() string {
+	return settings.ConduitSettingsPath()
+}
+
+func legacyConfigPath() string {
 	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
 		return filepath.Join(v, ".claude.json")
 	}
@@ -46,7 +42,7 @@ func configPath() string {
 	return filepath.Join(home, ".claude.json")
 }
 
-// Load reads ~/.claude.json. A missing or corrupt file returns an empty config.
+// Load reads Conduit's global state. A missing or corrupt file returns an empty config.
 func Load() (*GlobalConfig, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -72,38 +68,22 @@ func load() (*GlobalConfig, error) {
 	return &cfg, nil
 }
 
-func loadRaw() (map[string]json.RawMessage, error) {
-	data, err := os.ReadFile(configPath())
+func loadLegacy() (*GlobalConfig, error) {
+	data, err := os.ReadFile(legacyConfigPath())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return map[string]json.RawMessage{}, nil
+			return &GlobalConfig{Projects: map[string]*ProjectConfig{}}, nil
 		}
 		return nil, err
 	}
-	raw := make(map[string]json.RawMessage)
-	if len(data) == 0 {
-		return raw, nil
+	var cfg GlobalConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return &GlobalConfig{Projects: map[string]*ProjectConfig{}}, nil
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+	if cfg.Projects == nil {
+		cfg.Projects = map[string]*ProjectConfig{}
 	}
-	return raw, nil
-}
-
-func saveRaw(raw map[string]json.RawMessage) error {
-	p := configPath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return &cfg, nil
 }
 
 // IsTrusted reports whether cwd (or any ancestor) has been marked trusted.
@@ -139,56 +119,45 @@ func IsTrusted(cwd string) (bool, error) {
 		}
 		dir = parent
 	}
+
+	legacy, err := loadLegacy()
+	if err == nil {
+		dir := abs
+		for {
+			if p, ok := legacy.Projects[dir]; ok && p.HasTrustDialogAccepted {
+				_ = settings.SetConduitProjectTrusted(cwd)
+				return true, nil
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
 	return false, nil
 }
 
-// SetTrusted marks cwd as trusted in ~/.claude.json and persists immediately.
+// SetTrusted marks cwd as trusted in ~/.conduit/conduit.json and persists immediately.
 func SetTrusted(cwd string) error {
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		abs = cwd
-	}
-
 	mu.Lock()
 	defer mu.Unlock()
-
-	raw, err := loadRaw()
-	if err != nil {
-		return err
-	}
-	projects := make(map[string]json.RawMessage)
-	if rawProjects, ok := raw["projects"]; ok && len(rawProjects) > 0 {
-		if err := json.Unmarshal(rawProjects, &projects); err != nil {
-			return fmt.Errorf("global config: parse projects: %w", err)
-		}
-	}
-	project := make(map[string]json.RawMessage)
-	if rawProject, ok := projects[abs]; ok && len(rawProject) > 0 {
-		if err := json.Unmarshal(rawProject, &project); err != nil {
-			return fmt.Errorf("global config: parse project %q: %w", abs, err)
-		}
-	}
-	project["hasTrustDialogAccepted"] = json.RawMessage("true")
-	projectRaw, err := json.Marshal(project)
-	if err != nil {
-		return err
-	}
-	projects[abs] = projectRaw
-	projectsRaw, err := json.Marshal(projects)
-	if err != nil {
-		return err
-	}
-	raw["projects"] = projectsRaw
-	return saveRaw(raw)
+	return settings.SetConduitProjectTrusted(cwd)
 }
 
-// IncrementStartups bumps the startup counter in ~/.claude.json. Best-effort.
+// IncrementStartups bumps the startup counter in ~/.conduit/conduit.json. Best-effort.
 func IncrementStartups() {
 	mu.Lock()
 	defer mu.Unlock()
-	raw, err := loadRaw()
-	if err != nil {
+	raw := map[string]json.RawMessage{}
+	data, err := os.ReadFile(configPath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return
+	}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return
+		}
 	}
 	var count int
 	if current, ok := raw["numStartups"]; ok {
@@ -201,5 +170,12 @@ func IncrementStartups() {
 		return
 	}
 	raw["numStartups"] = countRaw
-	_ = saveRaw(raw)
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath()), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(configPath(), append(out, '\n'), 0o600)
 }

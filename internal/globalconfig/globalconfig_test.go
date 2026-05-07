@@ -4,11 +4,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
+func isolateConduitConfig(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(root, ".conduit"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(root, ".claude"))
+}
+
 func TestLoad_Empty(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateConduitConfig(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -19,7 +27,7 @@ func TestLoad_Empty(t *testing.T) {
 }
 
 func TestSetGetTrusted(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateConduitConfig(t)
 	t.Setenv("CLAUDE_CODE_SANDBOXED", "") // ensure not bypassed
 
 	cwd := t.TempDir()
@@ -45,7 +53,7 @@ func TestSetGetTrusted(t *testing.T) {
 }
 
 func TestIsTrusted_AncestorWalk(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateConduitConfig(t)
 	t.Setenv("CLAUDE_CODE_SANDBOXED", "")
 
 	parent := t.TempDir()
@@ -87,7 +95,7 @@ func TestIsTrusted_AncestorWalk(t *testing.T) {
 }
 
 func TestIsTrusted_SandboxedEnvBypass(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateConduitConfig(t)
 	t.Setenv("CLAUDE_CODE_SANDBOXED", "1")
 
 	cwd := t.TempDir()
@@ -101,7 +109,7 @@ func TestIsTrusted_SandboxedEnvBypass(t *testing.T) {
 }
 
 func TestRoundTrip_Persistence(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateConduitConfig(t)
 	t.Setenv("CLAUDE_CODE_SANDBOXED", "")
 
 	cwd := t.TempDir()
@@ -119,12 +127,47 @@ func TestRoundTrip_Persistence(t *testing.T) {
 	}
 }
 
+func TestIsTrusted_ImportsLegacyClaudeTrust(t *testing.T) {
+	root := t.TempDir()
+	conduitDir := filepath.Join(root, ".conduit")
+	claudeDir := filepath.Join(root, ".claude")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CLAUDE_CODE_SANDBOXED", "")
+	cwd := filepath.Join(root, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"projects":{"` + filepath.ToSlash(cwd) + `":{"hasTrustDialogAccepted":true}}}`
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, ".claude.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	trusted, err := IsTrusted(cwd)
+	if err != nil {
+		t.Fatalf("IsTrusted: %v", err)
+	}
+	if !trusted {
+		t.Fatal("expected legacy Claude trust to be imported")
+	}
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		t.Fatalf("read conduit config: %v", err)
+	}
+	if !strings.Contains(string(data), "hasTrustDialogAccepted") {
+		t.Fatalf("conduit config did not receive imported trust: %s", data)
+	}
+}
+
 func TestLoad_CorruptFile_ReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("CONDUIT_CONFIG_DIR", dir)
 
 	// Write garbage to the config file.
-	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte("not json{{"), 0o600); err != nil {
+	if err := os.WriteFile(configPath(), []byte("not json{{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,7 +181,7 @@ func TestLoad_CorruptFile_ReturnsEmpty(t *testing.T) {
 }
 
 func TestIncrementStartups(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateConduitConfig(t)
 	IncrementStartups()
 	IncrementStartups()
 	cfg, err := Load()
@@ -152,8 +195,8 @@ func TestIncrementStartups(t *testing.T) {
 
 func TestIncrementStartups_PreservesUnknownFields(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	path := filepath.Join(dir, ".claude.json")
+	t.Setenv("CONDUIT_CONFIG_DIR", dir)
+	path := configPath()
 	original := []byte(`{
   "mcpServers": {"global": {"command": "node"}},
   "custom": {"nested": true},
@@ -196,8 +239,8 @@ func TestIncrementStartups_PreservesUnknownFields(t *testing.T) {
 
 func TestIncrementStartups_DoesNotOverwriteCorruptFile(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
-	path := filepath.Join(dir, ".claude.json")
+	t.Setenv("CONDUIT_CONFIG_DIR", dir)
+	path := configPath()
 	before := []byte("not json{{")
 	if err := os.WriteFile(path, before, 0o600); err != nil {
 		t.Fatal(err)
@@ -216,13 +259,13 @@ func TestIncrementStartups_DoesNotOverwriteCorruptFile(t *testing.T) {
 
 func TestSetTrusted_PreservesUnknownProjectFields(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("CONDUIT_CONFIG_DIR", dir)
 	t.Setenv("CLAUDE_CODE_SANDBOXED", "")
 	cwd := filepath.Join(dir, "project")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, ".claude.json")
+	path := configPath()
 	initial := `{
   "topLevel": "keep",
   "projects": {

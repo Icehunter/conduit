@@ -254,7 +254,7 @@ type Config struct {
 	// the Bubble Tea event loop. Populated by the model on each Update.
 	Live *LiveState
 	// NeedsTrust is true when the current working directory has not been
-	// marked trusted in ~/.claude.json. The TUI shows the trust dialog
+	// marked trusted in Conduit-owned state. The TUI shows the trust dialog
 	// before allowing any agent interaction.
 	NeedsTrust bool
 	// SetTrusted persists acceptance of the workspace trust dialog.

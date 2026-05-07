@@ -14,7 +14,7 @@ import (
 // folder") or rejects (tea.Quit — exit code 1 like CC).
 type trustDialogState struct {
 	selected   int          // 0 = Yes, 1 = No
-	setTrusted func() error // persists acceptance to ~/.claude.json
+	setTrusted func() error // persists acceptance to Conduit-owned state
 }
 
 // trustAcceptedMsg is returned by the tea.Cmd that persists trust.

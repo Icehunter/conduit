@@ -78,7 +78,8 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 		Status: StatusPending,
 	}
 
-	// Check disabled state (stored in ~/.claude.json → projects[cwd].disabledMcpServers).
+	// Check disabled state (stored in ~/.conduit/conduit.json →
+	// projects[cwd].disabledMcpServers, with Claude as an import fallback).
 	if IsDisabled(name, cwd) {
 		srv.Status = StatusDisconnected
 		srv.Disabled = true
@@ -259,7 +260,7 @@ func (m *Manager) DisconnectServer(name string) {
 }
 
 // Reconnect closes and re-connects a single named server.
-// It re-reads the config so any edits to .claude.json take effect.
+// It re-reads the config so any edits to MCP config/state take effect.
 func (m *Manager) Reconnect(ctx context.Context, name, cwd string) error {
 	// Close existing connection if any.
 	m.mu.Lock()

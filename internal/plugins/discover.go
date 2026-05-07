@@ -83,7 +83,7 @@ type installCountsCache struct {
 	Counts    []InstallCountEntry `json:"counts"`
 }
 
-// installCountsCachePath returns ~/.claude/plugins/install-counts-cache.json
+// installCountsCachePath returns ~/.conduit/plugins/install-counts-cache.json
 func installCountsCachePath() string {
 	return filepath.Join(pluginsDir(), "install-counts-cache.json")
 }
@@ -115,6 +115,7 @@ func LoadMarketplaceManifest(marketplaceName string) (*MarketplaceManifest, erro
 // Uses cache with 24h TTL; fetches fresh from GitHub if stale.
 // If fetch fails and cache exists, returns stale cache silently.
 func LoadInstallCounts() (map[string]int, error) {
+	ensurePluginStorageImported()
 	cachePath := installCountsCachePath()
 
 	// Try to read cache.

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 func TestNormalizeServerName(t *testing.T) {
@@ -333,9 +335,9 @@ func TestMergedStdioEnvKeepsParentEnvironment(t *testing.T) {
 	}
 }
 
-func TestSetDisabled_PreservesClaudeJSONFields(t *testing.T) {
+func TestSetDisabled_PreservesConduitProjectFields(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("CONDUIT_CONFIG_DIR", dir)
 	cwd := filepath.Join(dir, "project")
 	initial := `{
   "mcpServers": {"global": {"command": "node"}},
@@ -348,7 +350,7 @@ func TestSetDisabled_PreservesClaudeJSONFields(t *testing.T) {
   },
   "customTopLevel": ["keep"]
 }`
-	path := filepath.Join(dir, ".claude.json")
+	path := settings.ConduitSettingsPath()
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -380,5 +382,34 @@ func TestSetDisabled_PreservesClaudeJSONFields(t *testing.T) {
 		if _, ok := project[key]; !ok {
 			t.Fatalf("project field %q was not preserved/set", key)
 		}
+	}
+}
+
+func TestIsDisabled_ConduitProjectOverridesClaudeFallback(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	conduitDir := filepath.Join(dir, ".conduit")
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	cwd := filepath.Join(dir, "project")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"projects":{"` + filepath.ToSlash(cwd) + `":{"disabledMcpServers":["srv"]}}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, ".claude.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !IsDisabled("srv", cwd) {
+		t.Fatal("expected Claude fallback to mark srv disabled")
+	}
+	if err := SetDisabled("srv", cwd, false); err != nil {
+		t.Fatal(err)
+	}
+	state, ok, err := settings.LoadConduitProjectState(cwd)
+	if err != nil || !ok || !state.DisabledMcpServersPresent {
+		t.Fatalf("state = %+v ok=%v err=%v", state, ok, err)
+	}
+	if IsDisabled("srv", cwd) {
+		t.Fatal("expected Conduit empty disabledMcpServers to override Claude fallback")
 	}
 }

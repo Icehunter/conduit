@@ -2,20 +2,13 @@ package mcp
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/settings"
 )
-
-// pluginsInstalledV2 is the minimal shape of installed_plugins.json we need.
-type pluginsInstalledV2 struct {
-	Plugins map[string][]struct {
-		InstallPath string `json:"installPath"`
-	} `json:"plugins"`
-}
 
 // claudeJSON is the shape of ~/.claude.json used by real Claude Code.
 // We only decode the fields we need for MCP server discovery.
@@ -140,26 +133,10 @@ func loadConduitMCPServers(merged map[string]ServerConfig) {
 // loadPluginMCPServers reads each enabled, installed plugin's .mcp.json and
 // adds its servers to merged with scope="plugin".
 func loadPluginMCPServers(merged map[string]ServerConfig) {
-	home, _ := os.UserHomeDir()
-	claudeHome := os.Getenv("CLAUDE_CONFIG_DIR")
-	if claudeHome == "" {
-		claudeHome = filepath.Join(home, ".claude")
-	}
-	pluginsDir := os.Getenv("CLAUDE_CODE_PLUGIN_CACHE_DIR")
-	if pluginsDir == "" {
-		pluginsDir = filepath.Join(claudeHome, "plugins")
-	}
+	enabledPlugins := loadEnabledPlugins()
 
-	enabledPlugins := loadEnabledPlugins(claudeHome)
-
-	// Read installed plugin paths from installed_plugins.json.
-	installedPath := filepath.Join(pluginsDir, "installed_plugins.json")
-	installedData, err := os.ReadFile(installedPath)
+	installed, err := plugins.LoadInstalledPlugins()
 	if err != nil {
-		return
-	}
-	var installed pluginsInstalledV2
-	if err := json.Unmarshal(installedData, &installed); err != nil {
 		return
 	}
 
@@ -215,13 +192,18 @@ func pluginEnabledFromMap(pluginID string, enabledPlugins map[string]interface{}
 	}
 }
 
-func loadEnabledPlugins(claudeHome string) map[string]interface{} {
+func loadEnabledPlugins() map[string]interface{} {
 	if cfg, err := settings.LoadConduitConfig(); err == nil && len(cfg.EnabledPlugins) > 0 {
 		out := make(map[string]interface{}, len(cfg.EnabledPlugins))
 		for k, v := range cfg.EnabledPlugins {
 			out[k] = v
 		}
 		return out
+	}
+	home, _ := os.UserHomeDir()
+	claudeHome := os.Getenv("CLAUDE_CONFIG_DIR")
+	if claudeHome == "" {
+		claudeHome = filepath.Join(home, ".claude")
 	}
 	settingsPath := filepath.Join(claudeHome, "settings.json")
 	settingsData, err := os.ReadFile(settingsPath)
@@ -328,8 +310,17 @@ func isMcpjsonApproved(name, cwd string) bool {
 }
 
 // IsDisabled returns true if the named server is in disabledMcpServers for cwd.
-// Mirrors isMcpServerDisabled() in src/services/mcp/config.ts.
+// Conduit project state wins; Claude global config is only a compatibility
+// fallback until Conduit has an explicit disabledMcpServers field for cwd.
 func IsDisabled(name, cwd string) bool {
+	if state, ok, err := settings.LoadConduitProjectState(cwd); err == nil && ok && state.DisabledMcpServersPresent {
+		for _, d := range state.DisabledMcpServers {
+			if d == name {
+				return true
+			}
+		}
+		return false
+	}
 	data, err := os.ReadFile(globalClaudeFile())
 	if err != nil {
 		return false
@@ -347,97 +338,10 @@ func IsDisabled(name, cwd string) bool {
 	return false
 }
 
-// SetDisabled adds or removes name from disabledMcpServers in ~/.claude.json → projects[cwd].
-// Mirrors setMcpServerEnabled() in src/services/mcp/config.ts.
+// SetDisabled adds or removes name from disabledMcpServers in
+// ~/.conduit/conduit.json → projects[cwd].
 func SetDisabled(name, cwd string, disabled bool) error {
-	path := globalClaudeFile()
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	var cfg map[string]json.RawMessage
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return err
-		}
-	} else {
-		cfg = make(map[string]json.RawMessage)
-	}
-
-	// Read existing projects map.
-	var projects map[string]json.RawMessage
-	if raw, ok := cfg["projects"]; ok {
-		if err := json.Unmarshal(raw, &projects); err != nil {
-			return fmt.Errorf("mcp config: parse projects: %w", err)
-		}
-	}
-	if projects == nil {
-		projects = make(map[string]json.RawMessage)
-	}
-
-	// Read existing project config as raw JSON so unrelated Claude Code
-	// fields survive enabling/disabling an MCP server.
-	proj := make(map[string]json.RawMessage)
-	if raw, ok := projects[cwd]; ok {
-		if err := json.Unmarshal(raw, &proj); err != nil {
-			return fmt.Errorf("mcp config: parse project %q: %w", cwd, err)
-		}
-	}
-
-	// Toggle membership in DisabledMcpServers.
-	var disabledServers []string
-	if rawDisabled, ok := proj["disabledMcpServers"]; ok && len(rawDisabled) > 0 {
-		if err := json.Unmarshal(rawDisabled, &disabledServers); err != nil {
-			return fmt.Errorf("mcp config: parse disabledMcpServers: %w", err)
-		}
-	}
-	disabledServers = toggleList(disabledServers, name, disabled)
-	if len(disabledServers) == 0 {
-		delete(proj, "disabledMcpServers")
-	} else if rawDisabled, err := json.Marshal(disabledServers); err == nil {
-		proj["disabledMcpServers"] = rawDisabled
-	}
-
-	// Write back.
-	projRaw, err := json.Marshal(proj)
-	if err != nil {
-		return err
-	}
-	projects[cwd] = projRaw
-	projectsRaw, err := json.Marshal(projects)
-	if err != nil {
-		return err
-	}
-	cfg["projects"] = projectsRaw
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
-}
-
-func toggleList(list []string, name string, add bool) []string {
-	has := false
-	for _, v := range list {
-		if v == name {
-			has = true
-			break
-		}
-	}
-	if add && !has {
-		return append(list, name)
-	}
-	if !add && has {
-		out := list[:0]
-		for _, v := range list {
-			if v != name {
-				out = append(out, v)
-			}
-		}
-		return out
-	}
-	return list
+	return settings.SetConduitProjectMCPDisabled(cwd, name, disabled)
 }
 
 // NormalizeServerName converts an MCP server name to a safe tool-name prefix.

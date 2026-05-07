@@ -9,17 +9,22 @@
 //
 // Plugin search path (in order, later entries override earlier):
 //  1. Built-in plugins in the conduit binary's plugin dir (via embed)
-//  2. ~/.claude/plugins/<pluginName>/
-//  3. <cwd>/.claude/plugins/<pluginName>/
+//  2. ~/.conduit/plugins/<pluginName>/
+//  3. ~/.claude/plugins/<pluginName>/ (legacy fallback only)
+//  4. <cwd>/.claude/plugins/<pluginName>/
 //
 // Mirrors src/utils/plugins/pluginLoader.ts.
 package plugins
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // Manifest is the parsed .claude-plugin/plugin.json.
@@ -56,7 +61,7 @@ type Plugin struct {
 	Commands []CommandDef
 }
 
-// installedPluginsFile is the subset of ~/.claude/plugins/installed_plugins.json we need.
+// installedPluginsFile is the subset of ~/.conduit/plugins/installed_plugins.json we need.
 // Real Claude Code v2 format: {"version":2,"plugins":{"name@marketplace":[{...}]}}
 type installedPluginsFile struct {
 	Version int                          `json:"version"`
@@ -69,12 +74,18 @@ type pluginInstEntry struct {
 	Version     string `json:"version"`
 }
 
-// pluginsDir returns the path to the ~/.claude/plugins directory,
-// honoring CLAUDE_CODE_PLUGIN_CACHE_DIR if set.
+// pluginsDir returns the path to the Conduit-owned plugin directory.
 func pluginsDir() string {
+	if dir := os.Getenv("CONDUIT_PLUGIN_CACHE_DIR"); dir != "" {
+		return dir
+	}
 	if dir := os.Getenv("CLAUDE_CODE_PLUGIN_CACHE_DIR"); dir != "" {
 		return dir
 	}
+	return filepath.Join(settings.ConduitDir(), "plugins")
+}
+
+func legacyPluginsDir() string {
 	home, _ := os.UserHomeDir()
 	claudeHome := os.Getenv("CLAUDE_CONFIG_DIR")
 	if claudeHome == "" {
@@ -83,10 +94,121 @@ func pluginsDir() string {
 	return filepath.Join(claudeHome, "plugins")
 }
 
-// loadInstalledPlugins reads ~/.claude/plugins/installed_plugins.json and
+func ensurePluginStorageImported() {
+	dst := pluginsDir()
+	if os.Getenv("CONDUIT_PLUGIN_CACHE_DIR") != "" || os.Getenv("CLAUDE_CODE_PLUGIN_CACHE_DIR") != "" {
+		return
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return
+	}
+	src := legacyPluginsDir()
+	if _, err := os.Stat(src); err != nil {
+		return
+	}
+	if err := copyPluginTree(src, dst); err == nil {
+		_ = rewriteLegacyPluginPaths(src, dst)
+	}
+}
+
+func copyPluginTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil || rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if _, err := os.Stat(target); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return nil
+		}
+		mode := info.Mode().Perm()
+		if mode == 0 {
+			mode = 0o644
+		}
+		return os.WriteFile(target, data, mode)
+	})
+}
+
+func rewriteLegacyPluginPaths(legacyRoot, conduitRoot string) error {
+	installedPath := filepath.Join(conduitRoot, "installed_plugins.json")
+	if data, err := os.ReadFile(installedPath); err == nil {
+		var installed InstalledPluginsV2
+		if json.Unmarshal(data, &installed) == nil {
+			for id, entries := range installed.Plugins {
+				for i := range entries {
+					entries[i].InstallPath = rewritePluginPath(entries[i].InstallPath, legacyRoot, conduitRoot)
+				}
+				installed.Plugins[id] = entries
+			}
+			var raw map[string]json.RawMessage
+			if json.Unmarshal(data, &raw) != nil || raw == nil {
+				raw = map[string]json.RawMessage{}
+			}
+			if versionRaw, err := json.Marshal(installed.Version); err == nil {
+				raw["version"] = versionRaw
+			}
+			if pluginsRaw, err := json.Marshal(installed.Plugins); err == nil {
+				raw["plugins"] = pluginsRaw
+			}
+			if out, err := json.MarshalIndent(raw, "", "  "); err == nil {
+				_ = os.WriteFile(installedPath, append(out, '\n'), 0o600)
+			}
+		}
+	}
+
+	marketplacesPath := filepath.Join(conduitRoot, "known_marketplaces.json")
+	if data, err := os.ReadFile(marketplacesPath); err == nil {
+		var marketplaces map[string]MarketplaceEntry
+		if json.Unmarshal(data, &marketplaces) == nil {
+			for name, entry := range marketplaces {
+				entry.InstallLocation = rewritePluginPath(entry.InstallLocation, legacyRoot, conduitRoot)
+				marketplaces[name] = entry
+			}
+			out, err := json.MarshalIndent(marketplaces, "", "  ")
+			if err == nil {
+				_ = os.WriteFile(marketplacesPath, append(out, '\n'), 0o600)
+			}
+		}
+	}
+	return nil
+}
+
+func rewritePluginPath(path, legacyRoot, conduitRoot string) string {
+	if path == "" {
+		return path
+	}
+	rel, err := filepath.Rel(legacyRoot, path)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return path
+	}
+	return filepath.Join(conduitRoot, rel)
+}
+
+// loadInstalledPlugins reads ~/.conduit/plugins/installed_plugins.json and
 // returns each unique installPath (deduplicated by plugin name, keeping the
-// most recent entry). Mirrors the real Claude Code plugin loader.
+// most recent entry). If Conduit has no plugin storage yet, legacy Claude
+// plugin storage is imported once as a compatibility source.
 func loadInstalledPlugins() []string {
+	ensurePluginStorageImported()
 	path := filepath.Join(pluginsDir(), "installed_plugins.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -111,11 +233,13 @@ func loadInstalledPlugins() []string {
 }
 
 // LoadAll discovers and loads all plugins from:
-//  1. ~/.claude/plugins/installed_plugins.json — plugins installed via /plugin install
+//  1. ~/.conduit/plugins/installed_plugins.json — plugins installed via /plugin install
 //  2. Bundled plugins adjacent to the binary in plugins/
-//  3. ~/.claude/plugins/<name>/ — manually dropped plugin dirs
-//  4. <cwd>/.claude/plugins/<name>/ — project-local plugins
+//  3. ~/.conduit/plugins/<name>/ — manually dropped plugin dirs
+//  4. ~/.claude/plugins/<name>/ — legacy manually dropped plugin dirs
+//  5. <cwd>/.claude/plugins/<name>/ — project-local plugins
 func LoadAll(cwd string) ([]*Plugin, error) {
+	ensurePluginStorageImported()
 	seen := map[string]bool{} // deduplicate by manifest name
 	var plugins []*Plugin
 
@@ -139,18 +263,20 @@ func LoadAll(cwd string) ([]*Plugin, error) {
 		scanDir(bundled, add)
 	}
 
-	home, _ := os.UserHomeDir()
-
-	// 3. ~/.claude/plugins/<name>/ — manually placed plugins.
+	// 3. ~/.conduit/plugins/<name>/ — manually placed plugins.
 	// Note: skip the well-known subdirs used by the install system.
 	scanDirExclude(filepath.Join(pluginsDir()), []string{"cache", "data", "marketplaces"}, add)
 
-	// 4. Project-local plugins.
+	// 4. Legacy ~/.claude/plugins/<name>/ — manually placed plugins.
+	if legacy := legacyPluginsDir(); legacy != pluginsDir() {
+		scanDirExclude(legacy, []string{"cache", "data", "marketplaces"}, add)
+	}
+
+	// 5. Project-local plugins.
 	if cwd != "" {
 		scanDir(filepath.Join(cwd, ".claude", "plugins"), add)
 	}
 
-	_ = home
 	return plugins, nil
 }
 

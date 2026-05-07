@@ -28,13 +28,14 @@ type MarketplaceEntry struct {
 	AutoUpdate      bool              `json:"autoUpdate,omitempty"`
 }
 
-// knownMarketplacesPath returns the path to known_marketplaces.json.
+// knownMarketplacesPath returns the path to Conduit's known_marketplaces.json.
 func knownMarketplacesPath() string {
 	return filepath.Join(pluginsDir(), "known_marketplaces.json")
 }
 
-// LoadKnownMarketplaces reads ~/.claude/plugins/known_marketplaces.json.
+// LoadKnownMarketplaces reads ~/.conduit/plugins/known_marketplaces.json.
 func LoadKnownMarketplaces() (map[string]MarketplaceEntry, error) {
+	ensurePluginStorageImported()
 	data, err := os.ReadFile(knownMarketplacesPath())
 	if err != nil {
 		if os.IsNotExist(err) {

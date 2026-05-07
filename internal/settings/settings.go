@@ -197,11 +197,28 @@ const (
 // Load reads and merges settings from all layers for the given cwd.
 func Load(cwd string) (*Merged, error) {
 	_ = ensureConduitConfigImported()
-	return loadPaths(settingsFiles(cwd))
+	merged := loadPaths(settingsFiles(cwd))
+	applyConduitProjectState(merged, cwd)
+	return merged, nil
+}
+
+func applyConduitProjectState(merged *Merged, cwd string) {
+	if merged == nil || cwd == "" {
+		return
+	}
+	state, ok, err := LoadConduitProjectState(cwd)
+	if err != nil || !ok {
+		return
+	}
+	merged.EnabledMcpjsonServers = append(merged.EnabledMcpjsonServers, state.EnabledMcpjsonServers...)
+	merged.DisabledMcpjsonServers = append(merged.DisabledMcpjsonServers, state.DisabledMcpjsonServers...)
+	if state.EnableAllProjectMcpServers {
+		merged.EnableAllProjectMcpServers = true
+	}
 }
 
 // loadPaths merges settings from an explicit list of file paths (testable).
-func loadPaths(paths []string) (*Merged, error) {
+func loadPaths(paths []string) *Merged {
 	merged := &Merged{
 		DefaultMode: "default",
 		Env:         make(map[string]string),
@@ -274,7 +291,7 @@ func loadPaths(paths []string) (*Merged, error) {
 			merged.EnableAllProjectMcpServers = true
 		}
 	}
-	return merged, nil
+	return merged
 }
 
 func settingsFiles(cwd string) []string {

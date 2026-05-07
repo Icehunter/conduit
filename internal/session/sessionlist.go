@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // FilterUnresolvedToolUses drops orphan tool_use blocks from assistant
@@ -57,12 +58,45 @@ func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
 
 // List returns all session IDs for the given cwd, newest first.
 func List(cwd string) ([]SessionMeta, error) {
-	home, err := os.UserHomeDir()
+	dir := ProjectDirInConfig(cwd, settings.ConduitDir())
+	out, err := listDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	sanitized := sanitizePath(cwd)
-	dir := filepath.Join(home, ".claude", "projects", sanitized)
+	legacyDir := LegacyProjectDirInConfig(cwd, settings.ClaudeDir())
+	if filepath.Clean(legacyDir) == filepath.Clean(dir) {
+		return out, nil
+	}
+	legacy, err := listDir(legacyDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return legacy, nil
+	}
+	out = appendMissingSessions(out, legacy...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Modified.After(out[j].Modified)
+	})
+	return out, nil
+}
+
+func appendMissingSessions(primary []SessionMeta, fallback ...SessionMeta) []SessionMeta {
+	seen := make(map[string]bool, len(primary))
+	for _, s := range primary {
+		seen[s.ID] = true
+	}
+	for _, s := range fallback {
+		if seen[s.ID] {
+			continue
+		}
+		primary = append(primary, s)
+		seen[s.ID] = true
+	}
+	return primary
+}
+
+func listDir(dir string) ([]SessionMeta, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

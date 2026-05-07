@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // DailyModelEntry mirrors DailyModelTokens from the cache — one entry per active day.
@@ -40,11 +42,11 @@ type ModelUsage struct {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Stats loading — reads ~/.claude/stats-cache.json (maintained by Claude Code),
-// falls back to JSONL scanning only when the cache is absent.
+// Stats loading — reads Conduit's stats cache first, falls back to Claude's
+// legacy stats cache, then scans JSONL files when both caches are absent.
 // ──────────────────────────────────────────────────────────────────────────────
 
-// statsCacheFile is the shape of ~/.claude/stats-cache.json written by Claude Code.
+// statsCacheFile is the stats-cache.json shape inherited from Claude Code.
 type statsCacheFile struct {
 	Version          int    `json:"version"`
 	LastComputedDate string `json:"lastComputedDate"`
@@ -71,22 +73,23 @@ type statsCacheFile struct {
 }
 
 func LoadAll(days int) Stats {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Stats{}
+	// Try the Conduit-owned stats cache first, then fall back to Claude's
+	// legacy cache for users with existing history.
+	cachePaths := []string{
+		filepath.Join(settings.ConduitDir(), "stats-cache.json"),
+		filepath.Join(settings.ClaudeDir(), "stats-cache.json"),
 	}
-
-	// Try the stats cache first.
-	cachePath := filepath.Join(home, ".claude", "stats-cache.json")
-	if data, err := os.ReadFile(cachePath); err == nil {
-		var cache statsCacheFile
-		if json.Unmarshal(data, &cache) == nil && cache.TotalSessions > 0 {
-			return statsFromCache(&cache, days)
+	for _, cachePath := range cachePaths {
+		if data, err := os.ReadFile(cachePath); err == nil {
+			var cache statsCacheFile
+			if json.Unmarshal(data, &cache) == nil && cache.TotalSessions > 0 {
+				return statsFromCache(&cache, days)
+			}
 		}
 	}
 
 	// Fallback: scan JSONL files.
-	return scanAllJSONL(home, days)
+	return scanAllJSONL(days)
 }
 
 // statsFromCache converts a statsCacheFile into Stats, optionally filtering
@@ -223,8 +226,11 @@ func statsFromCache(cache *statsCacheFile, days int) Stats {
 }
 
 // scanAllJSONL is the fallback when no stats cache exists.
-func scanAllJSONL(home string, days int) Stats {
-	projectsBase := filepath.Join(home, ".claude", "projects")
+func scanAllJSONL(days int) Stats {
+	projectsBase := filepath.Join(settings.ConduitDir(), "projects")
+	if !hasProjectSessions(projectsBase) {
+		projectsBase = filepath.Join(settings.ClaudeDir(), "projects")
+	}
 	projectDirs, err := os.ReadDir(projectsBase)
 	if err != nil {
 		return Stats{}
@@ -286,6 +292,28 @@ func scanAllJSONL(home string, days int) Stats {
 		out.TotalDaysRange = int(today.Sub(out.RangeStart).Hours()/24) + 1
 	}
 	return out
+}
+
+func hasProjectSessions(projectsBase string) bool {
+	projectDirs, err := os.ReadDir(projectsBase)
+	if err != nil {
+		return false
+	}
+	for _, pd := range projectDirs {
+		if !pd.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(projectsBase, pd.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".jsonl") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func scanJSONL(path string, out *Stats, cutoff time.Time) {

@@ -21,6 +21,173 @@ func newTestSession(t *testing.T) *Session {
 	return s
 }
 
+func TestNewUsesConduitProjectStore(t *testing.T) {
+	root := t.TempDir()
+	conduitDir := filepath.Join(root, ".conduit")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+
+	s, err := New("/tmp/work/project", "sess-1")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	wantDir := filepath.Join(conduitDir, "projects", "-tmp-work-project")
+	if s.ProjectDir != wantDir {
+		t.Fatalf("ProjectDir = %q, want %q", s.ProjectDir, wantDir)
+	}
+	if s.FilePath != filepath.Join(wantDir, "sess-1.jsonl") {
+		t.Fatalf("FilePath = %q, want session file under %q", s.FilePath, wantDir)
+	}
+}
+
+func TestListFallsBackToClaudeProjectStore(t *testing.T) {
+	root := t.TempDir()
+	conduitDir := filepath.Join(root, ".conduit")
+	claudeDir := filepath.Join(root, ".claude")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	cwd := "/tmp/work/project"
+	legacyProjectDir := LegacyProjectDirInConfig(cwd, claudeDir)
+	legacyPath := filepath.Join(legacyProjectDir, "legacy.jsonl")
+	writeJSONL(t, legacyPath, `{"type":"message","message":{"role":"user","content":"legacy"}}`)
+
+	sessions, err := List(cwd)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("List returned %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].FilePath != legacyPath {
+		t.Fatalf("List FilePath = %q, want legacy path %q", sessions[0].FilePath, legacyPath)
+	}
+}
+
+func TestListMergesStoresAndPrefersConduitDuplicates(t *testing.T) {
+	root := t.TempDir()
+	conduitDir := filepath.Join(root, ".conduit")
+	claudeDir := filepath.Join(root, ".claude")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	cwd := "/tmp/work/project"
+	legacyPath := filepath.Join(LegacyProjectDirInConfig(cwd, claudeDir), "legacy.jsonl")
+	duplicateLegacyPath := filepath.Join(LegacyProjectDirInConfig(cwd, claudeDir), "duplicate.jsonl")
+	duplicateConduitPath := filepath.Join(ProjectDirInConfig(cwd, conduitDir), "duplicate.jsonl")
+	writeJSONL(t, legacyPath, `{"type":"message","message":{"role":"user","content":"legacy"}}`)
+	writeJSONL(t, duplicateLegacyPath, `{"type":"message","message":{"role":"user","content":"legacy duplicate"}}`)
+	writeJSONL(t, duplicateConduitPath, `{"type":"message","message":{"role":"user","content":"conduit duplicate"}}`)
+
+	sessions, err := List(cwd)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("List returned %d sessions, want 2", len(sessions))
+	}
+	byID := map[string]SessionMeta{}
+	for _, s := range sessions {
+		byID[s.ID] = s
+	}
+	if byID["legacy"].FilePath != legacyPath {
+		t.Fatalf("legacy FilePath = %q, want %q", byID["legacy"].FilePath, legacyPath)
+	}
+	if byID["duplicate"].FilePath != duplicateConduitPath {
+		t.Fatalf("duplicate FilePath = %q, want conduit path %q", byID["duplicate"].FilePath, duplicateConduitPath)
+	}
+}
+
+func TestImportForWriteCopiesLegacyWithoutOverwriting(t *testing.T) {
+	root := t.TempDir()
+	conduitDir := filepath.Join(root, ".conduit")
+	claudeDir := filepath.Join(root, ".claude")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	cwd := "/tmp/work/project"
+	legacyPath := filepath.Join(LegacyProjectDirInConfig(cwd, claudeDir), "sess-1.jsonl")
+	writeJSONL(t, legacyPath, `{"type":"message","message":{"role":"user","content":"legacy"}}`)
+
+	imported, err := ImportForWrite(cwd, legacyPath)
+	if err != nil {
+		t.Fatalf("ImportForWrite: %v", err)
+	}
+	wantPath := filepath.Join(ProjectDirInConfig(cwd, conduitDir), "sess-1.jsonl")
+	if imported.FilePath != wantPath {
+		t.Fatalf("FilePath = %q, want %q", imported.FilePath, wantPath)
+	}
+	data, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read imported file: %v", err)
+	}
+	if !strings.Contains(string(data), "legacy") {
+		t.Fatalf("imported file did not contain legacy transcript: %s", data)
+	}
+	sourceInfo, err := os.Stat(legacyPath)
+	if err != nil {
+		t.Fatalf("stat source: %v", err)
+	}
+	destInfo, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("stat destination: %v", err)
+	}
+	if !destInfo.ModTime().Equal(sourceInfo.ModTime()) {
+		t.Fatalf("destination mtime = %s, want source mtime %s", destInfo.ModTime(), sourceInfo.ModTime())
+	}
+
+	if err := os.WriteFile(wantPath, []byte("existing\n"), 0o600); err != nil {
+		t.Fatalf("seed existing conduit file: %v", err)
+	}
+	if _, err := ImportForWrite(cwd, legacyPath); err != nil {
+		t.Fatalf("ImportForWrite existing: %v", err)
+	}
+	data, err = os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read existing imported file: %v", err)
+	}
+	if string(data) != "existing\n" {
+		t.Fatalf("ImportForWrite overwrote existing conduit file: %q", data)
+	}
+}
+
+func TestImportLegacyProjectCopiesMissingSessions(t *testing.T) {
+	root := t.TempDir()
+	conduitDir := filepath.Join(root, ".conduit")
+	claudeDir := filepath.Join(root, ".claude")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+
+	cwd := "/tmp/work/project"
+	writeJSONL(t, filepath.Join(LegacyProjectDirInConfig(cwd, claudeDir), "one.jsonl"),
+		`{"type":"message","message":{"role":"user","content":"one"}}`)
+	writeJSONL(t, filepath.Join(LegacyProjectDirInConfig(cwd, claudeDir), "two.jsonl"),
+		`{"type":"message","message":{"role":"user","content":"two"}}`)
+	writeJSONL(t, filepath.Join(ProjectDirInConfig(cwd, conduitDir), "two.jsonl"),
+		`{"type":"message","message":{"role":"user","content":"existing"}}`)
+
+	imported, err := ImportLegacyProject(cwd)
+	if err != nil {
+		t.Fatalf("ImportLegacyProject: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported = %d, want 1", imported)
+	}
+	one, err := os.ReadFile(filepath.Join(ProjectDirInConfig(cwd, conduitDir), "one.jsonl"))
+	if err != nil {
+		t.Fatalf("read imported one: %v", err)
+	}
+	if !strings.Contains(string(one), "one") {
+		t.Fatalf("one.jsonl = %q, want imported legacy content", one)
+	}
+	two, err := os.ReadFile(filepath.Join(ProjectDirInConfig(cwd, conduitDir), "two.jsonl"))
+	if err != nil {
+		t.Fatalf("read existing two: %v", err)
+	}
+	if !strings.Contains(string(two), "existing") {
+		t.Fatalf("two.jsonl was overwritten: %q", two)
+	}
+}
+
 // --- cost persistence ---
 
 func TestAppendCost_AndLoad(t *testing.T) {
@@ -488,6 +655,9 @@ var _ = json.Marshal
 
 func writeJSONL(t *testing.T, path string, lines ...string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

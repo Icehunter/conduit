@@ -5,7 +5,7 @@
 //
 // The memory directory lives at:
 //
-//	~/.claude/projects/<sanitized-cwd>/memory/
+//	~/.conduit/projects/<sanitized-cwd>/memory/
 //
 // The system prompt block injected by BuildPrompt contains:
 //  1. Full behavioral instructions (memory types, how to save, when to access)
@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 const (
@@ -29,15 +31,10 @@ const (
 )
 
 // Path returns the auto-memory directory for the given cwd.
-// Mirrors getAutoMemPath() — respects CLAUDE_CONFIG_DIR env override.
+// Mirrors getAutoMemPath() while using Conduit's private config directory.
 func Path(cwd string) string {
-	home, _ := os.UserHomeDir()
-	claudeHome := os.Getenv("CLAUDE_CONFIG_DIR")
-	if claudeHome == "" {
-		claudeHome = filepath.Join(home, ".claude")
-	}
 	sanitized := sanitizePath(cwd)
-	return filepath.Join(claudeHome, "projects", sanitized, "memory")
+	return filepath.Join(settings.ConduitDir(), "projects", sanitized, "memory")
 }
 
 // EntrypointPath returns the path to MEMORY.md for the given cwd.

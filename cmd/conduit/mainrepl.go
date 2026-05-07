@@ -92,6 +92,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	cwd, _ := os.Getwd()
 	sessionID := app.NewSessionID()
 	var resumedHistory []api.Message
+	resumeSourcePath := ""
 
 	if resumeID != "" {
 		// --resume <uuid> or --resume <path.jsonl>
@@ -115,6 +116,10 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 		}
 		if filePath != "" {
+			resumeSourcePath = filePath
+			if writeSession, err := session.ImportForWrite(cwd, filePath); err == nil {
+				filePath = writeSession.FilePath
+			}
 			resumedHistory, _ = session.LoadMessages(filePath)
 		}
 	} else if continueMode {
@@ -123,11 +128,22 @@ func runREPL(continueMode bool, resumeID string) error {
 		if err == nil && len(sessions) > 0 {
 			most := sessions[0]
 			sessionID = most.ID
-			resumedHistory, _ = session.LoadMessages(most.FilePath)
+			resumeSourcePath = most.FilePath
+			filePath := most.FilePath
+			if writeSession, err := session.ImportForWrite(cwd, most.FilePath); err == nil {
+				filePath = writeSession.FilePath
+			}
+			resumedHistory, _ = session.LoadMessages(filePath)
 		}
 	}
 
-	sess, err := session.New(cwd, sessionID)
+	var sess *session.Session
+	var err error
+	if resumeSourcePath != "" {
+		sess, err = session.ImportForWrite(cwd, resumeSourcePath)
+	} else {
+		sess, err = session.New(cwd, sessionID)
+	}
 	if err != nil {
 		// Non-fatal — session persistence failure shouldn't block the REPL.
 		sess = nil
@@ -156,6 +172,14 @@ func runREPL(continueMode bool, resumeID string) error {
 	if trusted, trustErr := globalconfig.IsTrusted(cwd); trustErr == nil && !trusted {
 		needsTrust = true
 	}
+	importLegacySessions := func() {
+		go func() {
+			_, _ = session.ImportLegacyProject(cwd)
+		}()
+	}
+	if !needsTrust {
+		importLegacySessions()
+	}
 	go globalconfig.IncrementStartups()
 
 	// additionalDirectories: auto-allow file operations under each directory.
@@ -167,19 +191,19 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 
 	// Auto-allow conduit's own per-project storage tree without prompting.
-	// The auto-extract memory sub-agent writes to <home>/.claude/projects/
+	// The auto-extract memory sub-agent writes to ~/.conduit/projects/
 	// <sanitized-cwd>/memory/, the session-memory sub-agent writes to
-	// <home>/.claude/projects/<sanitized-cwd>/<sessionID>/session-memory/
+	// ~/.conduit/projects/<sanitized-cwd>/<sessionID>/session-memory/
 	// summary.md, and dream consolidation reads/writes the same memory
 	// dir. Without these allows, every conduit-internal write triggered
 	// the user permission prompt — annoying and meaningless because the
 	// model never picked the path itself; conduit picked it.
-	if home, err := os.UserHomeDir(); err == nil {
-		conduitDataDir := filepath.Join(home, ".claude", "projects")
-		gate.AllowForSession("Read(" + conduitDataDir + "/**)")
-		gate.AllowForSession("Edit(" + conduitDataDir + "/**)")
-		gate.AllowForSession("Write(" + conduitDataDir + "/**)")
-	}
+	conduitDataDir := filepath.Join(settings.ConduitDir(), "projects")
+	legacyDataDir := filepath.Join(settings.ClaudeDir(), "projects")
+	gate.AllowForSession("Read(" + conduitDataDir + "/**)")
+	gate.AllowForSession("Edit(" + conduitDataDir + "/**)")
+	gate.AllowForSession("Write(" + conduitDataDir + "/**)")
+	gate.AllowForSession("Read(" + legacyDataDir + "/**)")
 
 	// Apply theme from settings.json. Style packages init at import time
 	// from default Dark, then re-derive via theme.OnChange when we Set here.
@@ -548,7 +572,11 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 		NeedsTrust: needsTrust,
 		SetTrusted: func() error {
-			return globalconfig.SetTrusted(cwd)
+			if err := globalconfig.SetTrusted(cwd); err != nil {
+				return err
+			}
+			importLegacySessions()
+			return nil
 		},
 	})
 

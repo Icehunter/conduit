@@ -692,10 +692,6 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			if err != nil || len(sessions) == 0 {
 				return Result{Type: "text", Text: "No previous sessions found for this directory.\nTip: use --continue / -c when starting claude to resume the latest session automatically."}
 			}
-			// Cap to 20 most recent sessions.
-			if len(sessions) > 20 {
-				sessions = sessions[:20]
-			}
 			// Encode sessions as tab-separated lines for the TUI to parse.
 			// Format: "<filePath>\t<age>\t<title>\t<recordCount>\t<size>"
 			var lines []string

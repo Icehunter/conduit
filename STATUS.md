@@ -152,7 +152,7 @@ Last updated: 2026-05-05
 | /usage | ✅ | token/cost breakdown by turn |
 | /toggle-usage | ✅ | conduit-only: toggles Claude plan usage footer + fetcher |
 | /vim | 🚫 REMOVED | descoped with vim mode — command removed from registry |
-| /resume | ✅ | lists previous sessions; use --continue to restore |
+| /resume | ✅ | lists Conduit sessions with Claude history fallback/import; use --continue to restore |
 | /rewind | ✅ | conversation snapshots via JSONL |
 | /rename | ✅ | renames current session |
 | /theme | ✅ | hot-swap palettes; persisted to settings.json |
@@ -217,7 +217,7 @@ Last updated: 2026-05-05
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Session transcript saving (JSONL) | ✅ | internal/session/, mirrors TS sessionStorage.ts |
+| Session transcript saving (JSONL) | ✅ | internal/session/, writes to ~/.conduit/projects with Claude fallback import |
 | Session path encoding (djb2+sanitize) | ✅ | exact port of sessionStoragePortable.ts |
 | --continue flag (resume latest session) | ✅ | cmd/claude/main.go |
 | /resume command (list sessions) | ✅ | shows previous sessions with age |

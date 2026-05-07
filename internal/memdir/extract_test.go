@@ -10,6 +10,7 @@ import (
 )
 
 func TestRunExtract_PassesPromptToSubAgent(t *testing.T) {
+	isolateConduitConfig(t)
 	dir := t.TempDir()
 
 	var got string
@@ -35,6 +36,7 @@ func TestRunExtract_PassesPromptToSubAgent(t *testing.T) {
 }
 
 func TestRunExtract_IncludesExistingManifest(t *testing.T) {
+	isolateConduitConfig(t)
 	dir := t.TempDir()
 	memDir := Path(dir)
 	_ = os.MkdirAll(memDir, 0o755)
@@ -60,6 +62,7 @@ func TestRunExtract_IncludesExistingManifest(t *testing.T) {
 }
 
 func TestRunExtract_ReturnsRunnerError(t *testing.T) {
+	isolateConduitConfig(t)
 	dir := t.TempDir()
 	runner := func(_ context.Context, _ string) (string, error) {
 		return "", context.DeadlineExceeded

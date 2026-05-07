@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -44,8 +45,14 @@ func (m Model) handleSearchPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.refreshViewport()
 		filePath := picked.filePath
 		return m, func() tea.Msg {
-			msgs, err := session.LoadMessages(filePath)
-			return resumeLoadMsg{msgs: msgs, filePath: filePath, err: err}
+			loadPath := filePath
+			if cwd, err := os.Getwd(); err == nil {
+				if writeSession, err := session.ImportForWrite(cwd, filePath); err == nil {
+					loadPath = writeSession.FilePath
+				}
+			}
+			msgs, err := session.LoadMessages(loadPath)
+			return resumeLoadMsg{msgs: msgs, filePath: loadPath, err: err}
 		}
 	case "esc", "ctrl+c":
 		m.searchPanel = nil

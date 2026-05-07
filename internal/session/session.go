@@ -1,12 +1,13 @@
 // Package session implements conversation persistence.
 //
-// Storage layout mirrors the real Claude Code (src/utils/sessionStorage.ts):
+// Storage layout follows Claude Code's per-project transcript shape, but
+// Conduit owns the files it writes:
 //
-//	~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl
+//	~/.conduit/projects/<sanitized-cwd>/<session-id>.jsonl
 //
-// Each line of the JSONL file is one Entry. On startup we can read any
-// previous session's JSONL and restore its message history, enabling
-// --continue and /resume.
+// Existing Claude Code history is treated as a read-only legacy source for
+// --continue and /resume, then imported into Conduit's project store before
+// new turns are appended.
 package session
 
 import (
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 const maxSanitizedLength = 200
@@ -58,9 +60,21 @@ type SessionMeta struct {
 	Title    string
 }
 
-// ProjectDir returns the directory where session files for cwd are stored.
+// ProjectDir returns the Conduit-owned directory where session files for cwd
+// are stored. The home parameter is retained for tests and path parity helpers.
 func ProjectDir(cwd, home string) string {
-	return filepath.Join(home, ".claude", "projects", sanitizePath(cwd))
+	return filepath.Join(home, ".conduit", "projects", sanitizePath(cwd))
+}
+
+// ProjectDirInConfig returns the Conduit-owned project directory under configDir.
+func ProjectDirInConfig(cwd, configDir string) string {
+	return filepath.Join(configDir, "projects", sanitizePath(cwd))
+}
+
+// LegacyProjectDirInConfig returns the Claude Code project directory used as a
+// read-only fallback/import source.
+func LegacyProjectDirInConfig(cwd, configDir string) string {
+	return filepath.Join(configDir, "projects", sanitizePath(cwd))
 }
 
 // FromFile wraps an existing JSONL file as a Session so new turns can be appended to it.
@@ -74,15 +88,79 @@ func FromFile(filePath string) *Session {
 	}
 }
 
+// ImportForWrite copies sourcePath into Conduit's project store, if necessary,
+// and returns a Session pointing at the Conduit-owned destination. Existing
+// Conduit files are never overwritten.
+func ImportForWrite(cwd, sourcePath string) (*Session, error) {
+	sourcePath = filepath.Clean(sourcePath)
+	base := filepath.Base(sourcePath)
+	if !strings.HasSuffix(base, ".jsonl") {
+		return nil, fmt.Errorf("session: resume source must be a .jsonl file: %s", sourcePath)
+	}
+	sessionID := strings.TrimSuffix(base, ".jsonl")
+	destProjectDir := ProjectDirInConfig(cwd, settings.ConduitDir())
+	destPath := filepath.Join(destProjectDir, base)
+	if filepath.Clean(destPath) == sourcePath {
+		return FromFile(destPath), nil
+	}
+	if err := os.MkdirAll(destProjectDir, 0o700); err != nil {
+		return nil, fmt.Errorf("session: mkdir %s: %w", destProjectDir, err)
+	}
+	if _, err := os.Stat(destPath); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("session: stat %s: %w", destPath, err)
+		}
+		data, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("session: read resume source %s: %w", sourcePath, err)
+		}
+		if err := os.WriteFile(destPath, data, 0o600); err != nil {
+			return nil, fmt.Errorf("session: import resume source to %s: %w", destPath, err)
+		}
+		if info, err := os.Stat(sourcePath); err == nil {
+			_ = os.Chtimes(destPath, info.ModTime(), info.ModTime())
+		}
+	}
+	return &Session{
+		ID:         sessionID,
+		ProjectDir: destProjectDir,
+		FilePath:   destPath,
+	}, nil
+}
+
+// ImportLegacyProject copies all missing Claude Code sessions for cwd into
+// Conduit's project store. Existing Conduit files are never overwritten.
+func ImportLegacyProject(cwd string) (int, error) {
+	legacyDir := LegacyProjectDirInConfig(cwd, settings.ClaudeDir())
+	entries, err := os.ReadDir(legacyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("session: read legacy project dir %s: %w", legacyDir, err)
+	}
+	imported := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		destPath := filepath.Join(ProjectDirInConfig(cwd, settings.ConduitDir()), e.Name())
+		if _, err := os.Stat(destPath); err == nil {
+			continue
+		} else if err != nil && !os.IsNotExist(err) {
+			return imported, fmt.Errorf("session: stat %s: %w", destPath, err)
+		}
+		if _, err := ImportForWrite(cwd, filepath.Join(legacyDir, e.Name())); err != nil {
+			return imported, err
+		}
+		imported++
+	}
+	return imported, nil
+}
+
 // New creates a new session rooted at cwd, using sessionID as the file name.
 func New(cwd, sessionID string) (*Session, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("session: home dir: %w", err)
-	}
-	projectsDir := filepath.Join(home, ".claude", "projects")
-	sanitized := sanitizePath(cwd)
-	projectDir := filepath.Join(projectsDir, sanitized)
+	projectDir := ProjectDirInConfig(cwd, settings.ConduitDir())
 	if err := os.MkdirAll(projectDir, 0o700); err != nil {
 		return nil, fmt.Errorf("session: mkdir %s: %w", projectDir, err)
 	}

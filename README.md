@@ -134,7 +134,7 @@ View your savings: type `/rtk gain` inside the TUI.
 
 ### Session management
 
-- **JSONL transcripts** — every session saved to `~/.claude/projects/<path>/<id>.jsonl`
+- **JSONL transcripts** — every session saved to `~/.conduit/projects/<path>/<id>.jsonl`, with existing Claude history imported on resume
 - **`/resume`** — fuzzy-search all past sessions, load with full history
 - **`/search`** — search across all session transcripts for a term
 - **Cost persistence** — accumulated cost tracked per-session, shown in `/status`

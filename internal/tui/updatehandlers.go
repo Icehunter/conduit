@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -528,7 +529,16 @@ func (m Model) handleResumeLoad(msg resumeLoadMsg) (Model, tea.Cmd) {
 	m.persistedCount = len(msg.msgs)
 	// Repoint cfg.Session so new turns append to the resumed file.
 	if msg.filePath != "" {
-		m.cfg.Session = session.FromFile(msg.filePath)
+		cwd, _ := os.Getwd()
+		resumeSession, err := session.ImportForWrite(cwd, msg.filePath)
+		if err != nil {
+			resumeSession = session.FromFile(msg.filePath)
+		}
+		m.cfg.Session = resumeSession
+		if m.cfg.Live != nil {
+			m.cfg.Live.SetSessionID(resumeSession.ID)
+			m.cfg.Live.SetSessionFile(resumeSession.FilePath)
+		}
 		// Restore coordinator mode if the session was in coordinator mode.
 		if notice := coordinator.MatchSessionMode(m.cfg.Session.ReadMode()); notice != "" {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: notice})

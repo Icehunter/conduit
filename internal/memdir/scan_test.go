@@ -8,7 +8,13 @@ import (
 	"time"
 )
 
+func isolateConduitConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(t.TempDir(), ".conduit"))
+}
+
 func TestScanMemories_Empty(t *testing.T) {
+	isolateConduitConfig(t)
 	cwd := t.TempDir()
 	files, err := ScanMemories(cwd)
 	if err != nil {
@@ -20,6 +26,7 @@ func TestScanMemories_Empty(t *testing.T) {
 }
 
 func TestScanMemories_FindsFiles(t *testing.T) {
+	isolateConduitConfig(t)
 	cwd := t.TempDir()
 	dir := Path(cwd)
 	_ = os.MkdirAll(dir, 0o755)
@@ -77,6 +84,7 @@ func TestFormatMemoryList_WithFiles(t *testing.T) {
 }
 
 func TestRelevantMemories_NoKeywords(t *testing.T) {
+	isolateConduitConfig(t)
 	cwd := t.TempDir()
 	dir := Path(cwd)
 	_ = os.MkdirAll(dir, 0o755)
@@ -92,6 +100,7 @@ func TestRelevantMemories_NoKeywords(t *testing.T) {
 }
 
 func TestRelevantMemories_MatchKeyword(t *testing.T) {
+	isolateConduitConfig(t)
 	cwd := t.TempDir()
 	dir := Path(cwd)
 	_ = os.MkdirAll(dir, 0o755)

@@ -68,7 +68,10 @@ should not silently change providers, modes, themes, or other runtime state.
 
 ### 1. Move Session and Project State
 
-Move Conduit session/project artifacts from Claude paths to Conduit paths:
+Status: implemented for transcript, resume/search, session memory roots,
+auto-memory roots, and session-derived stats fallback.
+
+Conduit session/project artifacts now write to Conduit paths:
 
 - `~/.claude/projects` -> `~/.conduit/projects`
 - resume history
@@ -77,8 +80,11 @@ Move Conduit session/project artifacts from Claude paths to Conduit paths:
 - auto-memory output
 - RTK scans and session-derived stats
 
-Keep a Claude fallback/import path so existing history remains visible. Once a
-Conduit project directory exists, write and read the Conduit path first.
+Claude project history remains a read-only fallback/import path so existing
+history stays visible. Session listing merges Conduit and Claude history while
+deduping by session id with Conduit winning. Once the workspace trust gate is
+satisfied, Conduit starts a best-effort background import of missing Claude
+session files into Conduit's project store.
 
 ### 2. Untangle Plugin Storage
 
@@ -168,20 +174,8 @@ migrations and config validation much easier.
 
 ## Suggested Next Slice
 
-Move session/project state to `~/.conduit/projects`.
+Untangle plugin storage and remaining trust/MCP state.
 
-This is the largest remaining source of "why is Conduit touching Claude files?"
-and it affects user-visible behavior:
-
-- `/resume`
-- session persistence
-- memory
-- RTK history
-- stats panels
-
-Do it with a compatibility fallback:
-
-1. Resolve Conduit project dir first.
-2. If missing, read Claude project dir.
-3. Once Conduit writes a session for a project, prefer Conduit from then on.
-4. Keep import behavior non-destructive.
+Session/project state is no longer the largest source of Claude-owned writes;
+the next storage boundary is deciding which plugin install/cache data should
+remain shared with Claude Code and which data should become Conduit-owned.

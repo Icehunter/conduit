@@ -54,7 +54,40 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			p.current = m.providerValueForRole(p.role)
 			p.selected = selectedPickerIndex(p.items, p.current)
 		}
-	case "enter", "space":
+	case "space":
+		// Model picker: apply to the current role but keep picker open so the
+		// user can assign models to multiple roles without reopening each time.
+		// Other pickers: space behaves like enter (apply + close).
+		if p.selected < 0 || p.selected >= len(p.items) || p.items[p.selected].Section {
+			break
+		}
+		if p.kind == "model" {
+			picked := p.items[p.selected].Value
+			role := p.role
+			if role == "" {
+				role = settings.RoleDefault
+			}
+			if m.cfg.Commands != nil {
+				if res, ok := m.cfg.Commands.Dispatch("/model --role " + role + " " + picked); ok {
+					m, _ = m.applyCommandResult(res)
+				}
+			}
+			// Refresh the ● marker to reflect the new assignment.
+			if m.picker == nil {
+				return m, nil
+			}
+			m.picker.current = m.providerValueForRole(m.picker.role)
+			return m, nil
+		}
+		// Non-model pickers: apply + close.
+		m.picker = nil
+		if m.cfg.Commands != nil {
+			if res, ok := m.cfg.Commands.Dispatch("/" + p.kind + " " + p.items[p.selected].Value); ok {
+				return m.applyCommandResult(res)
+			}
+		}
+		return m, nil
+	case "enter":
 		if p.selected < 0 || p.selected >= len(p.items) {
 			return m, nil
 		}

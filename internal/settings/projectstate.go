@@ -64,6 +64,8 @@ func LoadConduitProjectState(cwd string) (ConduitProjectState, bool, error) {
 }
 
 func updateConduitProjectRaw(cwd string, fn func(map[string]json.RawMessage) error) error {
+	conduitConfigMu.Lock()
+	defer conduitConfigMu.Unlock()
 	path := ConduitSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -102,7 +104,7 @@ func updateConduitProjectRaw(cwd string, fn func(map[string]json.RawMessage) err
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o600)
+	return writeFileAtomic(path, append(out, '\n'))
 }
 
 func SetConduitProjectTrusted(cwd string) error {

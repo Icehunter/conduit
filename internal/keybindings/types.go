@@ -1,6 +1,6 @@
 // Package keybindings ports the user-customizable keybinding layer from
 // src/keybindings/ in CC. MVP: single-keystroke bindings, JSON config in
-// ~/.claude/keybindings.json, resolved against bubbletea v2 KeyPressMsg
+// ~/.conduit/keybindings.json, resolved against bubbletea v2 KeyPressMsg
 // (which exposes structured Code + Mod after the M-P upgrade).
 //
 // Chord support (multi-keystroke like "ctrl+x ctrl+s") is intentionally

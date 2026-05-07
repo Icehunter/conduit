@@ -25,7 +25,7 @@ func RegisterOutputStyleCommand(r *Registry, cwd string) {
 			// on Enter, which falls into the lookup branch below.
 			if name == "" {
 				if len(styles) == 0 {
-					return Result{Type: "text", Text: "No output styles found.\n\nPlace *.md files in .claude/output-styles/ or ~/.claude/output-styles/"}
+					return Result{Type: "text", Text: "No output styles found.\n\nPlace *.md files in ~/.conduit/output-styles/ or this project's .claude/output-styles/."}
 				}
 				values := make([]string, len(styles))
 				labels := make([]string, len(styles))

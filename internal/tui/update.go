@@ -178,6 +178,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pluginInstallMsg:
 		return m.handlePluginInstall(msg)
 
+	case pluginMarketplaceAddMsg:
+		return m.handlePluginMarketplaceAdd(msg)
+
 	case pluginPanelReloadMsg:
 		return m.handlePluginPanelReload(msg)
 

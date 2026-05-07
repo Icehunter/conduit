@@ -122,6 +122,8 @@ modify it.
 
 ### 4. Stronger Provider Schema
 
+Status: implemented for the current kebab-case provider schema.
+
 Provider definitions should become explicitly typed rather than loosely keyed:
 
 - `claudeSubscription`
@@ -135,7 +137,7 @@ kebab-case wire strings while the provider UI and role picker are landing:
 camelCase names above are a future schema migration, not a prerequisite for
 Gemini/OpenAI-compatible configuration support.
 
-Add validation and migration for legacy keys like:
+Validation and canonicalization now repair legacy keys like:
 
 ```text
 claude-subscription.<account>.<model>
@@ -144,10 +146,12 @@ anthropic-api.<account>.<model>
 openai-compatible.<credential>.<model>
 ```
 
-The config API should reject broken provider references early and give a useful
-message in Ctrl+M or `/config`.
+The config API rejects broken provider references early and gives useful
+messages in Ctrl+M, the Providers settings tab, and `/config validate`.
 
 ### 5. UI and Command Follow-Through
+
+Status: implemented for known Conduit-owned runtime surfaces.
 
 Update visible labels and docs to say Conduit where the runtime file is now
 Conduit-owned:
@@ -157,11 +161,17 @@ Conduit-owned:
 - settings path/status text
 - MCP panel empty-state copy
 - keybindings docs if copied into Conduit
+- output style user path
+- Config tool default path
 
 The UI should be clear when a value came from an initial Claude import versus
 when it is now Conduit-owned.
 
 ### 6. Optional: Raw JSON Exit
+
+Status: mostly implemented. Raw JSON remains only for low-level generic
+read/modify/write helpers, first-run import, compatibility reads, and the
+user-facing `/config set` escape hatch.
 
 Keep raw JSON helpers only at the edges:
 
@@ -174,10 +184,8 @@ migrations and config validation much easier.
 
 ## Suggested Next Slice
 
-Untangle plugin storage.
-
-Session/project state, trust/MCP runtime state, and plugin install/cache state
-are now Conduit-owned. The next boundary is provider schema validation and UI
-follow-through: make provider definitions strongly typed, reject broken role
-references early, and finish visible Conduit-owned path labels in settings and
-config surfaces.
+The Conduit-owned state plan is complete for the current provider/storage
+schema. Future work should be feature-driven rather than storage cleanup:
+broaden provider setup beyond OpenAI-compatible providers, migrate provider
+kind wire names to camelCase if still desired, and move any newly discovered
+Claude-owned runtime writes behind Conduit-owned helpers.

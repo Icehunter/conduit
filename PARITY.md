@@ -265,10 +265,10 @@
 | /output-style | `commands/output-style/` | `internal/commands/outputstyle.go` | ✅ | |
 | /rtk gain | — | `internal/commands/rtk.go` | ✅ | conduit-only |
 | /buddy | — | `internal/commands/buddy.go` | ✅ | conduit-only |
-| /keybindings | `commands/keybindings/` | `internal/commands/session.go` | ✅ | Live resolver bindings grouped by context; fixed bindings listed; edit ~/.claude/keybindings.json hint |
+| /keybindings | `commands/keybindings/` | `internal/commands/session.go` | ✅ | Live resolver bindings grouped by context; fixed bindings listed; edit `~/.conduit/keybindings.json`; legacy Claude keybindings are fallback only |
 | /plan | `commands/plan/` | `internal/commands/misc.go` | ✅ | Sets plan mode; EnterPlanMode tool wired |
 | /memory | `commands/memory/` | `internal/commands/session.go` | ✅ | list\|show\|scan subcommands; memdir.ScanMemories |
-| /config | `commands/config/` | `internal/commands/session.go` | ✅ | list / get <key> / set <key> <value>; raw-map write |
+| /config | `commands/config/` | `internal/commands/session.go` | ✅ | list / get <key> / set <key> <value> / validate; writes `~/.conduit/conduit.json` |
 | /context | `commands/context/` | `internal/commands/session.go` | ✅ | Bar chart + token breakdown + remaining |
 | /diff | `commands/diff/` | `internal/commands/session.go` | ✅ | git diff of files edited this session |
 | /doctor | `commands/doctor/` | `internal/commands/session.go` | ✅ | auth, MCP, settings health check |
@@ -283,7 +283,7 @@
 | /status | `commands/status/` | `internal/commands/session.go` | ✅ | Model, mode, session ID, cost, context% |
 | /tag | `commands/tag/` | `internal/commands/session.go` | ✅ | Tag/clear current session; tag shown in /session and /resume picker |
 | /tasks | `commands/tasks/` | `internal/commands/session.go` | ✅ | Lists active TaskTool tasks |
-| /theme | `commands/theme/` | `internal/commands/misc.go` + `internal/theme/` | ✅ | Switch palette: dark/light/dark-accessible/light-accessible; hot-swap via OnChange listeners; persisted to settings.json |
+| /theme | `commands/theme/` | `internal/commands/misc.go` + `internal/theme/` | ✅ | Switch palette: dark/light/dark-accessible/light-accessible; hot-swap via OnChange listeners; persisted to `~/.conduit/conduit.json` |
 | /usage | `commands/usage/` | `internal/commands/session.go` | ✅ | Token/cost breakdown by turn |
 | /vim | `commands/vim/` | ❌ | ⬛ | Descoped with vim mode (1513 LOC; deferred) |
 | /branch | `commands/branch/` | ❌ | ❌ STUB | Conversation branching not implemented |
@@ -327,7 +327,7 @@
 | Config loading (.mcp.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | Includes conduit `~/.conduit/mcp.json` overlay after Claude/project/plugin sources |
 | Plugin MCP server registration | `services/mcp/` | — | `internal/mcp/manager.go` `SyncPluginServers` | ✅ | |
 | Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
-| MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | `internal/mcp/manager.go`, `internal/tui/model.go`, `internal/commands/mcp.go` | ✅ | Project-scope (.mcp.json) servers gated on user approval; startup picker offers Yes/Yes-All/No; persisted to settings.json (enabledMcpjsonServers / disabledMcpjsonServers / enableAllProjectMcpServers) |
+| MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | `internal/mcp/manager.go`, `internal/tui/model.go`, `internal/commands/mcp.go` | ✅ | Project-scope (.mcp.json) servers gated on user approval; startup picker offers Yes/Yes-All/No; persisted to `~/.conduit/conduit.json` project state |
 | OAuth for MCP servers | `services/mcp/` | — | `internal/mcp/oauth.go` + `oauthpersist.go` | ✅ | RFC 8414 metadata discovery (+OIDC fallback), RFC 7591 dynamic client registration, PKCE S256, localhost callback, token exchange + refresh, per-server bundle in secure storage |
 | MCP resource listing | `tools/ListMcpResourcesTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/list JSON-RPC |
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
@@ -438,7 +438,7 @@
 | Plugin enable/disable | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | |
 | Settings file preservation on update | `utils/config.ts` | — | `internal/settings/settings.go` | ✅ | Raw JSON map |
 | CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | — | `internal/claudemd/claudemd.go` | ✅ | Dir walk, @include, .claudeignore, per-session cache |
-| Output style setting | `utils/config.ts` | — | `internal/settings/settings.go`, `internal/tui/run.go` | ✅ | Persisted to settings.json; loaded on startup |
+| Output style setting | `utils/config.ts` | — | `internal/settings/settings.go`, `internal/tui/run.go` | ✅ | Persisted to `~/.conduit/conduit.json`; user styles load from `~/.conduit/output-styles` with Claude fallback |
 | Environment variable management | `utils/env.ts`, `envDynamic.ts` | — | `internal/settings/env.go` | ✅ | ApplyEnv; session.Env injected into BashTool subprocess |
 | Managed env constants | `utils/managedEnvConstants.ts` | — | `internal/settings/env.go` `dangerousEnvKeys` | ✅ | DANGEROUS_SHELL_SETTINGS filtered from ApplyEnv |
 | Remote managed settings | `services/remoteManagedSettings/` | — | ❌ | ⬛ | Anthropic-internal |

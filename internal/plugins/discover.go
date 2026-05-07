@@ -20,6 +20,7 @@ type pluginSource struct {
 	Repo   string `json:"repo,omitempty"` // for github shorthand
 	Ref    string `json:"ref,omitempty"`
 	Path   string `json:"path,omitempty"` // subpath within the repo
+	SHA    string `json:"sha,omitempty"`
 }
 
 // MarketplacePluginEntry is one plugin listing from a marketplace's marketplace.json.
@@ -28,6 +29,7 @@ type pluginSource struct {
 type MarketplacePluginEntry struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
+	Version     string          `json:"version,omitempty"`
 	Category    string          `json:"category,omitempty"`
 	Source      json.RawMessage `json:"source,omitempty"` // object — decoded on demand
 	Author      json.RawMessage `json:"author,omitempty"` // object — we don't use it
@@ -51,6 +53,24 @@ func (e *MarketplacePluginEntry) SourceURL() string {
 	return ""
 }
 
+// SourcePath returns a local path from the marketplace entry source.
+// The official marketplace uses string sources like "./plugins/name" for
+// plugins that live inside the marketplace repository.
+func (e *MarketplacePluginEntry) SourcePath() string {
+	if len(e.Source) == 0 {
+		return ""
+	}
+	var path string
+	if err := json.Unmarshal(e.Source, &path); err == nil {
+		return path
+	}
+	var s pluginSource
+	if err := json.Unmarshal(e.Source, &s); err != nil {
+		return ""
+	}
+	return s.Path
+}
+
 // SourceRef returns the git ref (branch/tag) for this plugin, or "".
 func (e *MarketplacePluginEntry) SourceRef() string {
 	if len(e.Source) == 0 {
@@ -61,6 +81,17 @@ func (e *MarketplacePluginEntry) SourceRef() string {
 		return ""
 	}
 	return s.Ref
+}
+
+func (e *MarketplacePluginEntry) SourceSHA() string {
+	if len(e.Source) == 0 {
+		return ""
+	}
+	var s pluginSource
+	if err := json.Unmarshal(e.Source, &s); err != nil {
+		return ""
+	}
+	return s.SHA
 }
 
 // MarketplaceManifest is the .claude-plugin/marketplace.json shape inside a cloned marketplace

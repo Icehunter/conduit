@@ -121,7 +121,7 @@ Last updated: 2026-05-05
 | /clear | ✅ | |
 | /exit, /quit | ✅ | |
 | /model | ✅ | grouped provider picker; switches Claude/MCP/OpenAI-compatible via `activeProvider`, mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles; Gemini/OpenAI-compatible providers are validated, assignable, text-streamable, and tool-call translated |
-| /providers | 🔶 | Settings Providers tab can add/edit/delete Gemini/OpenAI-compatible providers, rotate API keys via secure storage, and surface provider/role config validation; broader provider kinds still TODO |
+| /providers | ✅ | Settings Providers tab can add/edit/delete Gemini/OpenAI-compatible providers, rotate API keys via secure storage, canonicalize provider keys, and surface provider/role config validation; broader provider setup UI is future feature work |
 | /models | ✅ | alias for /model picker |
 | /compact | ✅ | calls Haiku to summarize |
 | /permissions | ✅ | shows gate state |
@@ -155,7 +155,7 @@ Last updated: 2026-05-05
 | /resume | ✅ | lists Conduit sessions with Claude history fallback/import; use --continue to restore |
 | /rewind | ✅ | conversation snapshots via JSONL |
 | /rename | ✅ | renames current session |
-| /theme | ✅ | hot-swap palettes; persisted to settings.json |
+| /theme | ✅ | hot-swap palettes; persisted to conduit.json |
 | /plan | ✅ | sets plan mode; EnterPlanMode tool wired |
 | /branch | ❌ STUB | needs conversation branching (not in PARITY yet — add to §7) |
 | /mcp | ✅ | internal/commands/mcp.go |

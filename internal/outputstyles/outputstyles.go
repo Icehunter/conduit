@@ -1,10 +1,11 @@
 // Package outputstyles loads user/project output style definitions from
-// markdown files in .claude/output-styles/ directories.
+// markdown files in Conduit and project output-styles directories.
 //
 // Mirrors src/outputStyles/loadOutputStylesDir.ts.
 //
 // Style files live at:
-//   - ~/.claude/output-styles/*.md         (user-level)
+//   - ~/.conduit/output-styles/*.md        (user-level)
+//   - ~/.claude/output-styles/*.md         (legacy fallback)
 //   - <cwd>/.claude/output-styles/*.md     (project-level, overrides user)
 //
 // Each .md file becomes one OutputStyle. Frontmatter fields:
@@ -19,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // Style is one loaded output style definition.
@@ -36,16 +39,14 @@ type Style struct {
 // Built-in "default", "Explanatory", "Learning" are always present so
 // /output-style with no args is never empty out of the box.
 func LoadAll(cwd string) ([]Style, error) {
-	var userDir string
-	if cd := os.Getenv("CLAUDE_CONFIG_DIR"); cd != "" {
-		userDir = filepath.Join(cd, "output-styles")
-	} else {
-		home, _ := os.UserHomeDir()
-		userDir = filepath.Join(home, ".claude", "output-styles")
-	}
+	userDir := filepath.Join(settings.ConduitDir(), "output-styles")
+	legacyUserDir := legacyUserOutputStylesDir()
 	projDir := filepath.Join(cwd, ".claude", "output-styles")
 
 	userStyles, _ := loadDir(userDir)
+	if len(userStyles) == 0 {
+		userStyles, _ = loadDir(legacyUserDir)
+	}
 	projStyles, _ := loadDir(projDir)
 
 	byName := make(map[string]Style)
@@ -64,6 +65,14 @@ func LoadAll(cwd string) ([]Style, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func legacyUserOutputStylesDir() string {
+	if cd := os.Getenv("CLAUDE_CONFIG_DIR"); cd != "" {
+		return filepath.Join(cd, "output-styles")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", "output-styles")
 }
 
 // LoadFromPluginDirs scans each pluginDir for an "output-styles" subdirectory

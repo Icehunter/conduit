@@ -1,14 +1,18 @@
 package settings
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const currentConduitConfigSchemaVersion = 1
+
+var conduitConfigMu sync.Mutex
 
 // ConduitConfig is the typed ~/.conduit/conduit.json shape. It intentionally
 // owns Conduit runtime preferences so Claude Code's settings are only an import
@@ -84,12 +88,21 @@ func LoadConduitConfig() (ConduitConfig, error) {
 	}
 	var cfg ConduitConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return ConduitConfig{}, err
+		dec := json.NewDecoder(bytes.NewReader(data))
+		if decErr := dec.Decode(&cfg); decErr != nil {
+			return ConduitConfig{}, err
+		}
 	}
 	return cfg, nil
 }
 
 func SaveConduitConfig(cfg ConduitConfig) error {
+	conduitConfigMu.Lock()
+	defer conduitConfigMu.Unlock()
+	return saveConduitConfigUnlocked(cfg)
+}
+
+func saveConduitConfigUnlocked(cfg ConduitConfig) error {
 	if cfg.SchemaVersion == 0 {
 		cfg.SchemaVersion = currentConduitConfigSchemaVersion
 	}
@@ -101,16 +114,18 @@ func SaveConduitConfig(cfg ConduitConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o600)
+	return writeFileAtomic(path, append(out, '\n'))
 }
 
 func UpdateConduitConfig(fn func(*ConduitConfig)) error {
+	conduitConfigMu.Lock()
+	defer conduitConfigMu.Unlock()
 	cfg, err := LoadConduitConfig()
 	if err != nil {
 		return err
 	}
 	fn(&cfg)
-	return SaveConduitConfig(cfg)
+	return saveConduitConfigUnlocked(cfg)
 }
 
 func ensureConduitConfigImported() error {

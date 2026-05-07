@@ -452,8 +452,9 @@ type Model struct {
 	outputStyleName   string
 	outputStylePrompt string
 
-	// kb resolves user-customized keybindings from ~/.claude/keybindings.json.
-	// Nil when keybindings could not be loaded (treated as defaults-only).
+	// kb resolves user-customized keybindings from ~/.conduit/keybindings.json,
+	// with ~/.claude/keybindings.json as a legacy fallback. Nil when
+	// keybindings could not be loaded (treated as defaults-only).
 	kb *keybindings.Resolver
 
 	// pendingImages holds clipboard images queued to send with the next

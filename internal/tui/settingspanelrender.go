@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -150,10 +151,9 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 
 	sb.WriteByte('\n')
 	var sources []string
-	home2, _ := os.UserHomeDir()
 	cwd2, _ := os.Getwd()
 	for _, f := range []struct{ path, label string }{
-		{filepath.Join(home2, ".claude", "settings.json"), "User settings"},
+		{settings.ConduitSettingsPath(), "Conduit settings"},
 		{filepath.Join(cwd2, ".claude", "settings.json"), "Project settings"},
 		{filepath.Join(cwd2, ".claude", "settings.local.json"), "Project local settings"},
 	} {
@@ -179,7 +179,7 @@ func modelDescription(model string) string {
 	case strings.Contains(model, "haiku"):
 		return "Fastest and most compact"
 	default:
-		return "Claude model"
+		return "Configured model"
 	}
 }
 

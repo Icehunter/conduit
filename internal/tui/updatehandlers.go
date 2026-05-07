@@ -82,6 +82,13 @@ func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	}
+	if m.pluginPanel != nil && m.pluginPanel.view == pluginViewAddMkt {
+		content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
+		content = strings.ReplaceAll(content, "\r", "\n")
+		m.pluginPanel.addMktInput += strings.TrimSpace(content)
+		m.refreshViewport()
+		return m, nil
+	}
 	hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
@@ -563,10 +570,29 @@ func (m Model) handlePluginInstall(msg pluginInstallMsg) (Model, tea.Cmd) {
 	p := m.pluginPanel
 	if msg.err != nil {
 		p.errors = append(p.errors, fmt.Sprintf("install %s: %v", msg.pluginID, msg.err))
+		p.tab = pluginTabErrors
+		p.view = pluginViewList
+		m.pluginPanel = p
 		return m, nil
 	}
 	// Reload full panel from disk so version/description/sort are correct.
 	return m, reloadPluginPanelCmd(m.cfg.MCPManager, p.tab, p.errors)
+}
+
+func (m Model) handlePluginMarketplaceAdd(msg pluginMarketplaceAddMsg) (Model, tea.Cmd) {
+	if m.pluginPanel == nil {
+		return m, nil
+	}
+	p := m.pluginPanel
+	if msg.err != nil {
+		p.errors = append(p.errors, fmt.Sprintf("marketplace add %s: %v", msg.name, msg.err))
+		p.tab = pluginTabErrors
+		p.view = pluginViewList
+		m.pluginPanel = p
+		return m, nil
+	}
+	m.pluginPanel = p
+	return m, reloadPluginPanelCmd(m.cfg.MCPManager, pluginTabMarketplaces, p.errors)
 }
 
 // handlePluginPanelReload rebuilds the plugin panel after an install/uninstall

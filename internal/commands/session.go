@@ -299,7 +299,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			sb.WriteString(statusRow("ripgrep:", statusCheck(rgErr == nil), rgHint, labelW))
 
 			home, _ := os.UserHomeDir()
-			_, settingsErr := os.Stat(home + "/.claude/settings.json")
+			_, settingsErr := os.Stat(settings.ConduitSettingsPath())
 			sb.WriteString(statusRow("settings:", statusCheck(settingsErr == nil), "", labelW))
 
 			_, claudeErr := os.Stat(home + "/.claude.json")
@@ -337,7 +337,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				{"Auth", authOK, authHint},
 				{"git", gitErr == nil, ""},
 				{"ripgrep (rg)", rgErr == nil, rgHint},
-				{"settings.json", settingsErr == nil, ""},
+				{"conduit.json", settingsErr == nil, ""},
 				{"claude.json", claudeErr == nil, ""},
 				{"img paste", imagePasteOK, imgHint},
 			}
@@ -365,7 +365,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 	// With no args → opens full-screen Settings panel on Config tab.
 	r.Register(Command{
 		Name:        "config",
-		Description: "Open settings panel, or: /config get <key> | set <key> <value> | list",
+		Description: "Open settings panel, or: /config get <key> | set <key> <value> | list | validate",
 		Handler: func(args string) Result {
 			settingsPath := settings.ConduitSettingsPath()
 
@@ -388,7 +388,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				}
 				var raw map[string]interface{}
 				if err := json.Unmarshal(data, &raw); err != nil {
-					return Result{Type: "error", Text: "settings.json parse error: " + err.Error()}
+					return Result{Type: "error", Text: "conduit.json parse error: " + err.Error()}
 				}
 				out, _ := json.MarshalIndent(raw, "", "  ")
 				return Result{Type: "text", Text: "```json\n" + string(out) + "\n```"}
@@ -404,11 +404,41 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				}
 				var raw map[string]interface{}
 				if err := json.Unmarshal(data, &raw); err != nil {
-					return Result{Type: "error", Text: "settings.json parse error: " + err.Error()}
+					return Result{Type: "error", Text: "conduit.json parse error: " + err.Error()}
 				}
 				val := getNestedKey(raw, key)
 				out, _ := json.MarshalIndent(val, "", "  ")
 				return Result{Type: "text", Text: key + ": " + string(out)}
+
+			case "validate":
+				cfg, err := settings.LoadConduitConfig()
+				if err != nil {
+					return Result{Type: "error", Text: "conduit.json parse error: " + err.Error()}
+				}
+				providers, roles, changed := settings.CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
+				if changed {
+					cfg.Providers = providers
+					cfg.Roles = roles
+					if err := settings.SaveConduitConfig(cfg); err != nil {
+						return Result{Type: "error", Text: "failed to repair provider keys: " + err.Error()}
+					}
+				}
+				errs := settings.ValidateProviderRegistry(providers, roles)
+				if len(errs) == 0 {
+					if changed {
+						return Result{Type: "text", Text: "Config OK. Provider keys were repaired."}
+					}
+					return Result{Type: "text", Text: "Config OK."}
+				}
+				var sb strings.Builder
+				if changed {
+					sb.WriteString("Provider keys were repaired.\n\n")
+				}
+				sb.WriteString("Config issues:\n")
+				for _, err := range errs {
+					sb.WriteString("- " + err.Error() + "\n")
+				}
+				return Result{Type: "error", Text: strings.TrimRight(sb.String(), "\n")}
 
 			case "set":
 				if len(parts) < 3 {
@@ -427,7 +457,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				return Result{Type: "flash", Text: "✓ Set " + key}
 
 			default:
-				return Result{Type: "error", Text: "Usage: /config list | get <key> | set <key> <value>"}
+				return Result{Type: "error", Text: "Usage: /config list | get <key> | set <key> <value> | validate"}
 			}
 		},
 	})
@@ -889,7 +919,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 					}
 					sb.WriteByte('\n')
 				}
-				sb.WriteString("  Edit ~/.claude/keybindings.json to customize.")
+				sb.WriteString("  Edit ~/.conduit/keybindings.json to customize. Conduit imports ~/.claude/keybindings.json only when no Conduit keybindings file exists.")
 			}
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},

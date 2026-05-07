@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,10 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
+
+var installedPluginsMu sync.Mutex
 
 // PluginInstallationEntry mirrors the V2 installed_plugins.json entry shape.
 type PluginInstallationEntry struct {
@@ -47,7 +51,13 @@ func LoadInstalledPlugins() (*InstalledPluginsV2, error) {
 	}
 	var f InstalledPluginsV2
 	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, err
+		dec := json.NewDecoder(bytes.NewReader(data))
+		if decErr := dec.Decode(&f); decErr != nil {
+			return nil, err
+		}
+		// The registry had a valid leading object with trailing garbage. Keep
+		// the usable data and rewrite the file cleanly on best effort.
+		_ = saveInstalledPlugins(&f)
 	}
 	if f.Plugins == nil {
 		f.Plugins = make(map[string][]PluginInstallationEntry)
@@ -65,7 +75,7 @@ func saveInstalledPlugins(f *InstalledPluginsV2) error {
 	raw := make(map[string]json.RawMessage)
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
 		if err := json.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("save installed plugins: parse existing: %w", err)
+			raw = make(map[string]json.RawMessage)
 		}
 	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("save installed plugins: read existing: %w", err)
@@ -84,7 +94,7 @@ func saveInstalledPlugins(f *InstalledPluginsV2) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return writePluginFileAtomic(path, append(data, '\n'), 0o644)
 }
 
 // Install installs a plugin from a marketplace.
@@ -104,29 +114,34 @@ func Install(ctx context.Context, pluginSpec, scope, cwd string) (*PluginInstall
 	srcDir := MarketplacePluginDir(marketplaceName, pluginName)
 	if srcDir == "" {
 		// Try to load/refresh the marketplace first.
-		known, err := LoadKnownMarketplaces()
-		if err != nil {
+		if err := ensureMarketplaceConfigured(ctx, marketplaceName); err != nil {
 			return nil, fmt.Errorf("install: load marketplaces: %w", err)
-		}
-		if _, ok := known[marketplaceName]; !ok {
-			return nil, fmt.Errorf("install: marketplace %q not configured\nAdd it with: /plugin marketplace add <source>", marketplaceName)
 		}
 		// Don't git pull — it can fail on detached/rebased repos. Just look up manifest.
 		srcDir = MarketplacePluginDir(marketplaceName, pluginName)
 		if srcDir == "" {
+			if localDir := marketplacePluginSourceDir(marketplaceName, pluginName); localDir != "" {
+				srcDir = localDir
+			}
+		}
+		if srcDir == "" {
 			// Plugin may be "external" — defined in marketplace.json with its own source URL.
 			// Try to clone it from the marketplace manifest's source field.
-			srcDir, err = cloneExternalPlugin(ctx, marketplaceName, pluginName, pluginsDir())
+			clonedDir, err := cloneExternalPlugin(ctx, marketplaceName, pluginName, pluginsDir())
 			if err != nil {
 				return nil, fmt.Errorf("install: plugin %q not found in marketplace %q: %w", pluginName, marketplaceName, err)
 			}
+			srcDir = clonedDir
 		}
 	}
 
 	// Read the plugin manifest to get version.
 	p, err := loadPlugin(srcDir)
 	if err != nil {
-		return nil, fmt.Errorf("install: load plugin manifest: %w", err)
+		p, err = loadMarketplacePluginFallback(marketplaceName, pluginName, srcDir)
+		if err != nil {
+			return nil, fmt.Errorf("install: load plugin manifest: %w", err)
+		}
 	}
 
 	version := p.Manifest.Version
@@ -152,6 +167,9 @@ func Install(ctx context.Context, pluginSpec, scope, cwd string) (*PluginInstall
 	if err := copyDir(srcDir, cachePath); err != nil {
 		return nil, fmt.Errorf("install: cache plugin: %w", err)
 	}
+	if err := writePluginManifestIfMissing(cachePath, p.Manifest); err != nil {
+		return nil, fmt.Errorf("install: cache plugin manifest: %w", err)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	entry := PluginInstallationEntry{
@@ -165,26 +183,21 @@ func Install(ctx context.Context, pluginSpec, scope, cwd string) (*PluginInstall
 		entry.ProjectPath = cwd
 	}
 
-	// Write to installed_plugins.json.
-	installed, err := LoadInstalledPlugins()
-	if err != nil {
-		return nil, err
-	}
-	// Upsert: replace existing entry for same scope+projectPath, else append.
-	entries := installed.Plugins[pluginID]
-	replaced := false
-	for i, e := range entries {
-		if e.Scope == scope && e.ProjectPath == entry.ProjectPath {
-			entries[i] = entry
-			replaced = true
-			break
+	if err := updateInstalledPlugins(func(installed *InstalledPluginsV2) {
+		entries := installed.Plugins[pluginID]
+		replaced := false
+		for i, e := range entries {
+			if e.Scope == scope && e.ProjectPath == entry.ProjectPath {
+				entries[i] = entry
+				replaced = true
+				break
+			}
 		}
-	}
-	if !replaced {
-		entries = append(entries, entry)
-	}
-	installed.Plugins[pluginID] = entries
-	if err := saveInstalledPlugins(installed); err != nil {
+		if !replaced {
+			entries = append(entries, entry)
+		}
+		installed.Plugins[pluginID] = entries
+	}); err != nil {
 		return nil, err
 	}
 
@@ -196,6 +209,34 @@ func Install(ctx context.Context, pluginSpec, scope, cwd string) (*PluginInstall
 	return &entry, nil
 }
 
+func updateInstalledPlugins(fn func(*InstalledPluginsV2)) error {
+	installedPluginsMu.Lock()
+	defer installedPluginsMu.Unlock()
+	installed, err := LoadInstalledPlugins()
+	if err != nil {
+		return err
+	}
+	fn(installed)
+	return saveInstalledPlugins(installed)
+}
+
+func writePluginManifestIfMissing(pluginDir string, manifest Manifest) error {
+	manifestPath := filepath.Join(pluginDir, ".claude-plugin", "plugin.json")
+	if _, err := os.Stat(manifestPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(manifestPath, append(data, '\n'), 0o644)
+}
+
 // Uninstall removes a plugin installation from the given scope.
 func Uninstall(pluginSpec, scope, cwd string) error {
 	if scope == "" {
@@ -204,51 +245,42 @@ func Uninstall(pluginSpec, scope, cwd string) error {
 	pluginName, marketplaceName := parsePluginSpec(pluginSpec)
 	pluginID := pluginName + "@" + marketplaceName
 
-	installed, err := LoadInstalledPlugins()
-	if err != nil {
-		return err
-	}
-	entries, ok := installed.Plugins[pluginID]
-	if !ok || len(entries) == 0 {
-		return fmt.Errorf("plugin %q is not installed", pluginID)
-	}
-
-	var kept []PluginInstallationEntry
 	var removed *PluginInstallationEntry
-	for _, e := range entries {
-		match := e.Scope == scope
-		if scope == "project" || scope == "local" {
-			match = match && e.ProjectPath == cwd
+	var hasKept bool
+	if err := updateInstalledPlugins(func(installed *InstalledPluginsV2) {
+		entries := installed.Plugins[pluginID]
+		var kept []PluginInstallationEntry
+		for _, e := range entries {
+			match := e.Scope == scope
+			if scope == "project" || scope == "local" {
+				match = match && e.ProjectPath == cwd
+			}
+			if match && removed == nil {
+				copyEntry := e
+				removed = &copyEntry
+			} else {
+				kept = append(kept, e)
+			}
 		}
-		if match && removed == nil {
-			removed = &e
+		hasKept = len(kept) > 0
+		if len(kept) == 0 {
+			delete(installed.Plugins, pluginID)
 		} else {
-			kept = append(kept, e)
+			installed.Plugins[pluginID] = kept
 		}
+	}); err != nil {
+		return err
 	}
 	if removed == nil {
 		return fmt.Errorf("plugin %q not installed at scope %q", pluginID, scope)
 	}
-
-	if len(kept) == 0 {
-		delete(installed.Plugins, pluginID)
-		// Last installation — delete cached files.
-		if removed.InstallPath != "" {
-			_ = os.RemoveAll(removed.InstallPath)
-		}
-		// Remove from settings.
-		if err := settings.RemovePlugin(pluginID); err != nil {
-			return err
-		}
-	} else {
-		installed.Plugins[pluginID] = kept
-		// Still installed at other scopes — just disable at this scope.
-		if err := settings.SetPluginEnabled(pluginID, false); err != nil {
-			return err
-		}
+	if !hasKept && removed.InstallPath != "" {
+		_ = os.RemoveAll(removed.InstallPath)
 	}
-
-	return saveInstalledPlugins(installed)
+	if !hasKept {
+		return settings.RemovePlugin(pluginID)
+	}
+	return settings.SetPluginEnabled(pluginID, false)
 }
 
 // parsePluginSpec splits "pluginName@marketplace" into components.

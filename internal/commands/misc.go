@@ -77,7 +77,7 @@ func RegisterMiscCommands(r *Registry) {
 		},
 	})
 
-	// /theme — switch active palette and persist to settings.json
+	// /theme — switch active palette and persist to conduit.json
 	r.Register(Command{
 		Name:        "theme",
 		Description: "Switch theme. Names: " + strings.Join(theme.AvailableThemes(), " | "),

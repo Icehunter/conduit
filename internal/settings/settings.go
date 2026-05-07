@@ -1,10 +1,10 @@
-// Package settings loads and merges Claude Code settings files.
+// Package settings loads and merges Conduit and Claude-compatible settings files.
 //
 // Priority order (later overrides earlier):
-//  1. ~/.claude/settings.json          (user global)
+//  1. ~/.claude/settings.json          (first-run import only when conduit.json is absent)
 //  2. <project>/.claude/settings.json  (project shared)
 //  3. <project>/.claude/settings.local.json (project local, gitignored)
-//  4. ~/.conduit/conduit.json          (conduit-only user overlay)
+//  4. ~/.conduit/conduit.json          (Conduit-owned user config)
 //
 // Mirrors src/utils/config.ts and src/utils/settings/settings.ts.
 package settings
@@ -197,7 +197,9 @@ const (
 // Load reads and merges settings from all layers for the given cwd.
 func Load(cwd string) (*Merged, error) {
 	_ = ensureConduitConfigImported()
+	_ = RepairConduitProviderRegistry()
 	merged := loadPaths(settingsFiles(cwd))
+	merged.Providers, merged.Roles, _ = CanonicalizeProviderRegistry(merged.Providers, merged.Roles)
 	applyConduitProjectState(merged, cwd)
 	return merged, nil
 }

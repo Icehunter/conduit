@@ -64,18 +64,17 @@ func ParseUserJSON(data []byte) ([]Block, error) {
 	return out, nil
 }
 
-// UserFilePath returns ~/.claude/keybindings.json (or the equivalent on
-// Windows once internal/config supports XDG/AppData). For now we keep it
-// simple — internal/config.UserDir is the source of truth for ~/.claude.
-func UserFilePath(claudeDir string) string {
-	return filepath.Join(claudeDir, "keybindings.json")
+// UserFilePath returns keybindings.json inside the supplied config directory.
+// Conduit passes ~/.conduit first and falls back to ~/.claude for legacy users.
+func UserFilePath(configDir string) string {
+	return filepath.Join(configDir, "keybindings.json")
 }
 
 // LoadAll loads defaults + user bindings, with user entries appended last
 // so they shadow defaults in the resolver's last-wins lookup.
-func LoadAll(claudeDir string) ([]Binding, error) {
+func LoadAll(configDir string) ([]Binding, error) {
 	all := ParseBlocks(DefaultBlocks())
-	user, err := LoadUserFile(UserFilePath(claudeDir))
+	user, err := LoadUserFile(UserFilePath(configDir))
 	if err != nil {
 		return all, err
 	}

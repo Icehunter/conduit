@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -40,30 +41,59 @@ func (m Model) renderOnboarding() string {
 	if o == nil {
 		return ""
 	}
+	panelW := m.width - 8
+	if panelW > 92 {
+		panelW = 92
+	}
+	if panelW < 48 {
+		panelW = max(24, m.width)
+	}
+	innerW := panelW - 4
+	wrapW := innerW
+	if wrapW > 76 {
+		wrapW = 76
+	}
+
 	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render("Welcome to conduit") + "\n\n")
-	sb.WriteString("Conduit is a Go-native CLI for the Claude API — a port of the\n")
-	sb.WriteString("official Claude Code with the same wire protocol, tool set, and\n")
-	sb.WriteString("plugin/MCP system.\n\n")
+	title := panelTitle("Welcome to conduit")
+	ornW := innerW - lipgloss.Width(title) - 4
+	if ornW < 8 {
+		ornW = 8
+	}
+	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + "\n\n")
+
+	intro := "Conduit is a local-first coding agent for the terminal: Claude-compatible at the core, provider-aware where it matters, and built as a single Go binary. Use Claude subscriptions or API keys, OpenAI-compatible providers like Gemini, local MCP-backed models, plugins, and MCP servers from one TUI."
+	sb.WriteString(stylePickerDesc.Width(wrapW).Render(intro) + "\n\n")
 
 	if o.authenticated {
 		who := o.userName
 		if who == "" {
 			who = "your account"
 		}
-		sb.WriteString(stylePickerItem.Render("✓ Signed in as ") + styleStatusAccent.Render(who) + "\n\n")
+		sb.WriteString(stylePickerItem.Render("Signed in as ") + styleStatusAccent.Render(who) + "\n\n")
 	} else {
-		sb.WriteString(stylePickerItem.Render("✗ Not signed in") + " — run " + styleStatusAccent.Render("/login") + " when ready.\n\n")
+		sb.WriteString(stylePickerItem.Render("Not signed in") + " - run " + styleStatusAccent.Render("/login") + " when ready.\n\n")
 	}
 
-	sb.WriteString("Useful commands:\n")
-	sb.WriteString("  " + styleStatusAccent.Render("/help") + "    list all slash commands\n")
-	sb.WriteString("  " + styleStatusAccent.Render("/login") + "   authenticate with your Anthropic account\n")
-	sb.WriteString("  " + styleStatusAccent.Render("/theme") + "   pick a color palette\n")
-	sb.WriteString("  " + styleStatusAccent.Render("/doctor") + "  diagnose auth / MCP / settings\n")
-	sb.WriteString("  " + styleStatusAccent.Render("/quit") + "    exit\n\n")
+	sb.WriteString(stylePickerItem.Render("Start here") + "\n")
+	writeOnboardingCommand(&sb, "/models", "assign providers and models by role")
+	writeOnboardingCommand(&sb, "/config", "manage accounts, providers, usage, and settings")
+	writeOnboardingCommand(&sb, "/plugin", "install skills, commands, and MCP-backed plugins")
+	writeOnboardingCommand(&sb, "/mcp", "inspect local and remote MCP servers")
+	writeOnboardingCommand(&sb, "/resume", "continue previous Conduit or imported Claude sessions")
+	writeOnboardingCommand(&sb, "/doctor", "diagnose auth, MCP, plugins, and config")
+	sb.WriteByte('\n')
 
 	sb.WriteString(stylePickerDesc.Render("Press Enter to continue · Ctrl+C to exit"))
 
-	return panelFrameStyle(m.width, renderedLineCount(sb.String())+4).Render(sb.String())
+	return panelFrameStyle(panelW, renderedLineCount(sb.String())+4).Render(sb.String())
+}
+
+func writeOnboardingCommand(sb *strings.Builder, command, desc string) {
+	sb.WriteString("  " + styleStatusAccent.Render(command))
+	gap := 11 - lipgloss.Width(command)
+	if gap < 2 {
+		gap = 2
+	}
+	sb.WriteString(surfaceSpaces(gap) + stylePickerDesc.Render(desc) + "\n")
 }

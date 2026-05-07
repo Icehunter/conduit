@@ -107,7 +107,7 @@ func ensurePluginStorageImported() {
 		return
 	}
 	if err := copyPluginTree(src, dst); err == nil {
-		_ = rewriteLegacyPluginPaths(src, dst)
+		rewriteLegacyPluginPaths(src, dst)
 	}
 }
 
@@ -133,7 +133,7 @@ func copyPluginTree(src, dst string) error {
 		if err != nil {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // Legacy plugin import copies files from the user-owned plugin tree selected above.
 		if err != nil {
 			return nil
 		}
@@ -148,7 +148,7 @@ func copyPluginTree(src, dst string) error {
 	})
 }
 
-func rewriteLegacyPluginPaths(legacyRoot, conduitRoot string) error {
+func rewriteLegacyPluginPaths(legacyRoot, conduitRoot string) {
 	installedPath := filepath.Join(conduitRoot, "installed_plugins.json")
 	if data, err := os.ReadFile(installedPath); err == nil {
 		var installed InstalledPluginsV2
@@ -189,7 +189,6 @@ func rewriteLegacyPluginPaths(legacyRoot, conduitRoot string) error {
 			}
 		}
 	}
-	return nil
 }
 
 func rewritePluginPath(path, legacyRoot, conduitRoot string) string {

@@ -156,3 +156,33 @@ func TestHandleKey_RunningUp_NotConsumed(t *testing.T) {
 		t.Error("up should not be consumed by history nav while agent is running")
 	}
 }
+
+func TestPluginDiscoverIInstallsSelectedAfterSearch(t *testing.T) {
+	m := idleModel()
+	p := &pluginPanelState{
+		tab:            pluginTabDiscover,
+		discoverSearch: "front",
+		discoverItems: []discoverItem{
+			{pluginID: "frontend-design@claude-plugins-official", name: "frontend-design"},
+		},
+	}
+	p.applyDiscoverFilter()
+
+	m2, cmd := m.handlePluginListKey(p, "i")
+	if cmd == nil {
+		t.Fatal("i should install the selected discover row")
+	}
+	if m2.pluginPanel.discoverSearch != "front" {
+		t.Fatalf("search changed after install shortcut: %q", m2.pluginPanel.discoverSearch)
+	}
+}
+
+func TestPluginAddMarketplaceAcceptsPaste(t *testing.T) {
+	m := idleModel()
+	m.pluginPanel = &pluginPanelState{view: pluginViewAddMkt}
+
+	m2, _ := m.handlePaste(tea.PasteMsg{Content: "anthropics/claude-plugins-official"})
+	if got := m2.pluginPanel.addMktInput; got != "anthropics/claude-plugins-official" {
+		t.Fatalf("pasted marketplace input = %q", got)
+	}
+}

@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"os"
-	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,11 +40,9 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 		isStructural := key == "esc" || key == "ctrl+c" || key == "enter" ||
 			key == "up" || key == "down" || key == "left" || key == "right" ||
 			key == " " || key == "backspace" || key == "ctrl+h" ||
-			key == "tab" || len(key) > 1 // multi-char = special key
-		// "i" installs when search is empty; goes to search when search is non-empty.
-		isInstall := key == "i" && p.discoverSearch == ""
+			key == "tab" || key == "i" || len(key) > 1 // multi-char = special key
 
-		if !isStructural && !isInstall && len(key) == 1 {
+		if !isStructural && len(key) == 1 {
 			p.discoverSearch += key
 			p.applyDiscoverFilter()
 			if p.selected >= len(p.discoverFiltered) {
@@ -91,7 +88,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 		}
 	case "i":
 		if p.tab == pluginTabDiscover && len(p.discoverFiltered) > 0 {
-			// Collect toggled items. If none are toggled, do nothing.
+			// Collect toggled items. If none are toggled, install the current row.
 			var toInstall []string
 			for _, item := range p.discoverItems {
 				if item.selected {
@@ -99,7 +96,8 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 				}
 			}
 			if len(toInstall) == 0 {
-				break // nothing toggled — i does nothing without a selection
+				idx := p.discoverFiltered[p.selected]
+				toInstall = append(toInstall, p.discoverItems[idx].pluginID)
 			}
 			cwd, _ := os.Getwd()
 			var cmds []tea.Cmd
@@ -222,37 +220,14 @@ func (m Model) handlePluginAddMktKey(p *pluginPanelState, key string) (Model, te
 		if p.addMktInput != "" {
 			src := p.addMktInput
 			name := deriveMarketplaceNameFromSource(src)
-			go func() { _ = plugins.MarketplaceAdd(context.Background(), name, src, nil) }()
 			p.addMktInput = ""
 			p.addMktMode = false
-			// Reload marketplaces.
-			if known, err := plugins.LoadKnownMarketplaces(); err == nil {
-				p.marketplaceItems = nil
-				names := make([]string, 0, len(known))
-				for n := range known {
-					names = append(names, n)
-				}
-				sort.Strings(names)
-				for _, n := range names {
-					e := known[n]
-					src2 := e.Source.Repo
-					if src2 == "" {
-						src2 = e.Source.URL
-					}
-					if src2 == "" {
-						src2 = e.Source.Path
-					}
-					cnt := 0
-					if manifest, err := plugins.LoadMarketplaceManifest(n); err == nil {
-						cnt = len(manifest.Plugins)
-					}
-					p.marketplaceItems = append(p.marketplaceItems, pluginMarketplaceItem{
-						name:        n,
-						source:      src2,
-						lastUpdated: e.LastUpdated,
-						pluginCount: cnt,
-					})
-				}
+			p.view = pluginViewList
+			p.selected = 0
+			m.pluginPanel = p
+			return m, func() tea.Msg {
+				err := plugins.MarketplaceAdd(context.Background(), name, src, nil)
+				return pluginMarketplaceAddMsg{name: name, err: err}
 			}
 		}
 		p.view = pluginViewList

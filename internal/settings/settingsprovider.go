@@ -39,6 +39,9 @@ func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
 func (m *Merged) providerAvailable(provider ActiveProviderSettings) bool {
 	switch provider.Kind {
 	case ProviderKindClaudeSubscription, ProviderKindAnthropicAPI:
+		if provider.Kind == ProviderKindAnthropicAPI && provider.Credential != "" {
+			return ValidateProviderSettings(provider) == nil
+		}
 		return m.accountProviderAvailable(provider)
 	case ProviderKindOpenAICompatible:
 		return ValidateProviderSettings(provider) == nil
@@ -123,6 +126,8 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	if err := ValidateProviderSettings(value); err != nil {
 		return err
 	}
+	conduitConfigMu.Lock()
+	defer conduitConfigMu.Unlock()
 	path := ConduitSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -147,6 +152,11 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	if existing := raw["providers"]; len(existing) > 0 {
 		_ = json.Unmarshal(existing, &providers)
 	}
+	roles := map[string]string{}
+	if existing := raw["roles"]; len(existing) > 0 {
+		_ = json.Unmarshal(existing, &roles)
+	}
+	providers, roles, _ = CanonicalizeProviderRegistry(providers, roles)
 	key := ProviderKey(value)
 	providers[key] = value
 	encodedProviders, err := json.Marshal(providers)
@@ -155,10 +165,6 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	}
 	raw["providers"] = encodedProviders
 
-	roles := map[string]string{}
-	if existing := raw["roles"]; len(existing) > 0 {
-		_ = json.Unmarshal(existing, &roles)
-	}
 	roles[role] = key
 	encodedRoles, err := json.Marshal(roles)
 	if err != nil {
@@ -170,7 +176,7 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	return writeFileAtomic(path, append(out, '\n'))
 }
 
 // SaveProviderEntry persists a configured provider without changing any role.
@@ -182,6 +188,7 @@ func SaveProviderEntry(value ActiveProviderSettings) error {
 		if cfg.Providers == nil {
 			cfg.Providers = map[string]ActiveProviderSettings{}
 		}
+		cfg.Providers, cfg.Roles, _ = CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
 		cfg.Providers[ProviderKey(value)] = value
 	})
 }
@@ -218,6 +225,26 @@ func ClearRoleProvider(role string) error {
 			cfg.ActiveProvider = nil
 		}
 	})
+}
+
+// RepairConduitProviderRegistry canonicalizes provider keys persisted in
+// conduit.json and rewrites matching role references. It is intentionally
+// narrow: invalid providers and missing refs remain for UI validation.
+func RepairConduitProviderRegistry() error {
+	cfg, err := LoadConduitConfig()
+	if err != nil {
+		return err
+	}
+	if len(cfg.Providers) == 0 && len(cfg.Roles) == 0 {
+		return nil
+	}
+	providers, roles, changed := CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
+	if !changed {
+		return nil
+	}
+	cfg.Providers = providers
+	cfg.Roles = roles
+	return SaveConduitConfig(cfg)
 }
 
 // ProviderKey returns a deterministic config key for a provider.

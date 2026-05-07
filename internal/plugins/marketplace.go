@@ -6,8 +6,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+const (
+	defaultMarketplaceName   = "claude-plugins-official"
+	defaultMarketplaceSource = "anthropics/claude-plugins-official"
+)
+
+var knownMarketplacesMu sync.Mutex
 
 // MarketplaceSource describes where a marketplace comes from.
 // Mirrors the TS union type in schemas.ts.
@@ -39,7 +47,7 @@ func LoadKnownMarketplaces() (map[string]MarketplaceEntry, error) {
 	data, err := os.ReadFile(knownMarketplacesPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return make(map[string]MarketplaceEntry), nil
+			return loadKnownMarketplacesWithDefault(make(map[string]MarketplaceEntry)), nil
 		}
 		return nil, err
 	}
@@ -47,7 +55,42 @@ func LoadKnownMarketplaces() (map[string]MarketplaceEntry, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
-	return m, nil
+	if m == nil {
+		m = make(map[string]MarketplaceEntry)
+	}
+	return loadKnownMarketplacesWithDefault(m), nil
+}
+
+func loadKnownMarketplacesWithDefault(m map[string]MarketplaceEntry) map[string]MarketplaceEntry {
+	if _, ok := m[defaultMarketplaceName]; ok {
+		return m
+	}
+	loc := filepath.Join(pluginsDir(), "marketplaces", defaultMarketplaceName)
+	if _, err := os.Stat(filepath.Join(loc, ".claude-plugin", "marketplace.json")); err != nil {
+		return m
+	}
+	m[defaultMarketplaceName] = MarketplaceEntry{
+		Source: MarketplaceSource{
+			Source: "github",
+			Repo:   defaultMarketplaceSource,
+		},
+		InstallLocation: loc,
+	}
+	return m
+}
+
+func ensureMarketplaceConfigured(ctx context.Context, name string) error {
+	known, err := LoadKnownMarketplaces()
+	if err != nil {
+		return err
+	}
+	if _, ok := known[name]; ok {
+		return nil
+	}
+	if name != defaultMarketplaceName {
+		return fmt.Errorf("marketplace %q not configured\nAdd it with: /plugin marketplace add <source>", name)
+	}
+	return MarketplaceAdd(ctx, defaultMarketplaceName, defaultMarketplaceSource, nil)
 }
 
 // saveKnownMarketplaces writes the marketplace registry atomically.
@@ -60,7 +103,7 @@ func saveKnownMarketplaces(m map[string]MarketplaceEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return writePluginFileAtomic(path, append(data, '\n'), 0o644)
 }
 
 // MarketplaceAdd adds a new marketplace from a source string.
@@ -74,29 +117,31 @@ func MarketplaceAdd(ctx context.Context, name, source string, sparsePaths []stri
 		return fmt.Errorf("marketplace add: %w", err)
 	}
 
-	known, err := LoadKnownMarketplaces()
-	if err != nil {
-		return err
-	}
-	known[name] = MarketplaceEntry{
+	entry := MarketplaceEntry{
 		Source:          ms,
 		InstallLocation: installLoc,
 		LastUpdated:     time.Now().UTC().Format(time.RFC3339),
 	}
-	return saveKnownMarketplaces(known)
+	return updateKnownMarketplaces(func(known map[string]MarketplaceEntry) {
+		known[name] = entry
+	})
 }
 
 // MarketplaceRemove removes a marketplace from the registry.
 func MarketplaceRemove(name string) error {
-	known, err := LoadKnownMarketplaces()
-	if err != nil {
+	found := false
+	if err := updateKnownMarketplaces(func(known map[string]MarketplaceEntry) {
+		if _, ok := known[name]; ok {
+			found = true
+			delete(known, name)
+		}
+	}); err != nil {
 		return err
 	}
-	if _, ok := known[name]; !ok {
+	if !found {
 		return fmt.Errorf("marketplace %q not found", name)
 	}
-	delete(known, name)
-	return saveKnownMarketplaces(known)
+	return nil
 }
 
 // MarketplaceUpdate refreshes one or all marketplaces from their source.
@@ -126,6 +171,17 @@ func MarketplaceUpdate(ctx context.Context, name string) error {
 		}
 	}
 	return nil
+}
+
+func updateKnownMarketplaces(fn func(map[string]MarketplaceEntry)) error {
+	knownMarketplacesMu.Lock()
+	defer knownMarketplacesMu.Unlock()
+	known, err := LoadKnownMarketplaces()
+	if err != nil {
+		return err
+	}
+	fn(known)
+	return saveKnownMarketplaces(known)
 }
 
 // parseMarketplaceSource converts a user-supplied source string to a MarketplaceSource.
@@ -211,6 +267,64 @@ func MarketplacePluginDir(marketplaceName, pluginName string) string {
 	return ""
 }
 
+func marketplacePluginSourceDir(marketplaceName, pluginName string) string {
+	known, err := LoadKnownMarketplaces()
+	if err != nil {
+		return ""
+	}
+	entry, ok := known[marketplaceName]
+	if !ok {
+		return ""
+	}
+	manifest, err := LoadMarketplaceManifest(marketplaceName)
+	if err != nil {
+		return ""
+	}
+	for _, p := range manifest.Plugins {
+		if p.Name != pluginName {
+			continue
+		}
+		srcPath := p.SourcePath()
+		if srcPath == "" {
+			return ""
+		}
+		dir := srcPath
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(entry.InstallLocation, dir)
+		}
+		dir = filepath.Clean(dir)
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			return dir
+		}
+	}
+	return ""
+}
+
+func loadMarketplacePluginFallback(marketplaceName, pluginName, dir string) (*Plugin, error) {
+	manifest, err := LoadMarketplaceManifest(marketplaceName)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range manifest.Plugins {
+		if entry.Name != pluginName {
+			continue
+		}
+		p := &Plugin{
+			Dir: dir,
+			Manifest: Manifest{
+				Name:        entry.Name,
+				Description: entry.Description,
+				Version:     entry.Version,
+			},
+		}
+		if p.Manifest.Version == "" {
+			p.Manifest.Version = entry.SourceSHA()
+		}
+		return p, nil
+	}
+	return nil, fmt.Errorf("plugin not listed in marketplace manifest")
+}
+
 // cloneExternalPlugin handles plugins whose source is a separate git repo (not
 // a subdirectory of the marketplace clone). It reads the plugin's source URL
 // from the marketplace manifest and clones it to a local cache directory.
@@ -222,13 +336,14 @@ func cloneExternalPlugin(ctx context.Context, marketplaceName, pluginName, plugi
 	}
 
 	// Find the plugin entry in the manifest.
-	var pluginURL, pluginRef string
+	var pluginURL, pluginRef, pluginPath string
 	found := false
 	for _, p := range manifest.Plugins {
 		if p.Name == pluginName {
 			found = true
 			pluginURL = p.SourceURL()
 			pluginRef = p.SourceRef()
+			pluginPath = p.SourcePath()
 			break
 		}
 	}
@@ -245,6 +360,12 @@ func cloneExternalPlugin(ctx context.Context, marketplaceName, pluginName, plugi
 	}
 	if err := gitCloneOrPull(ctx, pluginURL, pluginRef, nil, dst); err != nil {
 		return "", fmt.Errorf("clone %s: %w", pluginURL, err)
+	}
+	if pluginPath != "" {
+		subdir := filepath.Join(dst, pluginPath)
+		if fi, err := os.Stat(subdir); err == nil && fi.IsDir() {
+			return subdir, nil
+		}
 	}
 	return dst, nil
 }

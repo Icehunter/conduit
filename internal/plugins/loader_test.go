@@ -56,7 +56,7 @@ func TestNormalizeServerNameInPlugin(t *testing.T) {
 	}
 }
 
-func TestSaveInstalledPlugins_PreservesUnknownFieldsAndRejectsInvalidJSON(t *testing.T) {
+func TestSaveInstalledPlugins_PreservesUnknownFieldsAndRepairsInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", dir)
 	path := installedPluginsPath()
@@ -100,15 +100,91 @@ func TestSaveInstalledPlugins_PreservesUnknownFieldsAndRejectsInvalidJSON(t *tes
 	if err := os.WriteFile(path, bad, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveInstalledPlugins(&InstalledPluginsV2{}); err == nil {
-		t.Fatal("saveInstalledPlugins should fail on invalid existing JSON")
+	if err := saveInstalledPlugins(&InstalledPluginsV2{
+		Plugins: map[string][]PluginInstallationEntry{},
+	}); err != nil {
+		t.Fatalf("saveInstalledPlugins should repair invalid existing JSON: %v", err)
 	}
-	unchanged, err := os.ReadFile(path)
+	repaired, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(unchanged) != string(bad) {
-		t.Fatalf("invalid plugin registry was overwritten: %q", unchanged)
+	if err := json.Unmarshal(repaired, &raw); err != nil {
+		t.Fatalf("repaired registry is invalid: %v\n%s", err, repaired)
+	}
+}
+
+func TestLoadInstalledPluginsSalvagesLeadingJSONObject(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", dir)
+	path := installedPluginsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := `{"version":2,"plugins":{"demo@market":[{"scope":"user","installPath":"/tmp/demo","installedAt":"2026-05-07T00:00:00Z"}]}}` + "\n-demo"
+	if err := os.WriteFile(path, []byte(corrupt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := LoadInstalledPlugins()
+	if err != nil {
+		t.Fatalf("LoadInstalledPlugins: %v", err)
+	}
+	if len(installed.Plugins["demo@market"]) != 1 {
+		t.Fatalf("salvaged plugins = %#v", installed.Plugins)
+	}
+	cleaned, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(cleaned, &InstalledPluginsV2{}); err != nil {
+		t.Fatalf("registry was not cleaned: %v\n%s", err, cleaned)
+	}
+}
+
+func TestInstallMarketplaceLocalSourceWithoutPluginManifest(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(t.TempDir(), ".conduit"))
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", dir)
+	marketplaceDir := filepath.Join(dir, "marketplaces", "local-market")
+	pluginDir := filepath.Join(marketplaceDir, "plugins", "rust-analyzer-lsp")
+	if err := os.MkdirAll(filepath.Join(marketplaceDir, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "README.md"), []byte("# Rust LSP\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"local-market","plugins":[{"name":"rust-analyzer-lsp","description":"Rust language server","version":"1.0.0","source":"./plugins/rust-analyzer-lsp"}]}`
+	if err := os.WriteFile(filepath.Join(marketplaceDir, ".claude-plugin", "marketplace.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	known := map[string]MarketplaceEntry{
+		"local-market": {
+			Source:          MarketplaceSource{Source: "directory", Path: marketplaceDir},
+			InstallLocation: marketplaceDir,
+		},
+	}
+	if err := saveKnownMarketplaces(known); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, err := Install(t.Context(), "rust-analyzer-lsp@local-market", "user", "")
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	manifestPath := filepath.Join(entry.InstallPath, ".claude-plugin", "plugin.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("synthetic plugin manifest missing: %v", err)
+	}
+	var got Manifest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("synthetic plugin manifest invalid: %v", err)
+	}
+	if got.Name != "rust-analyzer-lsp" || got.Version != "1.0.0" {
+		t.Fatalf("manifest = %#v", got)
 	}
 }
 
@@ -172,5 +248,38 @@ func TestPluginStorageImportsLegacyClaudePluginsToConduit(t *testing.T) {
 	wantMarketplace := filepath.Join(conduitDir, "plugins", "marketplaces", "market")
 	if known["market"].InstallLocation != wantMarketplace {
 		t.Fatalf("marketplace location = %q, want %q", known["market"].InstallLocation, wantMarketplace)
+	}
+}
+
+func TestLoadKnownMarketplacesSelfHealsOfficialMarketplace(t *testing.T) {
+	conduitDir := filepath.Join(t.TempDir(), ".conduit")
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+	t.Setenv("CONDUIT_PLUGIN_CACHE_DIR", "")
+	t.Setenv("CLAUDE_CODE_PLUGIN_CACHE_DIR", "")
+
+	officialDir := filepath.Join(conduitDir, "plugins", "marketplaces", defaultMarketplaceName)
+	if err := os.MkdirAll(filepath.Join(officialDir, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(officialDir, ".claude-plugin", "marketplace.json"), []byte(`{"name":"claude-plugins-official","plugins":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conduitDir, "plugins", "known_marketplaces.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	known, err := LoadKnownMarketplaces()
+	if err != nil {
+		t.Fatalf("LoadKnownMarketplaces: %v", err)
+	}
+	entry, ok := known[defaultMarketplaceName]
+	if !ok {
+		t.Fatalf("default marketplace missing: %#v", known)
+	}
+	if entry.InstallLocation != officialDir {
+		t.Fatalf("InstallLocation = %q, want %q", entry.InstallLocation, officialDir)
+	}
+	if entry.Source.Repo != defaultMarketplaceSource {
+		t.Fatalf("Source.Repo = %q, want %q", entry.Source.Repo, defaultMarketplaceSource)
 	}
 }

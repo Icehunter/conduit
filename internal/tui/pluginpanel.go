@@ -100,6 +100,11 @@ type pluginInstallMsg struct {
 	err      error
 }
 
+type pluginMarketplaceAddMsg struct {
+	name string
+	err  error
+}
+
 // pluginPanelReloadMsg triggers a full reload of the plugin panel from disk.
 // Sent after install/uninstall to get correct data (version, description, sort order).
 type pluginPanelReloadMsg struct {

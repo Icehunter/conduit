@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -48,6 +49,8 @@ func ApproveMcpjsonServer(name, choice string, cwd ...string) error {
 	if len(cwd) > 0 && cwd[0] != "" {
 		return SaveConduitProjectMcpjsonApproval(cwd[0], name, choice)
 	}
+	conduitConfigMu.Lock()
+	defer conduitConfigMu.Unlock()
 	path := ConduitSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -85,7 +88,7 @@ func ApproveMcpjsonServer(name, choice string, cwd ...string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	return writeFileAtomic(path, append(out, '\n'))
 }
 
 func decodeStringList(raw json.RawMessage) []string {
@@ -141,6 +144,10 @@ func SaveConduitPermissionsField(field string, value interface{}) error {
 }
 
 func savePermissionsField(path, op, field string, value interface{}) error {
+	if path == ConduitSettingsPath() {
+		conduitConfigMu.Lock()
+		defer conduitConfigMu.Unlock()
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("settings: %s: mkdir: %w", op, err)
 	}
@@ -180,7 +187,7 @@ func savePermissionsField(path, op, field string, value interface{}) error {
 	if err != nil {
 		return fmt.Errorf("settings: %s: marshal settings: %w", op, err)
 	}
-	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+	if err := writeFileAtomic(path, append(out, '\n')); err != nil {
 		return fmt.Errorf("settings: %s: write: %w", op, err)
 	}
 	return nil
@@ -200,6 +207,10 @@ func SaveConduitRawKey(key string, value interface{}) error {
 }
 
 func saveRawKey(path, key string, value interface{}) error {
+	if path == ConduitSettingsPath() {
+		conduitConfigMu.Lock()
+		defer conduitConfigMu.Unlock()
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -220,7 +231,7 @@ func saveRawKey(path, key string, value interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	return writeFileAtomic(path, append(out, '\n'))
 }
 
 func readRawObject(path string) (map[string]json.RawMessage, error) {
@@ -236,7 +247,10 @@ func readRawObject(path string) (map[string]json.RawMessage, error) {
 		return raw, nil
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		dec := json.NewDecoder(bytes.NewReader(data))
+		if decErr := dec.Decode(&raw); decErr != nil {
+			return nil, err
+		}
 	}
 	return raw, nil
 }

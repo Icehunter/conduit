@@ -11,15 +11,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
 const toolName = "Config"
 
-// globalSettingsPath returns ~/.claude/settings.json.
+// globalSettingsPath returns ~/.conduit/conduit.json.
 func globalSettingsPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "settings.json")
+	return settings.ConduitSettingsPath()
 }
 
 // input is the JSON input for Config.
@@ -73,14 +73,14 @@ func (t *ConfigTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 		path = globalSettingsPath()
 	}
 
-	settings, err := t.loadSettings(path)
+	cfg, err := t.loadSettings(path)
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot read settings: %v", err)), nil
 	}
 
 	if inp.Value == nil {
 		// GET operation.
-		val := getField(settings, inp.Setting)
+		val := getField(cfg, inp.Setting)
 		out, _ := json.MarshalIndent(map[string]any{
 			"setting": inp.Setting,
 			"value":   val,
@@ -89,11 +89,11 @@ func (t *ConfigTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 	}
 
 	// SET operation.
-	prev := getField(settings, inp.Setting)
-	if err := setField(settings, inp.Setting, inp.Value); err != nil {
+	prev := getField(cfg, inp.Setting)
+	if err := setField(cfg, inp.Setting, inp.Value); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot set %q: %v", inp.Setting, err)), nil
 	}
-	if err := t.saveSettings(path, settings); err != nil {
+	if err := t.saveSettings(path, cfg); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot save settings: %v", err)), nil
 	}
 	out, _ := json.MarshalIndent(map[string]any{

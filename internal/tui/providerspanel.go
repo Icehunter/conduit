@@ -509,20 +509,7 @@ func (m Model) deleteProviderRow(row providerPanelRow) {
 }
 
 func providerPanelIssues(providers map[string]settings.ActiveProviderSettings, roles map[string]string) []string {
-	customProviders := map[string]settings.ActiveProviderSettings{}
-	for key, provider := range providers {
-		if provider.Kind == settings.ProviderKindOpenAICompatible ||
-			(provider.Kind == settings.ProviderKindAnthropicAPI && provider.Credential != "") {
-			customProviders[key] = provider
-		}
-	}
-	customRoles := map[string]string{}
-	for role, ref := range roles {
-		if _, ok := customProviders[ref]; ok {
-			customRoles[role] = ref
-		}
-	}
-	errs := settings.ValidateProviderRegistry(customProviders, customRoles)
+	errs := settings.ValidateProviderRegistry(providers, roles)
 	issues := make([]string, 0, len(errs))
 	for _, err := range errs {
 		issues = append(issues, err.Error())

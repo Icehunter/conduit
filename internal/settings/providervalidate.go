@@ -11,10 +11,16 @@ import (
 func ValidateProviderSettings(p ActiveProviderSettings) error {
 	switch p.Kind {
 	case ProviderKindClaudeSubscription:
+		if p.Account == "" {
+			return fmt.Errorf("settings: claude-subscription provider requires an account")
+		}
 		if p.Model == "" {
 			return fmt.Errorf("settings: claude-subscription provider requires a model")
 		}
 	case ProviderKindAnthropicAPI:
+		if p.Account == "" && p.Credential == "" {
+			return fmt.Errorf("settings: anthropic-api provider requires an account or credential")
+		}
 		if p.Model == "" {
 			return fmt.Errorf("settings: anthropic-api provider requires a model")
 		}
@@ -69,6 +75,40 @@ func ValidateProviderRegistry(providers map[string]ActiveProviderSettings, roles
 		}
 	}
 	return errs
+}
+
+// CanonicalizeProviderRegistry rewrites provider keys to ProviderKey(provider)
+// and updates role references that pointed at the old keys. Missing role refs
+// are left in place so ValidateProviderRegistry can surface a useful error.
+func CanonicalizeProviderRegistry(providers map[string]ActiveProviderSettings, roles map[string]string) (map[string]ActiveProviderSettings, map[string]string, bool) {
+	if providers == nil {
+		providers = map[string]ActiveProviderSettings{}
+	}
+	outProviders := make(map[string]ActiveProviderSettings, len(providers))
+	renamed := make(map[string]string, len(providers))
+	changed := false
+	for key, provider := range providers {
+		canonical := ProviderKey(provider)
+		if canonical == "" {
+			canonical = key
+		}
+		if canonical != key {
+			changed = true
+			renamed[key] = canonical
+		}
+		outProviders[canonical] = provider
+	}
+
+	outRoles := make(map[string]string, len(roles))
+	for role, ref := range roles {
+		if next, ok := renamed[ref]; ok {
+			outRoles[role] = next
+			changed = true
+			continue
+		}
+		outRoles[role] = ref
+	}
+	return outProviders, outRoles, changed
 }
 
 func looksLikeProviderSecret(value string) bool {

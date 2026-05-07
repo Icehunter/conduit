@@ -1,8 +1,10 @@
 # conduit
 
-**A fast, memory-efficient Go implementation of Claude Code — the agentic CLI for Claude.**
+**A local-first, provider-aware coding agent for the terminal.**
 
-Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in Go with Bubble Tea. It runs on your existing Claude Max or Teams subscription, uses the same OAuth flow, the same API wire format, and the same tool set — but starts faster, uses less memory, and ships as a single static binary.
+Conduit began as a Go port of Claude Code. It still keeps that compatibility where it matters: Claude OAuth, Anthropic wire format, the familiar tool surface, project memory, sessions, plugins, and MCP. It has also grown into its own agent runtime: Conduit-owned config, multi-account switching, role-based model assignment, OpenAI-compatible providers such as Gemini, and local/MCP-backed models can all live in one TUI.
+
+The goal is simple: keep the Claude Code ergonomics, make the runtime fast and hackable, and let you choose where each kind of work runs.
 
 <p align="center">
   <img src="internal/assets/conduit.png" alt="Conduit logo" width="200" />
@@ -29,13 +31,15 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 
 ## Why conduit?
 
-| | Claude Code (Node/Bun) | conduit (Go) |
+| | Claude Code | conduit |
 |---|---|---|
 | Cold start | ~800ms | <30ms |
 | Idle memory | ~200MB | <80MB |
 | Binary size | ~206MB | ~30MB |
 | Dependencies | Node.js + Bun runtime | None (static binary) |
 | Multi-account | Restart required | `/account` panel, live switch |
+| Providers | Claude-focused | Claude subscription, Anthropic API, OpenAI-compatible, local MCP |
+| Role routing | Single active model | Default, main, background, planning, implement |
 | Token savings | External `rtk` subprocess | In-process RTK filter |
 
 ---
@@ -45,6 +49,9 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 ### Core agent
 
 - **Full Claude Code parity** — 249/264 scoped features implemented (94%)
+- **Provider-aware routing** — assign models per role from `/models`
+- **OpenAI-compatible providers** — use API-key providers such as Gemini through a local credential alias
+- **Local model support** — route turns to MCP-backed local providers, including model servers on another machine
 - **Streaming SSE** — real-time token-by-token output with cost tracking
 - **Auto-compact** — context window managed automatically; manual `/compact`
 - **Thinking mode** — extended reasoning via `/effort low|normal|high|max`
@@ -84,7 +91,8 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 ### MCP (Model Context Protocol)
 
 - **stdio, HTTP, SSE transports** — connect any MCP server
-- **Plugin system** — install from marketplace (`claude-plugins-official`), enable/disable per-session
+- **Conduit-owned MCP config** — `~/.conduit/mcp.json` overlays imported Claude MCP settings
+- **Plugin system** — install from marketplace (`claude-plugins-official`), enable/disable plugins, and manage plugin MCP servers
 - **Resource listing and reading** — `ListMcpResources`, `ReadMcpResource`
 - **MCP panel** — `/mcp` opens full browser with per-server tool lists and reconnect
 - **Plugin panel** — `/plugin` browses marketplace, manages installed plugins
@@ -103,15 +111,17 @@ Conduit is a 1:1 functional reimplementation of Claude Code v2.1.126, written in
 - **Full GFM markdown** — tables, task lists, strikethrough, blockquotes, code blocks with syntax
 - **Light and dark themes** — `/theme` picker with 6 built-in palettes (dark, light, daltonized variants, ANSI variants), custom theme support
 - **Output styles** — `/output-style` for different response modes (`default`, `Explanatory`, `Learning`; plugins can add more)
-- **Custom keybindings** — `~/.claude/keybindings.json` remaps any action
-- **Status bar** — model, mode, context %, cost, rate-limit indicator
+- **Custom keybindings** — `~/.conduit/keybindings.json` remaps actions, with Claude keybindings imported as fallback
+- **Status bar** — provider, model, mode, context %, cost, and rate-limit indicator
 - **Coordinator footer** — live sub-agent progress during multi-agent runs
 
-### Multi-account
+### Accounts and providers
 
 - **Platform keychain storage** — macOS Keychain, Linux libsecret, Windows Credential Manager via `go-keyring`
 - **`/account` panel** — add, switch, remove, and delete accounts without restarting
-- **`accounts.json`** — tracks all registered accounts; auto-selects most-recently-added on first run
+- **Conduit-owned account registry** — account metadata lives in `~/.conduit/conduit.json`; credentials stay in the keychain
+- **Provider registry** — Claude subscription, Anthropic API, OpenAI-compatible, and MCP providers can be assigned to roles
+- **Role presets** — default, main, background, planning, and implement roles make it easy to run expensive work on one model and smaller work somewhere else
 
 ### In-process RTK (token savings)
 
@@ -186,6 +196,12 @@ conduit
 # Sign in with your Claude Max / Teams subscription (inside the TUI)
 /login
 
+# Assign providers/models by role
+/models
+
+# Configure accounts, providers, plugins, stats, and usage
+/config
+
 # One-shot prompt (no TUI)
 conduit --print "explain this codebase"
 
@@ -205,7 +221,7 @@ conduit --resume <session-id>
 | `/help` | List all commands |
 | `/commands` | Open the slash command picker |
 | `/model` | Switch model (claude-opus-4-7, claude-sonnet-4-6, …) |
-| `/models` | Open the model picker |
+| `/models` | Open the role-aware provider/model picker |
 | `/fast` | Toggle fast mode (⚡ badge in status bar) |
 | `/effort <level>` | Set thinking budget: low / normal / high / max |
 | `/compact` | Summarise and compress conversation history |
@@ -215,7 +231,7 @@ conduit --resume <session-id>
 | `/account` | Add, switch, or remove accounts |
 | `/login` | Sign in to Claude |
 | `/logout` | Sign out current account |
-| `/config` | Full settings panel (Status · Config · Stats · Usage · Accounts) |
+| `/config` | Full settings panel (Status · Config · Stats · Usage · Accounts · Providers) |
 | `/status` | Current model, mode, session, cost, context usage |
 | `/theme` | Switch colour theme |
 | `/output-style` | Switch output formatting style |

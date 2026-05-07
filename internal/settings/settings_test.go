@@ -305,10 +305,13 @@ func TestValidateProviderSettings(t *testing.T) {
 		input   ActiveProviderSettings
 		wantErr bool
 	}{
-		{"claude-subscription needs model", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription}, true},
-		{"claude-subscription valid", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription, Model: "claude-sonnet-4-6"}, false},
-		{"anthropic-api needs model", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI}, true},
-		{"anthropic-api valid", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI, Model: "claude-opus-4-7"}, false},
+		{"claude-subscription needs account", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription, Model: "claude-sonnet-4-6"}, true},
+		{"claude-subscription needs model", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription, Account: "max@example.com"}, true},
+		{"claude-subscription valid", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription, Account: "max@example.com", Model: "claude-sonnet-4-6"}, false},
+		{"anthropic-api needs account or credential", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI, Model: "claude-opus-4-7"}, true},
+		{"anthropic-api needs model", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI, Account: "api@example.com"}, true},
+		{"anthropic-api valid account", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI, Account: "api@example.com", Model: "claude-opus-4-7"}, false},
+		{"anthropic-api valid credential", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI, Credential: "work-api-key", Model: "claude-opus-4-7"}, false},
 		{"mcp needs server", ActiveProviderSettings{Kind: ProviderKindMCP}, true},
 		{"mcp valid", ActiveProviderSettings{Kind: ProviderKindMCP, Server: "local-router"}, false},
 		{"openai-compatible needs baseURL", ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, Model: "gemini-2.5-pro"}, true},
@@ -326,6 +329,31 @@ func TestValidateProviderSettings(t *testing.T) {
 				t.Fatalf("ValidateProviderSettings() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestCanonicalizeProviderRegistry_RewritesRoleRefs(t *testing.T) {
+	providers := map[string]ActiveProviderSettings{
+		"claude-subscription.claude-sonnet-4-6": {
+			Kind:    ProviderKindClaudeSubscription,
+			Account: "work@example.com",
+			Model:   "claude-sonnet-4-6",
+		},
+	}
+	roles := map[string]string{RoleDefault: "claude-subscription.claude-sonnet-4-6"}
+	gotProviders, gotRoles, changed := CanonicalizeProviderRegistry(providers, roles)
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	want := "claude-subscription.work@example.com.claude-sonnet-4-6"
+	if gotRoles[RoleDefault] != want {
+		t.Fatalf("role ref = %q, want %q", gotRoles[RoleDefault], want)
+	}
+	if _, ok := gotProviders[want]; !ok {
+		t.Fatalf("canonical provider %q missing: %#v", want, gotProviders)
+	}
+	if _, ok := gotProviders["claude-subscription.claude-sonnet-4-6"]; ok {
+		t.Fatalf("legacy provider key still present: %#v", gotProviders)
 	}
 }
 

@@ -12,13 +12,11 @@
 package permissions
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
+
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // Mode is the active permission mode.
@@ -181,6 +179,14 @@ func matchRule(rule, toolName, toolInput string) bool {
 		return false
 	}
 	pattern := rule[paren+1 : len(rule)-1]
+	if strings.EqualFold(toolName, "Bash") {
+		if pattern == "readonly:*" {
+			return isReadOnlyBashInspection(toolInput)
+		}
+		if normalized, ok := normalizeBashPermissionInput(toolInput); ok {
+			return matchPattern(pattern, normalized)
+		}
+	}
 	return matchPattern(pattern, toolInput)
 }
 
@@ -285,6 +291,12 @@ func SuggestRule(toolName, toolInput string) string {
 		return toolName + "(" + dir + "/**)"
 
 	case "Bash":
+		if isReadOnlyBashInspection(toolInput) {
+			return "Bash(readonly:*)"
+		}
+		if normalized, ok := normalizeBashPermissionInput(toolInput); ok {
+			toolInput = normalized
+		}
 		// Try to extract "cmd subcmd" prefix → "Bash(cmd subcmd:*)"
 		if prefix := bashCommandPrefix(toolInput); prefix != "" {
 			return "Bash(" + prefix + ":*)"
@@ -300,6 +312,159 @@ func SuggestRule(toolName, toolInput string) string {
 		}
 		return toolName + "(" + toolInput + ")"
 	}
+}
+
+func normalizeBashPermissionInput(cmd string) (string, bool) {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return "", false
+	}
+	parts, ok := splitShellChain(cmd)
+	if !ok || len(parts) < 2 {
+		return "", false
+	}
+	first := strings.TrimSpace(parts[0])
+	fields := strings.Fields(first)
+	if len(fields) != 2 || fields[0] != "cd" {
+		return "", false
+	}
+	return strings.Join(parts[1:], " && "), true
+}
+
+func isReadOnlyBashInspection(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+	if normalized, ok := normalizeBashPermissionInput(cmd); ok {
+		cmd = normalized
+	}
+	parts, ok := splitShellChain(cmd)
+	if !ok || len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
+		if !isReadOnlySimpleCommand(strings.TrimSpace(part)) {
+			return false
+		}
+	}
+	return true
+}
+
+func splitShellChain(cmd string) ([]string, bool) {
+	var parts []string
+	start := 0
+	sq, dq, esc := false, false, false
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		if esc {
+			esc = false
+			continue
+		}
+		if c == '\\' {
+			esc = true
+			continue
+		}
+		if sq {
+			if c == '\'' {
+				sq = false
+			}
+			continue
+		}
+		if c == '\'' && !dq {
+			sq = true
+			continue
+		}
+		if c == '"' {
+			dq = !dq
+			continue
+		}
+		if dq {
+			if c == '$' && i+1 < len(cmd) && cmd[i+1] == '(' {
+				return nil, false
+			}
+			if c == '`' {
+				return nil, false
+			}
+			continue
+		}
+		switch c {
+		case '\n', ';', '`', '>':
+			return nil, false
+		case '$':
+			if i+1 < len(cmd) && cmd[i+1] == '(' {
+				return nil, false
+			}
+		case '<':
+			if i+1 < len(cmd) && cmd[i+1] == '<' {
+				return nil, false
+			}
+		case '&':
+			if i+1 < len(cmd) && cmd[i+1] == '&' {
+				parts = append(parts, strings.TrimSpace(cmd[start:i]))
+				i++
+				start = i + 1
+			} else {
+				return nil, false
+			}
+		case '|':
+			if i+1 < len(cmd) && cmd[i+1] == '|' {
+				return nil, false
+			}
+			parts = append(parts, strings.TrimSpace(cmd[start:i]))
+			start = i + 1
+		}
+	}
+	parts = append(parts, strings.TrimSpace(cmd[start:]))
+	for _, part := range parts {
+		if part == "" {
+			return nil, false
+		}
+	}
+	return parts, true
+}
+
+func isReadOnlySimpleCommand(cmd string) bool {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+	bin := filepath.Base(fields[0])
+	switch bin {
+	case "ls", "ll", "la", "dir", "cat", "bat", "less", "more", "head", "tail",
+		"echo", "printf", "pwd", "which", "type", "whereis", "wc", "du", "df",
+		"stat", "file", "uname", "hostname", "whoami", "id", "date", "uptime",
+		"ps", "env", "printenv", "diff", "cmp", "grep", "egrep", "fgrep", "rg",
+		"ag", "sort", "uniq", "cut", "awk", "jq", "yq":
+		return true
+	case "find", "fd":
+		return !containsAnyArg(fields[1:], "-delete", "-exec", "-execdir", "-ok", "-okdir")
+	case "sed":
+		return !containsAnyArg(fields[1:], "-i", "--in-place")
+	case "git":
+		return len(fields) >= 2 && map[string]bool{
+			"log": true, "status": true, "diff": true, "show": true, "blame": true,
+			"branch": true, "tag": true, "remote": true, "stash": true,
+			"describe": true, "rev-parse": true, "ls-files": true,
+			"shortlog": true, "reflog": true, "config": true,
+		}[fields[1]]
+	case "go":
+		return len(fields) >= 2 && map[string]bool{"version": true, "env": true, "list": true, "doc": true, "vet": true}[fields[1]]
+	case "npm":
+		return len(fields) >= 2 && map[string]bool{"list": true, "ls": true, "outdated": true, "audit": true, "info": true, "view": true}[fields[1]]
+	}
+	return false
+}
+
+func containsAnyArg(fields []string, values ...string) bool {
+	for _, field := range fields {
+		for _, value := range values {
+			if field == value || strings.HasPrefix(field, value+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // bashCommandPrefix returns "cmd subcmd" if the command has a recognisable
@@ -332,65 +497,9 @@ func bashCommandPrefix(cmd string) string {
 	return ""
 }
 
-// PersistAllow writes rule to the allow list in <cwd>/.claude/settings.local.json.
-// This is the "always allow" persistence path — mirrors TS localSettings destination.
-// Uses raw-JSON map so unknown fields are preserved.
+// PersistAllow writes rule to Conduit's project-local settings file.
+// Conduit reads Claude project settings for compatibility, but new runtime
+// approvals are persisted under <cwd>/.conduit/settings.local.json.
 func PersistAllow(rule, cwd string) error {
-	if cwd == "" {
-		return nil
-	}
-	path := filepath.Join(cwd, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	raw := make(map[string]json.RawMessage)
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return err
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	// Read existing permissions.allow list.
-	var perms map[string]json.RawMessage
-	if p, ok := raw["permissions"]; ok {
-		if err := json.Unmarshal(p, &perms); err != nil {
-			return fmt.Errorf("permissions: parse permissions: %w", err)
-		}
-	}
-	if perms == nil {
-		perms = make(map[string]json.RawMessage)
-	}
-
-	allow := make([]string, 0, 1)
-	if a, ok := perms["allow"]; ok {
-		if err := json.Unmarshal(a, &allow); err != nil {
-			return fmt.Errorf("permissions: parse allow: %w", err)
-		}
-	}
-
-	// Deduplicate.
-	if slices.Contains(allow, rule) {
-		return nil
-	}
-	allow = append(allow, rule)
-
-	allowRaw, err := json.Marshal(allow)
-	if err != nil {
-		return err
-	}
-	perms["allow"] = allowRaw
-	permsRaw, err := json.Marshal(perms)
-	if err != nil {
-		return err
-	}
-	raw["permissions"] = permsRaw
-
-	out, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(out, '\n'), 0o600)
+	return settings.SaveConduitProjectPermissionAllow(cwd, rule)
 }

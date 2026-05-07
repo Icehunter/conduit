@@ -86,6 +86,34 @@ func TestMatchRule_BashSubcmdColonStar(t *testing.T) {
 	}
 }
 
+func TestMatchRule_BashReadonly(t *testing.T) {
+	readOnly := []string{
+		"git status",
+		"cd /Volumes/Engineering/Icehunter/conduit && wc -l internal/tui/model.go",
+		"cd /Volumes/Engineering/Icehunter/conduit && find internal -type d -maxdepth 2 | sort",
+		`cd /Volumes/Engineering/Icehunter/conduit && cat go.mod | head -50 && echo "done"`,
+		"rg -n permissions internal/permissions",
+	}
+	for _, input := range readOnly {
+		if !matchRule("Bash(readonly:*)", "Bash", input) {
+			t.Errorf("Bash(readonly:*) should match %q", input)
+		}
+	}
+
+	mutating := []string{
+		"cd /tmp && rm -rf x",
+		"cd /tmp && cat a > b",
+		"find . -delete",
+		"sed -i s/a/b/ file",
+		"echo $(rm -rf /tmp/nope)",
+	}
+	for _, input := range mutating {
+		if matchRule("Bash(readonly:*)", "Bash", input) {
+			t.Errorf("Bash(readonly:*) should not match %q", input)
+		}
+	}
+}
+
 func TestGate_BypassMode(t *testing.T) {
 	g := New(ModeBypassPermissions, nil, nil, nil)
 	if g.Check("Bash", "rm -rf /") != DecisionAllow {
@@ -131,8 +159,10 @@ func TestSuggestRule(t *testing.T) {
 	tests := []struct {
 		tool, input, want string
 	}{
-		{"Bash", "git log --oneline", "Bash(git log:*)"},
-		{"Bash", "git status", "Bash(git status:*)"},
+		{"Bash", "git log --oneline", "Bash(readonly:*)"},
+		{"Bash", "git status", "Bash(readonly:*)"},
+		{"Bash", "cd /repo && wc -l file.go", "Bash(readonly:*)"},
+		{"Bash", "cd /repo && find internal -type d -maxdepth 2 | sort", "Bash(readonly:*)"},
 		{"Bash", "npm install", "Bash(npm install:*)"},
 		{"Bash", "foobar --flag", "Bash(foobar --flag)"},
 		{"Bash", "", "Bash"},

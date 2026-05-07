@@ -1,10 +1,12 @@
 // Package settings loads and merges Conduit and Claude-compatible settings files.
 //
 // Priority order (later overrides earlier):
-//  1. ~/.claude/settings.json          (first-run import only when conduit.json is absent)
-//  2. <project>/.claude/settings.json  (project shared)
-//  3. <project>/.claude/settings.local.json (project local, gitignored)
-//  4. ~/.conduit/conduit.json          (Conduit-owned user config)
+//  1. ~/.claude/settings.json                (first-run import only when conduit.json is absent)
+//  2. <project>/.claude/settings.json        (Claude project shared)
+//  3. <project>/.claude/settings.local.json  (Claude project local, read-only import)
+//  4. <project>/.conduit/settings.json       (Conduit project shared)
+//  5. <project>/.conduit/settings.local.json (Conduit project local, gitignored)
+//  6. ~/.conduit/conduit.json                (Conduit-owned user config)
 //
 // Mirrors src/utils/config.ts and src/utils/settings/settings.ts.
 package settings
@@ -309,6 +311,8 @@ func settingsFiles(cwd string) []string {
 		paths = append(paths,
 			filepath.Join(cwd, ".claude", "settings.json"),
 			filepath.Join(cwd, ".claude", "settings.local.json"),
+			filepath.Join(cwd, ".conduit", "settings.json"),
+			ProjectLocalSettingsPath(cwd),
 		)
 	}
 	if conduitExists {

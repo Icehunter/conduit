@@ -143,6 +143,23 @@ func SaveConduitPermissionsField(field string, value interface{}) error {
 	return savePermissionsField(ConduitSettingsPath(), "SaveConduitPermissionsField", field, value)
 }
 
+// ProjectLocalSettingsPath returns conduit's machine-local project settings
+// path. It is intentionally separate from .claude/settings.local.json so
+// Conduit can persist approvals without mutating Claude Code state.
+func ProjectLocalSettingsPath(cwd string) string {
+	return filepath.Join(cwd, ".conduit", "settings.local.json")
+}
+
+// SaveConduitProjectPermissionAllow appends one permissions.allow rule to the
+// project-local Conduit settings file.
+func SaveConduitProjectPermissionAllow(cwd, rule string) error {
+	if cwd == "" || rule == "" {
+		return nil
+	}
+	path := ProjectLocalSettingsPath(cwd)
+	return updatePermissionsStringList(path, "SaveConduitProjectPermissionAllow", "allow", rule)
+}
+
 func savePermissionsField(path, op, field string, value interface{}) error {
 	if path == ConduitSettingsPath() {
 		conduitConfigMu.Lock()
@@ -183,6 +200,46 @@ func savePermissionsField(path, op, field string, value interface{}) error {
 		raw["permissions"] = encoded
 	}
 
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("settings: %s: marshal settings: %w", op, err)
+	}
+	if err := writeFileAtomic(path, append(out, '\n')); err != nil {
+		return fmt.Errorf("settings: %s: write: %w", op, err)
+	}
+	return nil
+}
+
+func updatePermissionsStringList(path, op, field, value string) error {
+	if path == ConduitSettingsPath() {
+		conduitConfigMu.Lock()
+		defer conduitConfigMu.Unlock()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("settings: %s: mkdir: %w", op, err)
+	}
+	raw, err := readRawObject(path)
+	if err != nil {
+		return fmt.Errorf("settings: %s: read: %w", op, err)
+	}
+	perms := make(map[string]json.RawMessage)
+	if r, ok := raw["permissions"]; ok && len(r) > 0 {
+		if err := json.Unmarshal(r, &perms); err != nil {
+			return fmt.Errorf("settings: %s: parse permissions: %w", op, err)
+		}
+	}
+	list := decodeStringList(perms[field])
+	list = appendUnique(list, value)
+	encodedList, err := json.Marshal(list)
+	if err != nil {
+		return fmt.Errorf("settings: %s: marshal list: %w", op, err)
+	}
+	perms[field] = encodedList
+	encodedPerms, err := json.Marshal(perms)
+	if err != nil {
+		return fmt.Errorf("settings: %s: marshal permissions: %w", op, err)
+	}
+	raw["permissions"] = encodedPerms
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return fmt.Errorf("settings: %s: marshal settings: %w", op, err)

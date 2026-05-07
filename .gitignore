@@ -12,3 +12,6 @@ coverage.html
 
 # Claude Code local settings (machine-specific permissions, not for repo)
 .claude/settings.local.json
+
+# Conduit local project settings (machine-specific permissions, not for repo)
+.conduit/settings.local.json

@@ -97,7 +97,7 @@ type LoopConfig struct {
 	// as one turn). 0 means no limit (use carefully).
 	MaxTurns int
 	// Cwd is the working directory for the session. Used for persisting
-	// "always allow" rules to <cwd>/.claude/settings.local.json.
+	// "always allow" rules to <cwd>/.conduit/settings.local.json.
 	Cwd string
 
 	// Gate is the permission gate to consult before each tool call.

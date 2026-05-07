@@ -814,6 +814,50 @@ func TestLoad_MergesAllowLists(t *testing.T) {
 	}
 }
 
+func TestLoad_ConduitProjectLocalSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	project := filepath.Join(dir, "project")
+	if err := os.MkdirAll(filepath.Join(dir, ".conduit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".conduit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".conduit", "settings.local.json"), []byte(`{"permissions":{"allow":["Bash(readonly:*)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := loadPaths(settingsFiles(project))
+	if len(m.Allow) != 1 || m.Allow[0] != "Bash(readonly:*)" {
+		t.Fatalf("Allow = %v, want Bash(readonly:*) from .conduit/settings.local.json", m.Allow)
+	}
+}
+
+func TestSaveConduitProjectPermissionAllow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	project := filepath.Join(dir, "project")
+	if err := SaveConduitProjectPermissionAllow(project, "Bash(readonly:*)"); err != nil {
+		t.Fatalf("SaveConduitProjectPermissionAllow: %v", err)
+	}
+	if err := SaveConduitProjectPermissionAllow(project, "Bash(readonly:*)"); err != nil {
+		t.Fatalf("SaveConduitProjectPermissionAllow duplicate: %v", err)
+	}
+
+	claudeLocal := filepath.Join(project, ".claude", "settings.local.json")
+	if _, err := os.Stat(claudeLocal); err == nil {
+		t.Fatalf("unexpected Claude local settings write at %s", claudeLocal)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat Claude local settings: %v", err)
+	}
+
+	m := loadPaths(settingsFiles(project))
+	if len(m.Allow) != 1 || m.Allow[0] != "Bash(readonly:*)" {
+		t.Fatalf("Allow = %v, want one deduped project-local Conduit rule", m.Allow)
+	}
+}
+
 func TestLoad_Hooks(t *testing.T) {
 	dir := t.TempDir()
 	writeSettings(t, dir, "settings.json", Settings{

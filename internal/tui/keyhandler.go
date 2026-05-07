@@ -9,6 +9,11 @@ import (
 // handleKey is the top-level key dispatcher. It runs overlay intercepts,
 // then the keybinding resolver, then falls through to handleKeyBuiltins.
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	// Trust dialog is the highest-priority modal — captures all keys.
+	if m.trustDialog != nil {
+		m2, cmd := m.handleTrustKey(msg)
+		return m2, cmd, true
+	}
 	if m.loginPrompt != nil {
 		m2, cmd := m.handleLoginKey(msg)
 		return m2, cmd, true
@@ -31,6 +36,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// Search results panel intercepts all keys when active.
 	if m.searchPanel != nil {
 		m2, cmd := m.handleSearchPanelKey(msg)
+		return m2, cmd, true
+	}
+	// Plan-approval picker intercepts all keys when active.
+	if m.planApproval != nil {
+		m2, cmd := m.handlePlanApprovalKey(msg)
 		return m2, cmd, true
 	}
 	// Generic picker (/theme /model /output-style) intercepts keys.

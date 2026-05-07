@@ -131,12 +131,12 @@
 |------|-----------|--------------|--------------|--------|-------|
 | AgentTool (Task) | `tools/AgentTool/` | — | `internal/tools/agenttool/` | ✅ | Wire name "Task" |
 | AskUserQuestion | `tools/AskUserQuestionTool/` | — | `internal/tools/askusertool/` | ✅ | Blocks on TUI permissionAskMsg |
-| BashTool | `tools/BashTool/` (18 files) | — | `internal/tools/bashtool/` | ✅ | RTK filtering wired |
+| BashTool | `tools/BashTool/` (18 files) | — | `internal/tools/bashtool/` | ✅ | RTK filtering wired. **Divergence**: on Windows, BashTool is NOT registered; instead `internal/tools/winshelltool/` (Shell/PowerShell) is registered under the name "Shell". |
 | BriefTool | `tools/BriefTool/` | — | ❌ | ⬛ | KAIROS-gated (GrowthBook build flag) |
 | ConfigTool | `tools/ConfigTool/` | — | `internal/tools/configtool/` | ✅ | get/set model, modes, allow/deny, env |
 | EnterPlanMode | `tools/EnterPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskEnter callback, sets plan mode |
 | EnterWorktree | `tools/EnterWorktreeTool/` | — | `internal/tools/worktreetool/` | ✅ | git worktree add, switches cwd |
-| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskApprove callback, switches to auto mode after approval |
+| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | **Divergence**: AskApprove returns `PlanApprovalDecision` (struct) instead of bool; user can choose auto/accept-edits/default mode; rejection can include textual feedback returned to model. |
 | ExitWorktree | `tools/ExitWorktreeTool/` | — | `internal/tools/worktreetool/` | ✅ | keep/remove action, branch cleanup |
 | FileEditTool | `tools/FileEditTool/` | — | `internal/tools/fileedittool/` | ✅ | |
 | FileReadTool | `tools/FileReadTool/` | — | `internal/tools/filereadtool/` | ✅ | |
@@ -149,7 +149,9 @@
 | McpAuthTool | `tools/McpAuthTool/` | — | `internal/tools/mcpauthtool/` + `internal/commands/mcp.go` | ✅ | Per-server pseudo-tool registered for needs-auth servers (mcp__<name>__authenticate) + manual /mcp auth <name> |
 | MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
 | NotebookEditTool | `tools/NotebookEditTool/` | — | `internal/tools/notebookedittool/` | ✅ | |
-| PowerShellTool | `tools/PowerShellTool/` | — | ❌ | ⬛ | Windows-only |
+| PowerShellTool | `tools/PowerShellTool/` | — | `internal/tools/winshelltool/` | ✅ | Windows-only; registered as "Shell" (not "PowerShell" as in CC). Registered instead of BashTool on Windows. |
+| EnterAutoMode | — (conduit extension) | — | `internal/tools/automodetool/` | ✅ | No CC counterpart. Lets model request auto (bypassPermissions) mode with user consent via permission prompt. |
+| ExitAutoMode | — (conduit extension) | — | `internal/tools/automodetool/` | ✅ | No CC counterpart. Lets model return to default mode without prompting. |
 | ReadMcpResource | `tools/ReadMcpResourceTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Reads one resource by URI |
 | RemoteTriggerTool | `tools/RemoteTriggerTool/` | — | ❌ | ⬛ | Remote-only (M10) |
 | REPLTool | `tools/REPLTool/` | — | `internal/tools/repltool/` | 🟡 | Functional but no tool-level tests |

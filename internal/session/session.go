@@ -251,6 +251,78 @@ func (s *Session) Snapshot() int {
 	return strings.Count(string(data), "\n")
 }
 
+// ReplaceHistory atomically rewrites the session JSONL to contain only the
+// provided messages plus a compact summary entry, discarding pre-compact
+// messages. Non-message metadata entries (custom-title, session_settings,
+// cost, etc.) are preserved so session labels and settings survive compaction.
+// Used by manual /compact to keep the on-disk state consistent with memory.
+func (s *Session) ReplaceHistory(msgs []api.Message, summary string) error {
+	// Read existing entries; keep everything that isn't a message or summary
+	// (custom-title, session_settings, cost — anything we might want later).
+	data, err := os.ReadFile(s.FilePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("session: compact read %s: %w", s.FilePath, err)
+	}
+	var metaLines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e Entry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			continue
+		}
+		if e.Type != "message" && e.Type != "summary" {
+			metaLines = append(metaLines, line)
+		}
+	}
+
+	ts := time.Now().UnixMilli()
+	var sb strings.Builder
+	for _, l := range metaLines {
+		sb.WriteString(l)
+		sb.WriteByte('\n')
+	}
+	for _, msg := range msgs {
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			continue
+		}
+		entry := Entry{
+			SessionID:    s.ID,
+			Type:         "message",
+			Timestamp:    ts,
+			Message:      raw,
+			ProviderKind: msg.ProviderKind,
+			Provider:     msg.Provider,
+		}
+		b, err := json.Marshal(entry)
+		if err != nil {
+			continue
+		}
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
+	if summary != "" {
+		entry := Entry{SessionID: s.ID, Type: "summary", Timestamp: ts, Summary: summary}
+		if b, err := json.Marshal(entry); err == nil {
+			sb.Write(b)
+			sb.WriteByte('\n')
+		}
+	}
+
+	tmp := s.FilePath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(sb.String()), 0o600); err != nil {
+		return fmt.Errorf("session: compact write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, s.FilePath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("session: compact rename %s: %w", s.FilePath, err)
+	}
+	return nil
+}
+
 // TruncateLines rewrites the JSONL file keeping only the first n non-empty
 // lines, then atomically renames it over the original. This is used by the
 // /rewind command to remove turns from the on-disk transcript so /resume

@@ -147,13 +147,13 @@ func (m Model) applyCompactResult(res commands.Result) (Model, tea.Cmd) {
 	backgroundModel := m.backgroundModel()
 	histCopy := make([]api.Message, len(m.history))
 	copy(histCopy, m.history)
-	return m, func() tea.Msg {
+	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 		result, err := compact.CompactWithModel(context.Background(), client, backgroundModel, histCopy, customInstructions)
 		if err != nil {
 			return compactDoneMsg{err: err}
 		}
 		return compactDoneMsg{newHistory: result.NewHistory, summary: result.Summary}
-	}
+	})
 }
 
 // applyLocalCall handles the "local-call" command result.
@@ -194,9 +194,9 @@ func (m Model) applyLocalCall(res commands.Result) (Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelTurn = cancel
 	manager := m.cfg.MCPManager
-	return m, func() tea.Msg {
+	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 		return runLocalCall(ctx, manager, call, input, turnID, false)
-	}
+	})
 }
 
 // applyLocalMode handles the "local-mode" command result.
@@ -281,7 +281,7 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 	histCopy := make([]api.Message, len(m.history))
 	copy(histCopy, m.history)
 	turnID := m.turnID
-	return m, func() tea.Msg {
+	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 		var usage api.Usage
 		newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 			if ev.Type == agent.EventUsage {
@@ -290,7 +290,7 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 			prog.Send(agentMsg{event: ev})
 		})
 		return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage}
-	}
+	})
 }
 
 // applyCoordinatorToggle handles the "coordinator-toggle" command result.

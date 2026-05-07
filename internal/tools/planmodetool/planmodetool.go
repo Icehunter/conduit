@@ -59,17 +59,27 @@ func (t *EnterPlanMode) Execute(ctx context.Context, _ json.RawMessage) (tool.Re
 Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.`), nil
 }
 
+// PlanApprovalDecision is the result of the ExitPlanMode user approval prompt.
+type PlanApprovalDecision struct {
+	// Approved is true when the user accepts the plan.
+	Approved bool
+	// Mode is the permission mode to activate on approval.
+	// Defaults to ModeBypassPermissions when zero.
+	Mode permissions.Mode
+	// Feedback is optional text from the user on rejection.
+	// Sent back to the model as part of the error message.
+	Feedback string
+}
+
 // ExitPlanMode is the tool the model calls to present a plan and ask for approval.
 // The user is shown the plan text and either approves or rejects.
 type ExitPlanMode struct {
 	// SetMode changes the active permission mode (nil = no-op).
 	SetMode func(permissions.Mode)
-	// ApprovedMode is the permission mode to enter after the user approves the
-	// plan. Defaults to bypassPermissions, which is displayed as auto mode.
-	ApprovedMode permissions.Mode
-	// AskApprove, when non-nil, shows the plan to the user and returns true if
-	// they approve. When nil, the plan is auto-approved.
-	AskApprove func(ctx context.Context, plan string) bool
+	// AskApprove, when non-nil, shows the plan to the user and returns a
+	// PlanApprovalDecision. When nil, the plan is auto-approved with
+	// ModeBypassPermissions.
+	AskApprove func(ctx context.Context, plan string) PlanApprovalDecision
 }
 
 // exitInput is the JSON input for ExitPlanMode.
@@ -101,19 +111,40 @@ func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 		return tool.ErrorResult("invalid input: " + err.Error()), nil
 	}
 
-	if t.AskApprove != nil && !t.AskApprove(ctx, inp.Plan) {
-		return tool.ErrorResult("User rejected the plan. Return to plan mode and revise your approach."), nil
+	var decision PlanApprovalDecision
+	if t.AskApprove != nil {
+		decision = t.AskApprove(ctx, inp.Plan)
+	} else {
+		// Auto-approve with bypass when no callback (non-interactive mode).
+		decision = PlanApprovalDecision{Approved: true, Mode: permissions.ModeBypassPermissions}
+	}
+
+	if !decision.Approved {
+		msg := "User rejected the plan."
+		if decision.Feedback != "" {
+			msg += " Feedback: " + decision.Feedback + ". Return to plan mode and revise."
+		} else {
+			msg += " Return to plan mode and revise your approach."
+		}
+		return tool.ErrorResult(msg), nil
 	}
 
 	if t.SetMode != nil {
-		mode := t.ApprovedMode
+		mode := decision.Mode
 		if mode == "" {
 			mode = permissions.ModeBypassPermissions
 		}
 		t.SetMode(mode)
 	}
 
-	return tool.TextResult("Plan approved. Auto mode is enabled; you may now begin implementation. Follow the plan you presented and write the necessary code."), nil
+	modeLabel := "Auto mode"
+	switch decision.Mode {
+	case permissions.ModeAcceptEdits:
+		modeLabel = "Accept-edits mode"
+	case permissions.ModeDefault:
+		modeLabel = "Default mode"
+	}
+	return tool.TextResult(modeLabel + " enabled. You may now begin implementation. Follow the plan you presented."), nil
 }
 
 const enterDescription = `Requests permission to enter plan mode for complex tasks requiring exploration and design. Use proactively before non-trivial implementation. In plan mode you explore the codebase with read-only tools and design an approach. When ready, use ExitPlanMode to present your plan for user approval.`

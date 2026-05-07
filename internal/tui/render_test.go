@@ -320,7 +320,7 @@ func TestStartupWelcomeUsesSavedPermissionModeProvider(t *testing.T) {
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
 	saveTestClaudeAccount(t, "syndicated.life@gmail.com")
 	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "stale-startup-model"})
-	gate := permissions.New(permissions.ModeBypassPermissions, nil, nil, nil)
+	gate := permissions.New("", nil, permissions.ModeBypassPermissions, nil, nil, nil)
 	m := New(Config{
 		Version:   "test",
 		ModelName: "stale-startup-model",

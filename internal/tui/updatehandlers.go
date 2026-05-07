@@ -67,7 +67,7 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Interrupted."})
 		m.refreshViewport()
 		m.input.Focus()
-		return m, nil
+		return m, clearWindowTitleCmd()
 	}
 	return m, tea.Quit
 }
@@ -92,7 +92,7 @@ func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
 	hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-		m.doctorPanel != nil || m.searchPanel != nil || m.helpOverlay != nil
+		m.planApproval != nil || m.trustDialog != nil || m.doctorPanel != nil || m.searchPanel != nil || m.helpOverlay != nil
 	if !hasOverlay {
 		content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 		content = strings.ReplaceAll(content, "\r", "\n")
@@ -269,6 +269,7 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
 	}
 
+	cmds = append(cmds, clearWindowTitleCmd())
 	return m, tea.Batch(cmds...)
 }
 
@@ -459,13 +460,21 @@ func (m Model) handleCompactDone(msg compactDoneMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Compact failed: %v", msg.err)})
 	} else {
 		m.history = msg.newHistory
+		// Rewrite the on-disk session so it reflects the compacted history.
+		// Without this, persistedCount stays at the pre-compact value and
+		// future turns never write the compact-wrap message, leaving stale
+		// pre-compact messages on disk and causing spurious /resume entries.
+		if m.cfg.Session != nil {
+			_ = m.cfg.Session.ReplaceHistory(msg.newHistory, msg.summary)
+		}
+		m.persistedCount = len(msg.newHistory)
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Conversation compacted. Summary:\n\n%s", msg.summary)})
 		m.tallyTokens()
 	}
 	m.refreshViewport()
 	m.vp.GotoBottom()
 	m.input.Focus()
-	return m, nil
+	return m, clearWindowTitleCmd()
 }
 
 // handleLocalCallDone processes the result of a local (MCP) tool call.
@@ -503,7 +512,7 @@ func (m Model) handleLocalCallDone(msg localCallDoneMsg) (Model, tea.Cmd) {
 	m.refreshViewport()
 	m.vp.GotoBottom()
 	m.input.Focus()
-	return m, nil
+	return m, clearWindowTitleCmd()
 }
 
 // handleMCPApproval opens a 3-option picker for the first pending MCP server

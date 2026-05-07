@@ -55,21 +55,29 @@ func (m Model) renderUsageFooter(width int) string {
 	weekly := renderUsageWindow("Weekly ", m.planUsage.SevenDay)
 	contextLine := m.renderContextUsageWindow()
 
-	dataPoints := []string{
-		padStatusLine(contextLine, width),
-		padStatusLine(providerLine, width),
-		padStatusLine(current, width),
-		padStatusLine(weekly, width),
+	var dataPoints []string
+	add := func(s string) {
+		if s != "" {
+			dataPoints = append(dataPoints, padStatusLine(s, width))
+		}
 	}
+	add(contextLine)
+	add(providerLine)
+	add(current)
+	add(weekly)
 
 	return strings.Join(dataPoints, "\n")
 }
 
 func (m Model) renderProviderUsageWindow() string {
+	name := m.activeModelDisplayName()
+	if name == "" {
+		return ""
+	}
 	return surfaceSpaces(1) +
 		styleStatus.Width(8).Render("Provider") +
 		surfaceSpaces(2) +
-		styleStatus.Render(m.activeModelDisplayName())
+		styleStatus.Render(name)
 }
 
 func (m Model) renderContextUsageWindow() string {

@@ -115,6 +115,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoBottom()
 		return m, nil
 
+	case planApprovalAskMsg:
+		// ExitPlanMode: open the plan-approval picker overlay.
+		m.planApproval = &planApprovalPickerState{
+			reply:    msg.reply,
+			selected: 0,
+		}
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		return m, nil
+
 	case compactDoneMsg:
 		return m.handleCompactDone(msg)
 
@@ -236,7 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-		m.questionAsk != nil || m.trustDialog != nil
+		m.questionAsk != nil || m.planApproval != nil || m.trustDialog != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		prevLines := m.input.LineCount()

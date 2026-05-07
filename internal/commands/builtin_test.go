@@ -678,6 +678,8 @@ func TestRegisterAccountCommand_ProvidersAlias(t *testing.T) {
 func TestRegisterPermissionsCommand_WithGate(t *testing.T) {
 	r := New()
 	gate := permissions.New(
+		"",
+		nil,
 		permissions.ModeDefault,
 		[]string{"Bash(git log *)", "Edit"},
 		[]string{"Bash(rm -rf *)"},
@@ -708,7 +710,7 @@ func TestRegisterPermissionsCommand_WithGate(t *testing.T) {
 
 func TestRegisterPermissionsCommand_EmptyLists(t *testing.T) {
 	r := New()
-	gate := permissions.New(permissions.ModeBypassPermissions, nil, nil, nil)
+	gate := permissions.New("", nil, permissions.ModeBypassPermissions, nil, nil, nil)
 	RegisterPermissionsCommand(r, gate)
 
 	result, _ := r.Dispatch("/permissions")

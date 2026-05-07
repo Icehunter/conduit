@@ -37,6 +37,12 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	}
 	drawString(scr, layout.footer, m.renderFooter())
 
+	// Trust dialog covers the entire viewport with no content behind it.
+	if m.trustDialog != nil {
+		drawFloating(scr, area, m.renderTrustDialog(), floatingModalSpec, false)
+		return
+	}
+
 	panelModel := m
 	panelModel.width = layout.panel.Dx()
 	panelModel.panelH = layout.panel.Dy()
@@ -228,6 +234,8 @@ func (m Model) renderActiveModal() string {
 		return m.renderPermissionPrompt()
 	case m.questionAsk != nil:
 		return m.renderQuestionDialog()
+	case m.planApproval != nil:
+		return m.renderPlanApprovalPicker()
 	}
 	return ""
 }

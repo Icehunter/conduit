@@ -27,6 +27,7 @@ import (
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
+	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
 
@@ -71,9 +72,11 @@ type RunOptions struct {
 	NewProviderAPIClient func(settings.ActiveProviderSettings) (*api.Client, error)
 
 	// Interactive tool stubs — the TUI wires their callbacks after startup.
-	EnterPlan *planmodetool.EnterPlanMode
-	ExitPlan  *planmodetool.ExitPlanMode
-	AskUser   *askusertool.AskUserQuestion
+	EnterPlan     *planmodetool.EnterPlanMode
+	ExitPlan      *planmodetool.ExitPlanMode
+	AskUser       *askusertool.AskUserQuestion
+	EnterAutoMode *automodetool.EnterAutoMode
+	ExitAutoMode  *automodetool.ExitAutoMode
 
 	// InitialOutputStyle is the style name to activate at startup (from settings).
 	InitialOutputStyle string
@@ -576,13 +579,33 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 	}
 
-	// Wire ExitPlanMode — presents plan and asks for approval.
+	// Wire ExitPlanMode — presents plan-approval picker and waits for decision.
 	if runOpts.ExitPlan != nil {
-		runOpts.ExitPlan.AskApprove = func(ctx context.Context, plan string) bool {
+		runOpts.ExitPlan.AskApprove = func(ctx context.Context, plan string) planmodetool.PlanApprovalDecision {
+			reply := make(chan planmodetool.PlanApprovalDecision, 1)
+			prog.Send(planApprovalAskMsg{reply: reply})
+			select {
+			case d := <-reply:
+				return d
+			case <-ctx.Done():
+				return planmodetool.PlanApprovalDecision{Approved: false, Feedback: "context cancelled"}
+			}
+		}
+		runOpts.ExitPlan.SetMode = func(m permissions.Mode) {
+			prog.Send(setPermissionModeMsg{mode: m})
+		}
+	}
+
+	// Wire EnterAutoMode — uses the same permission-prompt machinery.
+	if runOpts.EnterAutoMode != nil {
+		runOpts.EnterAutoMode.CurrentMode = func() permissions.Mode {
+			return live.PermissionMode()
+		}
+		runOpts.EnterAutoMode.AskEnter = func(ctx context.Context) bool {
 			reply := make(chan permissionReply, 1)
 			prog.Send(permissionAskMsg{
-				toolName:  "ExitPlanMode",
-				toolInput: "Approve this implementation plan and switch to auto mode?\n\n" + plan,
+				toolName:  "EnterAutoMode",
+				toolInput: "Enter auto mode? Tool calls will proceed without per-call prompts.",
 				reply:     reply,
 			})
 			select {
@@ -592,7 +615,14 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				return false
 			}
 		}
-		runOpts.ExitPlan.SetMode = func(m permissions.Mode) {
+		runOpts.EnterAutoMode.SetMode = func(m permissions.Mode) {
+			prog.Send(setPermissionModeMsg{mode: m})
+		}
+	}
+
+	// Wire ExitAutoMode — no confirmation needed; just resets the mode.
+	if runOpts.ExitAutoMode != nil {
+		runOpts.ExitAutoMode.SetMode = func(m permissions.Mode) {
 			prog.Send(setPermissionModeMsg{mode: m})
 		}
 	}

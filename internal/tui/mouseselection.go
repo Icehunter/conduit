@@ -59,7 +59,7 @@ func (m Model) selectionOverlayActive() bool {
 	return m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-		m.questionAsk != nil || m.trustDialog != nil || m.helpOverlay != nil ||
+		m.questionAsk != nil || m.planApproval != nil || m.trustDialog != nil || m.helpOverlay != nil ||
 		m.doctorPanel != nil || m.searchPanel != nil
 }
 

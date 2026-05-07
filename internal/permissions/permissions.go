@@ -43,6 +43,9 @@ type Gate struct {
 	mu   sync.RWMutex
 	mode Mode
 
+	cwd          string
+	trustedRoots []string
+
 	allow []string
 	deny  []string
 	ask   []string
@@ -52,12 +55,16 @@ type Gate struct {
 }
 
 // New constructs a Gate with the given settings.
-func New(mode Mode, allow, deny, ask []string) *Gate {
+// cwd is the working directory for implicit-trust path checks.
+// trustedRoots is the list of trusted ancestor paths (from globalconfig.TrustedAncestors).
+func New(cwd string, trustedRoots []string, mode Mode, allow, deny, ask []string) *Gate {
 	return &Gate{
-		mode:  mode,
-		allow: allow,
-		deny:  deny,
-		ask:   ask,
+		mode:         mode,
+		cwd:          cwd,
+		trustedRoots: trustedRoots,
+		allow:        allow,
+		deny:         deny,
+		ask:          ask,
 	}
 }
 
@@ -96,6 +103,63 @@ func (g *Gate) AllowForSession(rule string) {
 	g.mu.Unlock()
 }
 
+// sanitizeCWD replaces path separators and colons with dashes, matching
+// memdir.sanitizePath. Inlined here to avoid an import cycle.
+func sanitizeCWD(p string) string {
+	return strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+	).Replace(p)
+}
+
+// isImplicitlyTrustedPath returns true for file operations on conduit's own
+// per-project storage directories. These paths are picked by conduit itself
+// (never by the model), so prompting for them is meaningless.
+func isImplicitlyTrustedPath(toolName, toolInput, cwd string) bool {
+	switch toolName {
+	case "Read", "Write", "Edit", "NotebookEdit":
+	default:
+		return false
+	}
+	if toolInput == "" || cwd == "" {
+		return false
+	}
+	p := toSlash(filepath.Clean(toolInput))
+	sanitized := sanitizeCWD(cwd)
+	conduitPrefix := toSlash(filepath.Join(settings.ConduitDir(), "projects", sanitized))
+	claudePrefix := toSlash(filepath.Join(settings.ClaudeDir(), "projects", sanitized))
+	for _, prefix := range []string{conduitPrefix, claudePrefix} {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// toolIsReadOnly reports whether the tool (and given input) is considered
+// a read-only, non-mutating operation.
+func toolIsReadOnly(toolName, toolInput string) bool {
+	switch toolName {
+	case "Read", "Glob", "Grep", "LS", "LSP",
+		"WebSearch", "WebFetch", "ToolSearch",
+		"TaskList", "TaskGet", "TaskOutput":
+		return true
+	case "Bash":
+		return isReadOnlyBashInspection(toolInput)
+	}
+	return false
+}
+
+// toolIsEdit reports whether the tool performs file-editing operations.
+func toolIsEdit(toolName string) bool {
+	switch toolName {
+	case "Read", "Edit", "Write", "NotebookEdit":
+		return true
+	}
+	return false
+}
+
 // Check determines whether toolName with toolInput may run.
 // toolInput is the raw argument string (e.g. the command for Bash).
 func (g *Gate) Check(toolName, toolInput string) Decision {
@@ -107,15 +171,33 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 
 	g.mu.RLock()
 	mode := g.mode
+	cwd := g.cwd
+	trustedRoots := g.trustedRoots
 	allow := g.allow
 	deny := g.deny
 	ask := g.ask
 	sessionAllow := g.sessionAllow
 	g.mu.RUnlock()
 
-	// bypassPermissions / acceptEdits modes skip all checks.
-	if mode == ModeBypassPermissions || mode == ModeAcceptEdits {
+	// bypassPermissions skips all checks.
+	if mode == ModeBypassPermissions {
 		return DecisionAllow
+	}
+
+	// Implicit trust: conduit's own per-project storage never prompts.
+	if isImplicitlyTrustedPath(toolName, toolInput, cwd) {
+		return DecisionAllow
+	}
+
+	// Reads inside a trusted ancestor directory never prompt.
+	if toolIsReadOnly(toolName, toolInput) && toolName != "Bash" {
+		normInput := toSlash(filepath.Clean(toolInput))
+		for _, root := range trustedRoots {
+			normRoot := toSlash(filepath.Clean(root))
+			if normInput == normRoot || strings.HasPrefix(normInput, normRoot+"/") {
+				return DecisionAllow
+			}
+		}
 	}
 
 	// Deny list is checked first (highest priority).
@@ -148,10 +230,22 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 
 	// Default behaviour by mode.
 	switch mode {
-	case ModeDefault:
-		// In default mode, read-only tools auto-allow; others ask.
+	case ModeBypassPermissions:
+		return DecisionAllow
+	case ModeAcceptEdits:
+		if toolIsEdit(toolName) {
+			return DecisionAllow
+		}
 		return DecisionAsk
 	case ModePlan:
+		if toolIsReadOnly(toolName, toolInput) {
+			return DecisionAllow
+		}
+		return DecisionAsk
+	case ModeDefault:
+		if toolIsReadOnly(toolName, toolInput) {
+			return DecisionAllow
+		}
 		return DecisionAsk
 	}
 	return DecisionAsk
@@ -187,7 +281,35 @@ func matchRule(rule, toolName, toolInput string) bool {
 			return matchPattern(pattern, normalized)
 		}
 	}
+	// For path-based tools, normalise separators to / before matching.
+	// Use unconditional backslash replacement so Windows paths are handled
+	// correctly on all platforms (filepath.ToSlash is a no-op on non-Windows).
+	if isPathBasedTool(toolName) {
+		pattern = toSlash(pattern)
+		toolInput = toSlash(toolInput)
+	}
 	return matchPattern(pattern, toolInput)
+}
+
+// isPathBasedTool reports whether the tool operates on filesystem paths.
+func isPathBasedTool(name string) bool {
+	switch strings.ToLower(name) {
+	case "read", "edit", "write", "notebookedit", "glob", "grep", "ls":
+		return true
+	}
+	return false
+}
+
+// isWindowsDriveLetter reports whether b is an ASCII letter (a-z or A-Z).
+func isWindowsDriveLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+// toSlash converts all backslashes to forward slashes unconditionally.
+// Unlike filepath.ToSlash this works on non-Windows when handling
+// Windows-originated paths (e.g. in tests or cross-platform tooling).
+func toSlash(s string) string {
+	return strings.ReplaceAll(s, "\\", "/")
 }
 
 // matchPattern matches an input string against a rule pattern.
@@ -197,6 +319,11 @@ func matchPattern(pattern, input string) bool {
 	// Strip the extra leading slash so patterns match real filesystem paths.
 	if strings.HasPrefix(pattern, "//") {
 		pattern = pattern[1:]
+		// After stripping, "/C:/..." is a Windows drive path stored with a
+		// spurious leading slash.  Remove it so it matches "C:/..." paths.
+		if len(pattern) >= 3 && pattern[0] == '/' && isWindowsDriveLetter(pattern[1]) && pattern[2] == ':' {
+			pattern = pattern[1:]
+		}
 	}
 
 	// Legacy "prefix:*" form.
@@ -473,9 +600,9 @@ func containsAnyArg(fields []string, values ...string) bool {
 	return false
 }
 
-// bashCommandPrefix returns "cmd subcmd" if the command has a recognisable
-// subcommand (git status → "git status", npm install → "npm install").
-// Returns "" if no subcommand pattern is found.
+// bashCommandPrefix returns "cmd subcmd" for known multi-subcommand tools, or
+// just "cmd" for any other binary that has at least one argument. Returns ""
+// only when the command is a bare binary with no arguments.
 func bashCommandPrefix(cmd string) string {
 	fields := strings.Fields(cmd)
 	if len(fields) < 2 {
@@ -485,22 +612,23 @@ func bashCommandPrefix(cmd string) string {
 	if idx := strings.LastIndexByte(bin, '/'); idx >= 0 {
 		bin = bin[idx+1:]
 	}
-	// Tools with well-known subcommands.
+	// Tools with well-known subcommands: use "bin subcmd" form.
 	subcmdTools := map[string]bool{
 		"git": true, "npm": true, "yarn": true, "pnpm": true,
 		"cargo": true, "go": true, "gh": true, "docker": true,
 		"kubectl": true, "terraform": true, "aws": true, "make": true,
 	}
-	if !subcmdTools[bin] {
-		return ""
-	}
-	// First arg that doesn't start with "-" is the subcommand.
-	for _, f := range fields[1:] {
-		if !strings.HasPrefix(f, "-") {
-			return bin + " " + f
+	if subcmdTools[bin] {
+		// First arg that doesn't start with "-" is the subcommand.
+		for _, f := range fields[1:] {
+			if !strings.HasPrefix(f, "-") {
+				return bin + " " + f
+			}
 		}
 	}
-	return ""
+	// For all other binaries with at least one argument, use bin-only prefix.
+	// SuggestRule turns this into "Bash(bin:*)".
+	return bin
 }
 
 // PersistAllow writes rule to Conduit's project-local settings file.

@@ -32,7 +32,7 @@ Last updated: 2026-05-05
 | SSE parser | ✅ | internal/sse/ |
 | Agent loop | ✅ | internal/agent/loop.go |
 | System prompt assembly | 🔶 | internal/agent/systemprompt.go; content complete but not byte-identical to TS (conduit-authored to avoid IP) |
-| BashTool | ✅ | internal/tools/bashtool/ |
+| BashTool | ✅ | internal/tools/bashtool/ — Unix/macOS only; Windows replaced by Shell (PowerShell) |
 | FileReadTool | ✅ | internal/tools/filereadtool/ |
 | FileWriteTool | ✅ | internal/tools/filewritetool/ |
 | FileEditTool | ✅ | internal/tools/fileedittool/ |
@@ -56,6 +56,8 @@ Last updated: 2026-05-05
 | Status bar | ✅ | model, context%, cost |
 | TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
 | Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
+| Terminal window title (OSC 2) | ✅ | internal/tui/title.go — sets "conduit · working" on task start, resets to "conduit" on completion/interrupt |
+| Plan-approval picker | ✅ | internal/tui/planapproval.go — 4-option picker shown when ExitPlanMode presents a plan; user chooses mode (auto/accept-edits/default/reject) |
 | Assistant info row | ✅ | model, duration, per-turn cost after completed responses |
 | Tool message rendering | ✅ | one-line live/archive rows with tool-specific verbs + input/result summary; resumed tool_results pair back to tool_use; errors show details |
 | Welcome card (two-panel) | ✅ | profile fetched from oauth/profile |
@@ -72,7 +74,10 @@ Last updated: 2026-05-05
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| BashTool | ✅ | |
+| BashTool | ✅ | Unix/macOS only; on Windows the Shell (PowerShell) tool is registered instead |
+| Shell (PowerShell) | ✅ | internal/tools/winshelltool/ — Windows-only; registered instead of BashTool |
+| EnterAutoMode | ✅ | internal/tools/automodetool/ — conduit extension; no CC counterpart |
+| ExitAutoMode | ✅ | internal/tools/automodetool/ — conduit extension; no CC counterpart |
 | FileReadTool | ✅ | |
 | FileWriteTool | ✅ | |
 | FileEditTool | ✅ | |

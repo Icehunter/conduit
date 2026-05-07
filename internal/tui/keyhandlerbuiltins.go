@@ -448,9 +448,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				m.refreshViewport()
 				return m, nil, true
 			}
-			return m, func() tea.Msg {
+			return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 				return runLocalCall(ctx, manager, call, input, turnID, true)
-			}, true
+			}), true
 		}
 		// Expand paste placeholders before sending to the API.
 		// The textarea holds "[Pasted text #N +X lines]" tokens; the agent
@@ -506,7 +506,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		copy(histCopy, m.history)
 		turnID := m.turnID
 
-		return m, func() tea.Msg {
+		return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 			var usage api.Usage
 			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 				if ev.Type == agent.EventUsage {
@@ -515,7 +515,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				prog.Send(agentMsg{event: ev})
 			})
 			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage}
-		}, true
+		}), true
 	}
 	return m, nil, false
 }

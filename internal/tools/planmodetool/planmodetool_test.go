@@ -3,6 +3,7 @@ package planmodetool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/icehunter/conduit/internal/permissions"
@@ -79,8 +80,10 @@ func TestEnterPlanMode_Metadata(t *testing.T) {
 func TestExitPlanMode_ApprovedEnablesAutoMode(t *testing.T) {
 	var got permissions.Mode
 	tool := &ExitPlanMode{
-		SetMode:    func(m permissions.Mode) { got = m },
-		AskApprove: func(ctx context.Context, plan string) bool { return true },
+		SetMode: func(m permissions.Mode) { got = m },
+		AskApprove: func(_ context.Context, _ string) PlanApprovalDecision {
+			return PlanApprovalDecision{Approved: true, Mode: permissions.ModeBypassPermissions}
+		},
 	}
 	res, err := tool.Execute(context.Background(), json.RawMessage(`{"plan":"implement feature X"}`))
 	if err != nil {
@@ -94,11 +97,33 @@ func TestExitPlanMode_ApprovedEnablesAutoMode(t *testing.T) {
 	}
 }
 
+func TestExitPlanMode_ApprovedAcceptEditsMode(t *testing.T) {
+	var got permissions.Mode
+	tool := &ExitPlanMode{
+		SetMode: func(m permissions.Mode) { got = m },
+		AskApprove: func(_ context.Context, _ string) PlanApprovalDecision {
+			return PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEdits}
+		},
+	}
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"plan":"implement feature Y"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Errorf("unexpected error: %v", res.Content)
+	}
+	if got != permissions.ModeAcceptEdits {
+		t.Errorf("mode = %v; want ModeAcceptEdits", got)
+	}
+}
+
 func TestExitPlanMode_RejectedKeepsPlanMode(t *testing.T) {
 	var modeSet bool
 	tool := &ExitPlanMode{
-		SetMode:    func(_ permissions.Mode) { modeSet = true },
-		AskApprove: func(ctx context.Context, plan string) bool { return false },
+		SetMode: func(_ permissions.Mode) { modeSet = true },
+		AskApprove: func(_ context.Context, _ string) PlanApprovalDecision {
+			return PlanApprovalDecision{Approved: false}
+		},
 	}
 	res, err := tool.Execute(context.Background(), json.RawMessage(`{"plan":"draft plan"}`))
 	if err != nil {
@@ -109,6 +134,25 @@ func TestExitPlanMode_RejectedKeepsPlanMode(t *testing.T) {
 	}
 	if modeSet {
 		t.Error("SetMode should not be called when plan is rejected")
+	}
+}
+
+func TestExitPlanMode_RejectedWithFeedback(t *testing.T) {
+	tool := &ExitPlanMode{
+		SetMode: func(_ permissions.Mode) {},
+		AskApprove: func(_ context.Context, _ string) PlanApprovalDecision {
+			return PlanApprovalDecision{Approved: false, Feedback: "please also add tests"}
+		},
+	}
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"plan":"draft plan"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.IsError {
+		t.Error("expected error result when plan rejected with feedback")
+	}
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "please also add tests") {
+		t.Errorf("expected feedback in error message, got: %v", res.Content)
 	}
 }
 

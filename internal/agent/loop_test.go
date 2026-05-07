@@ -654,11 +654,11 @@ func TestLoop_NoGateAllowsAll(t *testing.T) {
 // --- helpers for M5 tests ---
 
 func newDenyGate(toolName string) *permissions.Gate {
-	return permissions.New(permissions.ModeDefault, nil, []string{toolName}, nil)
+	return permissions.New("", nil, permissions.ModeDefault, nil, []string{toolName}, nil)
 }
 
 func newAllowGate() *permissions.Gate {
-	return permissions.New(permissions.ModeBypassPermissions, nil, nil, nil)
+	return permissions.New("", nil, permissions.ModeBypassPermissions, nil, nil, nil)
 }
 
 func newBlockingPreToolHooks(toolName string) *settings.HooksSettings {
@@ -796,7 +796,7 @@ func TestLoop_AskMode_AlwaysAllowAddsSessionRule(t *testing.T) {
 	reg.Register(&fakeTool{name: "Bash", result: "output"})
 
 	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
-	gate := permissions.New(permissions.ModeDefault, nil, nil, nil)
+	gate := permissions.New("", nil, permissions.ModeDefault, nil, nil, nil)
 	lp := NewLoop(c, reg, LoopConfig{
 		Model: "m", MaxTokens: 1024,
 		System: []api.SystemBlock{{Type: "text", Text: "s"}},

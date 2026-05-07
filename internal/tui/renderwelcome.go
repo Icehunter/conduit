@@ -70,7 +70,9 @@ func renderWelcomeCard(content string, width int) string {
 		account += " · " + orgName
 	}
 	addRow(renderWelcomeSection("Session", sectionW))
-	addRow(metaStyle.Render(truncate("◇ "+modelName, innerW)))
+	if modelName != "" {
+		addRow(metaStyle.Render(truncate("◇ "+modelName, innerW)))
+	}
 	addRow(metaStyle.Render(truncate("◇ "+account, innerW)))
 	addBlank()
 

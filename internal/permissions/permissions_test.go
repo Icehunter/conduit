@@ -115,14 +115,14 @@ func TestMatchRule_BashReadonly(t *testing.T) {
 }
 
 func TestGate_BypassMode(t *testing.T) {
-	g := New(ModeBypassPermissions, nil, nil, nil)
+	g := New("", nil, ModeBypassPermissions, nil, nil, nil)
 	if g.Check("Bash", "rm -rf /") != DecisionAllow {
 		t.Error("bypass mode should allow everything")
 	}
 }
 
 func TestGate_DenyTakesPriority(t *testing.T) {
-	g := New(ModeDefault, []string{"Bash"}, []string{"Bash"}, nil)
+	g := New("", nil, ModeDefault, []string{"Bash"}, []string{"Bash"}, nil)
 	// deny list takes priority over allow
 	if g.Check("Bash", "") != DecisionDeny {
 		t.Error("deny should take priority over allow")
@@ -130,7 +130,7 @@ func TestGate_DenyTakesPriority(t *testing.T) {
 }
 
 func TestGate_AllowList(t *testing.T) {
-	g := New(ModeDefault, []string{"Bash(git status)"}, nil, nil)
+	g := New("", nil, ModeDefault, []string{"Bash(git status)"}, nil, nil)
 	if g.Check("Bash", "git status") != DecisionAllow {
 		t.Error("allowed rule should return Allow")
 	}
@@ -140,7 +140,7 @@ func TestGate_AllowList(t *testing.T) {
 }
 
 func TestGate_SessionAllow(t *testing.T) {
-	g := New(ModeDefault, nil, nil, nil)
+	g := New("", nil, ModeDefault, nil, nil, nil)
 	g.AllowForSession("Bash(git log *)")
 	if g.Check("Bash", "git log --oneline") != DecisionAllow {
 		t.Error("session-allowed rule should return Allow")
@@ -148,7 +148,7 @@ func TestGate_SessionAllow(t *testing.T) {
 }
 
 func TestGate_SetMode(t *testing.T) {
-	g := New(ModeDefault, nil, nil, nil)
+	g := New("", nil, ModeDefault, nil, nil, nil)
 	g.SetMode(ModeBypassPermissions)
 	if g.Mode() != ModeBypassPermissions {
 		t.Error("SetMode should update Mode()")
@@ -164,7 +164,7 @@ func TestSuggestRule(t *testing.T) {
 		{"Bash", "cd /repo && wc -l file.go", "Bash(readonly:*)"},
 		{"Bash", "cd /repo && find internal -type d -maxdepth 2 | sort", "Bash(readonly:*)"},
 		{"Bash", "npm install", "Bash(npm install:*)"},
-		{"Bash", "foobar --flag", "Bash(foobar --flag)"},
+		{"Bash", "foobar --flag", "Bash(foobar:*)"},
 		{"Bash", "", "Bash"},
 		{"Read", "/home/user/project/foo.go", "Read(//home/user/project/**)"},
 		{"Edit", "/tmp/file.txt", "Edit(//tmp/**)"},
@@ -211,7 +211,7 @@ func TestGate_Lists(t *testing.T) {
 	deny := []string{"Bash(rm -rf *)"}
 	ask := []string{"Bash(npm *)"}
 
-	g := New(ModeDefault, allow, deny, ask)
+	g := New("", nil, ModeDefault, allow, deny, ask)
 	gotAllow, gotDeny, gotAsk := g.Lists()
 
 	if len(gotAllow) != len(allow) {
@@ -229,7 +229,7 @@ func TestGate_Lists(t *testing.T) {
 }
 
 func TestGate_Lists_Empty(t *testing.T) {
-	g := New(ModeDefault, nil, nil, nil)
+	g := New("", nil, ModeDefault, nil, nil, nil)
 	a, d, ask := g.Lists()
 	if len(a) != 0 || len(d) != 0 || len(ask) != 0 {
 		t.Error("empty gate should return empty lists")
@@ -237,12 +237,111 @@ func TestGate_Lists_Empty(t *testing.T) {
 }
 
 func TestGate_Lists_Immutable(t *testing.T) {
-	g := New(ModeDefault, []string{"Bash"}, nil, nil)
+	g := New("", nil, ModeDefault, []string{"Bash"}, nil, nil)
 	a, _, _ := g.Lists()
 	// Mutating the returned slice must not affect the gate.
 	a[0] = "MUTATED"
 	a2, _, _ := g.Lists()
 	if a2[0] == "MUTATED" {
 		t.Error("Lists() should return a copy, not a reference")
+	}
+}
+
+// TestGate_ModeSemantics validates the mode-dispatch behaviour for
+// acceptEdits, plan, and default modes.
+func TestGate_ModeSemantics(t *testing.T) {
+	tests := []struct {
+		name  string
+		mode  Mode
+		tool  string
+		input string
+		want  Decision
+	}{
+		// acceptEdits — Bash must ask, file-edit tools must allow.
+		{"acceptEdits/Bash deny", ModeAcceptEdits, "Bash", "rm -rf /", DecisionAsk},
+		{"acceptEdits/Edit allow", ModeAcceptEdits, "Edit", "/any/file", DecisionAllow},
+		{"acceptEdits/Write allow", ModeAcceptEdits, "Write", "/any/file", DecisionAllow},
+		// plan — read-only tools allow, mutating tools ask (CC parity: prompt, don't hard-deny).
+		{"plan/Read allow", ModePlan, "Read", "/any/file", DecisionAllow},
+		{"plan/Glob allow", ModePlan, "Glob", "**/*.go", DecisionAllow},
+		{"plan/Edit ask", ModePlan, "Edit", "/any/file", DecisionAsk},
+		{"plan/Bash git status allow", ModePlan, "Bash", "git status", DecisionAllow},
+		{"plan/Bash npm install ask", ModePlan, "Bash", "npm install", DecisionAsk},
+		// default — read-only auto-allow, mutating asks.
+		{"default/Read allow", ModeDefault, "Read", "/any/file", DecisionAllow},
+		{"default/Bash git log allow", ModeDefault, "Bash", "git log", DecisionAllow},
+		{"default/Bash npm install ask", ModeDefault, "Bash", "npm install", DecisionAsk},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := New("", nil, tt.mode, nil, nil, nil)
+			got := g.Check(tt.tool, tt.input)
+			if got != tt.want {
+				t.Errorf("mode=%s tool=%s input=%q: got %v, want %v", tt.mode, tt.tool, tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchRule_CrossPlatformPaths ensures path separator normalisation works.
+func TestMatchRule_CrossPlatformPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		rule      string
+		tool      string
+		input     string
+		wantMatch bool
+	}{
+		// Backslash input should match a forward-slash pattern after normalisation.
+		{
+			name:      "Edit backslash input vs slash pattern",
+			rule:      "Edit(//C:/Users/x/**)",
+			tool:      "Edit",
+			input:     `C:\Users\x\foo.go`,
+			wantMatch: true,
+		},
+		// Regression: forward-slash input still matches forward-slash pattern.
+		{
+			name:      "Read forward-slash regression",
+			rule:      "Read(//home/u/**)",
+			tool:      "Read",
+			input:     "/home/u/sub/file",
+			wantMatch: true,
+		},
+		// Bash patterns must NOT have slashes mangled.
+		{
+			name:      "Bash git log no mangle",
+			rule:      "Bash(git log:*)",
+			tool:      "Bash",
+			input:     "git log /tmp/foo",
+			wantMatch: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchRule(tt.rule, tt.tool, tt.input)
+			if got != tt.wantMatch {
+				t.Errorf("matchRule(%q, %q, %q) = %v; want %v", tt.rule, tt.tool, tt.input, got, tt.wantMatch)
+			}
+		})
+	}
+}
+
+// TestSuggestRule_UnknownBin ensures unknown binaries get a bin-only prefix
+// (producing Bash(bin:*)) and known read-only commands still use readonly:*.
+func TestSuggestRule_UnknownBin(t *testing.T) {
+	tests := []struct {
+		tool, input, want string
+	}{
+		// Unknown binary with argument → Bash(bin:*)
+		{"Bash", "playwright test", "Bash(playwright:*)"},
+		// rg is read-only; takes priority over prefix extraction.
+		{"Bash", "rg foo .", "Bash(readonly:*)"},
+	}
+	for _, tt := range tests {
+		got := SuggestRule(tt.tool, tt.input)
+		if got != tt.want {
+			t.Errorf("SuggestRule(%q, %q) = %q; want %q", tt.tool, tt.input, got, tt.want)
+		}
 	}
 }

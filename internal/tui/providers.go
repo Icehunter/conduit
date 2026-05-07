@@ -414,6 +414,9 @@ func (m Model) activeModelDisplayName() string {
 		if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != settings.ProviderKindMCP && provider.Model != "" {
 			return accountProviderDisplayName(provider)
 		}
+		if m.noAuth {
+			return ""
+		}
 		return m.modelName
 	}
 	return mcpProviderDisplayName(provider, m.localModelName(provider.Server))

@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
@@ -50,12 +51,19 @@ func runPrint(args []string) error {
 	reg := app.BuildRegistry(c, nil, lsp.NewManager(), nil, nil)
 	modelName := internalmodel.Resolve()
 
+	// Non-interactive mode: create a gate with default mode and no trusted roots.
+	// AskPermission auto-denies anything that is not on an allow list — there is
+	// no user present to respond to a prompt.
+	gate := permissions.New(cwd, nil, permissions.ModeDefault, nil, nil, nil)
+
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:           modelName,
 		MaxTokens:       internalmodel.MaxTokens,
 		System:          agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
 		Metadata:        app.BuildMetadata(),
 		MaxTurns:        50,
+		Gate:            gate,
+		AskPermission:   func(_ context.Context, _, _ string) (bool, bool) { return false, false },
 		BackgroundModel: func() string { return compact.DefaultModel },
 	})
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)

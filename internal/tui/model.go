@@ -322,13 +322,14 @@ type Model struct {
 	cancelTurn       context.CancelFunc
 	streaming        string
 	apiRetryStatus   string
-	turnID           int               // incremented each turn; agentDoneMsg with stale ID is ignored
-	turnStarted      time.Time         // wall time when the current agent turn started
-	turnAssistant    string            // display label captured for the provider answering the current turn
-	turnProvider     string            // provider/model captured for transcript display metadata
-	turnProviderKind string            // provider kind captured for transcript display metadata
-	pendingMessages  []string          // messages typed while agent is running; drained after turn ends
-	questionAsk      *questionAskState // non-nil when AskUserQuestion is waiting for user input
+	turnID           int                      // incremented each turn; agentDoneMsg with stale ID is ignored
+	turnStarted      time.Time                // wall time when the current agent turn started
+	turnAssistant    string                   // display label captured for the provider answering the current turn
+	turnProvider     string                   // provider/model captured for transcript display metadata
+	turnProviderKind string                   // provider kind captured for transcript display metadata
+	pendingMessages  []string                 // messages typed while agent is running; drained after turn ends
+	questionAsk      *questionAskState        // non-nil when AskUserQuestion is waiting for user input
+	planApproval     *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands

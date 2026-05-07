@@ -145,6 +145,80 @@ func IsTrusted(cwd string) (bool, error) {
 	return false, nil
 }
 
+// TrustedAncestors returns the list of ancestor paths of cwd (including cwd
+// itself) that have HasTrustDialogAccepted set to true in either the Conduit
+// or legacy Claude global config. The returned list may be empty.
+func TrustedAncestors(cwd string) ([]string, error) {
+	if os.Getenv("CLAUDE_CODE_SANDBOXED") != "" {
+		// In sandboxed/CI environments everything is trusted; return cwd itself
+		// so the caller gets a non-empty list that covers the whole tree.
+		abs, err := filepath.Abs(cwd)
+		if err != nil {
+			abs = cwd
+		}
+		return []string{abs}, nil
+	}
+
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		abs = cwd
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var trusted []string
+
+	cfg, err := load()
+	if err != nil {
+		return nil, err
+	}
+
+	// Walk from cwd up to root collecting every trusted ancestor.
+	dir := abs
+	for {
+		if p, ok := cfg.Projects[dir]; ok && p.HasTrustDialogAccepted {
+			trusted = append(trusted, dir)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	// Also check legacy Claude config.
+	if legacy, legacyErr := loadLegacy(); legacyErr == nil {
+		dir := abs
+		for {
+			slashDir := filepath.ToSlash(dir)
+			if p, ok := legacy.Projects[dir]; ok && p.HasTrustDialogAccepted {
+				trusted = append(trusted, dir)
+			} else if slashDir != dir {
+				if p, ok := legacy.Projects[slashDir]; ok && p.HasTrustDialogAccepted {
+					trusted = append(trusted, dir)
+				}
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+
+	// Deduplicate while preserving order.
+	seen := make(map[string]bool, len(trusted))
+	deduped := trusted[:0]
+	for _, t := range trusted {
+		if !seen[t] {
+			seen[t] = true
+			deduped = append(deduped, t)
+		}
+	}
+	return deduped, nil
+}
+
 // SetTrusted marks cwd as trusted in ~/.conduit/conduit.json and persists immediately.
 func SetTrusted(cwd string) error {
 	mu.Lock()

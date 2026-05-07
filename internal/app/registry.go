@@ -1,6 +1,8 @@
 package app
 
 import (
+	"runtime"
+
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/lsp"
@@ -9,6 +11,7 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
+	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
 	"github.com/icehunter/conduit/internal/tools/configtool"
 	"github.com/icehunter/conduit/internal/tools/fileedittool"
@@ -31,6 +34,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/toolsearchtool"
 	"github.com/icehunter/conduit/internal/tools/webfetchtool"
 	"github.com/icehunter/conduit/internal/tools/websearchtool"
+	"github.com/icehunter/conduit/internal/tools/winshelltool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 )
 
@@ -73,6 +77,8 @@ type RegistryOpts struct {
 	ExitPlan      *planmodetool.ExitPlanMode
 	AskUser       *askusertool.AskUserQuestion
 	Synthetic     *syntheticoutputtool.SyntheticOutput
+	EnterAutoMode *automodetool.EnterAutoMode
+	ExitAutoMode  *automodetool.ExitAutoMode
 	EnterWorktree *worktreetool.EnterWorktree
 	ExitWorktree  *worktreetool.ExitWorktree
 
@@ -89,7 +95,12 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	if rOpts != nil {
 		sessionEnv = rOpts.SessionEnv
 	}
-	reg.Register(bashtool.New(sessionEnv))
+	// On Windows, register the PowerShell Shell tool; on Unix/macOS use Bash.
+	if runtime.GOOS == "windows" {
+		reg.Register(winshelltool.New(sessionEnv))
+	} else {
+		reg.Register(bashtool.New(sessionEnv))
+	}
 	reg.Register(fileedittool.New())
 	reg.Register(filereadtool.New())
 	reg.Register(filewritetool.New())
@@ -127,6 +138,12 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		reg.Register(rOpts.ExitPlan)
 		reg.Register(rOpts.AskUser)
 		reg.Register(rOpts.Synthetic)
+		if rOpts.EnterAutoMode != nil {
+			reg.Register(rOpts.EnterAutoMode)
+		}
+		if rOpts.ExitAutoMode != nil {
+			reg.Register(rOpts.ExitAutoMode)
+		}
 	}
 	// Register MCP server tools (if any servers are configured).
 	if mcpManager != nil {

@@ -183,8 +183,6 @@ func runREPL(continueMode bool, resumeID string) error {
 		usageStatusEnabled = userSettings.UsageStatusEnabled
 	}
 
-	gate := permissions.New(permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
-
 	// Workspace trust check — mirrors CC's hasTrustDialogAccepted logic.
 	// runPrint (-p) is non-interactive and skips the dialog; CLAUDE_CODE_SANDBOXED
 	// bypasses it too (handled inside IsTrusted).
@@ -192,6 +190,12 @@ func runREPL(continueMode bool, resumeID string) error {
 	if trusted, trustErr := globalconfig.IsTrusted(cwd); trustErr == nil && !trusted {
 		needsTrust = true
 	}
+	// Collect trusted ancestor paths for the permission gate so reads inside
+	// trusted directories never prompt. Best-effort: ignore errors.
+	trustedRoots, _ := globalconfig.TrustedAncestors(cwd)
+
+	gate := permissions.New(cwd, trustedRoots, permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
+
 	importLegacySessions := func() {
 		go func() {
 			_, _ = session.ImportLegacyProject(cwd)
@@ -209,21 +213,6 @@ func runREPL(continueMode bool, resumeID string) error {
 		gate.AllowForSession("Edit(" + dir + "/*)")
 		gate.AllowForSession("Write(" + dir + "/*)")
 	}
-
-	// Auto-allow conduit's own per-project storage tree without prompting.
-	// The auto-extract memory sub-agent writes to ~/.conduit/projects/
-	// <sanitized-cwd>/memory/, the session-memory sub-agent writes to
-	// ~/.conduit/projects/<sanitized-cwd>/<sessionID>/session-memory/
-	// summary.md, and dream consolidation reads/writes the same memory
-	// dir. Without these allows, every conduit-internal write triggered
-	// the user permission prompt — annoying and meaningless because the
-	// model never picked the path itself; conduit picked it.
-	conduitDataDir := filepath.Join(settings.ConduitDir(), "projects")
-	legacyDataDir := filepath.Join(settings.ClaudeDir(), "projects")
-	gate.AllowForSession("Read(" + conduitDataDir + "/**)")
-	gate.AllowForSession("Edit(" + conduitDataDir + "/**)")
-	gate.AllowForSession("Write(" + conduitDataDir + "/**)")
-	gate.AllowForSession("Read(" + legacyDataDir + "/**)")
 
 	// Apply theme from settings.json. Style packages init at import time
 	// from default Dark, then re-derive via theme.OnChange when we Set here.

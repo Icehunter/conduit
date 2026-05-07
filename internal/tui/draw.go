@@ -45,14 +45,19 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 		return
 	}
 
+	// Sub-agent detail view uses tighter margins to maximise visible log content.
+	panelRect := layout.panel
+	if m.subagentPanel != nil && m.subagentPanel.view == "detail" {
+		panelRect = image.Rect(area.Min.X+3, area.Min.Y+1, area.Max.X-3, area.Max.Y-1)
+	}
 	panelModel := m
-	panelModel.width = layout.panel.Dx()
-	panelModel.panelH = layout.panel.Dy()
+	panelModel.width = panelRect.Dx()
+	panelModel.panelH = panelRect.Dy()
 	panel := panelModel.renderActivePanel()
 	picker := m.renderActivePicker()
 	modal := m.renderActiveModal()
 	if panel != "" {
-		drawFloatingRendered(scr, layout.panel, panel)
+		drawFloatingRendered(scr, panelRect, panel)
 	}
 	if picker != "" {
 		spec := floatingPickerSpec
@@ -208,12 +213,16 @@ func (m Model) renderActivePanel() string {
 		return m.renderSearchPanel()
 	case m.onboarding != nil:
 		return m.renderOnboarding()
+	case m.subagentPanel != nil && m.subagentPanel.view == "detail":
+		return m.renderSubagentDetail()
 	}
 	return ""
 }
 
 func (m Model) renderActivePicker() string {
 	switch {
+	case m.subagentPanel != nil && m.subagentPanel.view == "list":
+		return m.renderSubagentList()
 	case m.loginPrompt != nil:
 		return m.renderLoginPicker()
 	case m.resumePrompt != nil:
@@ -250,21 +259,35 @@ func (m Model) renderWorkingRow() string {
 		return styleModeYellow.Width(m.width).Render(m.apiRetryStatus)
 	case m.running:
 		m.working.SetLabel("Thinking")
-		main := styleStatus.Width(m.width).Render(m.working.Render())
 		entries := subagent.Default.Snapshot()
 		if len(entries) == 0 {
-			return main
+			return styleStatus.Width(m.width).Render(m.working.Render())
 		}
+		// Right-align the hint so spinner width never clips it.
+		hint := stylePickerDesc.Render("  Enter ↵ to view log")
+		hintW := lipgloss.Width(hint)
+		spinnerW := m.width - hintW
+		if spinnerW < 10 {
+			spinnerW = 10
+		}
+		main := styleStatus.Width(spinnerW).Render(m.working.Render()) + hint
 		var sb strings.Builder
 		sb.WriteString(main)
 		for _, e := range entries {
 			label := e.Label
-			if len([]rune(label)) > 20 {
-				label = string([]rune(label)[:20]) + "…"
+			if len([]rune(label)) > 26 {
+				label = string([]rune(label)[:26]) + "…"
 			}
 			fmt.Fprintf(&sb, "\n  %s  %s", stylePickerDesc.Render("↳ "+label), modeBadge(e.Mode))
 		}
 		return sb.String()
+	case !m.running && len(subagent.Default.SnapshotAll()) > 0:
+		n := len(subagent.Default.SnapshotAll())
+		noun := "agent log"
+		if n > 1 {
+			noun = fmt.Sprintf("%d agent logs", n)
+		}
+		return styleStatusAccent.Width(m.width).Render("  ● " + noun + " ready — Enter to view")
 	default:
 		return styleStatus.Width(m.width).Render("")
 	}

@@ -28,6 +28,17 @@ func panelTitle(s string) string {
 		Render(s)
 }
 
+// panelHeader renders the standard modal header: bold title left, gradient
+// slash fill right. innerW is the usable content width (panel width - padding).
+func panelHeader(title string, innerW int) string {
+	rendered := panelTitle(title)
+	ornW := innerW - lipgloss.Width(rendered) - 4
+	if ornW < 1 {
+		ornW = 1
+	}
+	return rendered + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2)
+}
+
 func panelRule(width int) string {
 	if width <= 0 {
 		return ""

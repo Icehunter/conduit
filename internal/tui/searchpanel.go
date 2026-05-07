@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/session"
 )
@@ -67,9 +68,12 @@ func (m Model) renderSearchPanel() string {
 		return ""
 	}
 	p := m.searchPanel
+	innerW := m.width - 8
 	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render(fmt.Sprintf("Search: %q", p.query)))
-	sb.WriteString("  " + stylePickerDesc.Render(fmt.Sprintf("%d results", len(p.results))) + "\n\n")
+	title := fmt.Sprintf("Search: %q", p.query)
+	countHint := stylePickerDesc.Render(fmt.Sprintf("  %d results", len(p.results)))
+	titleW := innerW - lipgloss.Width(countHint) - 4
+	sb.WriteString(panelHeader(title, titleW) + countHint + "\n\n")
 
 	const maxVisible = 10
 	start := p.selected - maxVisible/2

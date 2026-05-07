@@ -33,10 +33,33 @@ type SubAgentSpec struct {
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
 // (extra system prompt, model override, tool allowlist). It uses the
 // background model unless spec.Model overrides it.
+// resolveModelAlias maps Claude Code plugin shorthand model names to the actual
+// model the loop should use. Plugins from claude-plugins-official declare
+// "model: sonnet/opus/haiku/inherit" in agent frontmatter; the CC runtime
+// resolves these against its own model list. Conduit maps them to the
+// closest configured equivalent rather than passing bare aliases to the API.
+func (l *Loop) resolveModelAlias(alias string) string {
+	switch strings.ToLower(strings.TrimSpace(alias)) {
+	case "", "inherit", "background":
+		return l.BackgroundModel()
+	case "haiku", "fast":
+		return l.BackgroundModel()
+	case "sonnet", "opus":
+		// Use the foreground main model — it's whatever the user configured as
+		// their primary model, which is the closest thing to "a capable model".
+		l.mu.RLock()
+		m := l.cfg.Model
+		l.mu.RUnlock()
+		return m
+	default:
+		return alias // already a full model ID — pass through unchanged
+	}
+}
+
 func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (string, error) {
 	model := l.BackgroundModel()
 	if spec.Model != "" {
-		model = spec.Model
+		model = l.resolveModelAlias(spec.Model)
 	}
 
 	l.mu.RLock()
@@ -85,7 +108,7 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	childID := fmt.Sprintf("sub-%d", time.Now().UnixNano())
 	label := "<sub-agent>"
 	if len(prompt) > 0 {
-		label = prompt
+		label = strings.ReplaceAll(strings.TrimSpace(prompt), "\n", " ")
 		if len(label) > 30 {
 			label = label[:30]
 		}
@@ -128,7 +151,7 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	msgs := []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: prompt}}},
 	}
-	history, err := child.Run(ctx, msgs, func(LoopEvent) {})
+	history, err := child.Run(ctx, msgs, subAgentEventHandler(childID))
 
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
@@ -225,16 +248,17 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	childID := fmt.Sprintf("sub-%d", time.Now().UnixNano())
 	label := "<sub-agent>"
 	if len(prompt) > 0 {
-		label = prompt
+		label = strings.ReplaceAll(strings.TrimSpace(prompt), "\n", " ")
 		if len(label) > 30 {
 			label = label[:30]
 		}
 	}
 	subagent.Default.Add(subagent.Entry{
-		ID:        childID,
-		Label:     label,
-		Mode:      childGate.Mode(),
-		StartedAt: time.Now(),
+		ID:         childID,
+		Label:      label,
+		Mode:       childGate.Mode(),
+		StartedAt:  time.Now(),
+		Background: true, // runSubAgentWithModel is always a system-initiated call
 	})
 	defer subagent.Default.Remove(childID)
 
@@ -266,7 +290,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}
-	history, err := child.Run(ctx, msgs, func(LoopEvent) {})
+	history, err := child.Run(ctx, msgs, subAgentEventHandler(childID))
 
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
@@ -294,6 +318,32 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 		return "", err
 	}
 	return extractLastAssistantText(history), nil
+}
+
+// subAgentEventHandler returns a LoopEvent handler that forwards tool events
+// to the subagent tracker for TUI drill-in display.
+func subAgentEventHandler(childID string) func(LoopEvent) {
+	started := map[string]time.Time{}
+	return func(ev LoopEvent) {
+		switch ev.Type {
+		case EventToolUse:
+			started[ev.ToolID] = time.Now()
+			subagent.Default.AppendEvent(childID, subagent.ToolEvent{
+				ToolID:    ev.ToolID,
+				ToolName:  ev.ToolName,
+				ToolInput: string(ev.ToolInput),
+				Status:    "running",
+				StartedAt: time.Now(),
+			})
+		case EventToolResult:
+			var dur time.Duration
+			if t, ok := started[ev.ToolID]; ok {
+				dur = time.Since(t).Round(time.Second)
+				delete(started, ev.ToolID)
+			}
+			subagent.Default.UpdateEvent(childID, ev.ToolID, ev.IsError, dur)
+		}
+	}
 }
 
 // extractLastAssistantText returns the concatenated text from the final

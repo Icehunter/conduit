@@ -80,6 +80,14 @@ type ExitPlanMode struct {
 	// PlanApprovalDecision. When nil, the plan is auto-approved with
 	// ModeBypassPermissions.
 	AskApprove func(ctx context.Context, plan string) PlanApprovalDecision
+
+	// IsCouncilMode returns true when the current permission mode is ModeCouncil.
+	// When true, StartCouncil is called instead of AskApprove.
+	IsCouncilMode func() bool
+
+	// StartCouncil runs the council debate and returns the approval decision.
+	// Called instead of AskApprove when IsCouncilMode returns true.
+	StartCouncil func(ctx context.Context, plan string) PlanApprovalDecision
 }
 
 // exitInput is the JSON input for ExitPlanMode.
@@ -112,7 +120,9 @@ func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 	}
 
 	var decision PlanApprovalDecision
-	if t.AskApprove != nil {
+	if t.IsCouncilMode != nil && t.IsCouncilMode() && t.StartCouncil != nil {
+		decision = t.StartCouncil(ctx, inp.Plan)
+	} else if t.AskApprove != nil {
 		decision = t.AskApprove(ctx, inp.Plan)
 	} else {
 		// Auto-approve with bypass when no callback (non-interactive mode).

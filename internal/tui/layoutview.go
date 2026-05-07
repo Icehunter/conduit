@@ -205,6 +205,9 @@ func (m Model) renderModeStatus() string {
 	case permissions.ModeBypassPermissions:
 		mode = "⏵⏵ auto"
 		style = styleModeYellow
+	case permissions.ModeCouncil:
+		mode = "⚖ council"
+		style = styleModeGreen
 	default:
 		mode = "default mode"
 		style = styleStatus

@@ -204,6 +204,64 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case councilStartMsg:
+		return m.handleCouncilFlow(msg)
+
+	case councilMemberResponseMsg:
+		m.messages = append(m.messages, Message{
+			Role:     RoleCouncil,
+			Content:  msg.text,
+			ToolName: msg.label,
+		})
+		if msg.agreed {
+			m.messages = append(m.messages, Message{
+				Role:     RoleCouncil,
+				Content:  "✓ agrees with current direction",
+				ToolName: msg.label,
+			})
+		}
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		return m, nil
+
+	case councilMemberEjectedMsg:
+		m.messages = append(m.messages, Message{
+			Role:     RoleCouncil,
+			Content:  "⚠ ejected: " + msg.reason,
+			ToolName: msg.label,
+		})
+		m.refreshViewport()
+		return m, nil
+
+	case councilSynthesisStartMsg:
+		m.messages = append(m.messages, Message{
+			Role:     RoleCouncil,
+			Content:  "Synthesising agreed points…",
+			ToolName: "Council",
+		})
+		m.refreshViewport()
+		return m, nil
+
+	case councilDoneMsg:
+		m.messages = append(m.messages, Message{
+			Role:     RoleCouncil,
+			Content:  msg.plan,
+			ToolName: "Council",
+		})
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		reply := m.councilReply
+		if reply != nil {
+			m.councilReply = nil
+			// Open the plan-approval picker directly — councilReply is already
+			// a send-only channel so we can't use planApprovalAskMsg (which
+			// requires a bidirectional chan). planApprovalPickerState accepts
+			// chan<- directly.
+			m.planApproval = &planApprovalPickerState{reply: reply}
+			m.refreshViewport()
+		}
+		return m, nil
+
 	case setPermissionModeMsg:
 		m.applyPermissionMode(msg.mode)
 		return m.startPlanUsageFetch()
@@ -237,6 +295,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 		}
 		return m, nil
+
+	case subagentPanelRefreshMsg:
+		if m.subagentPanel == nil {
+			return m, nil
+		}
+		// If the tracked sub-agent is gone, keep panel open so user can read the log.
+		return m, tickSubagentPanel()
 
 	}
 

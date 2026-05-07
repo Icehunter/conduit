@@ -192,6 +192,8 @@ func (m Model) currentProviderRole() string {
 	switch m.permissionMode {
 	case permissions.ModePlan:
 		return settings.RolePlanning
+	case permissions.ModeCouncil:
+		return settings.RolePlanning
 	case permissions.ModeAcceptEdits, permissions.ModeBypassPermissions:
 		// Use the dedicated implement role if configured; fall back to main.
 		if _, ok := m.providerForRole(settings.RoleImplement); ok {

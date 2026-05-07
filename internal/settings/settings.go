@@ -170,6 +170,22 @@ type Merged struct {
 	EnabledMcpjsonServers      []string
 	DisabledMcpjsonServers     []string
 	EnableAllProjectMcpServers bool
+
+	// CouncilProviders is the list of provider keys that participate in
+	// council-mode debates. Empty means council mode is disabled/unconfigured.
+	CouncilProviders []string `json:"councilProviders,omitempty"`
+	// CouncilMaxRounds is the maximum number of debate rounds before synthesis.
+	// Zero means use the default (4).
+	CouncilMaxRounds int `json:"councilMaxRounds,omitempty"`
+}
+
+// EffectiveCouncilMaxRounds returns the configured max debate rounds, defaulting
+// to 4 when CouncilMaxRounds is zero or negative.
+func (s *Merged) EffectiveCouncilMaxRounds() int {
+	if s.CouncilMaxRounds > 0 {
+		return s.CouncilMaxRounds
+	}
+	return 4
 }
 
 // ActiveProviderSettings stores conduit's provider routing selector.

@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -44,22 +45,61 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		p.selected = lastPickerSelectable(p.items)
 	case "tab", "right":
 		if p.kind == "model" {
-			p.role = nextProviderRole(p.role)
-			p.current = m.providerValueForRole(p.role)
-			p.selected = selectedPickerIndex(p.items, p.current)
+			next := nextProviderRole(p.role)
+			p.role = next
+			if next == roleCouncil {
+				// Council tab: multi-select — no single current value.
+				p.current = ""
+				p.selected = firstPickerSelectable(p.items)
+			} else {
+				p.current = m.providerValueForRole(next)
+				p.selected = selectedPickerIndex(p.items, p.current)
+			}
 		}
 	case "shift+tab", "left":
 		if p.kind == "model" {
-			p.role = previousProviderRole(p.role)
-			p.current = m.providerValueForRole(p.role)
-			p.selected = selectedPickerIndex(p.items, p.current)
+			prev := previousProviderRole(p.role)
+			p.role = prev
+			if prev == roleCouncil {
+				// Council tab: multi-select — no single current value.
+				p.current = ""
+				p.selected = firstPickerSelectable(p.items)
+			} else {
+				p.current = m.providerValueForRole(prev)
+				p.selected = selectedPickerIndex(p.items, p.current)
+			}
 		}
 	case "space":
-		// Model picker: apply to the current role but keep picker open so the
-		// user can assign models to multiple roles without reopening each time.
+		// Model picker (council tab): toggle provider in/out of council roster.
+		// Model picker (other tabs): apply to role but keep open.
+		// Mode picker: apply mode + close.
 		// Other pickers: space behaves like enter (apply + close).
 		if p.selected < 0 || p.selected >= len(p.items) || p.items[p.selected].Section {
 			break
+		}
+		if p.kind == "mode" {
+			picked := p.items[p.selected].Value
+			m.picker = nil
+			m.applyPermissionMode(permissions.Mode(picked))
+			return m, nil
+		}
+		if p.kind == "model" && p.role == roleCouncil {
+			// Toggle this provider key in m.councilProviders.
+			val := p.items[p.selected].Value
+			found := false
+			for i, cp := range m.councilProviders {
+				if cp == val {
+					m.councilProviders = append(m.councilProviders[:i], m.councilProviders[i+1:]...)
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.councilProviders = append(m.councilProviders, val)
+			}
+			// Keep picker open; re-point to same state.
+			m.picker = p
+			return m, nil
 		}
 		if p.kind == "model" {
 			picked := p.items[p.selected].Value
@@ -92,6 +132,19 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if p.items[p.selected].Section {
+			return m, nil
+		}
+		if p.kind == "mode" {
+			picked := p.items[p.selected].Value
+			m.picker = nil
+			m.applyPermissionMode(permissions.Mode(picked))
+			return m, nil
+		}
+		if p.kind == "model" && p.role == roleCouncil {
+			// Save the current council roster and close.
+			_ = settings.SaveConduitRawKey("councilProviders", m.councilProviders)
+			m.picker = nil
+			m.refreshViewport()
 			return m, nil
 		}
 		picked := p.items[p.selected].Value
@@ -128,6 +181,9 @@ func (m Model) renderPicker() string {
 	if p.kind == "model" {
 		return m.renderModelPicker()
 	}
+	if p.kind == "mode" {
+		return m.renderModePicker()
+	}
 	var sb strings.Builder
 	sb.WriteString(styleStatusAccent.Render(p.title))
 	sb.WriteString("\n\n")
@@ -141,6 +197,33 @@ func (m Model) renderPicker() string {
 			continue
 		}
 		marker := "  "
+		if it.Value == p.current {
+			marker = "● "
+		}
+		label := marker + it.Label
+		if i == p.selected {
+			sb.WriteString(stylePickerItemSelected.Render("❯ "+label) + "\n")
+		} else {
+			sb.WriteString(stylePickerItem.Render("  "+label) + "\n")
+		}
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · Escape cancel"))
+
+	return sb.String()
+}
+
+// renderModePicker renders the 5-item permission mode picker.
+func (m Model) renderModePicker() string {
+	p := m.picker
+	if p == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(styleStatusAccent.Render("Switch Mode"))
+	sb.WriteString("\n\n")
+
+	for i, it := range p.items {
+		marker := "○ "
 		if it.Value == p.current {
 			marker = "● "
 		}
@@ -195,7 +278,11 @@ func (m Model) renderModelPicker() string {
 	} else {
 		body = append(body, "")
 	}
-	body = append(body, renderModelPickerRows(p.items, p.current, p.selected, start, end, contentW)...)
+	if p.role == roleCouncil {
+		body = append(body, renderModelPickerCouncilRows(p.items, m.councilProviders, p.selected, start, end, contentW)...)
+	} else {
+		body = append(body, renderModelPickerRows(p.items, p.current, p.selected, start, end, contentW)...)
+	}
 	for modelPickerBodyListRows(body) < listRows {
 		body = append(body, "")
 	}
@@ -207,13 +294,43 @@ func (m Model) renderModelPicker() string {
 	for len(body) < bodyRows-1 {
 		body = append(body, "")
 	}
-	body = append(body, stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"))
+	if p.role == roleCouncil {
+		body = append(body, stylePickerDesc.Render("↑/↓ choose · Space toggle · Enter save · Esc close"))
+	} else {
+		body = append(body, stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"))
+	}
 	if len(body) > bodyRows {
 		body = body[:bodyRows]
-		body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close")
+		if p.role == roleCouncil {
+			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Space toggle · Enter save · Esc close")
+		} else {
+			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close")
+		}
 	}
 	sb.WriteString("\n" + strings.Join(body, "\n"))
 	return sb.String()
+}
+
+// renderModelPickerCouncilRows renders items for the council multi-select tab.
+// Items show ● if their Value is in councilProviders, ○ otherwise.
+func renderModelPickerCouncilRows(items []pickerItem, councilProviders []string, selected, start, end, contentW int) []string {
+	inCouncil := make(map[string]bool, len(councilProviders))
+	for _, cp := range councilProviders {
+		inCouncil[cp] = true
+	}
+	rows := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		it := items[i]
+		if it.Section {
+			if i > start {
+				rows = append(rows, "")
+			}
+			rows = append(rows, renderModelPickerSection(it.Label, false, contentW))
+			continue
+		}
+		rows = append(rows, renderModelPickerRow(it, i == selected, inCouncil[it.Value], contentW))
+	}
+	return rows
 }
 
 func renderModelPickerRows(items []pickerItem, current string, selected, start, end, contentW int) []string {
@@ -317,12 +434,16 @@ func modelPickerVisibleLines(height int) int {
 	return visible
 }
 
+// roleCouncil is the virtual role name used for the council multi-select tab.
+const roleCouncil = "council"
+
 var providerRoleOrder = []string{
 	settings.RoleDefault,
 	settings.RoleMain,
 	settings.RoleBackground,
 	settings.RolePlanning,
 	settings.RoleImplement,
+	roleCouncil,
 }
 
 func nextProviderRole(role string) string {
@@ -358,6 +479,7 @@ func renderProviderRoleTabs(active string) string {
 		settings.RoleBackground: "Background",
 		settings.RolePlanning:   "Planning",
 		settings.RoleImplement:  "Implement",
+		roleCouncil:             "Council",
 	}
 	activeIdx := 0
 	tabLabels := make([]string, 0, len(providerRoleOrder))
@@ -380,6 +502,8 @@ func providerRolePrompt(role string) string {
 		return "Choose a provider for planning and architecture tasks"
 	case settings.RoleImplement:
 		return "Choose a provider for bounded implementation offload tasks"
+	case roleCouncil:
+		return "Council Members — toggle providers with Space"
 	default:
 		return "Choose a provider for default permission mode"
 	}

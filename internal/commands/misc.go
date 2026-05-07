@@ -2,9 +2,12 @@ package commands
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"runtime"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/browser"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 )
@@ -95,6 +98,42 @@ func RegisterMiscCommands(r *Registry) {
 			return Result{Type: "text", Text: themeStatusText(head)}
 		},
 	})
+}
+
+// RegisterFeedbackCommand adds /feedback that opens a pre-filled GitHub issue
+// in the user's default browser. version is shown in the issue body.
+func RegisterFeedbackCommand(r *Registry, version string) {
+	r.Register(Command{
+		Name:        "feedback",
+		Description: "Open a GitHub issue to share feedback (/feedback <text>)",
+		Handler: func(args string) Result {
+			text := strings.TrimSpace(args)
+			if text == "" {
+				return Result{Type: "text", Text: "Usage: /feedback <text>\nExample: /feedback pressing X causes Y"}
+			}
+			issueURL := buildFeedbackURL(text, version)
+			if err := browser.Open(issueURL); err != nil {
+				return Result{Type: "text", Text: fmt.Sprintf(
+					"Could not open browser automatically.\nPlease open this URL manually:\n%s", issueURL,
+				)}
+			}
+			return Result{Type: "text", Text: "Opening browser to create GitHub issue…"}
+		},
+	})
+}
+
+// buildFeedbackURL constructs a GitHub new-issue URL pre-filled with the
+// feedback text and version metadata. The title is truncated to 60 runes.
+func buildFeedbackURL(text, version string) string {
+	title := text
+	if len([]rune(title)) > 60 {
+		title = string([]rune(title)[:60])
+	}
+	body := text + "\n\n---\nVersion: " + version + " | OS: " + runtime.GOOS
+	return "https://github.com/icehunter/conduit/issues/new" +
+		"?title=" + url.QueryEscape("[Feedback] "+title) +
+		"&body=" + url.QueryEscape(body) +
+		"&labels=" + url.QueryEscape("feedback")
 }
 
 // themeStatusText renders a heading + the active palette as a color swatch

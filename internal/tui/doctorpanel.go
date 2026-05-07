@@ -26,8 +26,9 @@ func (m Model) renderDoctorPanel() string {
 		return ""
 	}
 	dp := m.doctorPanel
+	innerW := m.width - 8
 	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render("Conduit Diagnostics") + "\n\n")
+	sb.WriteString(panelHeader("Conduit Diagnostics", innerW) + "\n\n")
 	if dp.platform != "" {
 		sb.WriteString(stylePickerDesc.Render(dp.platform) + "\n\n")
 	}

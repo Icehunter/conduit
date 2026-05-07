@@ -142,6 +142,9 @@ func (m *Model) exportConversation(path string) error {
 	defer f.Close()
 	for _, msg := range m.messages {
 		switch msg.Role {
+		case RoleCouncil:
+			// Council debate messages are display-only; skip in export.
+			continue
 		case RoleUser:
 			fmt.Fprintf(f, "**You:** %s\n\n", msg.Content)
 		case RoleAssistant:
@@ -156,6 +159,8 @@ func (m *Model) exportConversation(path string) error {
 }
 
 // persistNewMessages appends any messages not yet written to the session file.
+// Council debate messages (RoleCouncil) are display-only and never enter
+// m.history, so they are not reachable here. The guard below is defensive.
 func (m *Model) persistNewMessages(history []api.Message) {
 	if m.cfg.Session == nil {
 		return
@@ -164,6 +169,22 @@ func (m *Model) persistNewMessages(history []api.Message) {
 		_ = m.cfg.Session.AppendMessage(history[i]) // best-effort
 	}
 	m.persistedCount = len(history)
+}
+
+// filterCouncilMessages returns a copy of msgs with any RoleCouncil messages
+// removed. Council debate messages are display-only and must never be forwarded
+// to the Anthropic API or written to the session transcript.
+//
+//nolint:unused
+func filterCouncilMessages(msgs []Message) []Message {
+	out := make([]Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg.Role == RoleCouncil {
+			continue
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 // findNoAuthMsgIdx returns the index of the "Not logged in" welcome message,

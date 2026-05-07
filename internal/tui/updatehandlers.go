@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/subagent"
 )
 
 // handleWindowSize recalculates layout after a terminal resize.
@@ -277,6 +278,23 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	}
 
 	cmds = append(cmds, clearWindowTitleCmd())
+
+	// Flash only for agents that completed during THIS turn (not old ones).
+	var newLogs int
+	for _, e := range subagent.Default.SnapshotAll() {
+		if !e.DoneAt.IsZero() && !m.runStartedAt.IsZero() && e.DoneAt.After(m.runStartedAt) {
+			newLogs++
+		}
+	}
+	if newLogs > 0 {
+		noun := "agent log"
+		if newLogs > 1 {
+			noun = fmt.Sprintf("%d agent logs", newLogs)
+		}
+		m.flashMsg = "● " + noun + " ready — press Enter to view"
+		cmds = append(cmds, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }))
+	}
+
 	return m, tea.Batch(cmds...)
 }
 

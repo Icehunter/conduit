@@ -171,24 +171,21 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 // Unrecognised names are passed through unchanged (the Registry.Subset call
 // will silently skip them, which produces a warning in tests but not panics).
 func resolveToolNames(names []string) []string {
+	// Maps CC plugin shorthand names to conduit's registered tool names.
+	// Most CC names already match conduit's registered names exactly (Glob,
+	// Grep, Read, Bash, Edit, Write…) so only genuinely different names need
+	// an entry here. Registry.Subset does case-insensitive matching, so
+	// capitalisation differences are handled without aliases.
 	aliases := map[string]string{
-		"read":         "FileReadTool",
-		"edit":         "FileEditTool",
-		"write":        "FileWriteTool",
-		"bash":         "BashTool",
-		"grep":         "GrepTool",
-		"glob":         "GlobTool",
-		"task":         "Task",
-		"webfetch":     "WebFetch",
-		"websearch":    "WebSearch",
-		"todowrite":    "TodoWriteTool",
-		"notebookedit": "NotebookEditTool",
-		"lsp":          "LSP",
-		"sleep":        "SleepTool",
-		"repl":         "REPL",
-		"mcp":          "mcp",
+		// CC name   → conduit registered name
+		"notebookedit": "NotebookEdit",
 		"skill":        "SkillTool",
-		"config":       "Config",
+		// CC-only tools without a direct conduit equivalent — map to closest.
+		"ls":           "Glob",
+		"notebookread": "Read",
+		"killshell":    "Bash",
+		"bashoutput":   "Bash",
+		"shell":        "Bash",
 	}
 	out := make([]string, 0, len(names))
 	for _, n := range names {

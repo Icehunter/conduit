@@ -148,18 +148,24 @@ func TestResolveToolNames(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"Read", "FileReadTool"},
-		{"read", "FileReadTool"},
-		{"Bash", "BashTool"},
-		{"Edit", "FileEditTool"},
-		{"Write", "FileWriteTool"},
-		{"Grep", "GrepTool"},
-		{"Glob", "GlobTool"},
+		// These match conduit's registered names exactly — no alias needed.
+		{"Read", "Read"},
+		{"read", "read"},
+		{"Bash", "Bash"},
+		{"Edit", "Edit"},
+		{"Write", "Write"},
+		{"Grep", "Grep"},
+		{"Glob", "Glob"},
 		{"Task", "Task"},
 		{"WebFetch", "WebFetch"},
 		{"WebSearch", "WebSearch"},
-		{"TodoWrite", "TodoWriteTool"},
-		{"NotebookEdit", "NotebookEditTool"},
+		{"TodoWrite", "TodoWrite"},
+		// CC names that differ from conduit's registered names.
+		{"NotebookEdit", "NotebookEdit"},
+		{"LS", "Glob"}, // CC LS → nearest conduit equivalent
+		{"ls", "Glob"},
+		{"KillShell", "Bash"},
+		{"BashOutput", "Bash"},
 		{"unknown-tool", "unknown-tool"}, // pass-through
 	}
 	for _, tt := range tests {

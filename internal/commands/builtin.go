@@ -14,6 +14,8 @@ import (
 
 // RegisterBuiltins adds the standard slash commands to r.
 // compact and model commands that need external state are wired in the TUI.
+// Callers that know the binary version should call RegisterFeedbackCommand(r, version)
+// afterwards to override the placeholder registered here.
 func RegisterBuiltins(r *Registry) {
 	r.Register(Command{
 		Name:        "help",
@@ -45,6 +47,10 @@ func RegisterBuiltins(r *Registry) {
 		Description: "Exit claude",
 		Handler:     func(string) Result { return Result{Type: "exit"} },
 	})
+	// Register /feedback with an empty version placeholder; callers that have
+	// the real binary version (e.g. cmd/conduit) should call
+	// RegisterFeedbackCommand(r, AppVersion) to replace this registration.
+	RegisterFeedbackCommand(r, "")
 }
 
 // RegisterModelCommand adds /model with the current model name and a setter.

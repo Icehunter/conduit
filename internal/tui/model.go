@@ -26,6 +26,7 @@ import (
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
 
@@ -97,6 +98,7 @@ const (
 	RoleAssistantInfo
 	RoleError
 	RoleSystem
+	RoleCouncil
 )
 
 // Message is one entry in the displayed conversation.
@@ -215,6 +217,37 @@ type (
 	// setPermissionModeMsg is sent by EnterPlanMode/ExitPlanMode tool
 	// callbacks to change the active permission mode from outside the TUI event loop.
 	setPermissionModeMsg struct{ mode permissions.Mode }
+
+	// subagentPanelRefreshMsg is sent on each tick to update the sub-agent panel.
+	subagentPanelRefreshMsg struct{}
+
+	// councilStartMsg triggers the council debate flow from ExitPlanMode.
+	councilStartMsg struct { //nolint:unused
+		seedPlan string
+		reply    chan<- planmodetool.PlanApprovalDecision
+	}
+
+	// councilMemberResponseMsg carries one council member's response.
+	councilMemberResponseMsg struct { //nolint:unused
+		label  string // model/provider display name
+		text   string
+		agreed bool // true if response contains <council-agree/>
+	}
+
+	// councilMemberEjectedMsg signals a member was removed due to error.
+	councilMemberEjectedMsg struct { //nolint:unused
+		label  string
+		reason string
+	}
+
+	// councilSynthesisStartMsg signals synthesis has begun.
+	councilSynthesisStartMsg struct{} //nolint:unused
+
+	// councilDoneMsg carries the final synthesised plan.
+	councilDoneMsg struct { //nolint:unused
+		plan    string
+		costUSD float64
+	}
 
 	// setModelNameMsg is sent by /fast and /model to update the displayed model name.
 	setModelNameMsg struct {
@@ -412,6 +445,16 @@ type Model struct {
 	// Permission prompt state — non-nil when a tool is waiting for approval.
 	permPrompt *permissionPromptState
 
+	// councilDebate holds debate messages accumulated during a council session.
+	// These are display-only and are cleared after council ends. They are
+	// never forwarded to m.history or the Anthropic API.
+	councilDebate []Message //nolint:unused
+
+	// councilReply is the plan-approval reply channel from a councilStartMsg.
+	// Stored on the model so it can be forwarded to planApprovalAskMsg after
+	// the council synthesis completes.
+	councilReply chan<- planmodetool.PlanApprovalDecision
+
 	// trustDialog is non-nil when the workspace trust dialog is pending.
 	trustDialog *trustDialogState
 
@@ -467,9 +510,16 @@ type Model struct {
 	// Non-nil when active.
 	settingsPanel *settingsPanelState
 
+	// subagentPanel shows live tool events for a running sub-agent. Non-nil when open.
+	subagentPanel *subagentPanelState
+
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
 	permissionMode permissions.Mode
+
+	// councilProviders holds the provider keys selected for council-mode debates.
+	// Populated by the council tab in the model picker and persisted to settings.
+	councilProviders []string
 
 	// outputStyleName / outputStylePrompt hold the active output style.
 	// When set, the prompt is prepended to the system blocks on each turn.

@@ -104,8 +104,9 @@ func (m Model) renderPlanApprovalPicker() string {
 		return ""
 	}
 
+	contentW := floatingInnerWidth(m.width, floatingPickerSpec)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s\n\n", styleStatusAccent.Render("◆ Plan Approval"))
+	sb.WriteString(panelHeader("◆ Plan Approval", contentW) + "\n\n")
 	fmt.Fprintf(&sb, "%s\n\n", stylePickerDesc.Render("Choose how to approve this plan:"))
 
 	for i, label := range planApprovalItems {

@@ -90,6 +90,20 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		}
 		return sb.String()
 
+	case RoleCouncil:
+		label := msg.ToolName
+		if label == "" {
+			label = "Council"
+		}
+		var header string
+		if strings.HasPrefix(msg.Content, "⚠ ") {
+			// Ejection/warning messages: render the whole line in muted style.
+			header = stylePickerDesc.Render(label+": ") + stylePickerDesc.Render(msg.Content)
+		} else {
+			header = styleStatusAccent.Render(label+":") + " " + stylePickerDesc.Render(msg.Content)
+		}
+		return pad + surfaceSpaces(2) + header
+
 	case RoleSystem:
 		if msg.WelcomeCard {
 			return renderWelcomeCard(msg.Content, width)
@@ -302,6 +316,17 @@ func toolInputSummary(toolName, raw string) string {
 		return firstToolField(fields, "file_path", "path")
 	case strings.Contains(lower, "fetch"), strings.Contains(lower, "search"):
 		return firstToolField(fields, "url", "query")
+	case lower == "taskcreate":
+		return firstToolField(fields, "subject", "description")
+	case lower == "taskupdate":
+		subj := firstToolField(fields, "subject")
+		status := firstToolField(fields, "status")
+		if subj != "" && status != "" {
+			return subj + " → " + status
+		}
+		return subj + status
+	case lower == "taskget", lower == "tasklist", lower == "taskoutput", lower == "taskstop":
+		return firstToolField(fields, "subject", "id")
 	}
 	keys := make([]string, 0, len(fields))
 	for k := range fields {

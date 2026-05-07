@@ -16,6 +16,7 @@ import (
 	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/subagent"
 )
 
 // handleKeyBuiltins is the built-in key handler. It never consults the
@@ -118,24 +119,27 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 
 	case "shift+tab":
-		// Cycle: default → acceptEdits → plan → bypassPermissions → default.
-		// Mirrors getNextPermissionMode.ts from real Claude Code.
+		// Cycle: default → plan → council → acceptEdits → bypassPermissions → default.
 		switch m.permissionMode {
 		case "", permissions.ModeDefault:
-			m.permissionMode = permissions.ModeAcceptEdits
-		case permissions.ModeAcceptEdits:
 			m.permissionMode = permissions.ModePlan
 		case permissions.ModePlan:
+			m.permissionMode = permissions.ModeCouncil
+		case permissions.ModeCouncil:
+			m.permissionMode = permissions.ModeAcceptEdits
+		case permissions.ModeAcceptEdits:
 			m.permissionMode = permissions.ModeBypassPermissions
 		default:
 			m.permissionMode = permissions.ModeDefault
 		}
 		m.applyPermissionMode(m.permissionMode)
 		switch m.permissionMode {
-		case permissions.ModeAcceptEdits:
-			m.flashMsg = "⏵⏵ accept edits on (shift+tab to cycle)"
 		case permissions.ModePlan:
 			m.flashMsg = "⏸ plan mode on (shift+tab to cycle)"
+		case permissions.ModeCouncil:
+			m.flashMsg = "⚖ council mode on (shift+tab to cycle)"
+		case permissions.ModeAcceptEdits:
+			m.flashMsg = "⏵⏵ accept edits on (shift+tab to cycle)"
 		case permissions.ModeBypassPermissions:
 			m.flashMsg = "⏵⏵ auto mode on (shift+tab to cycle)"
 		default:
@@ -304,6 +308,25 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			}
 		}
 
+	case "ctrl+\\":
+		// Open mode picker — direct selection without Shift+Tab cycling.
+		items := []pickerItem{
+			{Value: "default", Label: "Default (ask for edits)"},
+			{Value: "plan", Label: "Plan (read-only)"},
+			{Value: "council", Label: "Council (multi-model plan)"},
+			{Value: "acceptEdits", Label: "Accept Edits"},
+			{Value: "bypassPermissions", Label: "Auto (bypass all)"},
+		}
+		current := string(m.permissionMode)
+		m.picker = &pickerState{
+			kind:     "mode",
+			items:    items,
+			current:  current,
+			selected: selectedPickerIndex(items, current),
+		}
+		m.refreshViewport()
+		return m, nil, true
+
 	case "ctrl+o":
 		m.verboseMode = !m.verboseMode
 		if m.verboseMode {
@@ -340,7 +363,18 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
 				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 			}
+			// Empty input while running: drill into running sub-agent log if any.
+			if entries := subagent.Default.Snapshot(); len(entries) > 0 {
+				m = m.openSubagentPanel()
+				return m, tickSubagentPanel(), true
+			}
 			return m, nil, true
+		}
+
+		// Not running, empty input: open agent log panel if recent sub-agents exist.
+		if strings.TrimSpace(m.input.Value()) == "" && len(subagent.Default.SnapshotAll()) > 0 {
+			m = m.openSubagentPanel()
+			return m, tickSubagentPanel(), true
 		}
 
 		// If the @ file picker is open, accept selected path.

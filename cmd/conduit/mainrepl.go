@@ -531,7 +531,14 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Register AgentTool and SkillTool now that the loop exists.
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
 	reg.Register(agenttool.New(
-		lp.RunBackgroundAgent,
+		// Plain Task calls (no subagent_type) use RunSubAgentTyped so they
+		// appear in the sub-agent drill-in panel. RunBackgroundAgent marks
+		// entries as Background:true which hides them from the panel.
+		func(ctx context.Context, prompt string) (string, error) {
+			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+				Mode: permissions.ModeBypassPermissions,
+			})
+		},
 		agentRegistry,
 		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
 			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{

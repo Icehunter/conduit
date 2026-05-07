@@ -108,13 +108,13 @@ func (m Model) renderResumePicker() string {
 	}
 	contentW := floatingInnerWidth(m.width, floatingPickerSpec)
 	var sb strings.Builder
-	// Search line.
+	// Header with slash fill.
 	if p.filter != "" {
-		sb.WriteString(styleStatusAccent.Render("❯ "+p.filter) + "  " +
-			stylePickerDesc.Render(fmt.Sprintf("(%d/%d)", len(p.filtered), len(p.sessions))) + "\n\n")
+		countHint := stylePickerDesc.Render(fmt.Sprintf("  (%d/%d)", len(p.filtered), len(p.sessions)))
+		titleW := contentW - lipgloss.Width(countHint) - 4
+		sb.WriteString(panelHeader("❯ "+p.filter, titleW) + countHint + "\n\n")
 	} else {
-		sb.WriteString(styleStatusAccent.Render("Resume a previous conversation") +
-			"  " + stylePickerDesc.Render("type to search") + "\n\n")
+		sb.WriteString(panelHeader("Resume a previous conversation", contentW) + "\n\n")
 	}
 
 	const maxVisible = 12

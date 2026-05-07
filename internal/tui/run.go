@@ -594,6 +594,22 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		runOpts.ExitPlan.SetMode = func(m permissions.Mode) {
 			prog.Send(setPermissionModeMsg{mode: m})
 		}
+		runOpts.ExitPlan.IsCouncilMode = func() bool {
+			return live.PermissionMode() == permissions.ModeCouncil
+		}
+		runOpts.ExitPlan.StartCouncil = func(ctx context.Context, plan string) planmodetool.PlanApprovalDecision {
+			ch := make(chan planmodetool.PlanApprovalDecision, 1)
+			prog.Send(councilStartMsg{
+				seedPlan: plan,
+				reply:    ch,
+			})
+			select {
+			case d := <-ch:
+				return d
+			case <-ctx.Done():
+				return planmodetool.PlanApprovalDecision{Approved: false, Feedback: "cancelled"}
+			}
+		}
 	}
 
 	// Wire EnterAutoMode — uses the same permission-prompt machinery.

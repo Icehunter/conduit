@@ -27,6 +27,7 @@ const (
 	ModeAcceptEdits       Mode = "acceptEdits"
 	ModeBypassPermissions Mode = "bypassPermissions"
 	ModePlan              Mode = "plan"
+	ModeCouncil           Mode = "council"
 )
 
 // Decision is the result of a permission check.
@@ -254,7 +255,7 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 			return DecisionAllow
 		}
 		return DecisionAsk
-	case ModePlan:
+	case ModePlan, ModeCouncil:
 		if toolIsReadOnly(toolName, toolInput) {
 			return DecisionAllow
 		}

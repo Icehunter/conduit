@@ -237,6 +237,16 @@ func (p *pluginPanelState) applyInstallCounts(counts map[string]int) {
 	p.applyDiscoverFilter()
 }
 
+// hasSelectedItems reports whether any discover item has been space-toggled.
+func (p *pluginPanelState) hasSelectedItems() bool {
+	for _, item := range p.discoverItems {
+		if item.selected {
+			return true
+		}
+	}
+	return false
+}
+
 // currentListLen returns the number of items in the current tab's list view.
 func (p *pluginPanelState) currentListLen() int {
 	switch p.tab {

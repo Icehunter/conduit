@@ -157,20 +157,37 @@ func TestHandleKey_RunningUp_NotConsumed(t *testing.T) {
 	}
 }
 
-func TestPluginDiscoverIInstallsSelectedAfterSearch(t *testing.T) {
+func TestPluginDiscoverIRequiresSpaceToggle(t *testing.T) {
 	m := idleModel()
-	p := &pluginPanelState{
-		tab:            pluginTabDiscover,
-		discoverSearch: "front",
-		discoverItems: []discoverItem{
-			{pluginID: "frontend-design@claude-plugins-official", name: "frontend-design"},
-		},
+	newState := func() *pluginPanelState {
+		p := &pluginPanelState{
+			tab:            pluginTabDiscover,
+			discoverSearch: "front",
+			discoverItems: []discoverItem{
+				{pluginID: "frontend-design@claude-plugins-official", name: "frontend-design"},
+			},
+		}
+		p.applyDiscoverFilter()
+		return p
 	}
-	p.applyDiscoverFilter()
 
-	m2, cmd := m.handlePluginListKey(p, "i")
-	if cmd == nil {
-		t.Fatal("i should install the selected discover row")
+	// Without a space-toggled item, i is structural but does nothing.
+	p1 := newState()
+	_, cmd := m.handlePluginListKey(p1, "i")
+	if cmd != nil {
+		t.Fatal("i without toggled items should not install anything")
+	}
+	// Search must be unchanged — i never types into the search box.
+	if p1.discoverSearch != "front" {
+		t.Fatalf("i without toggles modified search: %q", p1.discoverSearch)
+	}
+
+	// With a space-toggled item and an active search, i should install.
+	p2 := newState()
+	p2.discoverItems[0].selected = true
+	m2, cmd2 := m.handlePluginListKey(p2, "i")
+	if cmd2 == nil {
+		t.Fatal("i with toggled item and active search should install")
 	}
 	if m2.pluginPanel.discoverSearch != "front" {
 		t.Fatalf("search changed after install shortcut: %q", m2.pluginPanel.discoverSearch)

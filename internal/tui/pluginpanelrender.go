@@ -116,7 +116,7 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 		} else {
 			sb.WriteString(stylePickerDesc.Render("No plugins found."))
 		}
-		sb.WriteString("\n\n" + stylePickerDesc.Render("Space toggle · i install · Enter detail · ←→ tabs · Esc close"))
+		sb.WriteString("\n\n" + stylePickerDesc.Render("←→ tabs · Esc close"))
 		return
 	}
 

@@ -87,8 +87,8 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 			p.discoverItems[idx].selected = !p.discoverItems[idx].selected
 		}
 	case "i":
-		if p.tab == pluginTabDiscover && len(p.discoverFiltered) > 0 {
-			// Collect toggled items. If none are toggled, install the current row.
+		if p.tab == pluginTabDiscover && len(p.discoverSearch) > 0 {
+			// Only install space-toggled items — never the cursor row implicitly.
 			var toInstall []string
 			for _, item := range p.discoverItems {
 				if item.selected {
@@ -96,8 +96,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 				}
 			}
 			if len(toInstall) == 0 {
-				idx := p.discoverFiltered[p.selected]
-				toInstall = append(toInstall, p.discoverItems[idx].pluginID)
+				break
 			}
 			cwd, _ := os.Getwd()
 			trusted := !m.cfg.NeedsTrust

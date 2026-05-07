@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -506,6 +507,9 @@ func main() {
 		t.Fatal(err)
 	}
 	binFile := filepath.Join(dir, "server")
+	if runtime.GOOS == "windows" {
+		binFile += ".exe"
+	}
 	buildCmd := exec.Command("go", "build", "-o", binFile, srcFile)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("build stub server: %v\n%s", err, out)

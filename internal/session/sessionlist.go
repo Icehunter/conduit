@@ -12,16 +12,19 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 )
 
-// FilterUnresolvedToolUses drops orphan tool_use blocks from assistant
-// messages — i.e. tool_use blocks whose ID has no matching tool_result in
-// any subsequent user message. Anthropic's API rejects history with such
-// orphans; they appear when the stream errors mid-turn before tools could
-// run. Mirrors src/utils/messages.ts filterUnresolvedToolUses.
+// FilterUnresolvedToolUses drops orphan tool call blocks from message
+// history. Anthropic's API rejects history with either kind of orphan:
 //
-// If filtering empties an assistant message entirely (every block was an
-// orphan tool_use), the message is dropped to avoid sending an empty
-// content array.
+//   - tool_use in an assistant message with no matching tool_result in any
+//     subsequent user message (stream errored before tools could run).
+//   - tool_result in a user message whose tool_use_id has no matching tool_use
+//     in any prior assistant message (happens when transcript chain
+//     reconstruction picks a branch that excludes the assistant turn).
+//
+// If filtering empties a message entirely it is dropped.
+// Mirrors src/utils/messages.ts filterUnresolvedToolUses.
 func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
+	// Pass 1: collect tool_use IDs that have a matching tool_result.
 	resolvedIDs := make(map[string]bool)
 	for _, m := range msgs {
 		if m.Role != "user" {
@@ -34,16 +37,52 @@ func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
 		}
 	}
 
-	out := make([]api.Message, 0, len(msgs))
+	// Pass 2: drop orphan tool_use blocks from assistant messages.
+	pass1 := make([]api.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role != "assistant" {
-			out = append(out, m)
+			pass1 = append(pass1, m)
 			continue
 		}
 		filtered := make([]api.ContentBlock, 0, len(m.Content))
 		for _, b := range m.Content {
 			if b.Type == "tool_use" && !resolvedIDs[b.ID] {
 				continue // orphan; drop
+			}
+			filtered = append(filtered, b)
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		m.Content = filtered
+		pass1 = append(pass1, m)
+	}
+
+	// Pass 3: collect tool_use IDs that survived into pass1 assistant messages.
+	definedIDs := make(map[string]bool)
+	for _, m := range pass1 {
+		if m.Role != "assistant" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "tool_use" && b.ID != "" {
+				definedIDs[b.ID] = true
+			}
+		}
+	}
+
+	// Pass 4: drop tool_result blocks from user messages whose tool_use_id has
+	// no corresponding tool_use in the (now-filtered) assistant messages.
+	out := make([]api.Message, 0, len(pass1))
+	for _, m := range pass1 {
+		if m.Role != "user" {
+			out = append(out, m)
+			continue
+		}
+		filtered := make([]api.ContentBlock, 0, len(m.Content))
+		for _, b := range m.Content {
+			if b.Type == "tool_result" && !definedIDs[b.ToolUseID] {
+				continue // orphan result; drop
 			}
 			filtered = append(filtered, b)
 		}

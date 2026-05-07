@@ -827,3 +827,68 @@ func TestLoop_AskMode_AlwaysAllowAddsSessionRule(t *testing.T) {
 		t.Errorf("expected 2 API calls (tool_use + follow-up); got %d", calls)
 	}
 }
+
+// TestLoop_EmitsUsageEventTextOnly verifies that a single end_turn streamed
+// response yields exactly one EventUsage with input/output token counts
+// taken from message_start (input) + message_delta (output).
+func TestLoop_EmitsUsageEventTextOnly(t *testing.T) {
+	reg := tool.NewRegistry()
+	lp, srv := newTestLoop(t, []string{textOnlySSE("hi")}, reg)
+	defer srv.Close()
+
+	var usages []api.Usage
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "x"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventUsage {
+			usages = append(usages, ev.Usage)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(usages) != 1 {
+		t.Fatalf("expected 1 EventUsage; got %d", len(usages))
+	}
+	// textOnlySSE: input=10, output=5
+	if usages[0].InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", usages[0].InputTokens)
+	}
+	if usages[0].OutputTokens != 5 {
+		t.Errorf("OutputTokens = %d, want 5", usages[0].OutputTokens)
+	}
+}
+
+// TestLoop_EmitsUsageEventPerTurn verifies that a tool-using exchange
+// (two API calls) yields one EventUsage per call, each carrying that
+// turn's input + output counts. The TUI sums these into a Run total.
+func TestLoop_EmitsUsageEventPerTurn(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "t", result: "ok", readOnly: true})
+	gate := newAllowGate()
+	lp, srv := newTestLoopWithConfig(t, []string{toolUseSSE("t", "tool_1", `{"a":1}`, "done")}, reg, LoopConfig{Gate: gate})
+	defer srv.Close()
+
+	var usages []api.Usage
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "x"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventUsage {
+			usages = append(usages, ev.Usage)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(usages) != 2 {
+		t.Fatalf("expected 2 EventUsage (one per turn); got %d", len(usages))
+	}
+	// toolUseSSE first turn: input=10, output=5
+	if usages[0].InputTokens != 10 || usages[0].OutputTokens != 5 {
+		t.Errorf("turn 1 usage = %+v, want input=10 output=5", usages[0])
+	}
+	// toolUseSSE second turn: input=20, output=8
+	if usages[1].InputTokens != 20 || usages[1].OutputTokens != 8 {
+		t.Errorf("turn 2 usage = %+v, want input=20 output=8", usages[1])
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/lipgloss/v2"
 
+	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/tokens"
 )
 
@@ -42,6 +43,10 @@ func applyTextareaTheme(ta *textarea.Model) {
 // tallyTokens estimates token usage from conversation history using
 // cl100k_base — the tokenizer Claude approximates for billing. Falls
 // back to chars/4 if the encoder fails to initialize (offline first run).
+//
+// Used as a fallback on session-resume / load paths where we don't have
+// live API usage events. handleAgentDone prefers applyAPIUsage when the
+// just-finished Run reported real usage.
 func (m *Model) tallyTokens() {
 	var inputTok, outputTok int
 	for _, msg := range m.history {
@@ -58,6 +63,33 @@ func (m *Model) tallyTokens() {
 	m.totalInputTokens = inputTok + outputTok // billing input = full context
 	m.totalOutputTokens = outputTok
 	// Opus 4.7: $15/M input + $75/M output.
+	m.costUSD = float64(inputTok)*15.0/1_000_000 + float64(outputTok)*75.0/1_000_000
+	m.syncLive()
+}
+
+// accumulateUsage sums two api.Usage values field-wise. Used to fold
+// per-turn EventUsage events into a Run-cumulative total before delivery
+// in agentDoneMsg.
+func accumulateUsage(a, b api.Usage) api.Usage {
+	return api.Usage{
+		InputTokens:              a.InputTokens + b.InputTokens,
+		OutputTokens:             a.OutputTokens + b.OutputTokens,
+		CacheCreationInputTokens: a.CacheCreationInputTokens + b.CacheCreationInputTokens,
+		CacheReadInputTokens:     a.CacheReadInputTokens + b.CacheReadInputTokens,
+	}
+}
+
+// applyAPIUsage updates displayed token totals + cost from API-reported
+// usage (the authoritative numbers). Cache reads and cache creation count
+// against the input side because they're part of the prompt context.
+//
+// Pricing constants match tallyTokens (Opus 4.7: $15/M input, $75/M output);
+// model-aware pricing is a follow-up.
+func (m *Model) applyAPIUsage(u api.Usage) {
+	inputTok := u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+	outputTok := u.OutputTokens
+	m.totalInputTokens = inputTok + outputTok // billing input = full context
+	m.totalOutputTokens = outputTok
 	m.costUSD = float64(inputTok)*15.0/1_000_000 + float64(outputTok)*75.0/1_000_000
 	m.syncLive()
 }

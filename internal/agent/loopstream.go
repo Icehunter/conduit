@@ -18,19 +18,25 @@ type blockMeta struct {
 }
 
 // drainStream reads all SSE events from the stream and returns the accumulated
-// assistant content blocks, the stop reason, and the input token count from
-// the message_start event (used by auto-compact to gauge context pressure).
-func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent)) ([]api.ContentBlock, string, int, error) {
+// assistant content blocks, the stop reason, and the API-reported usage
+// (input + output + cache fields) summed across all turns in the stream.
+// Auto-compact uses Usage.InputTokens to gauge context pressure; the TUI
+// uses the full Usage to surface real billable token counts to the user.
+//
+// EventUsage is emitted via handler on each message_stop so the TUI can
+// update token counts incrementally when multiple turns arrive in one stream.
+func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent)) ([]api.ContentBlock, string, api.Usage, error) {
 	// blockTexts accumulates text/input_json across deltas per block index.
 	blockTexts := map[int]*strings.Builder{}
 	metas := map[int]blockMeta{}
 
 	stopReason := "end_turn"
-	inputTokens := 0
+	var totalUsage api.Usage // sum across all turns in this stream
+	var turnUsage api.Usage  // usage for the current turn (reset at message_start)
 
 	for {
 		if ctx.Err() != nil {
-			return buildContentBlocks(metas, blockTexts), stopReason, inputTokens, ctx.Err()
+			return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, ctx.Err()
 		}
 
 		ev, err := stream.Next()
@@ -40,14 +46,22 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 		if err != nil {
 			// Conversation recovery: build whatever blocks we accumulated
 			// before the error so the caller can persist them.
-			return buildContentBlocks(metas, blockTexts), stopReason, inputTokens, err
+			return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, err
 		}
 
 		switch ev.Type {
 		case "message_start":
-			// Extract input_tokens for auto-compact threshold checking.
+			// message_start opens a new turn — reset per-turn accumulator.
+			// input_tokens + cache fields live here; output_tokens is 0 here
+			// and finalized in the subsequent message_delta.
+			turnUsage = api.Usage{}
 			if ms, err := ev.AsMessageStart(); err == nil {
-				inputTokens = ms.Message.Usage.InputTokens
+				turnUsage.InputTokens = ms.Message.Usage.InputTokens
+				turnUsage.CacheCreationInputTokens = ms.Message.Usage.CacheCreationInputTokens
+				turnUsage.CacheReadInputTokens = ms.Message.Usage.CacheReadInputTokens
+				if ms.Message.Usage.OutputTokens > 0 {
+					turnUsage.OutputTokens = ms.Message.Usage.OutputTokens
+				}
 			}
 
 		case "content_block_start":
@@ -100,6 +114,20 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 				continue
 			}
 			stopReason = md.Delta.StopReason
+			// message_delta carries the finalized output_tokens for the turn.
+			if md.Usage.OutputTokens > 0 {
+				turnUsage.OutputTokens = md.Usage.OutputTokens
+			}
+
+		case "message_stop":
+			// Emit per-turn usage and accumulate into the stream total.
+			if turnUsage.InputTokens > 0 || turnUsage.OutputTokens > 0 {
+				handler(LoopEvent{Type: EventUsage, Usage: turnUsage})
+				totalUsage.InputTokens += turnUsage.InputTokens
+				totalUsage.OutputTokens += turnUsage.OutputTokens
+				totalUsage.CacheCreationInputTokens += turnUsage.CacheCreationInputTokens
+				totalUsage.CacheReadInputTokens += turnUsage.CacheReadInputTokens
+			}
 
 		case "content_block_stop":
 			// Block is complete — for tool_use emit the EventToolUse event.
@@ -126,7 +154,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 		}
 	}
 
-	return buildContentBlocks(metas, blockTexts), stopReason, inputTokens, nil
+	return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, nil
 }
 
 // buildContentBlocks materializes accumulated stream state into api.ContentBlocks.

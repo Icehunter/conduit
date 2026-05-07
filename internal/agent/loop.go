@@ -52,6 +52,7 @@ const (
 	EventRateLimit                   // rate-limit headers received; RateLimitWarning may be non-empty
 	EventAPIRetry                    // API returned 429 and the client is backing off
 	EventPartial                     // stream errored mid-turn; PartialBlocks holds what was received
+	EventUsage                       // per-API-turn usage from SSE (input + output + cache fields)
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -85,6 +86,12 @@ type LoopEvent struct {
 	// tool_use dropped by buildContentBlocks).
 	PartialBlocks []api.ContentBlock
 	PartialErr    error
+
+	// EventUsage carries the API-reported usage for one streamed turn
+	// (one Messages-API request). The TUI sums these across the Run to
+	// display real billable token counts; auto-compact uses InputTokens
+	// internally to gauge context pressure.
+	Usage api.Usage
 }
 
 // LoopConfig controls the loop's behaviour.
@@ -356,7 +363,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			})
 		}
 
-		assistantBlocks, stopReason, inputTokens, err := l.drainStream(ctx, stream, handler)
+		assistantBlocks, stopReason, usage, err := l.drainStream(ctx, stream, handler)
 		_ = stream.Close()
 		if err != nil {
 			// Conversation recovery: emit any partial assistant content the
@@ -376,6 +383,10 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			}
 			return msgs, fmt.Errorf("agent: drain: %w", err)
 		}
+
+		// usage is the sum across all SSE turns in this HTTP call (drainStream
+		// already emitted per-turn EventUsage events via handler).
+		inputTokens := usage.InputTokens
 
 		// Append the assistant message to history.
 		msgs = append(msgs, api.Message{

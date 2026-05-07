@@ -507,10 +507,14 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		turnID := m.turnID
 
 		return m, func() tea.Msg {
+			var usage api.Usage
 			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
+				if ev.Type == agent.EventUsage {
+					usage = accumulateUsage(usage, ev.Usage)
+				}
 				prog.Send(agentMsg{event: ev})
 			})
-			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil}
+			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage}
 		}, true
 	}
 	return m, nil, false

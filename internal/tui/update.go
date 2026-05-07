@@ -157,6 +157,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case workinganim.StepMsg:
 		cmds = append(cmds, m.working.Animate(msg))
+		// Maintain the spinner status suffix ("(thought for Xs · ↑ N · Thinking)").
+		// Capture run start on the first tick after running flips on; clear
+		// status when running flips off.
+		if m.running {
+			if m.runStartedAt.IsZero() {
+				m.runStartedAt = time.Now()
+			}
+			m.working.SetStatus(time.Since(m.runStartedAt), m.totalInputTokens, m.totalOutputTokens)
+		} else if !m.runStartedAt.IsZero() {
+			m.runStartedAt = time.Time{}
+			m.working.ClearStatus()
+		}
 
 	case clearFlash:
 		m.flashMsg = ""

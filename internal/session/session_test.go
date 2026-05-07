@@ -650,6 +650,52 @@ func TestFilterUnresolvedToolUses_DropsAssistantWithOnlyOrphanToolUse(t *testing
 	}
 }
 
+func TestFilterUnresolvedToolUses_DropsOrphanToolResult(t *testing.T) {
+	// Simulates a resumed conversation where the transcript chain included a
+	// user message with a tool_result but the corresponding assistant tool_use
+	// was on a different (excluded) branch. The API rejects this with a 400.
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "ok"}}},
+		{Role: "user", Content: []api.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_missing", ResultContent: "result"},
+		}},
+	}
+
+	got := FilterUnresolvedToolUses(msgs)
+	if len(got) != 2 {
+		t.Fatalf("user msg with only orphan tool_result should be dropped; got %d msgs", len(got))
+	}
+	if got[1].Role != "assistant" {
+		t.Errorf("expected assistant msg at index 1; got role %q", got[1].Role)
+	}
+}
+
+func TestFilterUnresolvedToolUses_KeepsToolResultWithTextSibling(t *testing.T) {
+	// When a user message has both an orphan tool_result and a text block,
+	// only the orphan result is dropped — the message and text survive.
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "ok"}}},
+		{Role: "user", Content: []api.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_missing", ResultContent: "result"},
+			{Type: "text", Text: "and also this"},
+		}},
+	}
+
+	got := FilterUnresolvedToolUses(msgs)
+	if len(got) != 3 {
+		t.Fatalf("user msg with text sibling should survive; got %d msgs", len(got))
+	}
+	last := got[2]
+	if len(last.Content) != 1 {
+		t.Fatalf("expected 1 block remaining; got %d", len(last.Content))
+	}
+	if last.Content[0].Type != "text" {
+		t.Errorf("expected text block to survive; got type %q", last.Content[0].Type)
+	}
+}
+
 // ensure json import is used
 var _ = json.Marshal
 

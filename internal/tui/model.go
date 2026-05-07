@@ -126,6 +126,12 @@ type (
 		history   []api.Message
 		err       error
 		cancelled bool // ctx was cancelled before the loop finished
+		// usage is the cumulative API-reported usage across every streamed
+		// turn in this Run. Zero-valued when the model produced no usage
+		// events (cancelled before first message_start, or non-streaming
+		// background calls). The TUI uses this to update displayed totals
+		// with real billable counts.
+		usage api.Usage
 	}
 	compactDoneMsg struct {
 		newHistory []api.Message
@@ -340,6 +346,8 @@ type Model struct {
 	totalOutputTokens int
 	costUSD           float64
 	prevCostUSD       float64 // cost before the current turn started; used to compute per-turn delta
+
+	runStartedAt time.Time // set when running flips on; zero otherwise. Drives "thought for Xs" status.
 
 	// turnCosts records the cost delta for each completed assistant turn,
 	// most-recent last. Used by /cost to show per-turn breakdown.

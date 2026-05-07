@@ -89,6 +89,13 @@ func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	}
+	if m.questionAsk != nil && m.questionAsk.textMode {
+		content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
+		content = strings.ReplaceAll(content, "\r", "\n")
+		m.questionAsk.textBuf += strings.TrimSpace(content)
+		m.refreshViewport()
+		return m, nil
+	}
 	hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||

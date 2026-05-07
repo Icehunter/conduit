@@ -1,6 +1,6 @@
 # conduit — AI Assistant Rules
 
-conduit is a 1:1 Go port of Claude Code v2.1.126 with RTK token-savings folded in-process. It's a working TUI agent — every change must keep the real binary functional.
+Conduit is a local-first, provider-aware terminal agent. It started as a Go port of Claude Code v2.1.126 and has grown into its own runtime. It maintains Claude Code **wire compatibility** — OAuth, API headers, billing block, request shape, plugin format — but is free to innovate in behavior, features, and architecture.
 
 - Module: `github.com/icehunter/conduit`
 - Go **1.26** (pinned in go.mod and CI)
@@ -24,9 +24,9 @@ CI runs vet + race tests on linux/macos/windows + golangci-lint + govulncheck. D
 
 Before making non-trivial changes, read:
 
-- **`PARITY.md`** — 1:1 map of TS source → Go packages. Use when porting behavior; note divergences here.
-- **`STATUS.md`** — milestone status for every tool, command, and subsystem (✅/🔶/❌/🔲). Check before assuming something works — many are intentional stubs.
-- **`README.md`** — points to the reference sources on the local filesystem.
+- **`PARITY.md`** — reference map of CC TS source → Go packages. Use when you need to understand CC's original behavior; note where conduit diverges intentionally.
+- **`STATUS.md`** — milestone status for every tool, command, and subsystem (✅/🔶/❌/🔲). Check before assuming something works — some features are intentional stubs.
+- **`README.md`** — feature overview and installation.
 
 ## Package Layout
 
@@ -47,7 +47,7 @@ internal/commands/        # Slash command handlers
 
 ## Hard Rules
 
-- **Fidelity over cleverness** — this is a port. Match TS behavior exactly, including quirks. Note divergences in `PARITY.md`.
+- **Wire compatibility over cleverness** — the Anthropic API wire format (billing header, request shape, OAuth headers) must remain compliant. For behavior and features, conduit is free to diverge; note intentional divergences in `PARITY.md`.
 - **Update `STATUS.md`** whenever you complete, partially complete, or discover a stub for any tracked component. It's how humans know what works.
 - **RTK filtering is in-process** (`internal/rtk/`). Don't shell out to the standalone `rtk` binary. Don't trim bash output ad-hoc at call sites — add a classifier in `internal/rtk/` instead.
 - **`make verify` must pass** before any task is done. Zero lint errors, tests pass with `-race`.
@@ -62,4 +62,4 @@ Standards live in `.claude/rules/` and are loaded automatically:
 | `testing.md` | `*_test.go` | Table-driven tests, fuzz targets, no `time.Sleep` |
 | `error-handling.md` | `*.go` | `%w` wrapping, no silent swallows, context propagation |
 | `tui.md` | `internal/tui/` | Bubble Tea v2 — no blocking in Update, model/update/view discipline |
-| `porting.md` | `*.go` | Reading TS source + decoded bundle, cross-referencing, PARITY.md updates |
+| `porting.md` | `*.go` | Using CC TS source as a behavioral reference; when and how to diverge; PARITY.md updates |

@@ -1,9 +1,11 @@
-# Conduit ↔ Claude Code v2.1.126 Parity Map
+# Conduit ↔ Claude Code v2.1.126 Reference Map
 
-> **Purpose:** 1:1 functional mapping between the Claude Code TypeScript source,
-> the decompiled v2.1.126 binary chunks, and the Go conduit implementation.
-> Used for milestone planning, descoping decisions, and tracking new feature
-> ingestion from future deobfuscated releases.
+> **Purpose:** Behavioral reference mapping between the Claude Code TypeScript
+> source, the decompiled v2.1.126 binary chunks, and the Go conduit
+> implementation. Used for understanding CC behavior, tracking intentional
+> divergences, and milestone planning. Conduit maintains wire compatibility
+> (OAuth, API headers, plugin format) but is free to diverge in behavior and
+> features — divergences are noted in the Notes column.
 >
 > **Status legend:**
 > - ✅ Complete — implemented and tested in conduit

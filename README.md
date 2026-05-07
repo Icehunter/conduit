@@ -421,18 +421,19 @@ make lint       # golangci-lint run
 
 ---
 
-## Parity
+## Claude Code compatibility
 
-Conduit implements 249/264 scoped Claude Code features (94%). The remaining features are Claude-internal or require the VS Code/JetBrains bridge:
+Conduit maintains wire compatibility with Claude Code: Anthropic OAuth, API headers and billing block, plugin format (commands, skills, hooks, agents), MCP protocol, and the tool surface the model expects. Settings files (`settings.json`, `CLAUDE.md`, `mcp.json`) are interchangeable.
 
-- Bridge (VS Code / JetBrains JSON-RPC) — use real Claude Code for IDE integration
+Features intentionally not implemented (Claude-internal or bridge-dependent):
+
+- VS Code / JetBrains bridge — use real Claude Code for IDE integration
 - Remote agents / ULTRAPLAN — Anthropic-hosted, bridge-dependent
-- Voice recording — no portable Go audio; would require cgo + whisper.cpp
-- Team swarm (SendMessageTool, TeamCreateTool) — requires Anthropic teammate mailbox
-- GrowthBook feature flags / KAIROS — Anthropic-internal
-- Vim mode — 1,513 LOC port of CC vim bindings; deferred
+- Voice recording — requires cgo + platform audio
+- Team swarm (SendMessageTool, TeamCreateTool) — Anthropic teammate mailbox
+- GrowthBook / KAIROS — Anthropic-internal
 
-Full breakdown: [PARITY.md](PARITY.md)
+Reference map: [PARITY.md](PARITY.md)
 
 ---
 

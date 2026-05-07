@@ -543,6 +543,9 @@ func runREPL(continueMode bool, resumeID string) error {
 		NewAPIClient: func(tok auth.PersistedTokens) *api.Client {
 			return app.NewAPIClient(tok, Version)
 		},
+		NewProviderAPIClient: func(provider settings.ActiveProviderSettings) (*api.Client, error) {
+			return app.NewProviderAPIClient(provider, secure.NewDefault(), Version)
+		},
 		NeedsTrust: needsTrust,
 		SetTrusted: func() error {
 			return globalconfig.SetTrusted(cwd)

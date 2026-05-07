@@ -74,6 +74,31 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 		}
 	}
 
+	if p.tab == settingsTabProviders {
+		switch key {
+		case "ctrl+c":
+			return closePanel()
+		case "esc":
+			if p.providerForm != nil {
+				p.providerForm = nil
+				return done()
+			}
+			return closePanel()
+		case "left":
+			if p.providerForm == nil {
+				switchMainTab(-1)
+			}
+			return done()
+		case "right":
+			if p.providerForm == nil {
+				switchMainTab(1)
+			}
+			return done()
+		default:
+			return m.handleProvidersTabKey(key)
+		}
+	}
+
 	// Global close.
 	switch key {
 	case "ctrl+c":

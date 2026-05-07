@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/profile"
 	"github.com/icehunter/conduit/internal/secure"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // NewAPIClient builds a configured API client using persisted account
@@ -66,6 +68,32 @@ func removeString(values []string, target string) []string {
 		}
 	}
 	return out
+}
+
+func NewProviderAPIClient(provider settings.ActiveProviderSettings, store secure.Storage, wireVersion string) (*api.Client, error) {
+	switch provider.Kind {
+	case settings.ProviderKindOpenAICompatible:
+		key, err := settings.LoadProviderCredential(store, provider.Credential)
+		if err != nil {
+			return nil, fmt.Errorf("provider credential %q: %w", provider.Credential, err)
+		}
+		entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
+		if entrypoint == "" {
+			entrypoint = "sdk-cli"
+		}
+		baseURL := strings.TrimRight(provider.BaseURL, "/")
+		if baseURL == "" {
+			return nil, fmt.Errorf("provider %q missing baseURL", settings.ProviderKey(provider))
+		}
+		return api.NewClientWithProxy(api.Config{
+			ProviderKind: settings.ProviderKindOpenAICompatible,
+			BaseURL:      baseURL,
+			APIKey:       key,
+			UserAgent:    fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),
+		}), nil
+	default:
+		return nil, fmt.Errorf("provider kind %q does not use a provider API client", provider.Kind)
+	}
 }
 
 func FillProfileAccountFallback(p *profile.Info) {

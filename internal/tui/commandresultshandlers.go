@@ -54,7 +54,7 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 		role = settings.RoleDefault
 	}
 	switch res.Provider.Kind {
-	case "mcp":
+	case settings.ProviderKindMCP:
 		server := res.Provider.Server
 		if server == "" {
 			server = "local-router"
@@ -74,6 +74,20 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 		m.syncLive()
 		m.refreshWelcomeCardMessage()
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Set %s provider to local %s · %s%s", role, model, server, suffix)})
+	case settings.ProviderKindOpenAICompatible:
+		provider := *res.Provider
+		provider.Account = ""
+		if provider.Model == "" {
+			provider.Model = res.Model
+		}
+		if role == settings.RoleDefault {
+			m.setActiveProvider(provider)
+		}
+		suffix := m.persistProviderForRole(role, provider)
+		m.applyEffectiveProviderForMode()
+		m.syncLive()
+		m.refreshWelcomeCardMessage()
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Set %s provider to %s%s", role, accountProviderDisplayName(provider), suffix)})
 	default:
 		model := res.Provider.Model
 		if model == "" {
@@ -84,10 +98,10 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 		}
 		provider := *res.Provider
 		provider.Model = model
-		if provider.Account == "" {
+		if provider.Account == "" && provider.Credential == "" {
 			provider.Account = m.cfg.Profile.Email
 		}
-		if provider.Kind == "claude-subscription" {
+		if provider.Kind == settings.ProviderKindClaudeSubscription {
 			provider.Kind = accountBackedActiveProvider(model, provider.Account).Kind
 		}
 		if role == settings.RoleDefault {
@@ -410,6 +424,8 @@ func (m Model) applySettingsPanel(res commands.Result) (Model, tea.Cmd) {
 		defaultTab = settingsTabStats
 	case "usage":
 		defaultTab = settingsTabUsage
+	case "providers":
+		defaultTab = settingsTabProviders
 	case "accounts":
 		defaultTab = settingsTabAccounts
 	}

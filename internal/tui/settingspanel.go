@@ -34,10 +34,11 @@ const (
 	settingsTabConfig
 	settingsTabStats
 	settingsTabUsage
+	settingsTabProviders
 	settingsTabAccounts
 )
 
-var settingsTabNames = []string{"Status", "Config", "Stats", "Usage", "Accounts"}
+var settingsTabNames = []string{"Status", "Config", "Stats", "Usage", "Providers", "Accounts"}
 
 type statsDateRange int
 
@@ -112,6 +113,11 @@ type settingsPanelState struct {
 
 	// accounts tab state (embedded from former standalone account panel)
 	accts *accountPanelState
+
+	providerSel       int
+	providerDetailKey string
+	providerAction    int
+	providerForm      *providerFormState
 }
 
 type statusSnapshot struct {

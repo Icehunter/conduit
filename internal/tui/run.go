@@ -67,6 +67,8 @@ type RunOptions struct {
 
 	// NewAPIClient constructs a fresh API client for the given persisted token.
 	NewAPIClient func(auth.PersistedTokens) *api.Client
+	// NewProviderAPIClient constructs a client for non-account providers.
+	NewProviderAPIClient func(settings.ActiveProviderSettings) (*api.Client, error)
 
 	// Interactive tool stubs — the TUI wires their callbacks after startup.
 	EnterPlan *planmodetool.EnterPlanMode
@@ -455,6 +457,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		Resumed:                   runOpts.Resumed,
 		LoadAuth:                  runOpts.LoadAuth,
 		NewAPIClient:              runOpts.NewAPIClient,
+		NewProviderAPIClient:      runOpts.NewProviderAPIClient,
 		Live:                      live,
 		NeedsTrust:                runOpts.NeedsTrust,
 		SetTrusted:                runOpts.SetTrusted,

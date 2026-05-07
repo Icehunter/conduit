@@ -279,6 +279,32 @@ API-key providers can use `credential` later:
 }
 ```
 
+OpenAI-compatible providers use the same provider map, with `baseURL` carrying
+the OpenAI-compatible endpoint. Gemini can be represented this way:
+
+```json
+{
+  "providers": {
+    "openai-compatible.gemini-personal.gemini-2.5-pro": {
+      "kind": "openai-compatible",
+      "model": "gemini-2.5-pro",
+      "credential": "gemini-personal",
+      "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai/"
+    }
+  },
+  "roles": {
+    "planning": "openai-compatible.gemini-personal.gemini-2.5-pro"
+  }
+}
+```
+
+The provider can be saved, validated, shown in Ctrl+M, and assigned to a role.
+`/providers` opens the Settings Providers tab to add a Gemini/OpenAI-compatible
+provider; the API key is stored through Conduit's secure storage under the
+credential name rather than written into `conduit.json`. `account` is only for
+OAuth-backed Claude/Anthropic accounts; `credential` is a local secret alias for
+API-key-backed providers.
+
 The server names map to existing MCP configuration. For example,
 `local-router` normalizes to a Conduit MCP tool prefix like:
 
@@ -482,10 +508,18 @@ First account-backed step:
 - Welcome card, `/status`, and the usage footer use the same provider display
   labels, e.g. `Claude Subscription · <model> · <email>`,
   `Anthropic API · <model> · <email>`, or `MCP · <model> · <server>`.
+- OpenAI-compatible providers now have config-level shape (`baseURL`,
+  `credential`, `model`) plus picker/role plumbing, so Gemini/OpenAI-compatible
+  entries do not fall through to Claude labels. Display strings include the
+  credential alias so multiple Gemini/OpenAI-compatible entries can be
+  distinguished. The adapter translates Conduit's Anthropic-shaped tool
+  definitions and streamed OpenAI-compatible `tool_calls` into the existing
+  `tool_use` loop, so Gemini/OpenAI-compatible chat can participate in normal
+  agent tool execution.
 
 This is the large refactor because Conduit currently assumes Anthropic wire
-format in its API client, streaming loop, thinking config, tool calls, rate-limit
-handling, and usage accounting.
+format in parts of its API client, thinking config, rate-limit handling, and
+usage accounting.
 
 ## Open Design Questions
 

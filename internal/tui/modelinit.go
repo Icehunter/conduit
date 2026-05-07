@@ -73,7 +73,7 @@ func (m Model) startPlanUsageFetch() (Model, tea.Cmd) {
 
 func (m Model) planUsageProviderSettings() (settings.ActiveProviderSettings, bool) {
 	provider, ok := m.providerForCurrentMode()
-	if !ok || provider.Kind != "claude-subscription" || provider.Account == "" {
+	if !ok || provider.Kind != settings.ProviderKindClaudeSubscription || provider.Account == "" {
 		return settings.ActiveProviderSettings{}, false
 	}
 	return provider, true

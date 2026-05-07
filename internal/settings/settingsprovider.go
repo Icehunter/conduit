@@ -38,8 +38,10 @@ func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
 
 func (m *Merged) providerAvailable(provider ActiveProviderSettings) bool {
 	switch provider.Kind {
-	case "claude-subscription", "anthropic-api":
+	case ProviderKindClaudeSubscription, ProviderKindAnthropicAPI:
 		return m.accountProviderAvailable(provider)
+	case ProviderKindOpenAICompatible:
+		return ValidateProviderSettings(provider) == nil
 	default:
 		return true
 	}
@@ -100,9 +102,9 @@ type accountEntrySettings struct {
 
 func providerKindMatchesAccount(providerKind, accountKind string) bool {
 	switch providerKind {
-	case "anthropic-api":
+	case ProviderKindAnthropicAPI:
 		return accountKind == "anthropic-console"
-	case "claude-subscription":
+	case ProviderKindClaudeSubscription:
 		return accountKind == "" || accountKind == "claude-ai"
 	default:
 		return false
@@ -118,6 +120,9 @@ func SaveActiveProvider(value ActiveProviderSettings) error {
 // SaveRoleProvider persists a provider and assigns it to role. For default it
 // also updates activeProvider for compatibility with older config readers.
 func SaveRoleProvider(role string, value ActiveProviderSettings) error {
+	if err := ValidateProviderSettings(value); err != nil {
+		return err
+	}
 	path := ConduitSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -168,6 +173,53 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	return os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
+// SaveProviderEntry persists a configured provider without changing any role.
+func SaveProviderEntry(value ActiveProviderSettings) error {
+	if err := ValidateProviderSettings(value); err != nil {
+		return err
+	}
+	return UpdateConduitConfig(func(cfg *ConduitConfig) {
+		if cfg.Providers == nil {
+			cfg.Providers = map[string]ActiveProviderSettings{}
+		}
+		cfg.Providers[ProviderKey(value)] = value
+	})
+}
+
+// DeleteProviderEntry removes a provider and clears any roles that reference it.
+func DeleteProviderEntry(key string) error {
+	return UpdateConduitConfig(func(cfg *ConduitConfig) {
+		if cfg.Providers != nil {
+			delete(cfg.Providers, key)
+		}
+		if cfg.Roles != nil {
+			for role, ref := range cfg.Roles {
+				if ref == key {
+					delete(cfg.Roles, role)
+				}
+			}
+		}
+		if cfg.ActiveProvider != nil && ProviderKey(*cfg.ActiveProvider) == key {
+			cfg.ActiveProvider = nil
+		}
+	})
+}
+
+// ClearRoleProvider removes the provider assignment for a role.
+func ClearRoleProvider(role string) error {
+	if role == "" {
+		role = RoleDefault
+	}
+	return UpdateConduitConfig(func(cfg *ConduitConfig) {
+		if cfg.Roles != nil {
+			delete(cfg.Roles, role)
+		}
+		if role == RoleDefault {
+			cfg.ActiveProvider = nil
+		}
+	})
+}
+
 // ProviderKey returns a deterministic config key for a provider.
 func ProviderKey(value ActiveProviderSettings) string {
 	kind := value.Kind
@@ -175,20 +227,39 @@ func ProviderKey(value ActiveProviderSettings) string {
 		kind = "provider"
 	}
 	switch value.Kind {
-	case "mcp":
+	case ProviderKindMCP:
 		if value.Server != "" {
 			return kind + "." + value.Server
 		}
-	case "claude-subscription":
+	case ProviderKindClaudeSubscription:
 		if value.Account != "" && value.Model != "" {
 			return kind + "." + value.Account + "." + value.Model
 		}
 		if value.Model != "" {
 			return kind + "." + value.Model
 		}
-	case "anthropic-api":
+	case ProviderKindAnthropicAPI:
 		if value.Account != "" && value.Model != "" {
 			return kind + "." + value.Account + "." + value.Model
+		}
+		if value.Credential != "" && value.Model != "" {
+			return kind + "." + value.Credential + "." + value.Model
+		}
+		if value.Model != "" {
+			return kind + "." + value.Model
+		}
+		if value.Credential != "" {
+			return kind + "." + value.Credential
+		}
+	case ProviderKindOpenAICompatible:
+		if value.Credential != "" && value.Model != "" {
+			return kind + "." + value.Credential + "." + value.Model
+		}
+		if value.Model != "" {
+			return kind + "." + value.Model
+		}
+		if value.Credential != "" {
+			return kind + "." + value.Credential
 		}
 	default:
 		if value.Credential != "" {

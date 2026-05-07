@@ -212,7 +212,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			// Commit whatever partial response was streamed so the next turn
 			// has context. Keep the user message in history too.
 			if m.streaming != "" {
-				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+				m.messages = append(m.messages, m.assistantMessage(m.streaming))
 				m.history = append(m.history, api.Message{
 					Role:    "assistant",
 					Content: []api.ContentBlock{{Type: "text", Text: m.streaming}},
@@ -417,10 +417,13 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				Role:    "user",
 				Content: userContent,
 			})
-			call := commands.NewLocalDirectCallWithTool(activeMCP.Server, activeMCP.DirectTool, localPromptFromContent(userContent))
+			call := commands.NewLocalDirectCallWithTool(activeMCP.Server, activeMCP.DirectTool, localChatPromptFromContent(userContent, activeMCP.Model))
 			m.running = true
 			m.cancelled = false
 			m.streaming = ""
+			m.turnAssistant = ""
+			m.turnProviderKind = ""
+			m.turnProvider = ""
 			m.apiRetryStatus = ""
 			m.turnStarted = time.Now()
 			m.refreshViewport()
@@ -489,6 +492,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.running = true
 		m.cancelled = false
 		m.streaming = ""
+		m.captureTurnProvider()
 		m.apiRetryStatus = ""
 		m.turnStarted = time.Now()
 		m.refreshViewport()

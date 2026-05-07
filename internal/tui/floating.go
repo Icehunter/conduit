@@ -22,7 +22,7 @@ type floatingSpec struct {
 
 var (
 	floatingPickerSpec      = floatingSpec{minWidth: 52, maxWidth: 96, minHeight: 5, maxHeight: 18}
-	floatingModelPickerSpec = floatingSpec{minWidth: 86, maxWidth: 132, minHeight: 20, maxHeight: 28}
+	floatingModelPickerSpec = floatingSpec{minWidth: 86, maxWidth: 132, minHeight: 26, maxHeight: 26}
 	floatingCommandSpec     = floatingSpec{minWidth: 72, maxWidth: 120, minHeight: 18, maxHeight: 18}
 	floatingModalSpec       = floatingSpec{minWidth: 56, maxWidth: 100, minHeight: 7, maxHeight: 22}
 )

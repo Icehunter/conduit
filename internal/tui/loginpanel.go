@@ -101,7 +101,7 @@ func (m Model) renderLoginPicker() string {
 func (m Model) welcomeCard() Message {
 	cwd, _ := os.Getwd()
 	p := m.cfg.Profile
-	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == "claude-subscription" && provider.Account != "" {
+	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == settings.ProviderKindClaudeSubscription && provider.Account != "" {
 		if p.Email != provider.Account {
 			p = profile.Info{Email: provider.Account}
 		}

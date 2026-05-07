@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/coordinator"
@@ -73,10 +74,12 @@ func RegisterModelCommand(
 			accountProviders := currentAccountProviders(getAccountProviders)
 			provider := firstAccountProvider(accountProviders)
 			localItems := localModelPickerItems(manager, providers)
-			items := make([]PickerOption, 0, len(accountProviders)*4+len(localItems))
+			customItems := customModelPickerItems(providers)
+			items := make([]PickerOption, 0, len(accountProviders)*4+len(localItems)+len(customItems))
 			for _, provider := range accountProviders {
 				items = append(items, accountModelPickerItems(provider)...)
 			}
+			items = append(items, customItems...)
 			items = append(items, localItems...)
 			return pickerResultItems("model", "Switch Model", currentModelValue(getModel(), provider), items)
 		}
@@ -91,7 +94,7 @@ func RegisterModelCommand(
 			provider := configuredMCPProviderForServer(providers, server)
 			if provider == nil {
 				provider = &settings.ActiveProviderSettings{
-					Kind:          "mcp",
+					Kind:          settings.ProviderKindMCP,
 					Server:        server,
 					Model:         localModelName(manager, server),
 					DirectTool:    defaultLocalDirectTool,
@@ -118,6 +121,22 @@ func RegisterModelCommand(
 		provider := firstAccountProvider(accountProviders)
 		if strings.HasPrefix(args, "provider:") {
 			key := strings.TrimSpace(strings.TrimPrefix(args, "provider:"))
+			if selected, ok := configuredProviderByKey(providers, key); ok {
+				if selected.Kind == settings.ProviderKindOpenAICompatible {
+					selected.Account = ""
+				}
+				if role == settings.RoleDefault && selected.Model != "" && selected.Kind != settings.ProviderKindOpenAICompatible {
+					setModel(selected.Model)
+					internalmodel.SetOverride(selected.Model)
+				}
+				return Result{
+					Type:     "provider-switch",
+					Model:    selected.Model,
+					Role:     role,
+					Text:     fmt.Sprintf("Switched to %s", selected.Model),
+					Provider: &selected,
+				}
+			}
 			if selected, ok := accountProviderByKey(accountProviders, key); ok {
 				if role == settings.RoleDefault {
 					setModel(selected.Model)
@@ -133,10 +152,10 @@ func RegisterModelCommand(
 			}
 		}
 		if strings.HasPrefix(args, "anthropic-api:") {
-			provider.Kind = "anthropic-api"
+			provider.Kind = settings.ProviderKindAnthropicAPI
 			args = strings.TrimSpace(strings.TrimPrefix(args, "anthropic-api:"))
 		} else if strings.HasPrefix(args, "claude-subscription:") {
-			provider.Kind = "claude-subscription"
+			provider.Kind = settings.ProviderKindClaudeSubscription
 			args = strings.TrimSpace(strings.TrimPrefix(args, "claude-subscription:"))
 		}
 		name := resolveModelName(args)
@@ -170,13 +189,13 @@ func RegisterModelCommand(
 
 func currentAccountProviders(getAccountProviders func() []settings.ActiveProviderSettings) []settings.ActiveProviderSettings {
 	if getAccountProviders == nil {
-		return []settings.ActiveProviderSettings{{Kind: "claude-subscription"}}
+		return []settings.ActiveProviderSettings{{Kind: settings.ProviderKindClaudeSubscription}}
 	}
 	var out []settings.ActiveProviderSettings
 	seen := map[string]bool{}
 	for _, provider := range getAccountProviders() {
 		switch provider.Kind {
-		case "anthropic-api", "claude-subscription":
+		case settings.ProviderKindAnthropicAPI, settings.ProviderKindClaudeSubscription:
 			key := provider.Kind + "\x00" + provider.Account
 			if !seen[key] {
 				out = append(out, settings.ActiveProviderSettings{
@@ -210,9 +229,24 @@ func accountProviderByKey(providers []settings.ActiveProviderSettings, key strin
 	return settings.ActiveProviderSettings{}, false
 }
 
+func configuredProviderByKey(providers map[string]settings.ActiveProviderSettings, key string) (settings.ActiveProviderSettings, bool) {
+	if len(providers) == 0 || key == "" {
+		return settings.ActiveProviderSettings{}, false
+	}
+	if provider, ok := providers[key]; ok {
+		return provider, true
+	}
+	for _, provider := range providers {
+		if settings.ProviderKey(provider) == key {
+			return provider, true
+		}
+	}
+	return settings.ActiveProviderSettings{}, false
+}
+
 func accountModelPickerItems(provider settings.ActiveProviderSettings) []PickerOption {
 	section := "Claude Subscription"
-	if provider.Kind == "anthropic-api" {
+	if provider.Kind == settings.ProviderKindAnthropicAPI {
 		section = "Anthropic API"
 	}
 	if provider.Account != "" {
@@ -231,12 +265,58 @@ func accountModelNames() []string {
 	return []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
 }
 
+func customModelPickerItems(providers map[string]settings.ActiveProviderSettings) []PickerOption {
+	if len(providers) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(providers))
+	for key := range providers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	items := make([]PickerOption, 0, len(keys)*2)
+	for _, key := range keys {
+		provider := providers[key]
+		if provider.Model == "" {
+			continue
+		}
+		label, ok := customModelPickerSection(provider)
+		if !ok {
+			continue
+		}
+		items = append(items, PickerOption{Label: label, Section: true})
+		items = append(items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
+	}
+	return items
+}
+
+func customModelPickerSection(provider settings.ActiveProviderSettings) (string, bool) {
+	switch provider.Kind {
+	case settings.ProviderKindOpenAICompatible:
+		label := "OpenAI-compatible"
+		if provider.Credential != "" {
+			label += " · credential " + provider.Credential
+		}
+		return label, true
+	case settings.ProviderKindAnthropicAPI:
+		if provider.Credential == "" || provider.Account != "" {
+			return "", false
+		}
+		return "Anthropic API · credential " + provider.Credential, true
+	default:
+		return "", false
+	}
+}
+
 func providerPickerValue(provider settings.ActiveProviderSettings, model string) string {
+	if provider.Kind == settings.ProviderKindOpenAICompatible {
+		return "provider:" + settings.ProviderKey(provider)
+	}
 	if provider.Account != "" {
 		provider.Model = model
 		return "provider:" + settings.ProviderKey(provider)
 	}
-	if provider.Kind == "anthropic-api" {
+	if provider.Kind == settings.ProviderKindAnthropicAPI {
 		return "anthropic-api:" + model
 	}
 	return "claude-subscription:" + model

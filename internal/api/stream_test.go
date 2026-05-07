@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -172,6 +173,187 @@ func TestStreamMessage_SetsStreamTrue(t *testing.T) {
 	}
 	if !sawStream {
 		t.Error("StreamMessage did not force stream:true on the request body")
+	}
+}
+
+func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
+	var capturedPath string
+	var capturedAuth string
+	var capturedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/openai/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"gemini-flash-latest\",\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\" there\"},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		ProviderKind: "openai-compatible",
+		BaseURL:      srv.URL + "/openai/",
+		APIKey:       "gemini-key",
+	}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{
+		Model:     "gemini-flash-latest",
+		MaxTokens: 64,
+		System:    []SystemBlock{{Type: "text", Text: "be brief"}},
+		Messages: []Message{
+			{Role: "assistant", Content: []ContentBlock{{Type: "text", Text: "I am claude-3-5-sonnet-20241022."}}},
+			{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var text strings.Builder
+	var types []string
+	for {
+		ev, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		types = append(types, ev.Type)
+		if ev.Type == "content_block_delta" {
+			delta, err := ev.AsContentBlockDelta()
+			if err != nil {
+				t.Fatal(err)
+			}
+			text.WriteString(delta.Delta.Text)
+		}
+	}
+	if capturedPath != "/openai/chat/completions" {
+		t.Fatalf("path = %q, want /openai/chat/completions", capturedPath)
+	}
+	if capturedAuth != "Bearer gemini-key" {
+		t.Fatalf("Authorization = %q, want bearer key", capturedAuth)
+	}
+	if capturedBody["model"] != "gemini-flash-latest" || capturedBody["stream"] != true {
+		t.Fatalf("body = %#v", capturedBody)
+	}
+	messages, ok := capturedBody["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatalf("messages = %#v, want non-empty list", capturedBody["messages"])
+	}
+	system, ok := messages[0].(map[string]any)
+	if !ok || system["role"] != "system" {
+		t.Fatalf("first message = %#v, want system", messages[0])
+	}
+	systemText, _ := system["content"].(string)
+	if strings.Contains(systemText, "Claude Agent SDK") || strings.Contains(systemText, "x-anthropic-billing-header") {
+		t.Fatalf("OpenAI-compatible system prompt leaked Claude identity: %q", systemText)
+	}
+	if !strings.Contains(systemText, "gemini-flash-latest") {
+		t.Fatalf("system prompt = %q, want configured model identity", systemText)
+	}
+	for _, msg := range messages {
+		encoded, _ := json.Marshal(msg)
+		if strings.Contains(string(encoded), "claude-3-5-sonnet-20241022") {
+			t.Fatalf("OpenAI-compatible request leaked stale assistant identity: %s", encoded)
+		}
+	}
+	if got := text.String(); got != "hi there" {
+		t.Fatalf("stream text = %q, want hi there; types=%v", got, types)
+	}
+}
+
+func TestStreamMessage_OpenAICompatibleConvertsToolCallStream(t *testing.T) {
+	var capturedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/openai/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl_tool\",\"model\":\"gemini-flash-latest\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"echo\"}}]},\"finish_reason\":null}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\" hi\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		ProviderKind: "openai-compatible",
+		BaseURL:      srv.URL + "/openai/",
+		APIKey:       "gemini-key",
+	}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{
+		Model:     "gemini-flash-latest",
+		MaxTokens: 64,
+		System:    []SystemBlock{{Type: "text", Text: "use tools"}},
+		Messages:  []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "run echo"}}}},
+		Tools: []ToolDef{{
+			Name:        "Bash",
+			Description: "Run a shell command",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"command": map[string]any{"type": "string"}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	tools, ok := capturedBody["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v, want one OpenAI tool", capturedBody["tools"])
+	}
+
+	var sawToolStart bool
+	var args strings.Builder
+	stopReason := ""
+	for {
+		ev, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		switch ev.Type {
+		case "content_block_start":
+			start, err := ev.AsContentBlockStart()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var block map[string]any
+			_ = json.Unmarshal(start.ContentBlock, &block)
+			if block["type"] == "tool_use" {
+				sawToolStart = block["id"] == "call_1" && block["name"] == "Bash"
+			}
+		case "content_block_delta":
+			delta, err := ev.AsContentBlockDelta()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if delta.Delta.Type == "input_json_delta" {
+				args.WriteString(delta.Delta.PartialJSON)
+			}
+		case "message_delta":
+			md, err := ev.AsMessageDelta()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stopReason = md.Delta.StopReason
+		}
+	}
+	if !sawToolStart {
+		t.Fatal("did not convert OpenAI tool call into Anthropic tool_use start")
+	}
+	if got := args.String(); got != `{"command":"echo hi"}` {
+		t.Fatalf("tool args = %q, want command JSON", got)
+	}
+	if stopReason != "tool_use" {
+		t.Fatalf("stop reason = %q, want tool_use", stopReason)
 	}
 }
 

@@ -26,6 +26,9 @@ const SDKPackageVersion = "0.81.0"
 
 // Config configures a Client.
 type Config struct {
+	// ProviderKind selects the request/response wire dialect. Empty means
+	// Anthropic Messages API. "openai-compatible" uses /chat/completions.
+	ProviderKind string
 	// BaseURL is the API origin, e.g. https://api.anthropic.com. No trailing slash.
 	BaseURL string
 	// AuthToken is the OAuth bearer token. Required when APIKey is empty.
@@ -92,6 +95,9 @@ func (c *Client) SetAuthToken(tok string) {
 // the error type and message, so callers can `errors.As` against APIError
 // for finer control once we add typed errors in M2.
 func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+	if c.cfg.ProviderKind == "openai-compatible" {
+		return c.createOpenAICompatible(ctx, req)
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal request: %w", err)

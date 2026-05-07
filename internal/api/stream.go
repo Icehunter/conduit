@@ -44,6 +44,9 @@ func (s *Stream) Close() error {
 // Reference: decoded/0158.js (create), 0137.js (SSE consumption), 4500.js
 // (retry semantics). The wire is HTTP+SSE — no protobuf/binary framing.
 func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Stream, error) {
+	if c.cfg.ProviderKind == "openai-compatible" {
+		return c.streamOpenAICompatible(ctx, req)
+	}
 	// Force stream:true so a forgetful caller doesn't get a non-stream JSON
 	// response back from the server (which would fail to parse as SSE and
 	// give a confusing error).

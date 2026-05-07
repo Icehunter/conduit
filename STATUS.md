@@ -120,7 +120,8 @@ Last updated: 2026-05-05
 | /commands | ✅ | opens slash command picker |
 | /clear | ✅ | |
 | /exit, /quit | ✅ | |
-| /model | ✅ | grouped provider picker; switches Claude/MCP via `activeProvider`, mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles |
+| /model | ✅ | grouped provider picker; switches Claude/MCP/OpenAI-compatible via `activeProvider`, mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles; Gemini/OpenAI-compatible providers are validated, assignable, text-streamable, and tool-call translated |
+| /providers | 🔶 | Settings Providers tab can add/edit/delete Gemini/OpenAI-compatible providers, rotate API keys via secure storage, and surface provider/role config validation; broader provider kinds still TODO |
 | /models | ✅ | alias for /model picker |
 | /compact | ✅ | calls Haiku to summarize |
 | /permissions | ✅ | shows gate state |

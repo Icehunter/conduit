@@ -52,7 +52,7 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 		m.cancelTurn = nil
 		m.cancelled = true
 		if m.streaming != "" {
-			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+			m.messages = append(m.messages, m.assistantMessage(m.streaming))
 			m.streaming = ""
 		}
 		// Mark any in-flight tool rows as interrupted so they don't
@@ -74,6 +74,13 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 // handlePaste processes bracketed paste events, handling file drag-drop
 // detection and large paste placeholders.
 func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
+	if m.settingsPanel != nil && m.settingsPanel.providerForm != nil {
+		content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
+		content = strings.ReplaceAll(content, "\r", "\n")
+		m.settingsPanel.providerForm.input += strings.TrimSpace(content)
+		m.refreshViewport()
+		return m, nil
+	}
 	hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
@@ -191,7 +198,7 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	m.cancelTurn = nil
 	m.apiRetryStatus = ""
 	if m.streaming != "" {
-		m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+		m.messages = append(m.messages, m.assistantMessage(m.streaming))
 		m.streaming = ""
 	}
 	if msg.cancelled || isCancelError(msg.err) {
@@ -202,7 +209,7 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 			m.history = m.history[:len(m.history)-1]
 		}
 	} else {
-		m.history = msg.history
+		m.history = m.annotateTurnProvider(msg.history)
 		m.tallyTokens()
 		// Record per-turn cost delta in both model and LiveState (LiveState
 		// is read by GetTurnCosts from outside the Bubble Tea event loop).
@@ -341,6 +348,7 @@ func (m Model) handleLoginDone(msg loginDoneMsg) (Model, tea.Cmd) {
 	m.loginFlowMsgStart = -1
 	m.noAuth = false
 	if msg.client != nil && m.cfg.Loop != nil {
+		m.cfg.APIClient = msg.client
 		m.cfg.Loop.SetClient(msg.client)
 		if msg.profile != nil {
 			m.cfg.Profile = *msg.profile
@@ -370,6 +378,7 @@ func (m Model) handleAuthReload(msg authReloadMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Could not reload credentials: %v", msg.err)})
 	} else if msg.client != nil {
+		m.cfg.APIClient = msg.client
 		m.cfg.Loop.SetClient(msg.client)
 		if msg.profile != nil {
 			m.cfg.Profile = *msg.profile

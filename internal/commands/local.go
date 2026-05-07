@@ -176,14 +176,14 @@ func splitLocalTarget(manager *mcp.Manager, provider *settings.ActiveProviderSet
 }
 
 func providerServer(provider *settings.ActiveProviderSettings) string {
-	if provider != nil && provider.Kind == "mcp" && provider.Server != "" {
+	if provider != nil && provider.Kind == settings.ProviderKindMCP && provider.Server != "" {
 		return provider.Server
 	}
 	return defaultLocalServer
 }
 
 func providerTool(provider *settings.ActiveProviderSettings, mode string) string {
-	if provider != nil && provider.Kind == "mcp" {
+	if provider != nil && provider.Kind == settings.ProviderKindMCP {
 		switch mode {
 		case "implement":
 			if provider.ImplementTool != "" {
@@ -326,7 +326,7 @@ func sortedMCPProviders(providers map[string]settings.ActiveProviderSettings) []
 	}
 	keys := make([]string, 0, len(providers))
 	for key, provider := range providers {
-		if provider.Kind == "mcp" && provider.Server != "" {
+		if provider.Kind == settings.ProviderKindMCP && provider.Server != "" {
 			keys = append(keys, key)
 		}
 	}

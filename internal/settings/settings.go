@@ -175,12 +175,18 @@ type ActiveProviderSettings struct {
 	Model         string `json:"model,omitempty"`
 	Account       string `json:"account,omitempty"`
 	Credential    string `json:"credential,omitempty"`
+	BaseURL       string `json:"baseURL,omitempty"`
 	Server        string `json:"server,omitempty"`
 	DirectTool    string `json:"directTool,omitempty"`
 	ImplementTool string `json:"implementTool,omitempty"`
 }
 
 const (
+	ProviderKindClaudeSubscription = "claude-subscription"
+	ProviderKindAnthropicAPI       = "anthropic-api"
+	ProviderKindOpenAICompatible   = "openai-compatible"
+	ProviderKindMCP                = "mcp"
+
 	RoleDefault    = "default"
 	RoleMain       = "main"
 	RolePlanning   = "planning"

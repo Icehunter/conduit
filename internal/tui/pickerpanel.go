@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -144,21 +145,143 @@ func (m Model) renderModelPicker() string {
 		ornW = 6
 	}
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
-	sb.WriteString("\n\n")
-	sb.WriteString(stylePickerDesc.Render("› "+providerRolePrompt(p.role)) + "\n\n")
 
-	for i, it := range p.items {
+	bodyRows := modelPickerBodyRows()
+	listRows := bodyRows - 6
+	if listRows < 6 {
+		listRows = 6
+	}
+	start, end := modelPickerWindow(p.items, p.selected, listRows)
+	body := []string{
+		"",
+		stylePickerDesc.Render("› " + providerRolePrompt(p.role)),
+		"",
+	}
+	if start > 0 {
+		body = append(body, stylePickerDesc.Render(fmt.Sprintf("  ↑ %d more above", start)))
+	} else {
+		body = append(body, "")
+	}
+	body = append(body, renderModelPickerRows(p.items, p.current, p.selected, start, end, contentW)...)
+	for modelPickerBodyListRows(body) < listRows {
+		body = append(body, "")
+	}
+	if end < len(p.items) {
+		body = append(body, stylePickerDesc.Render(fmt.Sprintf("  ↓ %d more below", len(p.items)-end)))
+	} else {
+		body = append(body, "")
+	}
+	for len(body) < bodyRows-1 {
+		body = append(body, "")
+	}
+	body = append(body, stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"))
+	if len(body) > bodyRows {
+		body = body[:bodyRows]
+		body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close")
+	}
+	sb.WriteString("\n" + strings.Join(body, "\n"))
+	return sb.String()
+}
+
+func renderModelPickerRows(items []pickerItem, current string, selected, start, end, contentW int) []string {
+	rows := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		it := items[i]
 		if it.Section {
-			if i > 0 {
-				sb.WriteByte('\n')
+			if i > start {
+				rows = append(rows, "")
 			}
-			sb.WriteString(renderModelPickerSection(it.Label, sectionHasCurrent(p.items, i, p.current), contentW) + "\n")
+			rows = append(rows, renderModelPickerSection(it.Label, sectionHasCurrent(items, i, current), contentW))
 			continue
 		}
-		sb.WriteString(renderModelPickerRow(it, i == p.selected, it.Value == p.current, contentW) + "\n")
+		rows = append(rows, renderModelPickerRow(it, i == selected, it.Value == current, contentW))
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"))
-	return sb.String()
+	return rows
+}
+
+func modelPickerBodyListRows(body []string) int {
+	if len(body) <= 4 {
+		return 0
+	}
+	return len(body) - 4
+}
+
+func modelPickerBodyRows() int {
+	rows := floatingModelPickerSpec.maxHeight - floatingWindowStyle().GetVerticalFrameSize() - 1 - floatingBodyPadY*2
+	if rows < 10 {
+		return 10
+	}
+	return rows
+}
+
+func modelPickerWindow(items []pickerItem, selected, visibleLines int) (int, int) {
+	if visibleLines < 6 {
+		visibleLines = 6
+	}
+	if selected < 0 {
+		selected = firstPickerSelectable(items)
+	}
+	start := selected
+	used := 0
+	for start > 0 {
+		next := pickerItemLineHeight(items, start-1, start)
+		if used+next > visibleLines/2 {
+			break
+		}
+		used += next
+		start--
+	}
+	if start > 0 {
+		for i := start; i >= 0; i-- {
+			if items[i].Section {
+				start = i
+				break
+			}
+		}
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start
+	for end < len(items) && modelPickerRenderedLines(items, start, end+1) <= visibleLines {
+		end++
+	}
+	if end <= selected {
+		end = selected + 1
+	}
+	for modelPickerRenderedLines(items, start, end) > visibleLines && start < selected {
+		start++
+	}
+	return start, end
+}
+
+func modelPickerRenderedLines(items []pickerItem, start, end int) int {
+	lines := 0
+	for i := start; i < end && i < len(items); i++ {
+		lines += pickerItemLineHeight(items, i, start)
+	}
+	return lines
+}
+
+func pickerItemLineHeight(items []pickerItem, index, start int) int {
+	if index < 0 || index >= len(items) {
+		return 0
+	}
+	if items[index].Section && index > start {
+		return 2
+	}
+	return 1
+}
+
+func modelPickerVisibleLines(height int) int {
+	visible := height / 3
+	if visible < 8 {
+		return 8
+	}
+	if visible > 15 {
+		return 15
+	}
+	return visible
 }
 
 var providerRoleOrder = []string{
@@ -266,6 +389,9 @@ func modelPickerProviderLabel(value string) string {
 	}
 	if strings.HasPrefix(value, "provider:anthropic-api.") {
 		return stylePickerDesc.Render("Anthropic API")
+	}
+	if strings.HasPrefix(value, "provider:openai-compatible.") {
+		return stylePickerDesc.Render("OpenAI compat")
 	}
 	if strings.HasPrefix(value, "provider:claude-subscription.") {
 		return stylePickerDesc.Render("Claude")

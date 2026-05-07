@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
@@ -42,7 +43,7 @@ func persistClaudeActiveProvider(model, account string) string {
 }
 
 func accountBackedActiveProvider(model, account string, tokens ...auth.PersistedTokens) settings.ActiveProviderSettings {
-	kind := "claude-subscription"
+	kind := settings.ProviderKindClaudeSubscription
 	if len(tokens) > 0 {
 		kind = providerKindForAccountKind(auth.InferAccountKind(tokens[0]))
 	} else if account != "" {
@@ -69,9 +70,9 @@ func accountBackedActiveProvider(model, account string, tokens ...auth.Persisted
 func providerKindForAccountKind(kind string) string {
 	switch kind {
 	case auth.AccountKindAnthropicConsole:
-		return "anthropic-api"
+		return settings.ProviderKindAnthropicAPI
 	default:
-		return "claude-subscription"
+		return settings.ProviderKindClaudeSubscription
 	}
 }
 
@@ -105,7 +106,7 @@ func (m *Model) setActiveProvider(value settings.ActiveProviderSettings) {
 	provider := value
 	m.activeProvider = &provider
 	switch provider.Kind {
-	case "mcp":
+	case settings.ProviderKindMCP:
 		m.localMode = true
 		m.localModeServer = provider.Server
 		m.localDirectTool = provider.DirectTool
@@ -130,7 +131,25 @@ func (m *Model) applyPermissionMode(mode permissions.Mode) {
 
 func (m *Model) applyEffectiveProviderForMode() {
 	provider, ok := m.providerForCurrentMode()
-	if !ok || provider.Kind == "mcp" || provider.Model == "" || m.cfg.Loop == nil {
+	if !ok || provider.Model == "" || m.cfg.Loop == nil {
+		return
+	}
+	switch provider.Kind {
+	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
+		if m.cfg.APIClient != nil {
+			m.cfg.Loop.SetClient(m.cfg.APIClient)
+		}
+	case settings.ProviderKindOpenAICompatible:
+		if m.cfg.NewProviderAPIClient == nil {
+			return
+		}
+		client, err := m.cfg.NewProviderAPIClient(provider)
+		if err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Provider client unavailable: " + err.Error()})
+			return
+		}
+		m.cfg.Loop.SetClient(client)
+	default:
 		return
 	}
 	m.cfg.Loop.SetModel(provider.Model)
@@ -153,7 +172,9 @@ func (m Model) backgroundModel() string {
 			return model
 		}
 	}
-	if provider, ok := m.providerForRole(settings.RoleBackground); ok && provider.Kind != "mcp" && provider.Model != "" {
+	if provider, ok := m.providerForRole(settings.RoleBackground); ok &&
+		(provider.Kind == settings.ProviderKindClaudeSubscription || provider.Kind == settings.ProviderKindAnthropicAPI) &&
+		provider.Model != "" {
 		return provider.Model
 	}
 	return compact.DefaultModel
@@ -186,8 +207,10 @@ func (m Model) providerForRole(role string) (settings.ActiveProviderSettings, bo
 
 func (m Model) providerAvailable(provider settings.ActiveProviderSettings) bool {
 	switch provider.Kind {
-	case "claude-subscription", "anthropic-api":
+	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
 		return m.accountProviderAvailable(provider)
+	case settings.ProviderKindOpenAICompatible:
+		return settings.ValidateProviderSettings(provider) == nil
 	default:
 		return true
 	}
@@ -214,9 +237,9 @@ func (m Model) accountProviderAvailable(provider settings.ActiveProviderSettings
 
 func tuiProviderKindMatchesAccount(providerKind, accountKind string) bool {
 	switch providerKind {
-	case "anthropic-api":
+	case settings.ProviderKindAnthropicAPI:
 		return accountKind == auth.AccountKindAnthropicConsole
-	case "claude-subscription":
+	case settings.ProviderKindClaudeSubscription:
 		return accountKind == "" || accountKind == auth.AccountKindClaudeAI
 	default:
 		return false
@@ -255,9 +278,9 @@ func (m Model) modelPickerItemAvailable(item pickerItem) bool {
 	case strings.HasPrefix(item.Value, "provider:"):
 		return true
 	case strings.HasPrefix(item.Value, "anthropic-api:"):
-		return m.anyAccountForProviderKind("anthropic-api")
+		return m.anyAccountForProviderKind(settings.ProviderKindAnthropicAPI)
 	case strings.HasPrefix(item.Value, "claude-subscription:"):
-		return m.anyAccountForProviderKind("claude-subscription")
+		return m.anyAccountForProviderKind(settings.ProviderKindClaudeSubscription)
 	default:
 		return true
 	}
@@ -286,7 +309,7 @@ func (m Model) mcpActiveProvider(server string) settings.ActiveProviderSettings 
 		implementTool = "local_implement"
 	}
 	return settings.ActiveProviderSettings{
-		Kind:          "mcp",
+		Kind:          settings.ProviderKindMCP,
 		Server:        server,
 		Model:         m.localModelName(server),
 		DirectTool:    directTool,
@@ -295,7 +318,7 @@ func (m Model) mcpActiveProvider(server string) settings.ActiveProviderSettings 
 }
 
 func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
-	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == "mcp" {
+	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == settings.ProviderKindMCP {
 		if provider.Server == "" {
 			provider.Server = "local-router"
 		}
@@ -324,7 +347,7 @@ func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
 			implementTool = "local_implement"
 		}
 		return settings.ActiveProviderSettings{
-			Kind:          "mcp",
+			Kind:          settings.ProviderKindMCP,
 			Server:        server,
 			Model:         m.localModelName(server),
 			DirectTool:    directTool,
@@ -350,24 +373,28 @@ func (m Model) providerValueForRole(role string) string {
 }
 
 func providerPickerValue(provider settings.ActiveProviderSettings) string {
-	if provider.Kind == "mcp" {
+	if provider.Kind == settings.ProviderKindMCP {
 		server := provider.Server
 		if server == "" {
 			server = "local-router"
 		}
 		return "local:" + server
 	}
-	if provider.Kind == "anthropic-api" {
+	if provider.Kind == settings.ProviderKindAnthropicAPI {
 		if provider.Account != "" {
 			return "provider:" + settings.ProviderKey(provider)
 		}
 		return "anthropic-api:" + provider.Model
 	}
-	if provider.Kind == "claude-subscription" {
+	if provider.Kind == settings.ProviderKindClaudeSubscription {
 		if provider.Account != "" {
 			return "provider:" + settings.ProviderKey(provider)
 		}
 		return "claude-subscription:" + provider.Model
+	}
+	if provider.Kind == settings.ProviderKindOpenAICompatible {
+		provider.Account = ""
+		return "provider:" + settings.ProviderKey(provider)
 	}
 	return provider.Model
 }
@@ -384,7 +411,7 @@ func (m *Model) ensureDefaultLocalTools() {
 func (m Model) activeModelDisplayName() string {
 	provider, ok := m.activeMCPProvider()
 	if !ok {
-		if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != "mcp" && provider.Model != "" {
+		if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != settings.ProviderKindMCP && provider.Model != "" {
 			return accountProviderDisplayName(provider)
 		}
 		return m.modelName
@@ -409,8 +436,12 @@ func mcpProviderDisplayName(provider settings.ActiveProviderSettings, fallbackMo
 
 func accountProviderDisplayName(provider settings.ActiveProviderSettings) string {
 	label := "Claude Subscription"
-	if provider.Kind == "anthropic-api" {
+	switch provider.Kind {
+	case settings.ProviderKindAnthropicAPI:
 		label = "Anthropic API"
+	case settings.ProviderKindOpenAICompatible:
+		label = "OpenAI-compatible"
+		provider.Account = ""
 	}
 	parts := []string{label}
 	if provider.Model != "" {
@@ -418,15 +449,86 @@ func accountProviderDisplayName(provider settings.ActiveProviderSettings) string
 	}
 	if provider.Account != "" {
 		parts = append(parts, provider.Account)
+	} else if provider.Credential != "" {
+		switch provider.Kind {
+		case settings.ProviderKindAnthropicAPI, settings.ProviderKindOpenAICompatible:
+			parts = append(parts, "credential "+provider.Credential)
+		default:
+			parts = append(parts, provider.Credential)
+		}
 	}
 	return strings.Join(parts, " · ")
 }
 
 func (m Model) effectiveAssistantModelName() string {
-	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != "mcp" && provider.Model != "" {
+	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind != settings.ProviderKindMCP && provider.Model != "" {
 		return provider.Model
 	}
 	return m.modelName
+}
+
+func (m Model) assistantDisplayLabel() string {
+	if provider, ok := m.providerForCurrentMode(); ok {
+		switch provider.Kind {
+		case settings.ProviderKindOpenAICompatible:
+			return "‹ " + openAICompatibleAssistantName(provider.Model)
+		case settings.ProviderKindAnthropicAPI, settings.ProviderKindClaudeSubscription:
+			return prefixClaude
+		}
+	}
+	return prefixClaude
+}
+
+func (m Model) assistantMessage(content string) Message {
+	label := m.turnAssistant
+	if label == "" {
+		label = m.assistantDisplayLabel()
+	}
+	return Message{Role: RoleAssistant, Content: content, AssistantLabel: label}
+}
+
+func (m *Model) captureTurnProvider() {
+	provider, ok := m.providerForCurrentMode()
+	if !ok {
+		m.turnAssistant = prefixClaude
+		m.turnProviderKind = ""
+		m.turnProvider = ""
+		return
+	}
+	m.turnAssistant = m.assistantDisplayLabel()
+	m.turnProviderKind = provider.Kind
+	m.turnProvider = provider.Model
+}
+
+func (m Model) annotateTurnProvider(history []api.Message) []api.Message {
+	if m.turnProviderKind == "" || m.turnProvider == "" {
+		return history
+	}
+	out := make([]api.Message, len(history))
+	copy(out, history)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role == "assistant" && out[i].ProviderKind == "" && out[i].Provider == "" {
+			out[i].ProviderKind = m.turnProviderKind
+			out[i].Provider = m.turnProvider
+			continue
+		}
+		if out[i].Role == "user" {
+			break
+		}
+	}
+	return out
+}
+
+func openAICompatibleAssistantName(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.Contains(model, "gemini"):
+		return "Gemini"
+	case strings.Contains(model, "gpt") || strings.Contains(model, "o1") || strings.Contains(model, "o3") || strings.Contains(model, "o4"):
+		return "OpenAI"
+	default:
+		return "OpenAI"
+	}
 }
 
 func (m Model) localModelName(server string) string {

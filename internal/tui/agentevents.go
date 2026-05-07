@@ -44,7 +44,7 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		// Tool block started streaming — show the row immediately.
 		// ToolInput arrives later via EventToolUse.
 		if m.streaming != "" {
-			m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+			m.messages = append(m.messages, m.assistantMessage(m.streaming))
 			m.streaming = ""
 		}
 		m.messages = append(m.messages, Message{
@@ -69,7 +69,7 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		if !found {
 			// Defensive: EventToolStart was missed; create the row now.
 			if m.streaming != "" {
-				m.messages = append(m.messages, Message{Role: RoleAssistant, Content: m.streaming})
+				m.messages = append(m.messages, m.assistantMessage(m.streaming))
 				m.streaming = ""
 			}
 			m.messages = append(m.messages, Message{

@@ -123,12 +123,19 @@ Provider definitions should become explicitly typed rather than loosely keyed:
 - `openaiCompatible`
 - `mcpLocal`
 
+Current `conduit.json` provider kind values intentionally remain the existing
+kebab-case wire strings while the provider UI and role picker are landing:
+`claude-subscription`, `anthropic-api`, `openai-compatible`, and `mcp`. The
+camelCase names above are a future schema migration, not a prerequisite for
+Gemini/OpenAI-compatible configuration support.
+
 Add validation and migration for legacy keys like:
 
 ```text
 claude-subscription.<account>.<model>
 mcp.<server>
 anthropic-api.<account>.<model>
+openai-compatible.<credential>.<model>
 ```
 
 The config API should reject broken provider references early and give a useful
@@ -178,4 +185,3 @@ Do it with a compatibility fallback:
 2. If missing, read Claude project dir.
 3. Once Conduit writes a session for a project, prefer Conduit from then on.
 4. Keep import behavior non-destructive.
-

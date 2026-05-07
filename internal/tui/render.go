@@ -44,8 +44,12 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		if content == "" {
 			return "" // pure companion quip — bubble handles display, skip chat row
 		}
+		prefix := msg.AssistantLabel
+		if prefix == "" {
+			prefix = prefixClaude
+		}
 		body := renderMarkdown(content, inner)
-		return pad + styleClaudePrefix.Render(prefixClaude) + "\n" + indentLines(body, pad)
+		return pad + styleClaudePrefix.Render(prefix) + "\n" + indentLines(body, pad)
 
 	case RoleLocal:
 		label := prefixLocal

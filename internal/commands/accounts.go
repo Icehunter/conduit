@@ -15,4 +15,11 @@ func RegisterAccountCommand(r *Registry) {
 		Description: "Manage accounts — switch, add, logout, delete",
 		Handler:     handler,
 	})
+	r.Register(Command{
+		Name:        "providers",
+		Description: "Manage model providers",
+		Handler: func(string) Result {
+			return Result{Type: "settings-panel", Text: "providers"}
+		},
+	})
 }

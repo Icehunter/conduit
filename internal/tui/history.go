@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // historyToDisplayMessages converts API history back into display messages.
@@ -29,10 +30,10 @@ func historyToDisplayMessages(msgs []api.Message) []Message {
 			}
 			content = stripCompanionMarkerGlobal(content)
 			if content != "" {
-				if apiMsg.ProviderKind == "mcp" || apiMsg.Provider != "" {
+				if apiMsg.ProviderKind == settings.ProviderKindMCP {
 					out = append(out, Message{Role: RoleLocal, Content: content, ToolName: apiMsg.Provider})
 				} else {
-					out = append(out, Message{Role: RoleAssistant, Content: content})
+					out = append(out, Message{Role: RoleAssistant, Content: content, AssistantLabel: assistantLabelForProviderMetadata(apiMsg.ProviderKind, apiMsg.Provider, content)})
 				}
 			}
 		}
@@ -107,10 +108,29 @@ func historyToDisplayMessage(msg api.Message) Message {
 	// Strip companion markers ([Name: ...]) stored from previous sessions.
 	content := text.String()
 	content = stripCompanionMarkerGlobal(content)
-	if msg.ProviderKind == "mcp" || msg.Provider != "" {
+	if msg.ProviderKind == settings.ProviderKindMCP {
 		return Message{Role: RoleLocal, Content: content, ToolName: msg.Provider}
 	}
-	return Message{Role: RoleAssistant, Content: content}
+	return Message{Role: RoleAssistant, Content: content, AssistantLabel: assistantLabelForProviderMetadata(msg.ProviderKind, msg.Provider, content)}
+}
+
+func assistantLabelForProviderMetadata(kind, provider, content string) string {
+	switch kind {
+	case settings.ProviderKindOpenAICompatible:
+		return "‹ " + openAICompatibleAssistantName(provider)
+	case settings.ProviderKindAnthropicAPI, settings.ProviderKindClaudeSubscription:
+		return prefixClaude
+	default:
+		return assistantLabelForLegacyContent(content)
+	}
+}
+
+func assistantLabelForLegacyContent(content string) string {
+	lower := strings.ToLower(content)
+	if strings.Contains(lower, "gemini-flash") || strings.Contains(lower, "gemini-pro") || strings.Contains(lower, " gemini ") {
+		return "‹ Gemini"
+	}
+	return ""
 }
 
 // exportConversation writes the conversation display messages to a markdown file.

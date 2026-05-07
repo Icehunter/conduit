@@ -76,6 +76,48 @@ func TestWelcomeCardUsesActiveMCPProviderDisplay(t *testing.T) {
 	}
 }
 
+func TestModelPickerProviderLabelOpenAICompatible(t *testing.T) {
+	got := plainText(modelPickerProviderLabel("provider:openai-compatible.gemini-personal.gemini-2.5-pro"))
+	if got != "OpenAI compat" {
+		t.Fatalf("provider label = %q, want OpenAI compat", got)
+	}
+}
+
+func TestActiveModelDisplayNameOpenAICompatible(t *testing.T) {
+	m := Model{
+		cfg: Config{Version: "test"},
+		activeProvider: &settings.ActiveProviderSettings{
+			Kind:       settings.ProviderKindOpenAICompatible,
+			Credential: "gemini-personal",
+			BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+			Model:      "gemini-2.5-pro",
+		},
+		providers: map[string]settings.ActiveProviderSettings{
+			"openai-compatible.gemini-personal.gemini-2.5-pro": {
+				Kind:       settings.ProviderKindOpenAICompatible,
+				Credential: "gemini-personal",
+				BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+				Model:      "gemini-2.5-pro",
+			},
+		},
+		roles: map[string]string{
+			settings.RoleDefault: "openai-compatible.gemini-personal.gemini-2.5-pro",
+		},
+	}
+	if got := m.activeModelDisplayName(); got != "OpenAI-compatible · gemini-2.5-pro · credential gemini-personal" {
+		t.Fatalf("display = %q, want OpenAI-compatible model display", got)
+	}
+}
+
+func TestModelPickerVisibleLinesCapsTallTerminals(t *testing.T) {
+	if got := modelPickerVisibleLines(80); got != 15 {
+		t.Fatalf("visible lines = %d, want cap at 15", got)
+	}
+	if got := modelPickerVisibleLines(18); got != 8 {
+		t.Fatalf("visible lines = %d, want minimum 8", got)
+	}
+}
+
 func TestPlanModeUsesPlanningProvider(t *testing.T) {
 	m := Model{
 		modelName:          "claude-sonnet-4-6",
@@ -481,6 +523,15 @@ func TestLocalPromptFromContentIncludesAtMentionContent(t *testing.T) {
 	}
 }
 
+func TestLocalChatPromptFromContentIdentifiesConduitAndModel(t *testing.T) {
+	prompt := localChatPromptFromContent([]api.ContentBlock{{Type: "text", Text: "who are you?"}}, "qwen3-coder")
+	for _, want := range []string{"You are Conduit", "qwen3-coder", "User request:\nwho are you?"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("local chat prompt missing %q: %q", want, prompt)
+		}
+	}
+}
+
 func TestAcceptAtMatchDirectoryKeepsPickerOpenForNestedPath(t *testing.T) {
 	dir := t.TempDir()
 	oldwd, err := os.Getwd()
@@ -546,6 +597,28 @@ func TestHistoryToDisplayMessagesRestoresLocalProvider(t *testing.T) {
 	}})
 	if len(msgs) != 1 || msgs[0].Role != RoleLocal || msgs[0].ToolName != "local-router" {
 		t.Fatalf("messages = %#v, want restored local provider display", msgs)
+	}
+}
+
+func TestHistoryToDisplayMessagesRestoresOpenAICompatibleProvider(t *testing.T) {
+	msgs := historyToDisplayMessages([]api.Message{{
+		Role:         "assistant",
+		Content:      []api.ContentBlock{{Type: "text", Text: "hi from gemini"}},
+		ProviderKind: settings.ProviderKindOpenAICompatible,
+		Provider:     "gemini-flash-latest",
+	}})
+	if len(msgs) != 1 || msgs[0].Role != RoleAssistant || msgs[0].AssistantLabel != "‹ Gemini" {
+		t.Fatalf("messages = %#v, want Gemini assistant message", msgs)
+	}
+}
+
+func TestHistoryToDisplayMessagesLabelsLegacyGeminiContent(t *testing.T) {
+	msgs := historyToDisplayMessages([]api.Message{{
+		Role:    "assistant",
+		Content: []api.ContentBlock{{Type: "text", Text: "I am Conduit, and I am using the gemini-flash-latest model."}},
+	}})
+	if len(msgs) != 1 || msgs[0].Role != RoleAssistant || msgs[0].AssistantLabel != "‹ Gemini" {
+		t.Fatalf("messages = %#v, want legacy Gemini assistant label", msgs)
 	}
 }
 
@@ -709,6 +782,17 @@ func TestRenderMessage_AssistantInfo(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("assistant info missing %q: %q", want, out)
 		}
+	}
+}
+
+func TestRenderMessage_AssistantUsesProviderLabel(t *testing.T) {
+	out := plainText(renderMessage(Message{
+		Role:           RoleAssistant,
+		AssistantLabel: "‹ Gemini",
+		Content:        "hello",
+	}, 80, false))
+	if !strings.Contains(out, "Gemini") || strings.Contains(out, "Claude") {
+		t.Fatalf("assistant label = %q, want Gemini and not Claude", out)
 	}
 }
 

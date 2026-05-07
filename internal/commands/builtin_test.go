@@ -359,6 +359,109 @@ func TestRegisterModelCommand_ProviderKeySelectionCarriesAccount(t *testing.T) {
 	}
 }
 
+func TestRegisterModelCommand_ModelsShowsOpenAICompatibleProviders(t *testing.T) {
+	r := New()
+	provider := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "gemini-personal",
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+		Model:      "gemini-2.5-pro",
+	}
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(provider): provider,
+	}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	foundSection := false
+	foundModel := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "OpenAI-compatible · credential gemini-personal" {
+			foundSection = true
+		}
+		if item.Value == "provider:openai-compatible.gemini-personal.gemini-2.5-pro" && item.Label == "gemini-2.5-pro" {
+			foundModel = true
+		}
+	}
+	if !foundSection || !foundModel {
+		t.Fatalf("picker openai-compatible section=%v model=%v items=%#v", foundSection, foundModel, got.Items)
+	}
+}
+
+func TestRegisterModelCommand_ModelsShowsCustomAnthropicAPIProviders(t *testing.T) {
+	r := New()
+	provider := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindAnthropicAPI,
+		Credential: "work-api-key",
+		Model:      "claude-custom-deployment",
+	}
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(provider): provider,
+	}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	foundSection := false
+	foundModel := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "Anthropic API · credential work-api-key" {
+			foundSection = true
+		}
+		if item.Value == "provider:anthropic-api.work-api-key.claude-custom-deployment" && item.Label == "claude-custom-deployment" {
+			foundModel = true
+		}
+	}
+	if !foundSection || !foundModel {
+		t.Fatalf("picker custom Anthropic section=%v model=%v items=%#v", foundSection, foundModel, got.Items)
+	}
+}
+
+func TestRegisterModelCommand_ConfiguredProviderKeySelection(t *testing.T) {
+	r := New()
+	provider := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "gemini-personal",
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+		Model:      "gemini-2.5-pro",
+	}
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(provider): provider,
+	}
+	called := false
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) { called = true }, nil, nil, providers)
+
+	result, ok := r.Dispatch("/model --role planning provider:openai-compatible.gemini-personal.gemini-2.5-pro")
+	if !ok {
+		t.Fatal("expected configured provider key selection to dispatch")
+	}
+	if result.Type != "provider-switch" || result.Provider == nil {
+		t.Fatalf("result = %#v, want provider-switch", result)
+	}
+	if result.Role != settings.RolePlanning {
+		t.Fatalf("role = %q, want planning", result.Role)
+	}
+	if result.Provider.Kind != settings.ProviderKindOpenAICompatible || result.Provider.BaseURL == "" || result.Provider.Model != "gemini-2.5-pro" {
+		t.Fatalf("provider = %#v, want OpenAI-compatible Gemini provider", result.Provider)
+	}
+	if called {
+		t.Fatal("configured OpenAI-compatible provider selection should not update Anthropic model override")
+	}
+}
+
 func TestRegisterModelCommand_RoleSelection(t *testing.T) {
 	r := New()
 	called := false
@@ -556,6 +659,19 @@ func TestRegisterAccountCommand_AccountsAlias(t *testing.T) {
 	}
 	if result.Type != "settings-panel" || result.Text != "accounts" {
 		t.Fatalf("result = %#v, want accounts settings panel", result)
+	}
+}
+
+func TestRegisterAccountCommand_ProvidersAlias(t *testing.T) {
+	r := New()
+	RegisterAccountCommand(r)
+
+	result, ok := r.Dispatch("/providers")
+	if !ok {
+		t.Fatal("expected /providers to dispatch")
+	}
+	if result.Type != "settings-panel" || result.Text != "providers" {
+		t.Fatalf("result = %#v, want providers settings panel", result)
 	}
 }
 

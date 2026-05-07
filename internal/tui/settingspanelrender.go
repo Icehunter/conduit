@@ -72,6 +72,8 @@ func (m Model) renderSettingsPanel() string {
 		m.renderSettingsStats(&sb, p, innerW, contentH)
 	case settingsTabUsage:
 		m.renderSettingsUsage(&sb, p, innerW, contentH)
+	case settingsTabProviders:
+		m.renderSettingsProviders(&sb, p, innerW, contentH)
 	case settingsTabAccounts:
 		m.renderSettingsAccounts(&sb, p, innerW, contentH)
 	}

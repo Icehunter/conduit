@@ -111,6 +111,7 @@ type Message struct {
 	ToolError    bool
 
 	AssistantModel    string
+	AssistantLabel    string
 	AssistantDuration time.Duration
 	AssistantCost     float64
 
@@ -246,6 +247,9 @@ type Config struct {
 	LoadAuth func(ctx context.Context) (auth.PersistedTokens, *profile.Info, error)
 	// NewAPIClient constructs a fresh client for the given persisted token.
 	NewAPIClient func(auth.PersistedTokens) *api.Client
+	// NewProviderAPIClient constructs a client for non-account providers such
+	// as OpenAI-compatible endpoints.
+	NewProviderAPIClient func(settings.ActiveProviderSettings) (*api.Client, error)
 	// Live is the shared state bag readable from command callbacks outside
 	// the Bubble Tea event loop. Populated by the model on each Update.
 	Live *LiveState
@@ -292,15 +296,18 @@ type Model struct {
 	height int
 	panelH int
 
-	running         bool
-	cancelled       bool // true after Ctrl+C; cleared when next turn starts
-	cancelTurn      context.CancelFunc
-	streaming       string
-	apiRetryStatus  string
-	turnID          int               // incremented each turn; agentDoneMsg with stale ID is ignored
-	turnStarted     time.Time         // wall time when the current agent turn started
-	pendingMessages []string          // messages typed while agent is running; drained after turn ends
-	questionAsk     *questionAskState // non-nil when AskUserQuestion is waiting for user input
+	running          bool
+	cancelled        bool // true after Ctrl+C; cleared when next turn starts
+	cancelTurn       context.CancelFunc
+	streaming        string
+	apiRetryStatus   string
+	turnID           int               // incremented each turn; agentDoneMsg with stale ID is ignored
+	turnStarted      time.Time         // wall time when the current agent turn started
+	turnAssistant    string            // display label captured for the provider answering the current turn
+	turnProvider     string            // provider/model captured for transcript display metadata
+	turnProviderKind string            // provider kind captured for transcript display metadata
+	pendingMessages  []string          // messages typed while agent is running; drained after turn ends
+	questionAsk      *questionAskState // non-nil when AskUserQuestion is waiting for user input
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands
@@ -523,7 +530,7 @@ func New(cfg Config) Model {
 	if cfg.InitialActiveProvider != nil {
 		provider := *cfg.InitialActiveProvider
 		m.activeProvider = &provider
-		if provider.Kind == "mcp" {
+		if provider.Kind == settings.ProviderKindMCP {
 			m.localMode = true
 			if m.localModeServer == "" {
 				m.localModeServer = provider.Server
@@ -623,6 +630,7 @@ func New(cfg Config) Model {
 		m.trustDialog = &trustDialogState{setTrusted: cfg.SetTrusted}
 	}
 
+	m.applyEffectiveProviderForMode()
 	return m
 }
 

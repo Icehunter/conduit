@@ -91,10 +91,10 @@ func configuredAccountProviders() []settings.ActiveProviderSettings {
 
 func accountProviderKind(accountKind string) string {
 	if accountKind == auth.AccountKindAnthropicConsole {
-		return "anthropic-api"
+		return settings.ProviderKindAnthropicAPI
 	}
 	if accountKind == "" || accountKind == auth.AccountKindClaudeAI {
-		return "claude-subscription"
+		return settings.ProviderKindClaudeSubscription
 	}
 	return ""
 }

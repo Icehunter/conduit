@@ -80,6 +80,15 @@ func localPromptFromContent(content []api.ContentBlock) string {
 	return strings.Join(parts, "\n\n")
 }
 
+func localChatPromptFromContent(content []api.ContentBlock, model string) string {
+	prompt := localPromptFromContent(content)
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = "the configured local model"
+	}
+	return fmt.Sprintf("You are Conduit, an interactive software engineering agent running through local model %q. If asked who you are, say you are Conduit. If asked which model you are using, say %q. Do not claim to be Claude, Anthropic, or another provider.\n\nUser request:\n%s", model, model, prompt)
+}
+
 // computeCommandMatches returns commands matching the current input and resets
 // the selection index if the match set changed.
 func (m Model) computeCommandMatches() ([]commands.Command, int) {

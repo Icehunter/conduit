@@ -138,7 +138,7 @@ func (m *Model) refreshViewport() {
 		}
 		displayStreaming := m.stripCompanionMarker(m.streaming)
 		if displayStreaming != "" {
-			sb.WriteString(renderMessage(Message{Role: RoleAssistant, Content: displayStreaming}, w, m.verboseMode))
+			sb.WriteString(renderMessage(m.assistantMessage(displayStreaming), w, m.verboseMode))
 			sb.WriteByte('\n')
 		}
 	}

@@ -2,10 +2,13 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/icehunter/conduit/internal/secure"
 )
 
 func writeSettings(t *testing.T, dir, name string, s Settings) {
@@ -262,6 +265,17 @@ func TestProviderKey_AnthropicAPIIncludesAccount(t *testing.T) {
 	}
 }
 
+func TestProviderKey_AnthropicAPIIncludesCredentialAndModel(t *testing.T) {
+	value := ActiveProviderSettings{
+		Kind:       ProviderKindAnthropicAPI,
+		Credential: "work-api-key",
+		Model:      "claude-custom-deployment",
+	}
+	if got, want := ProviderKey(value), "anthropic-api.work-api-key.claude-custom-deployment"; got != want {
+		t.Fatalf("ProviderKey = %q, want %q", got, want)
+	}
+}
+
 func TestProviderKey_ClaudeSubscriptionIncludesAccount(t *testing.T) {
 	value := ActiveProviderSettings{
 		Kind:    "claude-subscription",
@@ -270,6 +284,141 @@ func TestProviderKey_ClaudeSubscriptionIncludesAccount(t *testing.T) {
 	}
 	if got, want := ProviderKey(value), "claude-subscription.max@example.com.claude-sonnet-4-6"; got != want {
 		t.Fatalf("ProviderKey = %q, want %q", got, want)
+	}
+}
+
+func TestProviderKey_OpenAICompatibleIncludesCredentialAndModel(t *testing.T) {
+	value := ActiveProviderSettings{
+		Kind:       ProviderKindOpenAICompatible,
+		Credential: "gemini-personal",
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+		Model:      "gemini-2.5-pro",
+	}
+	if got, want := ProviderKey(value), "openai-compatible.gemini-personal.gemini-2.5-pro"; got != want {
+		t.Fatalf("ProviderKey = %q, want %q", got, want)
+	}
+}
+
+func TestValidateProviderSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   ActiveProviderSettings
+		wantErr bool
+	}{
+		{"claude-subscription needs model", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription}, true},
+		{"claude-subscription valid", ActiveProviderSettings{Kind: ProviderKindClaudeSubscription, Model: "claude-sonnet-4-6"}, false},
+		{"anthropic-api needs model", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI}, true},
+		{"anthropic-api valid", ActiveProviderSettings{Kind: ProviderKindAnthropicAPI, Model: "claude-opus-4-7"}, false},
+		{"mcp needs server", ActiveProviderSettings{Kind: ProviderKindMCP}, true},
+		{"mcp valid", ActiveProviderSettings{Kind: ProviderKindMCP, Server: "local-router"}, false},
+		{"openai-compatible needs baseURL", ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, Model: "gemini-2.5-pro"}, true},
+		{"openai-compatible needs model", ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, BaseURL: "https://example.com/v1"}, true},
+		{"openai-compatible needs absolute baseURL", ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, BaseURL: "example.com/v1", Model: "gemini-2.5-pro"}, true},
+		{"openai-compatible credential rejects raw key", ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, Credential: "AIzaSyDNm8MyqnbIShouldBeAPIKeyNotAlias", BaseURL: "https://example.com/v1", Model: "gemini-2.5-pro"}, true},
+		{"openai-compatible valid", ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, BaseURL: "https://example.com/v1", Model: "gemini-2.5-pro"}, false},
+		{"unknown kind", ActiveProviderSettings{Kind: "unknown", Model: "model"}, true},
+		{"empty kind", ActiveProviderSettings{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateProviderSettings(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateProviderSettings() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateProviderRegistry(t *testing.T) {
+	providers := map[string]ActiveProviderSettings{
+		"wrong.key": {Kind: ProviderKindOpenAICompatible, Credential: "gemini-personal", BaseURL: "https://example.com/v1", Model: "gemini-2.5-pro"},
+	}
+	roles := map[string]string{RolePlanning: "missing.provider"}
+	errs := ValidateProviderRegistry(providers, roles)
+	if len(errs) != 2 {
+		t.Fatalf("ValidateProviderRegistry errors = %v, want key mismatch and missing role ref", errs)
+	}
+}
+
+func TestSaveProviderEntryAndDeleteProviderEntry(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	value := ActiveProviderSettings{
+		Kind:       ProviderKindOpenAICompatible,
+		Credential: "gemini-personal",
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+		Model:      "gemini-2.5-pro",
+	}
+	if err := SaveProviderEntry(value); err != nil {
+		t.Fatalf("SaveProviderEntry: %v", err)
+	}
+	cfg, err := LoadConduitConfig()
+	if err != nil {
+		t.Fatalf("LoadConduitConfig: %v", err)
+	}
+	key := ProviderKey(value)
+	if got := cfg.Providers[key]; got.Kind != ProviderKindOpenAICompatible || got.BaseURL == "" {
+		t.Fatalf("providers[%q] = %#v, want OpenAI-compatible provider", key, got)
+	}
+	if err := SaveRoleProvider(RolePlanning, value); err != nil {
+		t.Fatalf("SaveRoleProvider: %v", err)
+	}
+	if err := DeleteProviderEntry(key); err != nil {
+		t.Fatalf("DeleteProviderEntry: %v", err)
+	}
+	cfg, err = LoadConduitConfig()
+	if err != nil {
+		t.Fatalf("LoadConduitConfig after delete: %v", err)
+	}
+	if _, ok := cfg.Providers[key]; ok {
+		t.Fatalf("providers[%q] still present after delete", key)
+	}
+	if got := cfg.Roles[RolePlanning]; got != "" {
+		t.Fatalf("roles.planning = %q, want cleared", got)
+	}
+}
+
+func TestClearRoleProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	value := ActiveProviderSettings{Kind: ProviderKindMCP, Server: "local-router", Model: "qwen3-coder"}
+	if err := SaveRoleProvider(RoleDefault, value); err != nil {
+		t.Fatalf("SaveRoleProvider: %v", err)
+	}
+	if err := ClearRoleProvider(RoleDefault); err != nil {
+		t.Fatalf("ClearRoleProvider: %v", err)
+	}
+	cfg, err := LoadConduitConfig()
+	if err != nil {
+		t.Fatalf("LoadConduitConfig: %v", err)
+	}
+	if cfg.ActiveProvider != nil {
+		t.Fatalf("activeProvider = %#v, want nil", cfg.ActiveProvider)
+	}
+	if got := cfg.Roles[RoleDefault]; got != "" {
+		t.Fatalf("roles.default = %q, want cleared", got)
+	}
+}
+
+func TestProviderCredentialRoundTrip(t *testing.T) {
+	store := secure.NewMemoryStorage()
+	if err := SaveProviderCredential(store, "gemini-personal", "secret-key"); err != nil {
+		t.Fatalf("SaveProviderCredential: %v", err)
+	}
+	got, err := LoadProviderCredential(store, "gemini-personal")
+	if err != nil {
+		t.Fatalf("LoadProviderCredential: %v", err)
+	}
+	if got != "secret-key" {
+		t.Fatalf("credential = %q, want secret-key", got)
+	}
+	if err := DeleteProviderCredential(store, "gemini-personal"); err != nil {
+		t.Fatalf("DeleteProviderCredential: %v", err)
+	}
+	if _, err := LoadProviderCredential(store, "gemini-personal"); !errors.Is(err, secure.ErrNotFound) {
+		t.Fatalf("LoadProviderCredential after delete err = %v, want not found", err)
 	}
 }
 

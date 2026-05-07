@@ -32,11 +32,19 @@ func TestLoad_ConduitSettingsOverrideClaudeSettings(t *testing.T) {
 
 	project := filepath.Join(dir, "project")
 	writeSettings(t, project, "settings.json", Settings{Model: "claude-sonnet-4-6"})
-	if err := SaveConduitRawKey("model", "claude-opus-4-7"); err != nil {
-		t.Fatalf("SaveConduitRawKey model: %v", err)
+
+	// Project-scoped .conduit overlay should beat project-scoped .claude settings.
+	conduitDir := filepath.Join(project, ".conduit")
+	if err := os.MkdirAll(conduitDir, 0o755); err != nil {
+		t.Fatalf("mkdir .conduit: %v", err)
 	}
-	if err := SaveConduitRawKey("activeProvider", ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"}); err != nil {
-		t.Fatalf("SaveConduitRawKey activeProvider: %v", err)
+	overlay := Settings{
+		Model:          "claude-opus-4-7",
+		ActiveProvider: &ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+	}
+	data, _ := json.Marshal(overlay)
+	if err := os.WriteFile(filepath.Join(conduitDir, "settings.json"), data, 0o600); err != nil {
+		t.Fatalf("write project .conduit/settings.json: %v", err)
 	}
 
 	merged, err := Load(project)
@@ -836,6 +844,98 @@ func TestLoad_ConduitProjectLocalSettings(t *testing.T) {
 	if len(m.Allow) != 1 || m.Allow[0] != "Bash(readonly:*)" {
 		t.Fatalf("Allow = %v, want Bash(readonly:*) from .conduit/settings.local.json", m.Allow)
 	}
+}
+
+// TestSettingsFiles_PrecedenceOrder pins the absolute load order so future
+// edits to settingsFiles() can't silently flip the rule that project-local
+// settings beat user-global ones.
+func TestSettingsFiles_PrecedenceOrder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "home", ".claude"))
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, "home", ".conduit"))
+	project := filepath.Join(dir, "project")
+
+	// No conduit.json yet → ~/.claude/settings.json is the user layer.
+	got := settingsFiles(project)
+	want := []string{
+		filepath.Join(dir, "home", ".claude", "settings.json"),
+		filepath.Join(project, ".claude", "settings.json"),
+		filepath.Join(project, ".claude", "settings.local.json"),
+		filepath.Join(project, ".conduit", "settings.json"),
+		filepath.Join(project, ".conduit", "settings.local.json"),
+	}
+	if !equalStrings(got, want) {
+		t.Fatalf("settingsFiles (no conduit.json) =\n  %v\nwant\n  %v", got, want)
+	}
+
+	// Create ~/.conduit/conduit.json → it should replace ~/.claude as the
+	// user layer AND remain at the front, so project files still win.
+	if err := os.MkdirAll(filepath.Dir(ConduitSettingsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConduitSettingsPath(), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = settingsFiles(project)
+	want = []string{
+		ConduitSettingsPath(),
+		filepath.Join(project, ".claude", "settings.json"),
+		filepath.Join(project, ".claude", "settings.local.json"),
+		filepath.Join(project, ".conduit", "settings.json"),
+		filepath.Join(project, ".conduit", "settings.local.json"),
+	}
+	if !equalStrings(got, want) {
+		t.Fatalf("settingsFiles (with conduit.json) =\n  %v\nwant\n  %v", got, want)
+	}
+}
+
+// TestLoad_ProjectLocalBeatsUserGlobalConduit asserts the corrected layering
+// rule: a value in project-scoped .conduit/settings.local.json wins over the
+// same value set in user-global ~/.conduit/conduit.json.
+func TestLoad_ProjectLocalBeatsUserGlobalConduit(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "home", ".claude"))
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, "home", ".conduit"))
+	project := filepath.Join(dir, "project")
+
+	if err := os.MkdirAll(filepath.Dir(ConduitSettingsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConduitSettingsPath(), []byte(`{"model":"user-global","theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, ".conduit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".conduit", "settings.local.json"), []byte(`{"model":"project-local"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := Load(project)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if merged.Model != "project-local" {
+		t.Fatalf("Model = %q, want project-local to beat user-global conduit.json", merged.Model)
+	}
+	// Theme only set in user-global → still inherited.
+	if merged.Theme != "dark" {
+		t.Fatalf("Theme = %q, want dark inherited from user-global", merged.Theme)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestSaveConduitProjectPermissionAllow(t *testing.T) {

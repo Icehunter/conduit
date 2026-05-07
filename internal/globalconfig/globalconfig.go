@@ -124,9 +124,16 @@ func IsTrusted(cwd string) (bool, error) {
 	if err == nil {
 		dir := abs
 		for {
+			slashDir := filepath.ToSlash(dir)
 			if p, ok := legacy.Projects[dir]; ok && p.HasTrustDialogAccepted {
 				_ = settings.SetConduitProjectTrusted(cwd)
 				return true, nil
+			}
+			if slashDir != dir {
+				if p, ok := legacy.Projects[slashDir]; ok && p.HasTrustDialogAccepted {
+					_ = settings.SetConduitProjectTrusted(cwd)
+					return true, nil
+				}
 			}
 			parent := filepath.Dir(dir)
 			if parent == dir {

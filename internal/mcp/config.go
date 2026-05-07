@@ -329,7 +329,10 @@ func IsDisabled(name, cwd string) bool {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return false
 	}
-	proj := cfg.Projects[cwd]
+	proj, ok := cfg.Projects[cwd]
+	if !ok {
+		proj = cfg.Projects[filepath.ToSlash(cwd)]
+	}
 	for _, d := range proj.DisabledMcpServers {
 		if d == name {
 			return true

@@ -63,29 +63,29 @@ func (m Model) selectionOverlayActive() bool {
 		m.doctorPanel != nil || m.searchPanel != nil
 }
 
-func (m *Model) handleMouseClick(msg tea.MouseClickMsg, area image.Rectangle) (bool, tea.Cmd) {
+func (m *Model) handleMouseClick(msg tea.MouseClickMsg, area image.Rectangle) bool {
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseLeft || m.selectionOverlayActive() {
-		return false, nil
+		return false
 	}
 	pt, ok := m.mousePointInViewport(mouse.X, mouse.Y, area)
 	if !ok {
 		m.mouseSelect = nil
 		m.applyViewportSelection()
-		return false, nil
+		return false
 	}
 	m.mouseSelect = &mouseSelectionState{start: pt, end: pt}
 	m.applyViewportSelection()
-	return true, nil
+	return true
 }
 
-func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg, area image.Rectangle) (bool, tea.Cmd) {
+func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg, area image.Rectangle) bool {
 	if m.mouseSelect == nil || m.selectionOverlayActive() {
-		return false, nil
+		return false
 	}
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseLeft {
-		return false, nil
+		return false
 	}
 	pt, ok := m.mousePointInViewport(mouse.X, mouse.Y, area)
 	if !ok {
@@ -96,7 +96,7 @@ func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg, area image.Rectangle) 
 		m.mouseSelect.dragged = true
 		m.applyViewportSelection()
 	}
-	return true, nil
+	return true
 }
 
 func (m *Model) handleMouseRelease(msg tea.MouseReleaseMsg, area image.Rectangle) (bool, tea.Cmd) {
@@ -139,7 +139,7 @@ func (m *Model) mousePointInViewport(x, y int, area image.Rectangle) (mouseSelec
 	if line < 0 || line >= len(m.viewportLines) {
 		return mouseSelectionPoint{}, false
 	}
-	return mouseSelectionPoint{line: line, col: clampSelectionInt(col, 0, runeCount(ansi.Strip(m.viewportLines[line])))}, true
+	return mouseSelectionPoint{line: line, col: clampSelectionInt(col, runeCount(ansi.Strip(m.viewportLines[line])))}, true
 }
 
 func (m *Model) clampMousePointToViewport(x, y int, area image.Rectangle) mouseSelectionPoint {
@@ -150,10 +150,10 @@ func (m *Model) clampMousePointToViewport(x, y int, area image.Rectangle) mouseS
 	if y >= layout.viewport.Max.Y {
 		y = layout.viewport.Max.Y - 1
 	}
-	line := clampSelectionInt(m.vp.YOffset()+y-layout.viewport.Min.Y, 0, max(0, len(m.viewportLines)-1))
+	line := clampSelectionInt(m.vp.YOffset()+y-layout.viewport.Min.Y, max(0, len(m.viewportLines)-1))
 	col := x - layout.viewport.Min.X
 	if line >= 0 && line < len(m.viewportLines) {
-		col = clampSelectionInt(col, 0, runeCount(ansi.Strip(m.viewportLines[line])))
+		col = clampSelectionInt(col, runeCount(ansi.Strip(m.viewportLines[line])))
 	}
 	return mouseSelectionPoint{line: line, col: col}
 }
@@ -190,8 +190,8 @@ func orderedSelection(a, b mouseSelectionPoint) (mouseSelectionPoint, mouseSelec
 
 func highlightPlainLine(line string, from, to int) string {
 	runes := []rune(line)
-	from = clampSelectionInt(from, 0, len(runes))
-	to = clampSelectionInt(to, 0, len(runes))
+	from = clampSelectionInt(from, len(runes))
+	to = clampSelectionInt(to, len(runes))
 	if from > to {
 		from, to = to, from
 	}
@@ -203,8 +203,8 @@ func highlightPlainLine(line string, from, to int) string {
 
 func sliceRunes(s string, from, to int) string {
 	runes := []rune(s)
-	from = clampSelectionInt(from, 0, len(runes))
-	to = clampSelectionInt(to, 0, len(runes))
+	from = clampSelectionInt(from, len(runes))
+	to = clampSelectionInt(to, len(runes))
 	if from > to {
 		from, to = to, from
 	}
@@ -215,12 +215,12 @@ func runeCount(s string) int {
 	return len([]rune(s))
 }
 
-func clampSelectionInt(v, lo, hi int) int {
-	if hi < lo {
-		hi = lo
+func clampSelectionInt(v, hi int) int {
+	if hi < 0 {
+		hi = 0
 	}
-	if v < lo {
-		return lo
+	if v < 0 {
+		return 0
 	}
 	if v > hi {
 		return hi

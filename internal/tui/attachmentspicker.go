@@ -299,9 +299,9 @@ func searchFiles(dir, query string, max int) []string {
 		}
 		haystack := strings.ToLower(name)
 		if strings.Contains(query, "/") || strings.Contains(query, string(os.PathSeparator)) {
-			haystack = strings.ToLower(rel)
+			haystack = filepath.ToSlash(strings.ToLower(rel))
 		}
-		if queryLow == "" || strings.Contains(haystack, queryLow) {
+		if queryLow == "" || strings.Contains(haystack, filepath.ToSlash(queryLow)) {
 			paths = append(paths, rel)
 		}
 		return nil

@@ -96,6 +96,7 @@ func TestTerminalSetupAdvice_EmptyTermProgram(t *testing.T) {
 func TestTerminalSetupApply_LeavesMalformedJSONUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	t.Setenv("APPDATA", filepath.Join(dir, "AppData", "Roaming"))
 
 	var codeUserDir string

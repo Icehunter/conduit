@@ -25,18 +25,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePaste(msg)
 
 	case tea.MouseClickMsg:
-		if handled, cmd := m.handleMouseClick(msg, image.Rect(0, 0, m.width, m.height)); handled {
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+		if m.handleMouseClick(msg, image.Rect(0, 0, m.width, m.height)) {
 			return m, tea.Batch(cmds...)
 		}
 
 	case tea.MouseMotionMsg:
-		if handled, cmd := m.handleMouseMotion(msg, image.Rect(0, 0, m.width, m.height)); handled {
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
+		if m.handleMouseMotion(msg, image.Rect(0, 0, m.width, m.height)) {
 			return m, tea.Batch(cmds...)
 		}
 

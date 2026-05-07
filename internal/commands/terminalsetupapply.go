@@ -246,7 +246,7 @@ func applyZed() string {
 	const zedEntry = `{
     "context": "Terminal",
     "bindings": {
-      "shift-enter": ["terminal::SendText", "\r"]
+      "shift-enter": ["terminal::SendText", "\u001b\r"]
     }
   }`
 

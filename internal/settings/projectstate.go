@@ -28,6 +28,15 @@ func normalizedProjectPath(cwd string) string {
 	return abs
 }
 
+func projectPathCandidates(cwd string) []string {
+	key := normalizedProjectPath(cwd)
+	candidates := []string{key}
+	if slash := filepath.ToSlash(key); slash != key {
+		candidates = append(candidates, slash)
+	}
+	return candidates
+}
+
 func LoadConduitProjectState(cwd string) (ConduitProjectState, bool, error) {
 	raw, err := readRawObject(ConduitSettingsPath())
 	if err != nil {
@@ -39,7 +48,16 @@ func LoadConduitProjectState(cwd string) (ConduitProjectState, bool, error) {
 			return ConduitProjectState{}, false, fmt.Errorf("settings: parse conduit projects: %w", err)
 		}
 	}
-	projectRaw, ok := projects[normalizedProjectPath(cwd)]
+	var (
+		projectRaw json.RawMessage
+		ok         bool
+	)
+	for _, key := range projectPathCandidates(cwd) {
+		projectRaw, ok = projects[key]
+		if ok && len(projectRaw) > 0 {
+			break
+		}
+	}
 	if !ok || len(projectRaw) == 0 {
 		return ConduitProjectState{}, false, nil
 	}
@@ -82,9 +100,14 @@ func updateConduitProjectRaw(cwd string, fn func(map[string]json.RawMessage) err
 	}
 	key := normalizedProjectPath(cwd)
 	project := map[string]json.RawMessage{}
-	if rawProject, ok := projects[key]; ok && len(rawProject) > 0 {
-		if err := json.Unmarshal(rawProject, &project); err != nil {
-			return fmt.Errorf("settings: parse conduit project %q: %w", key, err)
+	foundKey := key
+	for _, candidate := range projectPathCandidates(cwd) {
+		if rawProject, ok := projects[candidate]; ok && len(rawProject) > 0 {
+			foundKey = candidate
+			if err := json.Unmarshal(rawProject, &project); err != nil {
+				return fmt.Errorf("settings: parse conduit project %q: %w", candidate, err)
+			}
+			break
 		}
 	}
 	if err := fn(project); err != nil {
@@ -95,6 +118,9 @@ func updateConduitProjectRaw(cwd string, fn func(map[string]json.RawMessage) err
 		return err
 	}
 	projects[key] = projectRaw
+	if foundKey != key {
+		delete(projects, foundKey)
+	}
 	projectsRaw, err := json.Marshal(projects)
 	if err != nil {
 		return err

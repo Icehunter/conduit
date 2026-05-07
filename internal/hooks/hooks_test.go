@@ -181,7 +181,7 @@ func TestRunPostToolUse_ReceivesOutput(t *testing.T) {
 		Matcher: "Bash",
 		Hooks: []settings.Hook{{
 			Type:    "command",
-			Command: "cat > " + out,
+			Command: "cat > '" + filepath.ToSlash(out) + "'",
 		}},
 	}}
 

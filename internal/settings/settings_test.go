@@ -54,6 +54,8 @@ func TestLoad_ConduitSettingsOverrideClaudeSettings(t *testing.T) {
 func TestLoad_ImportsClaudeUserSettingsOnceThenConduitWins(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, ".claude"))
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
 	if err := os.MkdirAll(filepath.Dir(UserSettingsPath()), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -649,6 +651,7 @@ func TestSavePermissionsField_CreatesPermissionsObject(t *testing.T) {
 func TestSaveConduitPermissionsField_WritesConduitOverlay(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, ".claude"))
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
 
 	if err := SaveConduitPermissionsField("defaultMode", "plan"); err != nil {
@@ -674,6 +677,7 @@ func TestSaveConduitPermissionsField_WritesConduitOverlay(t *testing.T) {
 func TestSavePermissionsField_NilDeletes(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, ".claude"))
 
 	if err := SavePermissionsField("defaultMode", "plan"); err != nil {
 		t.Fatalf("seed: %v", err)

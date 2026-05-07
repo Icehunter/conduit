@@ -217,7 +217,7 @@ func (m Model) acceptAtMatch() Model {
 	// selection; files add a trailing space so the user can keep typing.
 	replacementPath := chosen
 	if isDir {
-		replacementPath = strings.TrimRight(chosen, string(os.PathSeparator)) + string(os.PathSeparator)
+		replacementPath = strings.TrimRight(filepath.ToSlash(chosen), "/") + "/"
 	}
 	replacement := "@" + replacementPath
 	if !isDir {

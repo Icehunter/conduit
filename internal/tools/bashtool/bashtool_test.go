@@ -10,6 +10,9 @@ import (
 )
 
 func TestBash_StdoutCapture(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
 	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"echo hello"}`))
 	if err != nil {
@@ -24,6 +27,9 @@ func TestBash_StdoutCapture(t *testing.T) {
 }
 
 func TestBash_CombinedStdoutStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
 	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(
 		`{"command":"echo out; echo err 1>&2"}`))
@@ -40,6 +46,9 @@ func TestBash_CombinedStdoutStderr(t *testing.T) {
 }
 
 func TestBash_NonZeroExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
 	tt := New(nil)
 	res, err := tt.Execute(context.Background(), json.RawMessage(`{"command":"exit 7"}`))
 	if err != nil {
@@ -71,6 +80,9 @@ func TestBash_Timeout(t *testing.T) {
 }
 
 func TestBash_TimeoutCappedToMax(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
 	tt := New(nil)
 	// Send timeout > MaxTimeout; should be silently capped (no immediate
 	// error from a fast command).
@@ -97,6 +109,9 @@ func TestBash_ContextCancel(t *testing.T) {
 }
 
 func TestBash_OutputTruncated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
 	tt := New(nil)
 	// Generate ~50KB of output (more than MaxOutputBytes).
 	res, err := tt.Execute(context.Background(),

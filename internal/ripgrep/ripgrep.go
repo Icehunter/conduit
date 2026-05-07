@@ -10,7 +10,10 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 )
+
+var rgLinePattern = regexp.MustCompile(`^(.*):([0-9]+):(.*)$`)
 
 // Find locates the rg binary, checking PATH then common Homebrew locations.
 // Returns "" if not found.
@@ -83,21 +86,20 @@ func Search(pattern, dir string, maxResults int, extraArgs ...string) ([]Result,
 		if len(line) == 0 {
 			continue
 		}
-		// Format: file:linenum:content
-		parts := bytes.SplitN(line, []byte(":"), 3)
-		if len(parts) < 3 {
+		m := rgLinePattern.FindSubmatch(line)
+		if len(m) != 4 {
 			continue
 		}
 		var lineNum int
-		for _, b := range parts[1] {
+		for _, b := range m[2] {
 			if b >= '0' && b <= '9' {
 				lineNum = lineNum*10 + int(b-'0')
 			}
 		}
 		results = append(results, Result{
-			File:    string(parts[0]),
+			File:    string(m[1]),
 			Line:    lineNum,
-			Content: string(bytes.TrimSpace(parts[2])),
+			Content: string(bytes.TrimSpace(m[3])),
 		})
 		if maxResults > 0 && len(results) >= maxResults {
 			break

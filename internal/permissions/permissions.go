@@ -285,7 +285,7 @@ func SuggestRule(toolName, toolInput string) string {
 			return toolName
 		}
 		// Prepend extra / for absolute paths matching TS "//{path}/**" pattern.
-		if filepath.IsAbs(cleaned) {
+		if filepath.IsAbs(toolInput) || strings.HasPrefix(cleaned, "/") {
 			return toolName + "(/" + dir + "/**)"
 		}
 		return toolName + "(" + dir + "/**)"

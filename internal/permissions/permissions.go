@@ -103,6 +103,23 @@ func (g *Gate) AllowForSession(rule string) {
 	g.mu.Unlock()
 }
 
+// Clone returns a deep copy of the Gate — all rules and current mode are
+// inherited but future mutations (SetMode, AllowForSession) on either side
+// are independent. Used to give sub-agents isolated permission scopes.
+func (g *Gate) Clone() *Gate {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return &Gate{
+		mode:         g.mode,
+		cwd:          g.cwd,
+		trustedRoots: append([]string(nil), g.trustedRoots...),
+		allow:        append([]string(nil), g.allow...),
+		deny:         append([]string(nil), g.deny...),
+		ask:          append([]string(nil), g.ask...),
+		sessionAllow: append([]string(nil), g.sessionAllow...),
+	}
+}
+
 // sanitizeCWD replaces path separators and colons with dashes, matching
 // memdir.sanitizePath. Inlined here to avoid an import cycle.
 func sanitizeCWD(p string) string {

@@ -131,15 +131,46 @@ func (m *Model) applyPermissionMode(mode permissions.Mode) {
 
 func (m *Model) applyEffectiveProviderForMode() {
 	provider, ok := m.providerForCurrentMode()
-	if !ok || provider.Model == "" || m.cfg.Loop == nil {
+	if !ok || m.cfg.Loop == nil {
 		return
 	}
 	switch provider.Kind {
+	case settings.ProviderKindMCP:
+		// Switch to local/MCP routing for this role's server and tools.
+		// No API client swap needed — turns route through MCP tool calls.
+		server := provider.Server
+		if server == "" {
+			server = "local-router"
+		}
+		directTool := provider.DirectTool
+		if directTool == "" {
+			directTool = "local_direct"
+		}
+		implementTool := provider.ImplementTool
+		if implementTool == "" {
+			implementTool = "local_implement"
+		}
+		m.localMode = true
+		m.localModeServer = server
+		m.localDirectTool = directTool
+		m.localImplementTool = implementTool
 	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
+		if provider.Model == "" {
+			return
+		}
 		if m.cfg.APIClient != nil {
 			m.cfg.Loop.SetClient(m.cfg.APIClient)
 		}
+		m.cfg.Loop.SetModel(provider.Model)
+		// Leaving MCP/local mode — restore direct API routing.
+		if m.localMode {
+			m.localMode = false
+			m.localModeServer = ""
+		}
 	case settings.ProviderKindOpenAICompatible:
+		if provider.Model == "" {
+			return
+		}
 		if m.cfg.NewProviderAPIClient == nil {
 			return
 		}
@@ -149,10 +180,12 @@ func (m *Model) applyEffectiveProviderForMode() {
 			return
 		}
 		m.cfg.Loop.SetClient(client)
-	default:
-		return
+		m.cfg.Loop.SetModel(provider.Model)
+		if m.localMode {
+			m.localMode = false
+			m.localModeServer = ""
+		}
 	}
-	m.cfg.Loop.SetModel(provider.Model)
 }
 
 func (m Model) currentProviderRole() string {
@@ -160,6 +193,10 @@ func (m Model) currentProviderRole() string {
 	case permissions.ModePlan:
 		return settings.RolePlanning
 	case permissions.ModeAcceptEdits, permissions.ModeBypassPermissions:
+		// Use the dedicated implement role if configured; fall back to main.
+		if _, ok := m.providerForRole(settings.RoleImplement); ok {
+			return settings.RoleImplement
+		}
 		return settings.RoleMain
 	default:
 		return settings.RoleDefault

@@ -120,6 +120,20 @@ func (r *Registry) All() []Tool {
 	return out
 }
 
+// WithOverrides returns a shallow copy of the Registry with the given tools
+// replacing any same-named existing entries. Used to give sub-agents scoped
+// versions of mode-change tools without mutating the parent registry.
+func (r *Registry) WithOverrides(tools ...Tool) *Registry {
+	out := &Registry{tools: make(map[string]Tool, len(r.tools))}
+	for k, v := range r.tools {
+		out.tools[k] = v
+	}
+	for _, t := range tools {
+		out.tools[t.Name()] = t
+	}
+	return out
+}
+
 // Subset returns a new Registry containing only the tools whose Name()
 // matches one of the provided names. Matching is case-insensitive.
 // names may use the CC plugin convention (e.g. "Read", "Bash") or the

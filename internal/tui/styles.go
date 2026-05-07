@@ -59,6 +59,7 @@ var (
 	styleModePurple         lipgloss.Style
 	styleModeCyan           lipgloss.Style
 	styleModeYellow         lipgloss.Style
+	styleModeGreen          lipgloss.Style
 	styleSep                lipgloss.Style
 	stylePickerItem         lipgloss.Style
 	stylePickerItemSelected lipgloss.Style
@@ -123,6 +124,7 @@ func RebuildStyles() {
 	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Background(colorWindowBg).Bold(true)
 	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Background(colorWindowBg).Bold(true)
 	styleModeYellow = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAuto)).Background(colorWindowBg).Bold(true)
+	styleModeGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Background(colorWindowBg).Bold(true)
 
 	styleSep = lipgloss.NewStyle().Foreground(colorDim).Background(colorWindowBg)
 

@@ -9,6 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/subagent"
 	"github.com/icehunter/conduit/internal/theme"
 )
 
@@ -248,9 +250,38 @@ func (m Model) renderWorkingRow() string {
 		return styleModeYellow.Width(m.width).Render(m.apiRetryStatus)
 	case m.running:
 		m.working.SetLabel("Thinking")
-		return styleStatus.Width(m.width).Render(m.working.Render())
+		main := styleStatus.Width(m.width).Render(m.working.Render())
+		entries := subagent.Default.Snapshot()
+		if len(entries) == 0 {
+			return main
+		}
+		var sb strings.Builder
+		sb.WriteString(main)
+		for _, e := range entries {
+			label := e.Label
+			if len([]rune(label)) > 20 {
+				label = string([]rune(label)[:20]) + "…"
+			}
+			fmt.Fprintf(&sb, "\n  %s  %s", stylePickerDesc.Render("↳ "+label), modeBadge(e.Mode))
+		}
+		return sb.String()
 	default:
 		return styleStatus.Width(m.width).Render("")
+	}
+}
+
+// modeBadge returns a short styled badge string for the given permission mode,
+// used to annotate active sub-agent entries in the working row.
+func modeBadge(mode permissions.Mode) string {
+	switch mode {
+	case permissions.ModePlan:
+		return styleModeYellow.Render("[plan]")
+	case permissions.ModeBypassPermissions:
+		return styleStatusAccent.Render("[auto]")
+	case permissions.ModeAcceptEdits:
+		return styleModeGreen.Render("[edits]")
+	default:
+		return stylePickerDesc.Render("[bg]")
 	}
 }
 

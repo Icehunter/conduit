@@ -8,6 +8,10 @@ import (
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/coordinator"
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/subagent"
+	"github.com/icehunter/conduit/internal/tools/automodetool"
+	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
 
 // SubAgentSpec configures an optionally-specialised sub-agent run.
@@ -21,6 +25,9 @@ type SubAgentSpec struct {
 	// Tools is the tool allowlist. Empty/nil means inherit parent registry.
 	// Callers pass the canonical registry-key names (already alias-resolved).
 	Tools []string
+	// Mode sets the initial permission mode for the child. "" means inherit
+	// the parent gate's current mode.
+	Mode permissions.Mode
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -58,6 +65,62 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	if len(spec.Tools) > 0 {
 		childReg = parentReg.Subset(spec.Tools)
 	}
+
+	// Clone the permission gate so child mutations don't affect the parent.
+	var childGate *permissions.Gate
+	if childCfg.Gate != nil {
+		childGate = childCfg.Gate.Clone()
+	} else {
+		childGate = permissions.New("", nil, permissions.ModeDefault, nil, nil, nil)
+	}
+	if spec.Mode != "" {
+		childGate.SetMode(spec.Mode)
+	}
+	childCfg.Gate = childGate
+
+	// Sub-agents must not block on interactive permission prompts.
+	childCfg.AskPermission = nil
+
+	// Register with tracker.
+	childID := fmt.Sprintf("sub-%d", time.Now().UnixNano())
+	label := "<sub-agent>"
+	if len(prompt) > 0 {
+		label = prompt
+		if len(label) > 30 {
+			label = label[:30]
+		}
+	}
+	subagent.Default.Add(subagent.Entry{
+		ID:        childID,
+		Label:     label,
+		Mode:      childGate.Mode(),
+		StartedAt: time.Now(),
+	})
+	defer subagent.Default.Remove(childID)
+
+	// Build scoped mode-change tools that update both the child gate and tracker.
+	notifyMode := func(m permissions.Mode) {
+		childGate.SetMode(m)
+		subagent.Default.UpdateMode(childID, m)
+	}
+	childEnterPlan := &planmodetool.EnterPlanMode{
+		SetMode:     notifyMode,
+		CurrentMode: func() permissions.Mode { return childGate.Mode() },
+		AskEnter:    nil,
+	}
+	childExitPlan := &planmodetool.ExitPlanMode{
+		SetMode:    notifyMode,
+		AskApprove: nil,
+	}
+	childEnterAuto := &automodetool.EnterAutoMode{
+		SetMode:     notifyMode,
+		CurrentMode: func() permissions.Mode { return childGate.Mode() },
+		AskEnter:    nil,
+	}
+	childExitAuto := &automodetool.ExitAutoMode{
+		SetMode: notifyMode,
+	}
+	childReg = childReg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 
 	child := &Loop{client: childClient, reg: childReg, cfg: childCfg}
 
@@ -113,16 +176,16 @@ func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
 	l.mu.RLock()
 	model := l.cfg.Model
 	l.mu.RUnlock()
-	return l.runSubAgentWithModel(ctx, prompt, model)
+	return l.runSubAgentWithModel(ctx, prompt, model, "")
 }
 
 // RunBackgroundAgent runs a nested agent loop on the configured background
 // model. The foreground chat model is not changed.
 func (l *Loop) RunBackgroundAgent(ctx context.Context, prompt string) (string, error) {
-	return l.runSubAgentWithModel(ctx, prompt, l.BackgroundModel())
+	return l.runSubAgentWithModel(ctx, prompt, l.BackgroundModel(), permissions.ModeBypassPermissions)
 }
 
-func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string) (string, error) {
+func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, mode permissions.Mode) (string, error) {
 	start := time.Now()
 	msgs := []api.Message{
 		{
@@ -143,7 +206,63 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string) (
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
 
-	child := &Loop{client: childClient, reg: l.reg, cfg: childCfg}
+	// Clone the permission gate so child mutations don't affect the parent.
+	var childGate *permissions.Gate
+	if childCfg.Gate != nil {
+		childGate = childCfg.Gate.Clone()
+	} else {
+		childGate = permissions.New("", nil, permissions.ModeDefault, nil, nil, nil)
+	}
+	if mode != "" {
+		childGate.SetMode(mode)
+	}
+	childCfg.Gate = childGate
+
+	// Sub-agents must not block on interactive permission prompts.
+	childCfg.AskPermission = nil
+
+	// Register with tracker.
+	childID := fmt.Sprintf("sub-%d", time.Now().UnixNano())
+	label := "<sub-agent>"
+	if len(prompt) > 0 {
+		label = prompt
+		if len(label) > 30 {
+			label = label[:30]
+		}
+	}
+	subagent.Default.Add(subagent.Entry{
+		ID:        childID,
+		Label:     label,
+		Mode:      childGate.Mode(),
+		StartedAt: time.Now(),
+	})
+	defer subagent.Default.Remove(childID)
+
+	// Build scoped mode-change tools that update both the child gate and tracker.
+	notifyMode := func(m permissions.Mode) {
+		childGate.SetMode(m)
+		subagent.Default.UpdateMode(childID, m)
+	}
+	childEnterPlan := &planmodetool.EnterPlanMode{
+		SetMode:     notifyMode,
+		CurrentMode: func() permissions.Mode { return childGate.Mode() },
+		AskEnter:    nil,
+	}
+	childExitPlan := &planmodetool.ExitPlanMode{
+		SetMode:    notifyMode,
+		AskApprove: nil,
+	}
+	childEnterAuto := &automodetool.EnterAutoMode{
+		SetMode:     notifyMode,
+		CurrentMode: func() permissions.Mode { return childGate.Mode() },
+		AskEnter:    nil,
+	}
+	childExitAuto := &automodetool.ExitAutoMode{
+		SetMode: notifyMode,
+	}
+	childReg := l.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
+
+	child := &Loop{client: childClient, reg: childReg, cfg: childCfg}
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}

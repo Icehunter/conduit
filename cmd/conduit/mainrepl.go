@@ -555,6 +555,8 @@ func runREPL(continueMode bool, resumeID string) error {
 		EnterPlan:                 rOpts.EnterPlan,
 		ExitPlan:                  rOpts.ExitPlan,
 		AskUser:                   rOpts.AskUser,
+		ClaudeMd:                  claudeMdPrompt + mcpInstructionsBuf.String(),
+		Skills:                    skillEntries,
 		InitialOutputStyle:        s.OutputStyle,
 		InitialUsageStatusEnabled: usageStatusEnabled,
 		InitialLocalMode:          initialLocalMode,

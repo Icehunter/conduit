@@ -109,6 +109,13 @@ type RunOptions struct {
 	SetTrusted func() error
 	// StartupWarnings are non-fatal startup failures shown as system messages.
 	StartupWarnings []string
+
+	// ClaudeMd is the concatenated CLAUDE.md + MCP server instructions passed to
+	// the initial BuildSystemBlocks call. Carried here so output-style rebuilds
+	// can include it instead of passing an empty string.
+	ClaudeMd string
+	// Skills is the skill listing from the initial BuildSystemBlocks call.
+	Skills []agent.SkillEntry
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -472,6 +479,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InitialProviders:          runOpts.InitialProviders,
 		InitialRoles:              runOpts.InitialRoles,
 		StartupWarnings:           runOpts.StartupWarnings,
+		ClaudeMd:                  runOpts.ClaudeMd,
+		Skills:                    runOpts.Skills,
 		BackgroundModel: func() string {
 			if loop != nil {
 				return loop.BackgroundModel()
@@ -509,7 +518,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			// fingerprint requires system[0] to be the billing header.
 			if s.Prompt != "" && loop != nil {
 				mem := memdir.BuildPrompt(cwd)
-				baseBlocks := agent.BuildSystemBlocks(mem, "")
+				baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, m.cfg.Skills...)
 				styleBlock := api.SystemBlock{
 					Type: "text",
 					Text: "# Output style: " + s.Name + "\n\n" + s.Prompt,

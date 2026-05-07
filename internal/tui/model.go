@@ -284,6 +284,14 @@ type Config struct {
 	// StartupWarnings are non-fatal startup failures worth showing once so
 	// resume, MCP, or config issues don't disappear silently.
 	StartupWarnings []string
+
+	// ClaudeMd is the concatenated CLAUDE.md + MCP server instructions used to
+	// build the initial system blocks. Stored so output-style rebuilds can
+	// include it rather than passing an empty string.
+	ClaudeMd string
+	// Skills is the skill listing injected into the initial system blocks.
+	// Stored alongside ClaudeMd for the same reason.
+	Skills []agent.SkillEntry
 }
 
 // Model is the Bubble Tea model.

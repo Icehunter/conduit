@@ -142,7 +142,7 @@ func (m *Model) refreshViewport() {
 			sb.WriteByte('\n')
 		}
 	}
-	m.vp.SetContent(sb.String())
+	m.setViewportContent(sb.String())
 	if wasAtBottom {
 		m.vp.GotoBottom()
 	}

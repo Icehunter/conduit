@@ -292,6 +292,9 @@ type Model struct {
 	vp      viewport.Model
 	working workinganim.Anim
 
+	viewportLines []string
+	mouseSelect   *mouseSelectionState
+
 	width  int
 	height int
 	panelH int

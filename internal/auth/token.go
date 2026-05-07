@@ -8,7 +8,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
+
+// oauthHTTPClient is a dedicated HTTP client for OAuth token operations.
+// Using a dedicated client (rather than http.DefaultClient) ensures a
+// bounded timeout on token exchange and refresh calls.
+var oauthHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
 
 // Tokens is the application-level OAuth token bundle.
 //
@@ -66,10 +74,12 @@ type TokenClient struct {
 	http *http.Client
 }
 
-// NewTokenClient returns a TokenClient. If httpClient is nil, http.DefaultClient is used.
+// NewTokenClient returns a TokenClient. If httpClient is nil, oauthHTTPClient
+// (a dedicated client with a 30-second timeout) is used instead of
+// http.DefaultClient, so token exchange/refresh calls are always bounded.
 func NewTokenClient(cfg Config, httpClient *http.Client) *TokenClient {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = oauthHTTPClient
 	}
 	return &TokenClient{cfg: cfg, http: httpClient}
 }

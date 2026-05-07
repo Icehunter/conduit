@@ -50,7 +50,26 @@ func (g *AsyncGroup) Shutdown(d time.Duration) {
 }
 
 // DefaultAsyncGroup is the session-scoped group used by runMatching for async
-// hooks. Set it once at session start (e.g. hooks.DefaultAsyncGroup =
-// hooks.NewAsyncGroup(ctx)) and call DefaultAsyncGroup.Shutdown at session end.
+// hooks. Prefer SetDefaultAsyncGroup / GetDefaultAsyncGroup for concurrent
+// access. Direct assignment is supported for the single-session startup path
+// in agent/loop.go (which assigns exactly once before any hooks run).
 // When nil, async hooks fall back to untracked goroutines (original behaviour).
-var DefaultAsyncGroup *AsyncGroup
+var DefaultAsyncGroup *AsyncGroup //nolint:gochecknoglobals
+
+var defaultAsyncGroupMu sync.Mutex
+
+// SetDefaultAsyncGroup safely sets DefaultAsyncGroup. Use this when multiple
+// sessions could run concurrently.
+func SetDefaultAsyncGroup(g *AsyncGroup) {
+	defaultAsyncGroupMu.Lock()
+	defer defaultAsyncGroupMu.Unlock()
+	DefaultAsyncGroup = g
+}
+
+// GetDefaultAsyncGroup safely reads DefaultAsyncGroup. Use this when multiple
+// sessions could run concurrently.
+func GetDefaultAsyncGroup() *AsyncGroup {
+	defaultAsyncGroupMu.Lock()
+	defer defaultAsyncGroupMu.Unlock()
+	return DefaultAsyncGroup
+}

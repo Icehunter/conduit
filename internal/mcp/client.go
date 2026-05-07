@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ErrUnauthorized is returned by HTTP/SSE client calls when the server
@@ -74,10 +75,14 @@ func NewStdioClient(ctx context.Context, command string, args []string, env map[
 		return nil, fmt.Errorf("mcp stdio: start %q: %w", command, err)
 	}
 
+	sc := bufio.NewScanner(stdoutPipe)
+	// Default scanner cap is 64 KB — real MCP servers (Playwright, Atlassian)
+	// emit tool schemas > 64 KB. Grow limit to 8 MiB, matching the SSE parser.
+	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	c := &stdioClient{
 		cmd:     cmd,
 		stdin:   stdin,
-		stdout:  bufio.NewScanner(stdoutPipe),
+		stdout:  sc,
 		pending: make(map[int64]chan *jsonrpcResponse),
 		done:    make(chan struct{}),
 	}
@@ -274,7 +279,9 @@ func NewHTTPClient(url string, headers map[string]string) Client {
 	return &httpClient{
 		url:     url,
 		headers: headers,
-		http:    &http.Client{},
+		// 60-second timeout matches internal/mcp/oauth.go and prevents a hung
+		// or unresponsive MCP server from blocking the agent indefinitely.
+		http: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -387,6 +394,9 @@ func formatBodyExcerpt(buf []byte, max int) string {
 // readSSEResponse reads a single JSON-RPC response from an SSE stream.
 func (c *httpClient) readSSEResponse(body io.Reader) (json.RawMessage, error) {
 	scanner := bufio.NewScanner(body)
+	// Default scanner cap is 64 KB — MCP servers can emit tool schemas > 64 KB.
+	// Grow limit to 8 MiB, matching the stdio transport and internal/sse/parser.go.
+	scanner.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {

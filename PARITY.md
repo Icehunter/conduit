@@ -93,7 +93,7 @@
 | Main agentic loop (query → tool → response) | `QueryEngine.ts` (1295 LOC), `query.ts` (1729 LOC) | `3585.js`, `3918.js`, `4091.js` | `internal/agent/loop.go` | ✅ | |
 | Multi-turn tool dispatch | `QueryEngine.ts` | `3585.js` | `internal/agent/loop.go` `executeTools` | ✅ | |
 | Parallel tool execution (bounded pool) | `coordinator/coordinatorMode.ts` | — | `internal/agent/loop.go` | ✅ | maxConcurrentTools=4 |
-| System prompt assembly | `constants/prompts.ts` | `2831.js` | `internal/agent/systemprompt.go` | ✅ | |
+| System prompt assembly | `constants/prompts.ts` | `2831.js` | `internal/agent/systemprompt.go` | 🔶 | Content complete (tool-usage policy, search, skills, error-recovery, blast-radius sections added) but not byte-identical to TS — conduit-authored to avoid IP reproduction. |
 | Billing header injection | — | `2831.js` | `internal/agent/systemprompt.go` | ✅ | |
 | Sub-agent spawning | `tools/AgentTool/` | — | `internal/agent/loop.go` `RunSubAgent` | ✅ | |
 | Max turns limit | `query.ts` | — | `internal/agent/loop.go` | ✅ | |
@@ -203,7 +203,7 @@
 | Main REPL screen | `screens/REPL.tsx` (5005 LOC) | `0219.js`+ | `internal/tui/model.go`, `internal/tui/update.go`, `internal/tui/keyhandler.go`, `internal/tui/layoutview.go` | ✅ | Bubble Tea vs React/Ink |
 | Message display (streaming) | `components/Messages.tsx` | — | `internal/tui/render.go` | ✅ | |
 | Markdown rendering | `components/Markdown.tsx` | — | `internal/tui/render.go` | ✅ | Full GFM: tables, headings, task lists, strikethrough, blockquotes, italic |
-| Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/render.go` | ✅ | Chroma-based; functionally equivalent to Prism.js (different library, same result) |
+| Syntax highlighting | `components/HighlightedCode.tsx` | — | `internal/tui/syntaxhighlight.go` | ✅ | hand-rolled syntax highlighting (no Chroma dependency); functionally equivalent to Prism.js |
 | Spinner / thinking indicator | `components/Spinner.tsx` | — | `internal/tui/model.go` | ✅ | |
 | Status bar | `components/StatusLine.tsx` | — | `internal/tui/layoutview.go`, `internal/tui/usagefooter.go` | ✅ | |
 | Permission mode badge | `components/StatusLine.tsx` | — | `internal/tui/model.go` | ✅ | |

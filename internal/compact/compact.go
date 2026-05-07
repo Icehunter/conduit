@@ -116,9 +116,11 @@ func CompactWithModel(ctx context.Context, client *api.Client, model string, mes
 
 	raw := sb.String()
 	summary := extractSummary(raw)
+	// Do not fall back to the raw response — it would dump the entire model
+	// output into session storage and leak as the session title.
+	// An empty summary is safe: loop.go only fires OnCompact when summary != "".
 	if summary == "" {
-		// Fallback: use the entire response if no <summary> tag found.
-		summary = strings.TrimSpace(raw)
+		return &Result{Summary: "", NewHistory: nil}, nil
 	}
 
 	newHistory := []api.Message{{

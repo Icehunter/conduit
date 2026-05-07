@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 
@@ -33,6 +34,8 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 	stopReason := "end_turn"
 	var totalUsage api.Usage // sum across all turns in this stream
 	var turnUsage api.Usage  // usage for the current turn (reset at message_start)
+	var gotMessageStart bool
+	var gotMessageStop bool
 
 	for {
 		if ctx.Err() != nil {
@@ -54,6 +57,8 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			// message_start opens a new turn — reset per-turn accumulator.
 			// input_tokens + cache fields live here; output_tokens is 0 here
 			// and finalized in the subsequent message_delta.
+			gotMessageStart = true
+			gotMessageStop = false
 			turnUsage = api.Usage{}
 			if ms, err := ev.AsMessageStart(); err == nil {
 				turnUsage.InputTokens = ms.Message.Usage.InputTokens
@@ -121,6 +126,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 
 		case "message_stop":
 			// Emit per-turn usage and accumulate into the stream total.
+			gotMessageStop = true
 			if turnUsage.InputTokens > 0 || turnUsage.OutputTokens > 0 {
 				handler(LoopEvent{Type: EventUsage, Usage: turnUsage})
 				totalUsage.InputTokens += turnUsage.InputTokens
@@ -152,6 +158,15 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 				})
 			}
 		}
+	}
+
+	// If the connection closed (io.EOF) after message_start but before
+	// message_stop arrived, the server dropped the stream prematurely.
+	// Surface an error so the agent loop doesn't silently treat a truncated
+	// response as a completed turn.
+	if gotMessageStart && !gotMessageStop {
+		return buildContentBlocks(metas, blockTexts), stopReason, totalUsage,
+			fmt.Errorf("sse: stream closed before message_stop")
 	}
 
 	return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, nil

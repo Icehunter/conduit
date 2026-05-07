@@ -12,6 +12,8 @@ package model
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"sync/atomic"
 )
 
@@ -56,6 +58,49 @@ var ThinkingBudgets = map[string]int{
 	"normal": 0,
 	"high":   8000,
 	"max":    16000,
+}
+
+// Context window and auto-compact constants mirroring autoCompact.ts / context.ts.
+const (
+	ContextWindowDefault      = 200_000
+	ContextWindow1M           = 1_000_000
+	CompactReserveTokens      = 20_000 // MAX_OUTPUT_TOKENS_FOR_SUMMARY
+	CompactBufferTokens       = 13_000 // AUTOCOMPACT_BUFFER_TOKENS
+	MaxConsecutiveCompactFail = 3
+)
+
+// ContextWindowFor returns the context window for the named model (200K default,
+// 1M for models that contain "sonnet-4" or "opus-4" or end with "[1m]").
+// Mirrors getContextWindowForModel in the TS source. The
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW env var can cap the returned value.
+func ContextWindowFor(name string) int {
+	n := strings.ToLower(name)
+	window := ContextWindowDefault
+	if strings.HasSuffix(n, "[1m]") || strings.Contains(n, "sonnet-4") || strings.Contains(n, "opus-4") {
+		window = ContextWindow1M
+	}
+	if cap := contextWindowOverride(); cap > 0 && cap < window {
+		return cap
+	}
+	return window
+}
+
+// AutoCompactThresholdFor returns the input-token count at which auto-compact
+// should fire for the given model. Mirrors getAutoCompactThreshold in autoCompact.ts.
+func AutoCompactThresholdFor(name string) int {
+	w := ContextWindowFor(name)
+	effective := w - CompactReserveTokens
+	return effective - CompactBufferTokens
+}
+
+// contextWindowOverride reads CLAUDE_CODE_AUTO_COMPACT_WINDOW.
+func contextWindowOverride() int {
+	if s := os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // Resolve returns the model name to use, applying priority order.

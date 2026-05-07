@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/microcompact"
+	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/settings"
@@ -53,6 +55,7 @@ const (
 	EventAPIRetry                    // API returned 429 and the client is backing off
 	EventPartial                     // stream errored mid-turn; PartialBlocks holds what was received
 	EventUsage                       // per-API-turn usage from SSE (input + output + cache fields)
+	EventCompacted                   // auto-compact ran; CompactedInputTokens and CompactedThreshold carry context
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -87,11 +90,12 @@ type LoopEvent struct {
 	PartialBlocks []api.ContentBlock
 	PartialErr    error
 
-	// EventUsage carries the API-reported usage for one streamed turn
-	// (one Messages-API request). The TUI sums these across the Run to
-	// display real billable token counts; auto-compact uses InputTokens
-	// internally to gauge context pressure.
+	// EventUsage carries the API-reported usage for one streamed turn.
 	Usage api.Usage
+
+	// EventCompacted
+	CompactedInputTokens int
+	CompactedThreshold   int
 }
 
 // LoopConfig controls the loop's behaviour.
@@ -176,6 +180,10 @@ type Loop struct {
 	client *api.Client
 	reg    *tool.Registry
 	cfg    LoopConfig
+	// consecutiveCompactFails tracks how many times auto-compact has failed in a
+	// row. Mirrors the MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES circuit breaker in
+	// autoCompact.ts. Stored on the struct so it persists across Run() calls.
+	consecutiveCompactFails int
 }
 
 // NewLoop constructs a Loop.
@@ -294,6 +302,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 	turn := 0
 	lastAssistantTime := l.cfg.LastAssistantTime
+	streamFailures := 0
 	for {
 		if ctx.Err() != nil {
 			return msgs, ctx.Err()
@@ -351,8 +360,17 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		})
 		stream, err := client.StreamMessage(streamCtx, req)
 		if err != nil {
-			return msgs, fmt.Errorf("agent: stream: %w", err)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return msgs, err
+			}
+			streamFailures++
+			if streamFailures > 3 {
+				return msgs, fmt.Errorf("agent: stream: %w", err)
+			}
+			handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: streamFailures, RetryErr: err})
+			continue
 		}
+		streamFailures = 0
 
 		// Emit rate-limit info from response headers before draining.
 		if rlInfo := ratelimit.Parse(stream.ResponseHeader); rlInfo.HasData() {
@@ -364,29 +382,42 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		assistantBlocks, stopReason, usage, err := l.drainStream(ctx, stream, handler)
+		inputTokens := usage.InputTokens
 		_ = stream.Close()
 		if err != nil {
-			// Conversation recovery: emit any partial assistant content the
-			// caller can persist to the session JSONL before the error
-			// propagates. On /resume the loaded history will pass through
-			// FilterUnresolvedToolUses to drop any orphan tool_use blocks.
-			if len(assistantBlocks) > 0 {
-				handler(LoopEvent{
-					Type:          EventPartial,
-					PartialBlocks: assistantBlocks,
-					PartialErr:    err,
-				})
-				msgs = append(msgs, api.Message{Role: "assistant", Content: assistantBlocks})
-			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// Conversation recovery: emit any partial assistant content the
+				// caller can persist to the session JSONL before the error
+				// propagates. On /resume the loaded history will pass through
+				// FilterUnresolvedToolUses to drop any orphan tool_use blocks.
+				if len(assistantBlocks) > 0 {
+					handler(LoopEvent{
+						Type:          EventPartial,
+						PartialBlocks: assistantBlocks,
+						PartialErr:    err,
+					})
+					msgs = append(msgs, api.Message{Role: "assistant", Content: assistantBlocks})
+				}
 				return msgs, err
 			}
-			return msgs, fmt.Errorf("agent: drain: %w", err)
+			// Non-cancellation drain error — retry up to 3 times before giving up.
+			// Don't persist partial blocks; the next attempt may succeed cleanly.
+			streamFailures++
+			if streamFailures > 3 {
+				if len(assistantBlocks) > 0 {
+					handler(LoopEvent{
+						Type:          EventPartial,
+						PartialBlocks: assistantBlocks,
+						PartialErr:    err,
+					})
+					msgs = append(msgs, api.Message{Role: "assistant", Content: assistantBlocks})
+				}
+				return msgs, fmt.Errorf("agent: drain: %w", err)
+			}
+			handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: streamFailures, RetryErr: err})
+			continue
 		}
-
-		// usage is the sum across all SSE turns in this HTTP call (drainStream
-		// already emitted per-turn EventUsage events via handler).
-		inputTokens := usage.InputTokens
+		streamFailures = 0
 
 		// Append the assistant message to history.
 		msgs = append(msgs, api.Message{
@@ -399,14 +430,18 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			// end_turn or unknown — we're done.
 			// Auto-compact check: if context is approaching capacity, compact
 			// so future turns don't hit the limit. Non-fatal if it fails.
-			if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
-				threshold := int(float64(l.cfg.MaxTokens) * 0.8)
-				if inputTokens > threshold {
+			if l.cfg.AutoCompact && inputTokens > 0 && os.Getenv("DISABLE_AUTO_COMPACT") == "" {
+				threshold := internalmodel.AutoCompactThresholdFor(model)
+				if inputTokens > threshold && l.consecutiveCompactFails < internalmodel.MaxConsecutiveCompactFail {
 					if result, err := compact.CompactWithModel(ctx, l.client, l.BackgroundModel(), msgs, ""); err == nil {
 						msgs = result.NewHistory
+						l.consecutiveCompactFails = 0
 						if l.cfg.OnCompact != nil && result.Summary != "" {
 							l.cfg.OnCompact(result.Summary)
 						}
+						handler(LoopEvent{Type: EventCompacted, CompactedInputTokens: inputTokens, CompactedThreshold: threshold})
+					} else {
+						l.consecutiveCompactFails++
 					}
 				}
 			}
@@ -435,19 +470,5 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			Content: toolResults,
 		})
 
-		// Auto-compact after tool_results are appended. By waiting until both
-		// the assistant tool_use message and the user tool_result message are in
-		// msgs, compact can summarize the complete pair — no orphaned IDs.
-		if l.cfg.AutoCompact && l.cfg.MaxTokens > 0 && inputTokens > 0 {
-			threshold := int(float64(l.cfg.MaxTokens) * 0.8)
-			if inputTokens > threshold {
-				if result, err := compact.CompactWithModel(ctx, l.client, l.BackgroundModel(), msgs, ""); err == nil {
-					msgs = result.NewHistory
-					if l.cfg.OnCompact != nil && result.Summary != "" {
-						l.cfg.OnCompact(result.Summary)
-					}
-				}
-			}
-		}
 	}
 }

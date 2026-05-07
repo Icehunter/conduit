@@ -100,6 +100,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 				toInstall = append(toInstall, p.discoverItems[idx].pluginID)
 			}
 			cwd, _ := os.Getwd()
+			trusted := !m.cfg.NeedsTrust
 			var cmds []tea.Cmd
 			mgr := m.cfg.MCPManager
 			for _, pluginID := range toInstall {
@@ -107,7 +108,7 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 				cmds = append(cmds, func() tea.Msg {
 					_, err := plugins.Install(context.Background(), pid, "user", cwd)
 					if err == nil && mgr != nil {
-						mgr.SyncPluginServers(context.Background(), cwd)
+						mgr.SyncPluginServers(context.Background(), cwd, trusted)
 					}
 					return pluginInstallMsg{pluginID: pid, err: err}
 				})
@@ -308,6 +309,7 @@ func mcpOptsActions(p *pluginPanelState, mgr *mcp.Manager) []string {
 
 func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model, tea.Cmd) {
 	cwd, _ := os.Getwd()
+	trusted := !m.cfg.NeedsTrust
 	switch action {
 	case "Back":
 		p.view = pluginViewList
@@ -319,7 +321,7 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 			return m, func() tea.Msg {
 				_, err := plugins.Install(context.Background(), pluginID, "user", cwd)
 				if err == nil && mgr != nil {
-					mgr.SyncPluginServers(context.Background(), cwd)
+					mgr.SyncPluginServers(context.Background(), cwd, trusted)
 				}
 				return pluginInstallMsg{pluginID: pluginID, err: err}
 			}
@@ -331,7 +333,7 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 				pluginID := p.discoverItems[p.itemIdx].pluginID
 				_ = plugins.Uninstall(pluginID, "user", cwd)
 				if m.cfg.MCPManager != nil {
-					m.cfg.MCPManager.SyncPluginServers(context.Background(), cwd)
+					m.cfg.MCPManager.SyncPluginServers(context.Background(), cwd, trusted)
 				}
 				m.pluginPanel = p
 				return m, reloadPluginPanelCmd(m.cfg.MCPManager, pluginTabDiscover, p.errors)
@@ -341,7 +343,7 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 				pluginID := p.installedItems[p.itemIdx].pluginID
 				_ = plugins.Uninstall(pluginID, "user", cwd)
 				if m.cfg.MCPManager != nil {
-					m.cfg.MCPManager.SyncPluginServers(context.Background(), cwd)
+					m.cfg.MCPManager.SyncPluginServers(context.Background(), cwd, trusted)
 				}
 				// Reload panel from disk — gets correct descriptions, sort order, etc.
 				m.pluginPanel = p
@@ -388,6 +390,7 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 
 func (m Model) execMCPOptAction(p *pluginPanelState, action string) (Model, tea.Cmd) {
 	cwd, _ := os.Getwd()
+	trusted := !m.cfg.NeedsTrust
 	switch action {
 	case "Back":
 		p.view = pluginViewList
@@ -396,7 +399,7 @@ func (m Model) execMCPOptAction(p *pluginPanelState, action string) (Model, tea.
 		if m.cfg.MCPManager != nil {
 			srvName := p.mcpActionTarget
 			mgr := m.cfg.MCPManager
-			go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd) }()
+			go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
 		}
 		p.view = pluginViewList
 		p.selected = 0
@@ -419,7 +422,7 @@ func (m Model) execMCPOptAction(p *pluginPanelState, action string) (Model, tea.
 		if m.cfg.MCPManager != nil {
 			srvName := p.mcpActionTarget
 			mgr := m.cfg.MCPManager
-			go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd) }()
+			go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
 		}
 		for i, item := range p.installedItems {
 			if item.isMCPSub && item.mcpServerName == p.mcpActionTarget {

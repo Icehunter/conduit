@@ -22,6 +22,7 @@ import (
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/ratelimit"
+	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 )
@@ -662,12 +663,22 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 	// Trim from m.history: each "turn" is one user+assistant message pair.
 	n := 1
 	_, _ = fmt.Sscanf(res.Text, "%d", &n)
+
+	// Snapshot line count before slicing so we can truncate the JSONL after.
+	linesBefore := 0
+	if m.cfg.Session != nil {
+		linesBefore = m.cfg.Session.Snapshot()
+	}
+
 	removed := 0
 	for i := 0; i < n && len(m.history) >= 2; i++ {
 		// Remove the last user+assistant pair from the API history.
 		m.history = m.history[:len(m.history)-2]
 		removed++
 	}
+	// Drop any orphaned tool_use/tool_result pairs left by the slice.
+	m.history = session.FilterUnresolvedToolUses(m.history)
+
 	// Also trim display messages — keep system messages, remove last n user+assistant pairs.
 	for i := 0; i < removed; i++ {
 		// Walk backwards to find and remove the last assistant then user display message.
@@ -684,6 +695,17 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 			}
 		}
 	}
+
+	// Truncate the on-disk JSONL so /resume after /rewind reflects the new state.
+	// Each removed turn corresponds to 2 JSONL lines (user + assistant).
+	if removed > 0 && m.cfg.Session != nil && linesBefore > 0 {
+		keep := linesBefore - removed*2
+		if keep < 0 {
+			keep = 0
+		}
+		_ = m.cfg.Session.TruncateLines(keep)
+	}
+
 	if removed > 0 {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Rewound %d turn(s).", removed)})
 	} else {

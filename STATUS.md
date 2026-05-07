@@ -31,6 +31,7 @@ Last updated: 2026-05-05
 |-----------|--------|-------|
 | SSE parser | ✅ | internal/sse/ |
 | Agent loop | ✅ | internal/agent/loop.go |
+| System prompt assembly | 🔶 | internal/agent/systemprompt.go; content complete but not byte-identical to TS (conduit-authored to avoid IP) |
 | BashTool | ✅ | internal/tools/bashtool/ |
 | FileReadTool | ✅ | internal/tools/filereadtool/ |
 | FileWriteTool | ✅ | internal/tools/filewritetool/ |
@@ -63,7 +64,7 @@ Last updated: 2026-05-05
 | Ctrl+Y copy code block | ✅ | |
 | Interrupt (Ctrl+C) | ✅ | |
 | Markdown rendering | ✅ | full GFM: tables, headings, italic, strikethrough, task lists, blockquotes |
-| Code block highlighting | ✅ | Chroma-based syntax highlighting |
+| Code block highlighting | ✅ | hand-rolled syntax highlighting (no Chroma dependency) |
 
 ---
 

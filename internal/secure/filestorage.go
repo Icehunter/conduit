@@ -66,8 +66,8 @@ func (s *FileStorage) loadLocked() error {
 	if runtime.GOOS != "windows" {
 		if info, err := os.Lstat(s.path); err == nil {
 			mode := info.Mode().Perm()
-			if mode&0o022 != 0 {
-				return fmt.Errorf("secure: refusing to load credentials at %s: file is group/world-writable (mode %o); run `chmod 600 %s`", s.path, mode, s.path)
+			if mode&0o077 != 0 {
+				return fmt.Errorf("secure: refusing to load credentials at %s: file has group/world-readable or writable bits (mode %o); run `chmod 600 %s`", s.path, mode, s.path)
 			}
 		}
 	}

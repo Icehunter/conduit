@@ -159,7 +159,7 @@ func parseLine(line string, typ *string, data *strings.Builder, hasData, hasFiel
 func assemble(typ string, data strings.Builder, hasData bool) *Event {
 	ev := &Event{Type: typ}
 	if hasData {
-		ev.RawData = []byte(strings.TrimRight(data.String(), " \t"))
+		ev.RawData = []byte(data.String())
 	}
 	return ev
 }

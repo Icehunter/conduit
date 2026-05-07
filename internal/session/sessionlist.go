@@ -187,13 +187,26 @@ func sanitizePath(s string) string {
 	return sanitized[:maxSanitizedLength] + "-" + suffix
 }
 
-// djb2Hash mirrors the TS djb2Hash function exactly.
+// djb2Hash mirrors the TS djb2Hash function exactly, iterating over UTF-16
+// code units (matching JS charCodeAt behavior) rather than Unicode code points.
+// For BMP characters (U+0000–U+FFFF) this is the same; for supplementary
+// characters the Go rune is split into a surrogate pair to match JS.
 func djb2Hash(s string) int32 {
-	var hash int32
-	for _, c := range s {
-		hash = ((hash << 5) - hash + c)
+	var hash uint32
+	for _, r := range s {
+		if r < 0x10000 {
+			// BMP code point: directly a single UTF-16 code unit.
+			hash = (hash << 5) - hash + uint32(r)
+		} else {
+			// Supplementary code point: split into surrogate pair.
+			r -= 0x10000
+			high := uint32(0xD800 + (r>>10)&0x3FF)
+			low := uint32(0xDC00 + r&0x3FF)
+			hash = (hash << 5) - hash + high
+			hash = (hash << 5) - hash + low
+		}
 	}
-	return hash
+	return int32(hash)
 }
 
 func abs32(n int32) int32 {

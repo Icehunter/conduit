@@ -221,7 +221,8 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:u
 						cwd, _ := os.Getwd()
 						srvName := item.name
 						mgr := m.cfg.MCPManager
-						go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd) }()
+						trusted := !m.cfg.NeedsTrust
+						go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
 						p.mcpItems[p.serverIdx].status = "pending"
 						p.mcpItems[p.serverIdx].err = ""
 					}
@@ -247,7 +248,8 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:u
 					if m.cfg.MCPManager != nil {
 						srvName := item.name
 						mgr := m.cfg.MCPManager
-						go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd) }()
+						trusted := !m.cfg.NeedsTrust
+						go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
 					}
 					p.view = panelViewList
 					p.selected = 0

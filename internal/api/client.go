@@ -211,10 +211,29 @@ func (c *Client) applyHeaders(h http.Header) {
 		h.Set("x-api-key", apiKey)
 	}
 
-	// Merge caller-supplied extras last so they can override anything.
+	// Merge caller-supplied extras. Identity/authentication headers are locked
+	// and cannot be overridden by ExtraHeaders to prevent spoofing.
 	for k, v := range c.cfg.ExtraHeaders {
-		h.Set(k, v)
+		if !lockedHeaders[strings.ToLower(k)] {
+			h.Set(k, v)
+		}
 	}
+}
+
+// lockedHeaders is the set of header names (lower-cased) that ExtraHeaders
+// must not override. These carry identity, auth, and wire-fingerprint
+// information that must match what the server expects.
+var lockedHeaders = map[string]bool{
+	"user-agent":                  true,
+	"x-app":                       true,
+	"authorization":               true,
+	"anthropic-beta":              true,
+	"x-api-key":                   true,
+	"x-stainless-lang":            true,
+	"x-stainless-package-version": true,
+	"x-stainless-runtime":         true,
+	"x-stainless-runtime-version": true,
+	"x-stainless-timeout":         true,
 }
 
 // stainlessOS maps GOOS to the value the Stainless SDK reports

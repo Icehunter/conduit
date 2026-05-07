@@ -85,15 +85,22 @@ func retryDelay(n int, retryAfterSecs float64) time.Duration {
 
 // parseRetryAfter parses the retry-after header value.
 // Returns seconds as float64, 0 if absent or unparseable.
-// The header can be a decimal seconds value or an HTTP-date.
+// The header can be a decimal seconds value or an HTTP-date
+// (e.g. "Thu, 08 May 2026 12:00:00 GMT" from CDN intermediaries).
 func parseRetryAfter(h string) float64 {
 	h = strings.TrimSpace(h)
 	if h == "" {
 		return 0
 	}
 	// Try numeric first (most common from Anthropic).
-	if v, err := strconv.ParseFloat(h, 64); err == nil {
+	if v, err := strconv.ParseFloat(h, 64); err == nil && v > 0 {
 		return v
+	}
+	// Fall back to HTTP-date form (RFC 7231 / CDN intermediaries).
+	if t, err := http.ParseTime(h); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d.Seconds()
+		}
 	}
 	return 0
 }

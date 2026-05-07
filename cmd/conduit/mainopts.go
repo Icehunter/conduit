@@ -55,7 +55,7 @@ func runPrint(args []string) error {
 		MaxTokens:       internalmodel.MaxTokens,
 		System:          agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
 		Metadata:        app.BuildMetadata(),
-		MaxTurns:        10,
+		MaxTurns:        50,
 		BackgroundModel: func() string { return compact.DefaultModel },
 	})
 	reg.Register(agenttool.New(lp.RunBackgroundAgent))

@@ -69,6 +69,7 @@ func ExtractTitle(path string) string {
 
 	var customTitle string
 	var firstUserText string
+	var summaryFallback string
 
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -93,16 +94,28 @@ func ExtractTitle(path string) string {
 					}
 				}
 			}
+		case "summary":
+			// Capture summary as a last-resort fallback only — a real user
+			// message (from the transcript) always wins over this.
+			if summaryFallback == "" && entry.Summary != "" {
+				summaryFallback = entry.Summary
+			}
 		}
 	}
 
 	if customTitle != "" {
 		return customTitle
 	}
-	if firstUserText == "" {
+	// Prefer real user message text; fall back to compact summary if no user
+	// turn was found (metadata-only or image-only sessions).
+	text := firstUserText
+	if text == "" {
+		text = summaryFallback
+	}
+	if text == "" {
 		return ""
 	}
-	return titleFromText(firstUserText)
+	return titleFromText(text)
 }
 
 // titleFromText derives a display title from a user message.
@@ -134,6 +147,34 @@ var promptPrefixTitles = []struct {
 
 func titleFromText(text string) string {
 	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	// Strip XML wrappers injected by the compact flow and model responses.
+	// The first user turn after a compaction starts with <summary>...</summary>,
+	// which would otherwise leak as the session title.
+	// For <summary> we extract the inner text; for other tags we skip past them.
+	if strings.HasPrefix(text, "<summary>") {
+		inner := text[len("<summary>"):]
+		if end := strings.Index(inner, "</summary>"); end >= 0 {
+			text = strings.TrimSpace(inner[:end])
+		} else {
+			text = strings.TrimSpace(inner)
+		}
+	} else {
+		// Strip other common XML wrappers (title, analysis, context) for robustness.
+		for _, tag := range []string{"<title>", "<analysis>", "<context>"} {
+			if strings.HasPrefix(text, tag) {
+				closeTag := strings.Replace(tag, "<", "</", 1)
+				if end := strings.Index(text, closeTag); end >= 0 {
+					text = strings.TrimSpace(text[end+len(closeTag):])
+				} else {
+					text = strings.TrimSpace(text[len(tag):])
+				}
+				break
+			}
+		}
+	}
 	if text == "" {
 		return ""
 	}

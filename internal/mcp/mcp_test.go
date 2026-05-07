@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -36,7 +38,7 @@ func TestToolNamePrefixMatchesClaudeMCPConvention(t *testing.T) {
 func TestLoadConfigsNoError(t *testing.T) {
 	// LoadConfigs must never return an error regardless of whether config files exist.
 	// Global ~/.claude.json is always read if present, so we only assert no error.
-	_, err := LoadConfigs("/tmp/definitely-nonexistent-8675309")
+	_, err := LoadConfigs("/tmp/definitely-nonexistent-8675309", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +61,7 @@ func TestLoadConfigsPicksUpTopLevelClaudeMcpServers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgs, err := LoadConfigs("/tmp/project")
+	cfgs, err := LoadConfigs("/tmp/project", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,7 @@ func TestLoadConfigsPicksUpConduitMCPOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgs, err := LoadConfigs("/tmp/project")
+	cfgs, err := LoadConfigs("/tmp/project", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +160,7 @@ func TestLoadConfigsLoadsPluginMCPWhenEnabledSettingIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgs, err := LoadConfigs("/tmp/project")
+	cfgs, err := LoadConfigs("/tmp/project", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +216,7 @@ func TestLoadConfigsSkipsPluginMCPWhenExplicitlyDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgs, err := LoadConfigs("/tmp/project")
+	cfgs, err := LoadConfigs("/tmp/project", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +266,7 @@ func TestClaudeJSONParse(t *testing.T) {
 func TestManagerConnectAllNoError(t *testing.T) {
 	// Manager must not error even when servers fail to connect.
 	m := NewManager()
-	err := m.ConnectAll(context.Background(), "/tmp")
+	err := m.ConnectAll(context.Background(), "/tmp", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -411,5 +413,214 @@ func TestIsDisabled_ConduitProjectOverridesClaudeFallback(t *testing.T) {
 	}
 	if IsDisabled("srv", cwd) {
 		t.Fatal("expected Conduit empty disabledMcpServers to override Claude fallback")
+	}
+}
+
+// ---- H1: stdio scanner buffer -----------------------------------------------
+
+// TestStdioClientLargeResponse verifies that a tools/list response larger than
+// 64 KB (the default bufio.Scanner cap) is read successfully. The fix sets
+// sc.Buffer(..., 8<<20) so bufio.ErrTooLong never fires.
+func TestStdioClientLargeResponse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stdio subprocess test in short mode")
+	}
+	// Build a tools/list result whose JSON is larger than 64 KB.
+	// Each tool has a 1 KB description, and we emit 70 tools → ~70 KB.
+	bigDesc := strings.Repeat("x", 1024)
+	type fakeTool struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	tools := make([]fakeTool, 70)
+	for i := range tools {
+		tools[i] = fakeTool{Name: fmt.Sprintf("tool%d", i), Description: bigDesc}
+	}
+	// Build the tools/list response JSON manually.
+	toolsJSON, err := json.Marshal(struct {
+		Tools []fakeTool `json:"tools"`
+	}{Tools: tools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toolsJSON) <= 64<<10 {
+		t.Fatalf("test data too small: %d bytes, want > 64 KB", len(toolsJSON))
+	}
+
+	// Write a tiny Go program that acts as a minimal MCP stdio server:
+	// it reads one line (the initialize request), writes back an initialize
+	// response, reads the initialized notification, reads the tools/list
+	// request, writes back the big tools/list response, then exits.
+	serverSrc := `package main
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	sc := bufio.NewScanner(os.Stdin)
+	// initialize
+	sc.Scan()
+	line := sc.Text()
+	var req map[string]interface{}
+	json.Unmarshal([]byte(line), &req)
+	id := req["id"]
+	resp := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  map[string]interface{}{"protocolVersion": "2024-11-05", "capabilities": map[string]interface{}{}},
+	}
+	b, _ := json.Marshal(resp)
+	fmt.Fprintln(os.Stdout, string(b))
+	// notifications/initialized (no response needed)
+	sc.Scan()
+	// tools/list
+	sc.Scan()
+	line = sc.Text()
+	json.Unmarshal([]byte(line), &req)
+	id = req["id"]
+	_ = strings.Contains("", "") // suppress import warning
+` + fmt.Sprintf("	bigDesc := strings.Repeat(\"x\", 1024)\n"+
+		"	_ = bigDesc\n") + `
+	type Tool struct {
+		Name        string ` + "`json:\"name\"`" + `
+		Description string ` + "`json:\"description\"`" + `
+	}
+	tools := make([]Tool, 70)
+	for i := range tools {
+		tools[i] = Tool{Name: fmt.Sprintf("tool%d", i), Description: strings.Repeat("x", 1024)}
+	}
+	result := map[string]interface{}{"tools": tools}
+	resp2 := map[string]interface{}{"jsonrpc": "2.0", "id": id, "result": result}
+	b2, _ := json.Marshal(resp2)
+	fmt.Fprintln(os.Stdout, string(b2))
+}
+`
+	// Write server source to a temp dir and compile it.
+	dir := t.TempDir()
+	srcFile := filepath.Join(dir, "server.go")
+	if err := os.WriteFile(srcFile, []byte(serverSrc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binFile := filepath.Join(dir, "server")
+	buildCmd := exec.Command("go", "build", "-o", binFile, srcFile)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build stub server: %v\n%s", err, out)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client, err := NewStdioClient(ctx, binFile, nil, nil)
+	if err != nil {
+		t.Fatalf("NewStdioClient: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if _, err := client.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	got, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatalf("ListTools (large response): %v", err)
+	}
+	if len(got) != 70 {
+		t.Fatalf("ListTools: got %d tools, want 70", len(got))
+	}
+}
+
+// ---- H2: CallTool unknown tool returns error, not panic ---------------------
+
+// TestManagerCallToolUnknownReturnsError verifies that CallTool for an
+// unrecognised tool name returns a CallResult with IsError=true rather than
+// panicking or blocking forever. This is the observable behaviour the H2 lock
+// fix must preserve.
+func TestManagerCallToolUnknownReturnsError(t *testing.T) {
+	m := NewManager()
+	result, err := m.CallTool(context.Background(), "mcp__nonexistent__no_such_tool", nil)
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected IsError=true for unknown tool")
+	}
+	if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "not found") {
+		t.Fatalf("unexpected error content: %+v", result.Content)
+	}
+}
+
+// ---- H3: HTTP client timeout ------------------------------------------------
+
+// TestHTTPClientHasTimeout verifies NewHTTPClient sets a non-zero timeout,
+// preventing a hung MCP server from blocking indefinitely.
+func TestHTTPClientHasTimeout(t *testing.T) {
+	c := NewHTTPClient("http://localhost:0", nil)
+	hc, ok := c.(*httpClient)
+	if !ok {
+		t.Fatal("NewHTTPClient did not return *httpClient")
+	}
+	if hc.http.Timeout == 0 {
+		t.Fatal("http.Client.Timeout is 0 — expected a non-zero timeout (60s)")
+	}
+}
+
+// ---- C2: plugin MCP servers skipped when trusted=false ----------------------
+
+// TestLoadConfigsSkipsPluginMCPWhenUntrusted verifies that when trusted=false
+// no plugin-scoped MCP servers appear in the result, regardless of what
+// installed_plugins.json contains.
+func TestLoadConfigsSkipsPluginMCPWhenUntrusted(t *testing.T) {
+	claudeDir := t.TempDir()
+	conduitDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CONDUIT_CONFIG_DIR", conduitDir)
+
+	// Set up a valid installed plugin with an MCP server.
+	pluginDir := filepath.Join(claudeDir, "plugins", "cache", "context7")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, ".mcp.json"), []byte(`{
+  "mcpServers": {
+    "context7": {
+      "command": "node",
+      "args": ["server.js"]
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedPath := filepath.Join(claudeDir, "plugins", "installed_plugins.json")
+	if err := os.WriteFile(installedPath, []byte(fmt.Sprintf(`{
+  "version": 2,
+  "plugins": {
+    "context7@claude-plugins-official": [
+      {"scope": "user", "installPath": %q, "version": "1.0.0"}
+    ]
+  }
+}`, pluginDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// With trusted=false, no plugin servers should appear.
+	cfgs, err := LoadConfigs("/tmp/project", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, cfg := range cfgs {
+		if cfg.Scope == "plugin" {
+			t.Fatalf("plugin MCP server %q loaded when trusted=false — want none", name)
+		}
+	}
+
+	// With trusted=true, the server should appear.
+	cfgs2, err := LoadConfigs("/tmp/project", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfgs2["plugin:context7:context7"]; !ok {
+		t.Fatal("plugin MCP server should load when trusted=true")
 	}
 }

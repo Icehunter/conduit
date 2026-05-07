@@ -18,6 +18,31 @@ func Bundled() []skilltool.Command {
 			Description:   "Review auto-memory entries and propose promotions to CLAUDE.md or CLAUDE.local.md.",
 			Body:          rememberPrompt,
 		},
+		{
+			QualifiedName: "verify",
+			Description:   "Run the project's verification suite (build, lint, tests) and surface any failures.",
+			Body:          "Run the project's verification commands (e.g. `make verify` or equivalent). Report failures with context. Fix trivial issues automatically; escalate non-trivial ones.",
+		},
+		{
+			QualifiedName: "keybindings-help",
+			Description:   "Use when the user wants to customize keyboard shortcuts, rebind keys, add chord bindings, or modify ~/.claude/keybindings.json.",
+			Body:          "Help the user customize keybindings. Read ~/.claude/keybindings.json, explain the current bindings, and apply the requested changes following conduit keybinding syntax.",
+		},
+		{
+			QualifiedName: "update-config",
+			Description:   "Use to configure the conduit harness via settings.json — hooks, permissions, env vars, and automated behaviors.",
+			Body:          "Inspect and modify .claude/settings.json or .claude/settings.local.json to apply the requested configuration change (hook, permission, env var, etc). Validate JSON before writing.",
+		},
+		{
+			QualifiedName: "batch",
+			Description:   "Research and plan a large-scale mechanical change, then execute it across many files using parallel agents.",
+			Body:          "Analyse the requested change, decompose it into independent units, then execute each unit in parallel via sub-agents. Summarise results when all units complete.",
+		},
+		{
+			QualifiedName: "skill-creator",
+			Description:   "Capture the current session's repeatable process into a new skill file for future reuse.",
+			Body:          "Review the conversation to identify the repeatable workflow. Write a concise SKILL.md capturing the steps, then save it to .claude/skills/<name>/SKILL.md (project) or ~/.claude/skills/<name>/SKILL.md (personal) as the user prefers.",
+		},
 	}
 }
 

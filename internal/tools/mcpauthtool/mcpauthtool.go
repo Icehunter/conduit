@@ -82,8 +82,9 @@ func (t *authTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result,
 	// Reconnect now that we have a bearer. Errors here are surfaced to the
 	// LLM so it can ask the user to retry — the tokens are already saved,
 	// so a future /mcp reconnect will pick them up.
+	// trusted=true: tool execution only reaches here when the workspace is already trusted.
 	cwd := "" // Manager.Reconnect treats "" as user/local scope — correct for HTTP/SSE servers.
-	if err := t.manager.Reconnect(context.Background(), t.serverName, cwd); err != nil {
+	if err := t.manager.Reconnect(context.Background(), t.serverName, cwd, true); err != nil {
 		return tool.TextResult(fmt.Sprintf(
 			"OAuth complete and tokens saved. Reconnect failed (%v) — try /mcp reconnect %s.",
 			err, t.serverName,

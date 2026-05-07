@@ -46,11 +46,15 @@ func globalClaudeFile() string {
 //  1. user   — ~/.claude.json → mcpServers  (global)
 //  2. local  — ~/.claude.json → projects[cwd].mcpServers  (per-project)
 //  3. project — every .mcp.json from filesystem root down to cwd (closer wins)
-//  4. plugin — enabled plugin .mcp.json files
+//  4. plugin — enabled plugin .mcp.json files (skipped when trusted=false)
 //  5. conduit — ~/.conduit/mcp.json
 //
+// trusted mirrors the same workspace-trust flag used by FilterUntrustedHooks:
+// when false (workspace not yet trusted), plugin MCP servers are not loaded.
+// This prevents auto-executing plugin code from an untrusted checkout.
+//
 // Mirrors getMcpConfigsByScope() in src/services/mcp/config.ts.
-func LoadConfigs(cwd string) (map[string]ServerConfig, error) {
+func LoadConfigs(cwd string, trusted bool) (map[string]ServerConfig, error) {
 	merged := make(map[string]ServerConfig)
 
 	// 1 + 2. ~/.claude.json
@@ -96,7 +100,7 @@ func LoadConfigs(cwd string) (map[string]ServerConfig, error) {
 	// 4. Plugin-provided MCP servers: read installed_plugins.json, check each
 	// enabled plugin's install dir for a .mcp.json file.
 	// These show as scope "plugin" in the manager.
-	loadPluginMCPServers(merged)
+	loadPluginMCPServers(merged, trusted)
 
 	// 5. Conduit global MCP config. This is conduit's own overlay and wins
 	// over Claude/project/plugin sources when server names collide.
@@ -132,7 +136,14 @@ func loadConduitMCPServers(merged map[string]ServerConfig) {
 
 // loadPluginMCPServers reads each enabled, installed plugin's .mcp.json and
 // adds its servers to merged with scope="plugin".
-func loadPluginMCPServers(merged map[string]ServerConfig) {
+//
+// When trusted is false the workspace has not been approved by the user, so
+// plugin MCP servers are skipped entirely — matching the behavior of
+// FilterUntrustedHooks which also gates project-local hook execution on trust.
+func loadPluginMCPServers(merged map[string]ServerConfig, trusted bool) {
+	if !trusted {
+		return
+	}
 	enabledPlugins := loadEnabledPlugins()
 
 	installed, err := plugins.LoadInstalledPlugins()

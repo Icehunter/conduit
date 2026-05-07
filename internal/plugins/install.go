@@ -358,6 +358,8 @@ func gitHead(dir string) (string, error) {
 }
 
 // copyDir copies src directory tree to dst, creating dst if needed.
+// Symlinks are skipped to prevent zip-slip / symlink-following attacks.
+// Paths that escape dst via ".." components are also skipped.
 func copyDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
@@ -369,6 +371,23 @@ func copyDir(src, dst string) error {
 	for _, e := range entries {
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
+
+		// Zip-slip guard: dstPath must remain inside dst.
+		rel, err := filepath.Rel(dst, dstPath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+
+		// Use Lstat so we see the symlink itself, not its target.
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			// Skip symlinks — they could point outside the plugin directory.
+			continue
+		}
+
 		if e.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {
 				return err

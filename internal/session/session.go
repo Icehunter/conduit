@@ -250,3 +250,41 @@ func (s *Session) Snapshot() int {
 	}
 	return strings.Count(string(data), "\n")
 }
+
+// TruncateLines rewrites the JSONL file keeping only the first n non-empty
+// lines, then atomically renames it over the original. This is used by the
+// /rewind command to remove turns from the on-disk transcript so /resume
+// reflects the rewound state. A no-op if n >= the current line count or if
+// the file doesn't exist.
+func (s *Session) TruncateLines(n int) error {
+	data, err := os.ReadFile(s.FilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("session: truncate read %s: %w", s.FilePath, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, n)
+	for _, l := range lines {
+		if len(kept) >= n {
+			break
+		}
+		if strings.TrimSpace(l) != "" {
+			kept = append(kept, l)
+		}
+	}
+	out := strings.Join(kept, "\n")
+	if len(out) > 0 {
+		out += "\n"
+	}
+	tmp := s.FilePath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(out), 0o600); err != nil {
+		return fmt.Errorf("session: truncate write tmp %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, s.FilePath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("session: truncate rename %s: %w", s.FilePath, err)
+	}
+	return nil
+}

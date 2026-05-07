@@ -438,9 +438,15 @@ func isReadOnlySimpleCommand(cmd string) bool {
 		"ag", "sort", "uniq", "cut", "awk", "jq", "yq":
 		return true
 	case "find", "fd":
-		return !containsAnyArg(fields[1:], "-delete", "-exec", "-execdir", "-ok", "-okdir")
+		// -delete, -exec*, -ok* execute or mutate; -fprint* write to files.
+		return !containsAnyArg(fields[1:],
+			"-delete", "-exec", "-execdir", "-ok", "-okdir",
+			"-fprint", "-fprint0", "-fprintf", "-printf")
 	case "sed":
-		return !containsAnyArg(fields[1:], "-i", "--in-place")
+		// -i / --in-place edits files in place; `e` flag in s/// executes shell.
+		// Treat any sed command as non-readonly to be safe (detecting s///e
+		// inline is too fragile without a full parser).
+		return false
 	case "git":
 		return len(fields) >= 2 && map[string]bool{
 			"log": true, "status": true, "diff": true, "show": true, "blame": true,

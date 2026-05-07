@@ -51,8 +51,11 @@ func (m *Manager) SecureStore() secure.Storage {
 // ConnectAll loads configs for cwd and connects to every server in parallel.
 // Errors from individual servers are captured in the server's Error field;
 // ConnectAll itself only returns an error if config loading fails.
-func (m *Manager) ConnectAll(ctx context.Context, cwd string) error {
-	configs, err := LoadConfigs(cwd)
+//
+// trusted must be true when the workspace has been approved by the user;
+// plugin MCP servers are skipped when trusted is false (matching hooks gating).
+func (m *Manager) ConnectAll(ctx context.Context, cwd string, trusted bool) error {
+	configs, err := LoadConfigs(cwd, trusted)
 	if err != nil {
 		return fmt.Errorf("mcp: load configs: %w", err)
 	}
@@ -198,8 +201,11 @@ func (m *Manager) store(name string, srv *ConnectedServer) {
 // new plugin servers are connected, removed plugin servers are disconnected.
 // Non-plugin servers (user/project/local scope) are left untouched.
 // Called after /plugin install or /plugin uninstall.
-func (m *Manager) SyncPluginServers(ctx context.Context, cwd string) {
-	configs, err := LoadConfigs(cwd)
+//
+// trusted must be true when the workspace has been approved by the user;
+// plugin MCP servers are skipped when trusted is false.
+func (m *Manager) SyncPluginServers(ctx context.Context, cwd string, trusted bool) {
+	configs, err := LoadConfigs(cwd, trusted)
 	if err != nil {
 		return
 	}
@@ -261,7 +267,10 @@ func (m *Manager) DisconnectServer(name string) {
 
 // Reconnect closes and re-connects a single named server.
 // It re-reads the config so any edits to MCP config/state take effect.
-func (m *Manager) Reconnect(ctx context.Context, name, cwd string) error {
+//
+// trusted must be true when the workspace has been approved by the user;
+// plugin MCP servers are skipped when trusted is false.
+func (m *Manager) Reconnect(ctx context.Context, name, cwd string, trusted bool) error {
 	// Close existing connection if any.
 	m.mu.Lock()
 	if srv, ok := m.servers[name]; ok && srv.client != nil {
@@ -270,7 +279,7 @@ func (m *Manager) Reconnect(ctx context.Context, name, cwd string) error {
 	delete(m.servers, name)
 	m.mu.Unlock()
 
-	configs, err := LoadConfigs(cwd)
+	configs, err := LoadConfigs(cwd, trusted)
 	if err != nil {
 		return err
 	}
@@ -405,10 +414,15 @@ func (m *Manager) AllTools() []NamedTool {
 
 // CallTool dispatches a tool call to the appropriate server.
 // qualifiedName is "mcp__<serverName>__<toolName>" as returned by AllTools.
+//
+// The RLock is released before the RPC so that a long-running tool call (which
+// can take tens of seconds) does not block DisconnectServer or SyncPluginServers,
+// both of which need a write lock.
 func (m *Manager) CallTool(ctx context.Context, qualifiedName string, input []byte) (CallResult, error) {
+	// Snapshot the matching client pointer under the RLock, then release.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
+	var matchedClient Client
+	var matchedToolName string
 	for srvName, srv := range m.servers {
 		if srv.Status != StatusConnected {
 			continue
@@ -417,10 +431,16 @@ func (m *Manager) CallTool(ctx context.Context, qualifiedName string, input []by
 		if !strings.HasPrefix(qualifiedName, prefix) {
 			continue
 		}
-		toolName := strings.TrimPrefix(qualifiedName, prefix)
-		return srv.client.CallTool(ctx, toolName, input)
+		matchedClient = srv.client
+		matchedToolName = strings.TrimPrefix(qualifiedName, prefix)
+		break
 	}
-	return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("mcp: tool %q not found", qualifiedName)}}}, nil
+	m.mu.RUnlock()
+
+	if matchedClient == nil {
+		return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("mcp: tool %q not found", qualifiedName)}}}, nil
+	}
+	return matchedClient.CallTool(ctx, matchedToolName, input)
 }
 
 // ListResources fetches resources from the named server.

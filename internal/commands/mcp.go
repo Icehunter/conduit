@@ -143,7 +143,8 @@ func runMcpAuth(manager *mcp.Manager, name string, servers []*mcp.ConnectedServe
 	if err := mcp.SaveServerToken(store, name, tokens); err != nil {
 		return Result{Type: "error", Text: fmt.Sprintf("MCP OAuth: save tokens: %v", err)}
 	}
-	if err := manager.Reconnect(context.Background(), name, ""); err != nil {
+	// trusted=true: /mcp auth is only reachable after workspace trust has been established.
+	if err := manager.Reconnect(context.Background(), name, "", true); err != nil {
 		return Result{Type: "text", Text: fmt.Sprintf(
 			"OAuth complete and tokens saved. Reconnect failed (%v) — try /mcp again to retry.", err)}
 	}
@@ -167,7 +168,8 @@ func RegisterMCPApproveCommand(r *Registry, manager *mcp.Manager, cwd string) {
 				return Result{Type: "error", Text: fmt.Sprintf("mcp-approve: %v", err)}
 			}
 			if (choice == "yes" || choice == "yes_all") && manager != nil {
-				_ = manager.Reconnect(context.Background(), name, cwd)
+				// trusted=true: the user just approved this server, so trust is granted.
+				_ = manager.Reconnect(context.Background(), name, cwd, true)
 			}
 			verb := "Approved"
 			switch choice {

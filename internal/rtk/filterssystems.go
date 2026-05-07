@@ -165,8 +165,19 @@ func filterDiff(_ string, output string) string {
 
 func filterAWS(_ string, output string) string {
 	// Strip access keys / secrets from output.
-	secretRe := regexp.MustCompile(`(?i)(AKIA[0-9A-Z]{16}|aws_secret_access_key\s*=\s*\S+)`)
+	// Covers AKIA (long-term) and ASIA (STS/short-term) access key IDs,
+	// secret access key and session token in INI and JSON forms.
+	secretRe := regexp.MustCompile(
+		`(?i)(AKIA[0-9A-Z]{16}` +
+			`|ASIA[0-9A-Z]{16}` +
+			`|aws_secret_access_key\s*=\s*\S+` +
+			`|aws_session_token\s*=\s*\S+)`)
 	output = secretRe.ReplaceAllString(output, "[REDACTED]")
+	// Redact JSON keys: "SecretAccessKey":"..." and "SessionToken":"..."
+	jsonRe := regexp.MustCompile(`(?i)("SecretAccessKey"\s*:\s*)"[^"]*"`)
+	output = jsonRe.ReplaceAllString(output, `$1"[REDACTED]"`)
+	jsonRe2 := regexp.MustCompile(`(?i)("SessionToken"\s*:\s*)"[^"]*"`)
+	output = jsonRe2.ReplaceAllString(output, `$1"[REDACTED]"`)
 	return truncateLines(output, 150)
 }
 

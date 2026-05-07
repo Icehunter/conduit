@@ -307,7 +307,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	mcpManager := mcp.NewManager()
 	// Wire the platform keychain so MCP OAuth tokens persist securely.
 	mcpManager.SetSecureStore(secure.NewDefault())
-	if err := mcpManager.ConnectAll(ctx, cwd); err != nil {
+	if err := mcpManager.ConnectAll(ctx, cwd, !needsTrust); err != nil {
 		warnf("Could not connect MCP servers: %v", err)
 	}
 

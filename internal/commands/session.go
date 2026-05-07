@@ -729,7 +729,12 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				age := formatSessionAge(time.Since(s.Modified))
 				title := session.ExtractTitle(s.FilePath)
 				if title == "" {
-					title = "session " + s.ID[:min(8, len(s.ID))]
+					// Fallback: use the session file's mod time as the title.
+					if info, err := os.Stat(s.FilePath); err == nil {
+						title = "Session " + info.ModTime().Format("Jan 2 15:04")
+					} else {
+						title = "Session " + s.ID[:min(8, len(s.ID))]
+					}
 				}
 				if tag, _ := session.LoadTag(s.FilePath); tag != "" {
 					title = "#" + tag + " · " + title

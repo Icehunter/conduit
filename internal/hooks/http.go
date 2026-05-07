@@ -9,9 +9,20 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
+
+// httpHookClient is a dedicated HTTP client for hook calls. It has a bounded
+// timeout and does not follow redirects — tool input could leak to an
+// attacker-controlled server via a redirect.
+var httpHookClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // runHTTPHook POSTs hook input as JSON to the configured URL and interprets
 // the JSON response as a HookOutput directive. Mirrors execHttpHook.ts.
@@ -39,7 +50,7 @@ func runHTTPHook(ctx context.Context, hook settings.Hook, input HookInput) Resul
 		req.Header.Set(k, interpolateEnv(v, hook.AllowedEnvVars))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpHookClient.Do(req)
 	if err != nil {
 		return Result{Blocked: true, Reason: fmt.Sprintf("http hook: request failed: %v", err)}
 	}

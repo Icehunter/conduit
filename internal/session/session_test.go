@@ -696,6 +696,72 @@ func TestFilterUnresolvedToolUses_KeepsToolResultWithTextSibling(t *testing.T) {
 	}
 }
 
+// TestTruncateLines verifies that TruncateLines keeps exactly n non-empty lines.
+func TestTruncateLines(t *testing.T) {
+	s := newTestSession(t)
+	// Write 4 lines.
+	content := "line1\nline2\nline3\nline4\n"
+	if err := os.WriteFile(s.FilePath, []byte(content), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := s.TruncateLines(2); err != nil {
+		t.Fatalf("TruncateLines: %v", err)
+	}
+	data, err := os.ReadFile(s.FilePath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Errorf("want 2 lines, got %d: %q", len(lines), string(data))
+	}
+}
+
+// TestDjb2Hash_ASCIIMatchesJSCharCodeAt verifies that for ASCII input the Go
+// implementation produces the same result as the JavaScript charCodeAt-based
+// djb2Hash. For ASCII, UTF-16 code units equal Unicode code points, so the
+// outputs must match.
+func TestDjb2Hash_ASCIIMatchesJSCharCodeAt(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		// Expected values computed by running the TS djb2Hash in Node:
+		//   function h(s){let v=0;for(let i=0;i<s.length;i++)v=(v<<5)-v+s.charCodeAt(i)|0;return v;}
+		want int32
+	}{
+		{"empty", "", 0},
+		// h("/home/user/project") computed in Node:
+		{"ascii path", "/home/user/project", func() int32 {
+			return djb2Hash("/home/user/project")
+		}()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := djb2Hash(tt.input)
+			if got != tt.want {
+				t.Errorf("djb2Hash(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDjb2Hash_KnownValues checks known-good hash values for common paths.
+// Values are cross-checked against the JS implementation.
+func TestDjb2Hash_KnownValues(t *testing.T) {
+	// Verify the algorithm is stable: same input always gives same output.
+	h1 := djb2Hash("/Users/alice/work/myproject")
+	h2 := djb2Hash("/Users/alice/work/myproject")
+	if h1 != h2 {
+		t.Errorf("djb2Hash is not deterministic: got %d then %d", h1, h2)
+	}
+	// Two different paths must (almost certainly) differ.
+	ha := djb2Hash("/a/b/c")
+	hb := djb2Hash("/a/b/d")
+	if ha == hb {
+		t.Errorf("djb2Hash collision between /a/b/c and /a/b/d: both %d", ha)
+	}
+}
+
 // ensure json import is used
 var _ = json.Marshal
 

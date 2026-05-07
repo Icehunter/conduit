@@ -34,7 +34,7 @@ paths: "**/*.go"
 
 ## Common Gotchas
 
-- **`encoding/json` is banned** — the TS source uses standard JSON; Go uses `github.com/goccy/go-json` (same API, depguard enforces this)
+- **Use standard JSON unless there is a measured reason not to** — this repo uses Go's `encoding/json`; do not churn imports to an alternate implementation without a benchmark and a repo-wide decision
 - **Node stream semantics** differ from Go's `io.Reader` — SSE chunks can span multiple reads
 - **`setTimeout(f, 0)` in TS** → `tea.Tick(0, ...)` or just a synchronous command in Go
 - **Class methods** become struct methods — if the TS class has shared state, put it on the struct

@@ -107,6 +107,8 @@ type RunOptions struct {
 	NeedsTrust bool
 	// SetTrusted persists workspace trust acceptance.
 	SetTrusted func() error
+	// StartupWarnings are non-fatal startup failures shown as system messages.
+	StartupWarnings []string
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -469,6 +471,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InitialActiveProvider:     runOpts.InitialActiveProvider,
 		InitialProviders:          runOpts.InitialProviders,
 		InitialRoles:              runOpts.InitialRoles,
+		StartupWarnings:           runOpts.StartupWarnings,
 		BackgroundModel: func() string {
 			if loop != nil {
 				return loop.BackgroundModel()

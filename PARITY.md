@@ -286,7 +286,7 @@
 | /theme | `commands/theme/` | `internal/commands/misc.go` + `internal/theme/` | ✅ | Switch palette: dark/light/dark-accessible/light-accessible; hot-swap via OnChange listeners; persisted to `~/.conduit/conduit.json` |
 | /usage | `commands/usage/` | `internal/commands/session.go` | ✅ | Token/cost breakdown by turn |
 | /vim | `commands/vim/` | ❌ | ⬛ | Descoped with vim mode (1513 LOC; deferred) |
-| /branch | `commands/branch/` | ❌ | ❌ STUB | Conversation branching not implemented |
+| /branch | `commands/branch/` | ❌ | 🚫 REMOVED | Conversation branching deferred; command not registered |
 | /voice | `commands/voice/` | ❌ | ⬛ | Requires cgo audio |
 | /rename | `commands/rename/` | `internal/commands/session.go` | ✅ | Renames current session |
 | /sandbox-toggle | `commands/sandbox-toggle/` | ❌ | ⬛ | Anthropic-internal |

@@ -68,15 +68,6 @@ func RegisterMiscCommands(r *Registry) {
 		},
 	})
 
-	// /branch — deferred
-	r.Register(Command{
-		Name:        "branch",
-		Description: "Branch the conversation at this point (coming soon)",
-		Handler: func(string) Result {
-			return Result{Type: "text", Text: "Conversation branching is not yet implemented."}
-		},
-	})
-
 	// /theme — switch active palette and persist to conduit.json
 	r.Register(Command{
 		Name:        "theme",

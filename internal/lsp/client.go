@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -41,7 +40,7 @@ func NewClient(ctx context.Context, cmd string, args ...string) (*Client, error)
 	if err != nil {
 		return nil, fmt.Errorf("lsp: stdout pipe: %w", err)
 	}
-	c.Stderr = log.Writer() // route server stderr to our logger
+	c.Stderr = os.Stderr
 
 	if err := c.Start(); err != nil {
 		return nil, fmt.Errorf("lsp: start %q: %w", cmd, err)
@@ -207,7 +206,7 @@ func (c *Client) readLoop(r io.Reader) {
 		msg, err := readMessage(br)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.Printf("lsp: read error: %v", err)
+				lspLogf("read error: %v", err)
 			}
 			return
 		}
@@ -224,7 +223,7 @@ func (c *Client) dispatch(raw []byte) {
 		Params json.RawMessage `json:"params"`
 	}
 	if err := json.Unmarshal(raw, &peek); err != nil {
-		log.Printf("lsp: dispatch unmarshal: %v", err)
+		lspLogf("dispatch unmarshal: %v", err)
 		return
 	}
 
@@ -232,7 +231,7 @@ func (c *Client) dispatch(raw []byte) {
 		// Response to one of our requests.
 		var resp rpcResponse
 		if err := json.Unmarshal(raw, &resp); err != nil {
-			log.Printf("lsp: response unmarshal: %v", err)
+			lspLogf("response unmarshal: %v", err)
 			return
 		}
 		if v, ok := c.pending.Load(resp.ID); ok {
@@ -253,6 +252,10 @@ func (c *Client) dispatch(raw []byte) {
 		// Unknown notifications are intentionally ignored (log at trace level
 		// only to avoid noisy output during normal operation).
 	}
+}
+
+func lspLogf(format string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stderr, "lsp: "+format+"\n", args...)
 }
 
 // readMessage reads one Content-Length-framed message from br.

@@ -2,7 +2,7 @@
 
 conduit is a 1:1 Go port of Claude Code v2.1.126 with RTK token-savings folded in-process. It's a working TUI agent — every change must keep the real binary functional.
 
-- Module: `github.com/icehunter/conduit` (repo dir is `claude-go` — don't rename)
+- Module: `github.com/icehunter/conduit`
 - Go **1.26** (pinned in go.mod and CI)
 - Entrypoint: `cmd/conduit/main.go` → `bin/conduit`, also copied to `./conduit` at repo root
 

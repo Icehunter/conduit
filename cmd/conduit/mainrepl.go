@@ -50,6 +50,10 @@ import (
 func runREPL(continueMode bool, resumeID string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	var startupWarnings []string
+	warnf := func(format string, args ...any) {
+		startupWarnings = append(startupWarnings, fmt.Sprintf(format, args...))
+	}
 
 	// Warm the TCP+TLS connection to the API in the background to overlap
 	// with the rest of startup (mirrors utils/apiPreconnect.ts). Skipped
@@ -119,8 +123,14 @@ func runREPL(continueMode bool, resumeID string) error {
 			resumeSourcePath = filePath
 			if writeSession, err := session.ImportForWrite(cwd, filePath); err == nil {
 				filePath = writeSession.FilePath
+			} else {
+				warnf("Could not import resumed session for writing: %v", err)
 			}
-			resumedHistory, _ = session.LoadMessages(filePath)
+			if history, err := session.LoadMessages(filePath); err == nil {
+				resumedHistory = history
+			} else {
+				warnf("Could not load resumed session %q: %v", filepath.Base(filePath), err)
+			}
 		}
 	} else if continueMode {
 		// Load the most recent session for this directory.
@@ -132,8 +142,14 @@ func runREPL(continueMode bool, resumeID string) error {
 			filePath := most.FilePath
 			if writeSession, err := session.ImportForWrite(cwd, most.FilePath); err == nil {
 				filePath = writeSession.FilePath
+			} else {
+				warnf("Could not import latest session for writing: %v", err)
 			}
-			resumedHistory, _ = session.LoadMessages(filePath)
+			if history, err := session.LoadMessages(filePath); err == nil {
+				resumedHistory = history
+			} else {
+				warnf("Could not load latest session %q: %v", filepath.Base(filePath), err)
+			}
 		}
 	}
 
@@ -146,6 +162,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 	if err != nil {
 		// Non-fatal — session persistence failure shouldn't block the REPL.
+		warnf("Session persistence is disabled for this run: %v", err)
 		sess = nil
 	}
 
@@ -154,7 +171,10 @@ func runREPL(continueMode bool, resumeID string) error {
 	migrations.Run(settings.ClaudeDir())
 
 	// Load settings (missing/invalid files are fine — defaults apply).
-	s, _ := settings.Load(cwd)
+	s, settingsErr := settings.Load(cwd)
+	if settingsErr != nil {
+		warnf("Could not load settings; using defaults: %v", settingsErr)
+	}
 	if s == nil {
 		s = &settings.Merged{DefaultMode: "default"}
 	}
@@ -287,7 +307,9 @@ func runREPL(continueMode bool, resumeID string) error {
 	mcpManager := mcp.NewManager()
 	// Wire the platform keychain so MCP OAuth tokens persist securely.
 	mcpManager.SetSecureStore(secure.NewDefault())
-	_ = mcpManager.ConnectAll(ctx, cwd)
+	if err := mcpManager.ConnectAll(ctx, cwd); err != nil {
+		warnf("Could not connect MCP servers: %v", err)
+	}
 
 	// Create the LSP manager; servers are started on demand per file extension.
 	lspManager := lsp.NewManager()
@@ -313,7 +335,10 @@ func runREPL(continueMode bool, resumeID string) error {
 	mem := memdir.BuildPrompt(cwd)
 
 	// Load CLAUDE.md instruction files (project + user + local).
-	claudeMdFiles, _ := claudemd.Load(cwd)
+	claudeMdFiles, claudeMdErr := claudemd.Load(cwd)
+	if claudeMdErr != nil {
+		warnf("Could not load instruction files: %v", claudeMdErr)
+	}
 	claudeMdPrompt := claudemd.BuildPrompt(claudeMdFiles)
 
 	c := app.NewAPIClient(tok, Version)
@@ -539,6 +564,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		InitialActiveProvider:     defaultProvider,
 		InitialProviders:          s.Providers,
 		InitialRoles:              s.Roles,
+		StartupWarnings:           startupWarnings,
 		PluginDirs:                pluginDirs,
 		FetchPlanUsage: func(ctx context.Context, provider settings.ActiveProviderSettings) (planusage.Info, error) {
 			if provider.Kind != "claude-subscription" || provider.Account == "" {

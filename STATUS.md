@@ -157,7 +157,7 @@ Last updated: 2026-05-05
 | /rename | ✅ | renames current session |
 | /theme | ✅ | hot-swap palettes; persisted to conduit.json |
 | /plan | ✅ | sets plan mode; EnterPlanMode tool wired |
-| /branch | ❌ STUB | needs conversation branching (not in PARITY yet — add to §7) |
+| /branch | 🚫 REMOVED | conversation branching deferred; command removed from registry |
 | /mcp | ✅ | internal/commands/mcp.go |
 | /agents | ✅ | lists active sub-agents |
 | /skills | ✅ | internal/commands/skills.go |
@@ -282,4 +282,4 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 | Issue | Location | Fix milestone |
 |-------|----------|---------------|
-| /branch registered as a stub but conversation branching is not implemented | internal/commands/ | deferred |
+| Conversation branching is not implemented | internal/commands/ | deferred |

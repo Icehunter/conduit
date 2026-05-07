@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -280,6 +281,9 @@ type Config struct {
 	// FetchPlanUsage returns the current Claude plan usage windows for a
 	// provider/account that supports plan usage.
 	FetchPlanUsage func(context.Context, settings.ActiveProviderSettings) (planusage.Info, error)
+	// StartupWarnings are non-fatal startup failures worth showing once so
+	// resume, MCP, or config issues don't disappear silently.
+	StartupWarnings []string
 }
 
 // Model is the Bubble Tea model.
@@ -594,6 +598,11 @@ func New(cfg Config) Model {
 		m.tallyTokens()
 	} else {
 		m.messages = append(m.messages, m.welcomeCard())
+	}
+	for _, warning := range cfg.StartupWarnings {
+		if strings.TrimSpace(warning) != "" {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: warning})
+		}
 	}
 
 	// Load user keybindings. Conduit owns ~/.conduit/keybindings.json; the

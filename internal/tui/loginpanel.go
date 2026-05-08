@@ -101,7 +101,8 @@ func (m Model) renderLoginPicker() string {
 func (m Model) welcomeCard() Message {
 	cwd, _ := os.Getwd()
 	p := m.cfg.Profile
-	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == settings.ProviderKindClaudeSubscription && provider.Account != "" {
+	provider, providerOk := m.providerForCurrentMode()
+	if providerOk && provider.Kind == settings.ProviderKindClaudeSubscription && provider.Account != "" {
 		if p.Email != provider.Account {
 			p = profile.Info{Email: provider.Account}
 		}
@@ -117,6 +118,11 @@ func (m Model) welcomeCard() Message {
 				p.SubscriptionType = entry.SubscriptionType
 			}
 		}
+	} else if !providerOk && m.activeProvider != nil {
+		// Provider was configured but its account was deleted at runtime —
+		// clear stale subscription info from the startup profile.
+		p.SubscriptionType = ""
+		p.OrganizationName = ""
 	}
 	fields := []string{
 		m.cfg.Version,

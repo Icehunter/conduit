@@ -505,6 +505,11 @@ func (m Model) activeModelDisplayName() string {
 		if m.noAuth {
 			return ""
 		}
+		// activeProvider was set but its account is no longer in the store
+		// (deleted at runtime) — don't show a stale model name from startup.
+		if m.activeProvider != nil {
+			return ""
+		}
 		return m.modelName
 	}
 	return mcpProviderDisplayName(provider, m.localModelName(provider.Server))

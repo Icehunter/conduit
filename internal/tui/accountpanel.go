@@ -234,11 +234,13 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 				}
 				a.view = accountViewList
 				a.refresh()
+				m.refreshWelcomeCardMessage()
 			case "delete":
 				s := secure.NewDefault()
 				_ = auth.DeleteForEmail(s, a.detailID)
 				a.view = accountViewList
 				a.refresh()
+				m.refreshWelcomeCardMessage()
 			case "back":
 				a.view = accountViewList
 			}

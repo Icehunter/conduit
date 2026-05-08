@@ -219,6 +219,16 @@ func Load(cwd string) (*Merged, error) {
 	_ = RepairConduitProviderRegistry()
 	merged := loadPaths(settingsFiles(cwd))
 	merged.Providers, merged.Roles, _ = CanonicalizeProviderRegistry(merged.Providers, merged.Roles)
+	// Overlay conduit-only fields from ConduitConfig — these are not part of
+	// the CC-compatible Settings struct so loadPaths never sees them.
+	if cfg, err := LoadConduitConfig(); err == nil {
+		if len(cfg.CouncilProviders) > 0 {
+			merged.CouncilProviders = append([]string(nil), cfg.CouncilProviders...)
+		}
+		if cfg.CouncilMaxRounds > 0 {
+			merged.CouncilMaxRounds = cfg.CouncilMaxRounds
+		}
+	}
 	applyConduitProjectState(merged, cwd)
 	return merged, nil
 }

@@ -142,7 +142,10 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		if p.kind == "model" && p.role == roleCouncil {
 			// Save the current council roster and close.
-			_ = settings.SaveConduitRawKey("councilProviders", m.councilProviders)
+			roster := append([]string(nil), m.councilProviders...)
+			_ = settings.UpdateConduitConfig(func(cfg *settings.ConduitConfig) {
+				cfg.CouncilProviders = roster
+			})
 			m.picker = nil
 			m.refreshViewport()
 			return m, nil
@@ -165,6 +168,12 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case "esc", "ctrl+c", "q":
+		if p.kind == "model" && p.role == roleCouncil {
+			roster := append([]string(nil), m.councilProviders...)
+			_ = settings.UpdateConduitConfig(func(cfg *settings.ConduitConfig) {
+				cfg.CouncilProviders = roster
+			})
+		}
 		m.picker = nil
 		m.refreshViewport()
 		return m, nil

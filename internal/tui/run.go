@@ -96,6 +96,8 @@ type RunOptions struct {
 	// InitialProviders/Roles are conduit's named provider role bindings.
 	InitialProviders map[string]settings.ActiveProviderSettings
 	InitialRoles     map[string]string
+	// InitialCouncilProviders is the saved list of provider keys for council mode.
+	InitialCouncilProviders []string
 	// FetchPlanUsage returns the current Claude plan usage windows for the
 	// selected provider/account. Nil disables fetching even if the footer
 	// setting is enabled.
@@ -482,6 +484,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InitialActiveProvider:     runOpts.InitialActiveProvider,
 		InitialProviders:          runOpts.InitialProviders,
 		InitialRoles:              runOpts.InitialRoles,
+		InitialCouncilProviders:   runOpts.InitialCouncilProviders,
 		StartupWarnings:           runOpts.StartupWarnings,
 		ClaudeMd:                  runOpts.ClaudeMd,
 		Skills:                    runOpts.Skills,

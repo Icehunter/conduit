@@ -34,10 +34,12 @@ type ConduitConfig struct {
 	DisabledMcpjsonServers     []string `json:"disabledMcpjsonServers,omitempty"`
 	EnableAllProjectMcpServers bool     `json:"enableAllProjectMcpServers,omitempty"`
 
-	Model          string                            `json:"model,omitempty"`
-	ActiveProvider *ActiveProviderSettings           `json:"activeProvider,omitempty"`
-	Providers      map[string]ActiveProviderSettings `json:"providers,omitempty"`
-	Roles          map[string]string                 `json:"roles,omitempty"`
+	Model            string                            `json:"model,omitempty"`
+	ActiveProvider   *ActiveProviderSettings           `json:"activeProvider,omitempty"`
+	Providers        map[string]ActiveProviderSettings `json:"providers,omitempty"`
+	Roles            map[string]string                 `json:"roles,omitempty"`
+	CouncilProviders []string                          `json:"councilProviders,omitempty"`
+	CouncilMaxRounds int                               `json:"councilMaxRounds,omitempty"`
 
 	OutputStyle        string                       `json:"outputStyle,omitempty"`
 	Theme              string                       `json:"theme,omitempty"`

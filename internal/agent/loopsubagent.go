@@ -32,6 +32,9 @@ type SubAgentSpec struct {
 	// the parent loop's client. Use this to route council members through
 	// their own provider accounts rather than the parent's active client.
 	Client *api.Client
+	// Background marks the sub-agent as system-initiated so it is hidden from
+	// the user-visible agent log panel and working-row badge.
+	Background bool
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -124,10 +127,11 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 		}
 	}
 	subagent.Default.Add(subagent.Entry{
-		ID:        childID,
-		Label:     label,
-		Mode:      childGate.Mode(),
-		StartedAt: time.Now(),
+		ID:         childID,
+		Label:      label,
+		Mode:       childGate.Mode(),
+		StartedAt:  time.Now(),
+		Background: spec.Background,
 	})
 	defer subagent.Default.Remove(childID)
 

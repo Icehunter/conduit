@@ -582,6 +582,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		InitialActiveProvider:     defaultProvider,
 		InitialProviders:          s.Providers,
 		InitialRoles:              s.Roles,
+		InitialCouncilProviders:   s.CouncilProviders,
 		StartupWarnings:           startupWarnings,
 		PluginDirs:                pluginDirs,
 		FetchPlanUsage: func(ctx context.Context, provider settings.ActiveProviderSettings) (planusage.Info, error) {

@@ -35,6 +35,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 	// Snapshot the data the goroutine needs from the model.
 	providerKeys := append([]string(nil), m.councilProviders...)
 	providers := cloneProviderMap(m.providers)
+	accountProviders := configuredAccountProviders()
 	loop := m.cfg.Loop
 	prog := *m.cfg.Program
 	seedPlan := msg.seedPlan
@@ -51,7 +52,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 		ctx := context.Background()
 
 		// --- Build the roster ---
-		members := buildCouncilRoster(providerKeys, providers, newAPIClient, newProviderClient)
+		members := buildCouncilRoster(providerKeys, providers, accountProviders, newAPIClient, newProviderClient)
 
 		if len(members) == 0 {
 			// No valid members: skip debate, forward seed plan.
@@ -178,8 +179,9 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 		)
 
 		synthesis, err := loop.RunSubAgentTyped(ctx, sb.String(), agent.SubAgentSpec{
-			Mode:  permissions.ModeBypassPermissions,
-			Tools: []string{"Read", "Glob", "Grep"},
+			Mode:       permissions.ModeBypassPermissions,
+			Tools:      []string{"Read", "Glob", "Grep"},
+			Background: true,
 		})
 		if err != nil {
 			// Fall back to seed plan if synthesis fails.
@@ -198,22 +200,24 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 	providerKeys := append([]string(nil), m.councilProviders...)
 	providers := cloneProviderMap(m.providers)
+	accountProviders := configuredAccountProviders()
 	loop := m.cfg.Loop
 	prog := *m.cfg.Program
 	question := msg.question
 	newAPIClient := m.cfg.NewAPIClient
 	newProviderClient := m.cfg.NewProviderAPIClient
 
-	maxRounds := 1 // chat council: propose only, no critique rounds
-	if s, err := settings.Load(""); err == nil && s.EffectiveCouncilMaxRounds() > 0 {
-		maxRounds = 1 // keep chat council fast: single round regardless of setting
+	maxRounds := 2 // chat council: 1 propose + up to 1 critique round
+	if s, err := settings.Load(""); err == nil {
+		if r := s.EffectiveCouncilMaxRounds(); r > 0 {
+			maxRounds = r
+		}
 	}
-	_ = maxRounds
 
 	cmd := func() tea.Msg {
 		ctx := context.Background()
 
-		members := buildCouncilRoster(providerKeys, providers, newAPIClient, newProviderClient)
+		members := buildCouncilRoster(providerKeys, providers, accountProviders, newAPIClient, newProviderClient)
 		if len(members) == 0 {
 			return councilChatDoneMsg{err: fmt.Errorf("no council members configured — add providers in /model → Council tab")}
 		}
@@ -224,6 +228,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			err  error
 		}
 
+		// Round 0: parallel propose.
 		resultCh := make(chan proposeResult, len(members))
 		var wg sync.WaitGroup
 		for i := range members {
@@ -252,7 +257,46 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			}
 		}
 
-		// Synthesize all member responses into a single answer.
+		// Rounds 1..maxRounds: sequential critique (mirrors handleCouncilFlow).
+		if countActive(members) > 1 {
+			for round := 1; round < maxRounds; round++ {
+				allAgreed := true
+				atLeastOneActive := false
+				debateCtx := buildDebateContext(members)
+				critiquePrompt := fmt.Sprintf(
+					"The question was: %q\n\nHere are the other council members' answers:\n\n%s\n\n"+
+						"Critique the answers, identify the strongest points, and either propose "+
+						"a better synthesis or signal agreement by including <council-agree/> if "+
+						"you are satisfied with the current direction.",
+					question, debateCtx,
+				)
+				for i := range members {
+					if !members[i].active {
+						continue
+					}
+					atLeastOneActive = true
+					text, err := runCouncilSubAgent(ctx, loop, members[i], critiquePrompt,
+						[]string{"Read", "Glob", "Grep"})
+					if err != nil {
+						members[i].active = false
+						prog.Send(councilMemberEjectedMsg{label: members[i].label, reason: err.Error()})
+						continue
+					}
+					agreed := strings.Contains(text, "<council-agree/>")
+					if !agreed {
+						allAgreed = false
+					}
+					members[i].lastResponse = text
+					prog.Send(councilMemberResponseMsg{label: members[i].label, text: text, agreed: agreed})
+				}
+				if !atLeastOneActive || allAgreed || countActive(members) <= 1 {
+					break
+				}
+			}
+		}
+
+		// Synthesis (background — not user-visible as a separate agent log entry).
+		prog.Send(councilSynthesisStartMsg{})
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Multiple AI models were asked: %q\n\nHere are their responses:\n\n", question)
 		for _, mem := range members {
@@ -266,11 +310,11 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 				"Be direct and concise — this is a chat answer, not a formal plan.")
 
 		synthesis, err := loop.RunSubAgentTyped(ctx, sb.String(), agent.SubAgentSpec{
-			Mode:  permissions.ModeBypassPermissions,
-			Tools: []string{"Read", "Glob", "Grep"},
+			Mode:       permissions.ModeBypassPermissions,
+			Tools:      []string{"Read", "Glob", "Grep"},
+			Background: true,
 		})
 		if err != nil {
-			// If synthesis fails, concatenate member responses.
 			var fallback strings.Builder
 			for _, mem := range members {
 				if mem.lastResponse != "" {
@@ -288,15 +332,25 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 
 // buildCouncilRoster converts the TUI's provider key list into councilMember
 // entries with per-member API clients so each member hits its own account.
+// accountProviders is the list from configuredAccountProviders() — these are
+// not in the settings registry but may match council keys selected from the
+// account rows in the model picker.
 func buildCouncilRoster(
 	keys []string,
 	providers map[string]settings.ActiveProviderSettings,
+	accountProviders []settings.ActiveProviderSettings,
 	newAPIClient func(auth.PersistedTokens) *api.Client,
 	newProviderClient func(settings.ActiveProviderSettings) (*api.Client, error),
 ) []councilMember {
 	members := make([]councilMember, 0, len(keys))
 	for _, key := range keys {
-		p, ok := providers[key]
+		// Keys stored in councilProviders carry a "provider:" prefix (from the
+		// picker), but m.providers uses bare canonical keys without it.
+		bareKey := strings.TrimPrefix(key, "provider:")
+		p, ok := providers[bareKey]
+		if !ok {
+			p, ok = resolveAccountProvider(key, accountProviders)
+		}
 		if !ok {
 			continue
 		}
@@ -313,6 +367,23 @@ func buildCouncilRoster(
 		})
 	}
 	return members
+}
+
+// resolveAccountProvider finds an account-based provider whose canonical key
+// matches the given council key. Account providers have no Model set, so we
+// try each known Claude model to find the matching combination.
+func resolveAccountProvider(key string, accountProviders []settings.ActiveProviderSettings) (settings.ActiveProviderSettings, bool) {
+	knownModels := []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
+	for _, ap := range accountProviders {
+		for _, model := range knownModels {
+			candidate := ap
+			candidate.Model = model
+			if "provider:"+settings.ProviderKey(candidate) == key {
+				return candidate, true
+			}
+		}
+	}
+	return settings.ActiveProviderSettings{}, false
 }
 
 // buildCouncilClient creates an API client for a council member's provider.

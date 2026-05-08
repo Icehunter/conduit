@@ -328,6 +328,8 @@ type Config struct {
 	// InitialProviders/Roles are conduit's named provider role bindings.
 	InitialProviders map[string]settings.ActiveProviderSettings
 	InitialRoles     map[string]string
+	// InitialCouncilProviders is the saved council member roster from settings.
+	InitialCouncilProviders []string
 	// BackgroundModel returns the model for helper calls such as /compact.
 	BackgroundModel func() string
 	// FetchPlanUsage returns the current Claude plan usage windows for a
@@ -614,6 +616,7 @@ func New(cfg Config) Model {
 		usageStatusEnabled: cfg.UsageStatusEnabled,
 		providers:          cloneProviderMap(cfg.InitialProviders),
 		roles:              cloneStringMap(cfg.InitialRoles),
+		councilProviders:   append([]string(nil), cfg.InitialCouncilProviders...),
 	}
 	if cfg.InitialActiveProvider != nil {
 		provider := *cfg.InitialActiveProvider

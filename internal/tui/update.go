@@ -230,29 +230,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCouncilFlow(msg)
 
 	case councilMemberResponseMsg:
-		m.messages = append(m.messages, Message{
-			Role:     RoleCouncil,
-			Content:  msg.text,
-			ToolName: msg.label,
-		})
-		if msg.agreed {
+		if m.verboseMode {
 			m.messages = append(m.messages, Message{
 				Role:     RoleCouncil,
-				Content:  "✓ agrees with current direction",
+				Content:  msg.text,
 				ToolName: msg.label,
 			})
+			if msg.agreed {
+				m.messages = append(m.messages, Message{
+					Role:     RoleCouncil,
+					Content:  "✓ agrees with current direction",
+					ToolName: msg.label,
+				})
+			}
+			m.refreshViewport()
+			m.vp.GotoBottom()
 		}
-		m.refreshViewport()
-		m.vp.GotoBottom()
 		return m, nil
 
 	case councilMemberEjectedMsg:
-		m.messages = append(m.messages, Message{
-			Role:     RoleCouncil,
-			Content:  "⚠ ejected: " + msg.reason,
-			ToolName: msg.label,
-		})
-		m.refreshViewport()
+		if m.verboseMode {
+			m.messages = append(m.messages, Message{
+				Role:     RoleCouncil,
+				Content:  "⚠ ejected: " + msg.reason,
+				ToolName: msg.label,
+			})
+			m.refreshViewport()
+		}
 		return m, nil
 
 	case councilSynthesisStartMsg:

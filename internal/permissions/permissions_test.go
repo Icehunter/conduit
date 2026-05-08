@@ -147,6 +147,24 @@ func TestGate_SessionAllow(t *testing.T) {
 	}
 }
 
+// TestGate_SessionAllow_BareToolName verifies that a session "Always Allow"
+// rule keyed on the bare tool name (e.g. "EnterPlanMode") matches subsequent
+// calls. This is the path used by EnterPlanMode/EnterAutoMode, which have no
+// meaningful tool input to scope on.
+func TestGate_SessionAllow_BareToolName(t *testing.T) {
+	g := New("", nil, ModeDefault, nil, nil, nil)
+	if g.Check("EnterPlanMode", "") != DecisionAsk {
+		t.Fatal("baseline: EnterPlanMode should be Ask in default mode")
+	}
+	g.AllowForSession("EnterPlanMode")
+	if got := g.Check("EnterPlanMode", ""); got != DecisionAllow {
+		t.Errorf("after AllowForSession(\"EnterPlanMode\"), Check = %v, want Allow", got)
+	}
+	if got := g.Check("EnterAutoMode", ""); got == DecisionAllow {
+		t.Errorf("rule should not leak to other tools: EnterAutoMode = %v", got)
+	}
+}
+
 func TestGate_SetMode(t *testing.T) {
 	g := New("", nil, ModeDefault, nil, nil, nil)
 	g.SetMode(ModeBypassPermissions)
@@ -267,6 +285,18 @@ func TestGate_ModeSemantics(t *testing.T) {
 		{"plan/Edit ask", ModePlan, "Edit", "/any/file", DecisionAsk},
 		{"plan/Bash git status allow", ModePlan, "Bash", "git status", DecisionAllow},
 		{"plan/Bash npm install ask", ModePlan, "Bash", "npm install", DecisionAsk},
+		// council — strictly read-only. Non-read-only tools are DENIED, not asked,
+		// so the model self-corrects to ExitPlanMode rather than prompting for writes.
+		{"council/Read allow", ModeCouncil, "Read", "/any/file", DecisionAllow},
+		{"council/Glob allow", ModeCouncil, "Glob", "**/*.go", DecisionAllow},
+		{"council/Grep allow", ModeCouncil, "Grep", "TODO", DecisionAllow},
+		{"council/LS allow", ModeCouncil, "LS", "/", DecisionAllow},
+		{"council/Bash git status allow", ModeCouncil, "Bash", "git status", DecisionAllow},
+		{"council/Edit deny", ModeCouncil, "Edit", "/any/file", DecisionDeny},
+		{"council/Write deny", ModeCouncil, "Write", "/any/file", DecisionDeny},
+		{"council/NotebookEdit deny", ModeCouncil, "NotebookEdit", "/any.ipynb", DecisionDeny},
+		{"council/Bash mutating deny", ModeCouncil, "Bash", "git push", DecisionDeny},
+		{"council/Bash npm install deny", ModeCouncil, "Bash", "npm install", DecisionDeny},
 		// default — read-only auto-allow, mutating asks.
 		{"default/Read allow", ModeDefault, "Read", "/any/file", DecisionAllow},
 		{"default/Bash git log allow", ModeDefault, "Bash", "git log", DecisionAllow},

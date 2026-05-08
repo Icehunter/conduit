@@ -32,6 +32,9 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	layout := m.computeLayout(area)
 
 	drawString(scr, layout.viewport, m.vp.View())
+	if layout.todoStrip.Dy() > 0 {
+		drawString(scr, layout.todoStrip, m.renderTodoStrip())
+	}
 	drawString(scr, layout.workingRow, m.renderWorkingRow())
 	drawString(scr, layout.input, m.renderInputBox())
 	if coord := renderCoordinatorPanel(area.Dx()); coord != "" {
@@ -72,6 +75,18 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	}
 	if modal != "" {
 		drawFloating(scr, layout.panel, modal, floatingModalSpec, false)
+	}
+	// Plan-approval renders into a chat-panel-style rect (input/footer remain
+	// visible). Tighter horizontal insets and a 1-row top inset feel right for
+	// the take-over modal; bottom matches layout.panel.
+	if m.planApproval != nil {
+		modalRect := image.Rect(area.Min.X+2, area.Min.Y+1, area.Max.X-2, layout.panel.Max.Y)
+		if modalRect.Dx() < 20 || modalRect.Dy() < 8 {
+			modalRect = layout.panel
+		}
+		rendered := m.renderPlanApprovalPicker(modalRect.Dx(), modalRect.Dy())
+		m.planApproval.recordPlanRect(modalRect)
+		drawFloatingRendered(scr, modalRect, rendered)
 	}
 	if m.companionBubble != "" && panel == "" && picker == "" && modal == "" {
 		drawCompanionOverlay(scr, layout, m.renderCompanionBubble())
@@ -245,9 +260,8 @@ func (m Model) renderActiveModal() string {
 		return m.renderPermissionPrompt()
 	case m.questionAsk != nil:
 		return m.renderQuestionDialog()
-	case m.planApproval != nil:
-		return m.renderPlanApprovalPicker()
 	}
+	// Plan-approval is rendered separately in Draw() with an inset rect.
 	return ""
 }
 

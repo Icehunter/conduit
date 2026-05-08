@@ -255,7 +255,15 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 			return DecisionAllow
 		}
 		return DecisionAsk
-	case ModePlan, ModeCouncil:
+	case ModeCouncil:
+		// Council mode is strictly read-only. Non-read-only tools are denied
+		// outright (not prompted) so the model self-corrects to ExitPlanMode
+		// rather than asking the user to approve writes mid-debate.
+		if toolIsReadOnly(toolName, toolInput) {
+			return DecisionAllow
+		}
+		return DecisionDeny
+	case ModePlan:
 		if toolIsReadOnly(toolName, toolInput) {
 			return DecisionAllow
 		}

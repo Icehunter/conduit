@@ -21,7 +21,7 @@ type blockMeta struct {
 // drainStream reads all SSE events from the stream and returns the accumulated
 // assistant content blocks, the stop reason, and the API-reported usage
 // (input + output + cache fields) summed across all turns in the stream.
-// Auto-compact uses Usage.InputTokens to gauge context pressure; the TUI
+// Auto-compact uses Usage.PromptInputTokens to gauge context pressure; the TUI
 // uses the full Usage to surface real billable token counts to the user.
 //
 // EventUsage is emitted via handler on each message_stop so the TUI can
@@ -119,7 +119,18 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 				continue
 			}
 			stopReason = md.Delta.StopReason
-			// message_delta carries the finalized output_tokens for the turn.
+			// Anthropic message_delta carries finalized output_tokens. Some
+			// OpenAI-compatible streams only provide prompt usage at the end;
+			// the adapter maps that onto this same usage block.
+			if md.Usage.InputTokens > 0 {
+				turnUsage.InputTokens = md.Usage.InputTokens
+			}
+			if md.Usage.CacheCreationInputTokens > 0 {
+				turnUsage.CacheCreationInputTokens = md.Usage.CacheCreationInputTokens
+			}
+			if md.Usage.CacheReadInputTokens > 0 {
+				turnUsage.CacheReadInputTokens = md.Usage.CacheReadInputTokens
+			}
 			if md.Usage.OutputTokens > 0 {
 				turnUsage.OutputTokens = md.Usage.OutputTokens
 			}

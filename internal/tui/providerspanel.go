@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,6 +21,7 @@ const (
 	providerFormStepCredential providerFormStep = iota
 	providerFormStepBaseURL
 	providerFormStepModel
+	providerFormStepContextWindow
 	providerFormStepAPIKey
 )
 
@@ -29,6 +31,7 @@ type providerFormState struct {
 	credential string
 	baseURL    string
 	model      string
+	contextWin int
 	apiKey     string
 	editKey    string
 	tokenOnly  bool
@@ -150,6 +153,7 @@ func formForProvider(provider settings.ActiveProviderSettings, key string, token
 		credential: provider.Credential,
 		baseURL:    provider.BaseURL,
 		model:      provider.Model,
+		contextWin: provider.ContextWindow,
 		editKey:    key,
 		tokenOnly:  tokenOnly,
 	}
@@ -213,6 +217,15 @@ func (m Model) advanceProviderForm(f *providerFormState, backwards bool) error {
 			return fmt.Errorf("model is required")
 		}
 		f.model = value
+		f.input = providerFormValue(f, providerFormStepContextWindow)
+	case providerFormStepContextWindow:
+		if value == "" {
+			f.contextWin = 0
+		} else if n, ok := parseProviderContextWindow(value); ok {
+			f.contextWin = n
+		} else {
+			return fmt.Errorf("context window must be a positive token count, e.g. 128k or 1000000")
+		}
 		f.input = ""
 	case providerFormStepAPIKey:
 		if value == "" && f.editKey == "" {
@@ -243,10 +256,11 @@ func (m Model) commitProviderFormIfComplete(f *providerFormState) (Model, bool) 
 		return m, false
 	}
 	provider := settings.ActiveProviderSettings{
-		Kind:       settings.ProviderKindOpenAICompatible,
-		Credential: f.credential,
-		BaseURL:    f.baseURL,
-		Model:      f.model,
+		Kind:          settings.ProviderKindOpenAICompatible,
+		Credential:    f.credential,
+		BaseURL:       f.baseURL,
+		Model:         f.model,
+		ContextWindow: f.contextWin,
 	}
 	if f.editKey != "" && f.editKey != settings.ProviderKey(provider) {
 		_ = settings.DeleteProviderEntry(f.editKey)
@@ -391,7 +405,7 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 	fg := lipgloss.NewStyle().Foreground(colorFg)
 	errStyle := lipgloss.NewStyle().Foreground(colorError)
 
-	labels := []string{"Credential alias (not API key)", "Base URL", "Model", "API key"}
+	labels := []string{"Credential alias (not API key)", "Base URL", "Model", "Context window (optional)", "API key"}
 	title := "Add OpenAI-compatible Provider"
 	if f.editKey != "" {
 		title = "Edit OpenAI-compatible Provider"
@@ -442,6 +456,11 @@ func providerFormValue(f *providerFormState, step providerFormStep) string {
 		return f.baseURL
 	case providerFormStepModel:
 		return f.model
+	case providerFormStepContextWindow:
+		if f.contextWin <= 0 {
+			return ""
+		}
+		return strconv.Itoa(f.contextWin)
 	case providerFormStepAPIKey:
 		return f.apiKey
 	default:
@@ -531,4 +550,31 @@ func providerCredentialAliasLooksSecret(value string) bool {
 		}
 	}
 	return false
+}
+
+func parseProviderContextWindow(value string) (int, bool) {
+	s := strings.ToLower(strings.TrimSpace(value))
+	if s == "" {
+		return 0, false
+	}
+	switch {
+	case strings.HasSuffix(s, "tokens"):
+		s = strings.TrimSpace(strings.TrimSuffix(s, "tokens"))
+	case strings.HasSuffix(s, "token"):
+		s = strings.TrimSpace(strings.TrimSuffix(s, "token"))
+	}
+	multiplier := 1
+	switch {
+	case strings.HasSuffix(s, "k"):
+		multiplier = 1_000
+		s = strings.TrimSpace(strings.TrimSuffix(s, "k"))
+	case strings.HasSuffix(s, "m"):
+		multiplier = 1_000_000
+		s = strings.TrimSpace(strings.TrimSuffix(s, "m"))
+	}
+	n, err := strconv.Atoi(strings.ReplaceAll(s, "_", ""))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n * multiplier, true
 }

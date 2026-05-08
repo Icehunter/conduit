@@ -4,6 +4,7 @@ import "image"
 
 type uiLayout struct {
 	viewport    image.Rectangle
+	todoStrip   image.Rectangle
 	workingRow  image.Rectangle
 	input       image.Rectangle
 	coordinator image.Rectangle
@@ -55,13 +56,22 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 		workingTop = area.Min.Y
 	}
 
+	// Todo strip sits between the working row and the chat viewport.
+	// todoStripRows() returns 0 when hidden or empty — strip collapses.
+	todoRows := m.todoStripRows()
+	todoStripTop := workingTop - todoRows
+	if todoStripTop < area.Min.Y {
+		todoStripTop = area.Min.Y
+	}
+
 	panel := image.Rect(area.Min.X+6, area.Min.Y+2, area.Max.X-6, area.Max.Y-2)
 	if panel.Dx() < 20 || panel.Dy() < 8 {
 		panel = image.Rect(area.Min.X, area.Min.Y, area.Max.X, area.Max.Y)
 	}
 
 	layout := uiLayout{
-		viewport:    image.Rect(area.Min.X, area.Min.Y, area.Max.X, workingTop),
+		viewport:    image.Rect(area.Min.X, area.Min.Y, area.Max.X, todoStripTop),
+		todoStrip:   image.Rect(area.Min.X, todoStripTop, area.Max.X, workingTop),
 		workingRow:  image.Rect(area.Min.X, workingTop, area.Max.X, inputTop),
 		input:       image.Rect(area.Min.X, inputTop, area.Max.X, inputBottom),
 		coordinator: image.Rect(area.Min.X, inputBottom, area.Max.X, footerTop),

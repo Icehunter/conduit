@@ -105,9 +105,38 @@ func renderTable(lines []string, width int) string {
 	colWidths := make([]int, cols)
 	for _, row := range rows {
 		for i, cell := range row {
-			if i < cols && len(cell) > colWidths[i] {
-				colWidths[i] = len(cell)
+			if i < cols {
+				cw := lipgloss.Width(cell)
+				if cw > colWidths[i] {
+					colWidths[i] = cw
+				}
 			}
+		}
+	}
+
+	// Cap total table width to fit within the available terminal width.
+	// Each column is separated by 2 spaces; we also have a 2-space left indent.
+	// totalW = 2 (indent) + sum(colWidths) + 2*(cols-1) (separators)
+	totalW := 2
+	for _, w := range colWidths {
+		totalW += w
+	}
+	totalW += 2 * (cols - 1)
+	if totalW > width && cols > 0 {
+		excess := totalW - width
+		// Shrink columns proportionally, largest first.
+		for excess > 0 {
+			maxW, maxI := 0, 0
+			for i, w := range colWidths {
+				if w > maxW {
+					maxW, maxI = w, i
+				}
+			}
+			if maxW <= 1 {
+				break
+			}
+			colWidths[maxI]--
+			excess--
 		}
 	}
 
@@ -123,8 +152,18 @@ func renderTable(lines []string, width int) string {
 				cell = row[i]
 			}
 			padded := cell
-			if pad := colWidths[i] - len(cell); pad > 0 {
-				padded += surfaceSpaces(pad)
+			cw := lipgloss.Width(cell)
+			if cw > colWidths[i] && colWidths[i] > 1 {
+				// Cell is wider than its allotted column — truncate with ellipsis.
+				runes := []rune(cell)
+				for lipgloss.Width(string(runes)) > colWidths[i]-1 && len(runes) > 0 {
+					runes = runes[:len(runes)-1]
+				}
+				padded = string(runes) + "…"
+				cw = lipgloss.Width(padded)
+			}
+			if colWidths[i] > cw {
+				padded += surfaceSpaces(colWidths[i] - cw)
 			}
 			if ri == 0 {
 				sb.WriteString(styleHeader.Render(padded))
@@ -212,13 +251,13 @@ func renderLine(line string, width int) string {
 
 	// Headings.
 	if strings.HasPrefix(line, "### ") {
-		return styleHeading3.Render(strings.TrimPrefix(line, "### "))
+		return styleHeading3.Width(width).MaxWidth(width).Render(strings.TrimPrefix(line, "### "))
 	}
 	if strings.HasPrefix(line, "## ") {
-		return styleHeading2.Render(strings.TrimPrefix(line, "## "))
+		return styleHeading2.Width(width).MaxWidth(width).Render(strings.TrimPrefix(line, "## "))
 	}
 	if strings.HasPrefix(line, "# ") {
-		return styleHeading1.Render(strings.TrimPrefix(line, "# "))
+		return styleHeading1.Width(width).MaxWidth(width).Render(strings.TrimPrefix(line, "# "))
 	}
 
 	// Blockquote.

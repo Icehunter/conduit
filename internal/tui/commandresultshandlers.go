@@ -283,13 +283,15 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 	turnID := m.turnID
 	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 		var usage api.Usage
+		contextInputTokens := 0
 		newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 			if ev.Type == agent.EventUsage {
 				usage = accumulateUsage(usage, ev.Usage)
+				contextInputTokens = maxPromptInputTokens(contextInputTokens, ev.Usage)
 			}
 			prog.Send(agentMsg{event: ev})
 		})
-		return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage}
+		return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage, contextInputTokens: contextInputTokens}
 	})
 }
 

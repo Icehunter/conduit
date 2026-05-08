@@ -133,7 +133,8 @@ type (
 		// events (cancelled before first message_start, or non-streaming
 		// background calls). The TUI uses this to update displayed totals
 		// with real billable counts.
-		usage api.Usage
+		usage              api.Usage
+		contextInputTokens int
 	}
 	compactDoneMsg struct {
 		newHistory []api.Message
@@ -273,6 +274,10 @@ type (
 		costUSD   float64
 		perMember []councilMemberStats
 		err       error
+		// reply receives the user's approval decision from the plan-approval
+		// picker. Non-nil when synthesis is non-empty — the goroutine in
+		// handleCouncilChat reads it and applies the permission mode change.
+		reply chan<- planmodetool.PlanApprovalDecision
 	}
 
 	// setModelNameMsg is sent by /fast and /model to update the displayed model name.
@@ -391,6 +396,7 @@ type Model struct {
 	pendingMessages  []string                 // messages typed while agent is running; drained after turn ends
 	questionAsk      *questionAskState        // non-nil when AskUserQuestion is waiting for user input
 	planApproval     *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
+	todoStripHidden  bool                     // ctrl+t toggles; strip is shown by default when todos present
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands
@@ -404,10 +410,11 @@ type Model struct {
 	atQuery    string   // last @ fragment used to populate atMatches
 	atCwd      string   // cwd used to populate atMatches
 
-	totalInputTokens  int
-	totalOutputTokens int
-	costUSD           float64
-	prevCostUSD       float64 // cost before the current turn started; used to compute per-turn delta
+	totalInputTokens   int
+	totalOutputTokens  int
+	contextInputTokens int
+	costUSD            float64
+	prevCostUSD        float64 // cost before the current turn started; used to compute per-turn delta
 
 	runStartedAt time.Time // set when running flips on; zero otherwise. Drives "thought for Xs" status.
 

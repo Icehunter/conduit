@@ -99,10 +99,10 @@
 | Billing header injection | — | `2831.js` | `internal/agent/systemprompt.go` | ✅ | |
 | Sub-agent spawning | `tools/AgentTool/` | — | `internal/agent/loop.go` `RunSubAgent` | ✅ | |
 | Max turns limit | `query.ts` | — | `internal/agent/loop.go` | ✅ | |
-| Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
+| Context compaction (auto) | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires near model/provider context limit using input + cache read/write prompt tokens |
 | Micro-compaction | `services/compact/microCompact.ts` | — | `internal/microcompact/microcompact.go` | ✅ | Time-based path: when last assistant >60min old, replace older tool_results with `[Old tool result content cleared]`, keep last 5. Cache-editing path is Anthropic-internal. |
 | Session memory compaction | `services/compact/sessionMemoryCompact.ts` | — | ❌ | ⬛ | GrowthBook-gated (`tengu_sm_compact`+`tengu_session_memory`); see FEATURE_FLAGS.md |
-| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go` (tallyTokens/syncLive), `internal/tui/livestate.go`, `internal/agent/loop.go` | ✅ | Shows ctx%; auto-compact fires at 80% of MaxTokens |
+| Token budget tracking | `query/tokenBudget.ts` | — | `internal/tui/model.go` (tallyTokens/syncLive), `internal/tui/livestate.go`, `internal/agent/loop.go` | ✅ | Shows context-window usage separately from billing totals; provider `contextWindow` overrides model-name fallback; auto-compact counts input + cache read/write prompt tokens against the model context window |
 | Extended thinking / effort modes | `utils/effort.ts` | — | `internal/model/model.go`, `internal/agent/loop.go` | ✅ | ThinkingBudgets map; /effort low\|medium\|high\|max; CLAUDE_THINKING_BUDGET env |
 | Interleaved thinking | `constants/betas.ts` | — | `internal/agent/systemprompt.go` | ✅ | Beta header included |
 | Stop hooks (clean shutdown) | `query/stopHooks.ts` | — | `internal/hooks/hooks.go` `RunStop` | ✅ | |
@@ -136,7 +136,7 @@
 | ConfigTool | `tools/ConfigTool/` | — | `internal/tools/configtool/` | ✅ | get/set model, modes, allow/deny, env |
 | EnterPlanMode | `tools/EnterPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | AskEnter callback, sets plan mode |
 | EnterWorktree | `tools/EnterWorktreeTool/` | — | `internal/tools/worktreetool/` | ✅ | git worktree add, switches cwd |
-| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | **Divergence**: AskApprove returns `PlanApprovalDecision` (struct) instead of bool; user can choose auto/accept-edits/default mode; rejection can include textual feedback returned to model. |
+| ExitPlanMode | `tools/ExitPlanModeTool/` | — | `internal/tools/planmodetool/` | ✅ | **Divergence**: AskApprove returns `PlanApprovalDecision` (struct) instead of bool; user can choose auto/accept-edits/default mode; rejection can include textual feedback returned to model. Plan is shown in a scrollable inset take-over modal (not CC's sticky-footer inline widget). "Chat about this" option collapses CC's inline feedback input — user types in the main chat input after dismissing. Council chat path now also opens the plan-approval picker (CC has no equivalent; council is conduit-original). |
 | ExitWorktree | `tools/ExitWorktreeTool/` | — | `internal/tools/worktreetool/` | ✅ | keep/remove action, branch cleanup |
 | FileEditTool | `tools/FileEditTool/` | — | `internal/tools/fileedittool/` | ✅ | |
 | FileReadTool | `tools/FileReadTool/` | — | `internal/tools/filereadtool/` | ✅ | |
@@ -424,7 +424,7 @@
 | Session title | `utils/sessionTitle.ts` | — | `internal/session/session.go`, `internal/tui/model.go` | ✅ | Shown in status bar; /rename persists; auto-title from first message |
 | Session summary (compact) | `utils/sessionStorage.ts` | — | `internal/session/session.go` | ✅ | SetSummary() persisted on every auto-compact via OnCompact callback |
 | Message compaction | `services/compact/compact.ts` | — | `internal/compact/compact.go` | ✅ | |
-| Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires at 80% inputTokens/MaxTokens |
+| Auto-compaction | `services/compact/autoCompact.ts` | — | `internal/agent/loop.go` | ✅ | Fires near the model context limit using total prompt tokens, including cache_read/cache_creation |
 | Conversation recovery | `utils/conversationRecovery.ts` | — | `internal/agent/loop.go` + `internal/session/session.go` | ✅ | Partial assistant message persisted on stream error; orphan tool_use filtered on /resume |
 | File access history | `utils/fileHistory.ts` | — | `internal/session/extras.go` | ✅ | AppendFileAccess / LoadFileAccess |
 | Session activity tracking | `utils/sessionActivity.ts` | — | `internal/session/extras.go` | ✅ | LoadActivity returns first/last/idle from JSONL timestamps; remote keepalive heartbeat descoped (bridge-only) |

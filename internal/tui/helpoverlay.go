@@ -31,6 +31,7 @@ var helpSections = []helpSection{
 			{"Esc", "Clear attachments / cancel"},
 			{"/? (command)", "Show keyboard shortcuts"},
 			{"ctrl+o", "Toggle verbose tool output"},
+			{"ctrl+t", "Toggle todo task strip"},
 			{"ctrl+v", "Paste image or PDF"},
 			{"ctrl+y", "Copy last code block"},
 		},

@@ -188,6 +188,7 @@ func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"gemini-flash-latest\",\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n")
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\" there\"},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":123,\"completion_tokens\":4}}\n\n")
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	})
 	srv := httptest.NewServer(mux)
@@ -214,6 +215,7 @@ func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
 
 	var text strings.Builder
 	var types []string
+	var promptTokens, outputTokens int
 	for {
 		ev, err := stream.Next()
 		if errors.Is(err, io.EOF) {
@@ -230,6 +232,14 @@ func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
 			}
 			text.WriteString(delta.Delta.Text)
 		}
+		if ev.Type == "message_delta" {
+			delta, err := ev.AsMessageDelta()
+			if err != nil {
+				t.Fatal(err)
+			}
+			promptTokens = delta.Usage.InputTokens
+			outputTokens = delta.Usage.OutputTokens
+		}
 	}
 	if capturedPath != "/openai/chat/completions" {
 		t.Fatalf("path = %q, want /openai/chat/completions", capturedPath)
@@ -239,6 +249,10 @@ func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
 	}
 	if capturedBody["model"] != "gemini-flash-latest" || capturedBody["stream"] != true {
 		t.Fatalf("body = %#v", capturedBody)
+	}
+	streamOptions, ok := capturedBody["stream_options"].(map[string]any)
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options = %#v, want include_usage", capturedBody["stream_options"])
 	}
 	messages, ok := capturedBody["messages"].([]any)
 	if !ok || len(messages) == 0 {
@@ -263,6 +277,9 @@ func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
 	}
 	if got := text.String(); got != "hi there" {
 		t.Fatalf("stream text = %q, want hi there; types=%v", got, types)
+	}
+	if promptTokens != 123 || outputTokens != 4 {
+		t.Fatalf("usage = (%d, %d), want (123, 4)", promptTokens, outputTokens)
 	}
 }
 

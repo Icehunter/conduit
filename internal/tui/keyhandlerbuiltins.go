@@ -348,6 +348,16 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.refreshViewport()
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
+	case "ctrl+t":
+		m.todoStripHidden = !m.todoStripHidden
+		m = m.applyLayout()
+		if m.todoStripHidden {
+			m.flashMsg = "todo strip hidden (ctrl+t to show)"
+		} else {
+			m.flashMsg = "todo strip visible (ctrl+t to hide)"
+		}
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to
 		// the system clipboard via OSC 52 (works in iTerm2, kitty, WezTerm).
@@ -572,13 +582,15 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 		return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 			var usage api.Usage
+			contextInputTokens := 0
 			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
 				if ev.Type == agent.EventUsage {
 					usage = accumulateUsage(usage, ev.Usage)
+					contextInputTokens = maxPromptInputTokens(contextInputTokens, ev.Usage)
 				}
 				prog.Send(agentMsg{event: ev})
 			})
-			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage}
+			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage, contextInputTokens: contextInputTokens}
 		}), true
 	}
 	return m, nil, false

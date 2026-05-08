@@ -88,7 +88,13 @@ func ContextWindowFor(name string) int {
 // AutoCompactThresholdFor returns the input-token count at which auto-compact
 // should fire for the given model. Mirrors getAutoCompactThreshold in autoCompact.ts.
 func AutoCompactThresholdFor(name string) int {
-	w := ContextWindowFor(name)
+	return AutoCompactThresholdForWindow(ContextWindowFor(name))
+}
+
+func AutoCompactThresholdForWindow(w int) int {
+	if w <= 0 {
+		w = ContextWindowDefault
+	}
 	effective := w - CompactReserveTokens
 	return effective - CompactBufferTokens
 }

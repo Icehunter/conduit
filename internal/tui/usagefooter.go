@@ -81,10 +81,10 @@ func (m Model) renderProviderUsageWindow() string {
 }
 
 func (m Model) renderContextUsageWindow() string {
-	const maxContextTokens = 200000
+	maxContextTokens := m.effectiveContextWindow()
 	pct := 0
-	if m.totalInputTokens > 0 {
-		pct = clampInt(m.totalInputTokens*100/maxContextTokens, 0, 100)
+	if m.contextInputTokens > 0 {
+		pct = clampInt(m.contextInputTokens*100/maxContextTokens, 0, 100)
 	}
 
 	labelText := styleStatus.Width(8).Render("Context")
@@ -103,8 +103,8 @@ func (m Model) renderContextUsageWindow() string {
 	}
 
 	var tokText string
-	if m.totalInputTokens > 0 {
-		tok := m.totalInputTokens
+	if m.contextInputTokens > 0 {
+		tok := m.contextInputTokens
 		switch {
 		case tok >= 1_000_000:
 			tokText = fmt.Sprintf(" · %.1fM tok", float64(tok)/1_000_000)

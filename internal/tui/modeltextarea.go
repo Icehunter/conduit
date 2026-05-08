@@ -60,10 +60,13 @@ func (m *Model) tallyTokens() {
 			inputTok += t
 		}
 	}
-	m.totalInputTokens = inputTok + outputTok // billing input = full context
+	m.contextInputTokens = inputTok + outputTok
+	m.totalInputTokens = inputTok + outputTok // local estimate: full context
 	m.totalOutputTokens = outputTok
-	// Opus 4.7: $15/M input + $75/M output.
-	m.costUSD = float64(inputTok)*15.0/1_000_000 + float64(outputTok)*75.0/1_000_000
+	m.costUSD = api.CostUSDForModel(m.effectiveAssistantModelName(), api.Usage{
+		InputTokens:  inputTok,
+		OutputTokens: outputTok,
+	})
 	m.syncLive()
 }
 
@@ -79,18 +82,26 @@ func accumulateUsage(a, b api.Usage) api.Usage {
 	}
 }
 
+func maxPromptInputTokens(current int, usage api.Usage) int {
+	if n := usage.PromptInputTokens(); n > current {
+		return n
+	}
+	return current
+}
+
 // applyAPIUsage updates displayed token totals + cost from API-reported
 // usage (the authoritative numbers). Cache reads and cache creation count
 // against the input side because they're part of the prompt context.
-//
-// Pricing constants match tallyTokens (Opus 4.7: $15/M input, $75/M output);
-// model-aware pricing is a follow-up.
-func (m *Model) applyAPIUsage(u api.Usage) {
-	inputTok := u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+func (m *Model) applyAPIUsage(u api.Usage, contextInputTokens int) {
+	inputTok := u.PromptInputTokens()
 	outputTok := u.OutputTokens
-	m.totalInputTokens = inputTok + outputTok // billing input = full context
+	if contextInputTokens <= 0 {
+		contextInputTokens = inputTok
+	}
+	m.contextInputTokens = contextInputTokens
+	m.totalInputTokens = inputTok
 	m.totalOutputTokens = outputTok
-	m.costUSD = float64(inputTok)*15.0/1_000_000 + float64(outputTok)*75.0/1_000_000
+	m.costUSD = api.CostUSDForModel(m.effectiveAssistantModelName(), u)
 	m.syncLive()
 }
 
@@ -109,6 +120,8 @@ func (m *Model) syncLive() {
 	}
 	m.cfg.Live.SetPermissionMode(m.permissionMode)
 	m.cfg.Live.SetTokens(m.totalInputTokens, m.totalOutputTokens, m.costUSD)
+	m.cfg.Live.SetContextInputTokens(m.contextInputTokens)
+	m.cfg.Live.SetContextWindow(m.effectiveContextWindow())
 	m.cfg.Live.SetRateLimitWarning(m.rateLimitWarning)
 	if m.cfg.Session != nil {
 		m.cfg.Live.SetSessionID(m.cfg.Session.ID)

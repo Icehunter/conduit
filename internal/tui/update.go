@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
@@ -42,6 +41,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
+
+	case tea.MouseWheelMsg:
+		mouse := msg.Mouse()
+		if m.planApproval != nil {
+			// Wheel scrolls the plan viewport when the plan-approval modal is open.
+			switch mouse.Button {
+			case tea.MouseWheelUp:
+				m.planApproval.vp.ScrollUp(3)
+			case tea.MouseWheelDown:
+				m.planApproval.vp.ScrollDown(3)
+			}
+			return m, nil
+		}
+		// Otherwise fall through to sub-component propagation for the main viewport.
 
 	case tea.KeyPressMsg:
 		m2, cmd, consumed := m.handleKey(msg)
@@ -117,11 +130,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case planApprovalAskMsg:
-		// ExitPlanMode: open the plan-approval picker overlay.
-		m.planApproval = &planApprovalPickerState{
-			reply:    msg.reply,
-			selected: 0,
-		}
+		// ExitPlanMode: open the plan-approval take-over modal.
+		// Sized lazily by the renderer; pass placeholder dims so the state
+		// is constructable, then resize() happens on first render.
+		m.planApproval = newPlanApprovalState(msg.plan, msg.reply, 60, 12)
 		m.refreshViewport()
 		m.vp.GotoBottom()
 		return m, nil
@@ -175,7 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.runStartedAt.IsZero() {
 				m.runStartedAt = time.Now()
 			}
-			m.working.SetStatus(time.Since(m.runStartedAt), m.totalInputTokens, m.totalOutputTokens)
+			m.working.SetStatus(time.Since(m.runStartedAt), m.contextInputTokens, m.totalOutputTokens)
 		} else if !m.runStartedAt.IsZero() {
 			m.runStartedAt = time.Time{}
 			m.working.ClearStatus()
@@ -216,15 +228,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.councilSynthesizing = false
 		if msg.err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
-		} else if msg.synthesis != "" {
-			m.messages = append(m.messages, m.assistantMessage(msg.synthesis))
-			m.history = append(m.history, api.Message{
-				Role:    "assistant",
-				Content: []api.ContentBlock{{Type: "text", Text: msg.synthesis}},
-			})
+			m.refreshViewport()
+			m.vp.GotoBottom()
+			m.input.Focus()
+			return m, nil
+		}
+		if msg.synthesis != "" {
 			m.totalInputTokens += msg.usage.InputTokens
 			m.totalOutputTokens += msg.usage.OutputTokens
 			m.costUSD += msg.costUSD
+			// Post the council synthesis to history so it's visible above the
+			// plan-approval modal. The picker gives the user a chance to approve
+			// (which activates a permission mode) or chat about it further.
+			m.messages = append(m.messages, Message{
+				Role:     RoleCouncil,
+				Content:  msg.synthesis,
+				ToolName: "Council",
+			})
+			m.refreshViewport()
+			m.vp.GotoBottom()
+			if msg.reply != nil {
+				m.planApproval = newPlanApprovalState(msg.synthesis, msg.reply, 60, 12)
+				m.refreshViewport()
+				return m, nil
+			}
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -302,7 +329,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		reply := m.councilReply
 		if reply != nil {
 			m.councilReply = nil
-			m.planApproval = &planApprovalPickerState{reply: reply}
+			m.planApproval = newPlanApprovalState(msg.plan, reply, 60, 12)
 			m.refreshViewport()
 		}
 		return m, nil

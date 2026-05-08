@@ -184,6 +184,13 @@ type Usage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
+// PromptInputTokens returns the total prompt/context size represented by a
+// usage block. Anthropic reports cached prompt tokens separately from
+// input_tokens, but they still occupy the model context window.
+func (u Usage) PromptInputTokens() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+}
+
 // APIErrorEnvelope is the shape Anthropic returns on 4xx/5xx.
 type APIErrorEnvelope struct {
 	Type  string   `json:"type"`

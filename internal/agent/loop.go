@@ -126,6 +126,9 @@ type LoopConfig struct {
 	// exceeds 80% of MaxTokens. Mirrors the auto-compact behavior in
 	// src/services/compact/compact.ts and QueryEngine.ts.
 	AutoCompact bool
+	// ContextWindow overrides model-derived context window sizing for custom
+	// providers whose model names do not carry enough information.
+	ContextWindow int
 
 	// ThinkingBudget, when > 0, sends thinking:{type:"enabled",budget_tokens:N}
 	// in each API request. Requires the interleaved-thinking-2025-05-14 beta header.
@@ -211,6 +214,12 @@ func (l *Loop) SetModel(name string) {
 	l.cfg.Model = name
 }
 
+func (l *Loop) SetContextWindow(tokens int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cfg.ContextWindow = tokens
+}
+
 // Model returns the model configured for new requests.
 func (l *Loop) Model() string {
 	l.mu.RLock()
@@ -286,6 +295,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	model := l.cfg.Model
 	system := l.cfg.System
 	thinkingBudget := l.cfg.ThinkingBudget
+	contextWindow := l.cfg.ContextWindow
 	client := l.client
 	l.mu.RUnlock()
 
@@ -411,7 +421,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		assistantBlocks, stopReason, usage, err := l.drainStream(ctx, stream, handler)
-		inputTokens := usage.InputTokens
+		inputTokens := usage.PromptInputTokens()
 		_ = stream.Close()
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -461,6 +471,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			// so future turns don't hit the limit. Non-fatal if it fails.
 			if l.cfg.AutoCompact && inputTokens > 0 && os.Getenv("DISABLE_AUTO_COMPACT") == "" {
 				threshold := internalmodel.AutoCompactThresholdFor(model)
+				if contextWindow > 0 {
+					threshold = internalmodel.AutoCompactThresholdForWindow(contextWindow)
+				}
 				if inputTokens > threshold && l.consecutiveCompactFails < internalmodel.MaxConsecutiveCompactFail {
 					if result, err := compact.CompactWithModel(ctx, l.client, l.BackgroundModel(), msgs, ""); err == nil {
 						msgs = result.NewHistory

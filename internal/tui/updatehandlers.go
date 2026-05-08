@@ -230,7 +230,7 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		// to tallyTokens only when the Run produced no usage events (very
 		// short turns that errored before message_start, etc.).
 		if msg.usage.InputTokens > 0 || msg.usage.OutputTokens > 0 {
-			m.applyAPIUsage(msg.usage)
+			m.applyAPIUsage(msg.usage, msg.contextInputTokens)
 		} else {
 			m.tallyTokens()
 		}

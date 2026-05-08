@@ -16,6 +16,7 @@ import (
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
+	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -176,6 +177,7 @@ func (m *Model) applyEffectiveProviderForMode() {
 	}
 	switch provider.Kind {
 	case settings.ProviderKindMCP:
+		m.cfg.Loop.SetContextWindow(provider.ContextWindow)
 		// Switch to local/MCP routing for this role's server and tools.
 		// No API client swap needed — turns route through MCP tool calls.
 		server := provider.Server
@@ -211,6 +213,7 @@ func (m *Model) applyEffectiveProviderForMode() {
 			m.cfg.Loop.SetClient(m.cfg.APIClient)
 		}
 		m.cfg.Loop.SetModel(provider.Model)
+		m.cfg.Loop.SetContextWindow(provider.ContextWindow)
 		// Leaving MCP/local mode — restore direct API routing.
 		if m.localMode {
 			m.localMode = false
@@ -230,6 +233,7 @@ func (m *Model) applyEffectiveProviderForMode() {
 		}
 		m.cfg.Loop.SetClient(client)
 		m.cfg.Loop.SetModel(provider.Model)
+		m.cfg.Loop.SetContextWindow(provider.ContextWindow)
 		if m.localMode {
 			m.localMode = false
 			m.localModeServer = ""
@@ -400,6 +404,7 @@ func (m Model) mcpActiveProvider(server string) settings.ActiveProviderSettings 
 		Kind:          settings.ProviderKindMCP,
 		Server:        server,
 		Model:         m.localModelName(server),
+		ContextWindow: m.localContextWindow(server),
 		DirectTool:    directTool,
 		ImplementTool: implementTool,
 	}
@@ -418,6 +423,9 @@ func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
 		}
 		if provider.Model == "" {
 			provider.Model = m.localModelName(provider.Server)
+		}
+		if provider.ContextWindow <= 0 {
+			provider.ContextWindow = m.localContextWindow(provider.Server)
 		}
 		return provider, true
 	}
@@ -438,6 +446,7 @@ func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
 			Kind:          settings.ProviderKindMCP,
 			Server:        server,
 			Model:         m.localModelName(server),
+			ContextWindow: m.localContextWindow(server),
 			DirectTool:    directTool,
 			ImplementTool: implementTool,
 		}, true
@@ -563,6 +572,20 @@ func (m Model) effectiveAssistantModelName() string {
 	return m.modelName
 }
 
+func (m Model) effectiveContextWindow() int {
+	if provider, ok := m.providerForCurrentMode(); ok {
+		if provider.ContextWindow > 0 {
+			return provider.ContextWindow
+		}
+		if provider.Kind == settings.ProviderKindMCP {
+			if w := m.localContextWindow(provider.Server); w > 0 {
+				return w
+			}
+		}
+	}
+	return internalmodel.ContextWindowFor(m.effectiveAssistantModelName())
+}
+
 func (m Model) assistantDisplayLabel() string {
 	if provider, ok := m.providerForCurrentMode(); ok {
 		switch provider.Kind {
@@ -643,4 +666,21 @@ func (m Model) localModelName(server string) string {
 		return "qwen3-coder"
 	}
 	return server
+}
+
+func (m Model) localContextWindow(server string) int {
+	if m.cfg.MCPManager != nil {
+		for _, srv := range m.cfg.MCPManager.Servers() {
+			if srv == nil || srv.Name != server {
+				continue
+			}
+			if raw := strings.TrimSpace(srv.Config.Env["LOCAL_LLM_CONTEXT_WINDOW"]); raw != "" {
+				if n, ok := parseProviderContextWindow(raw); ok {
+					return n
+				}
+			}
+			break
+		}
+	}
+	return 0
 }

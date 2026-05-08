@@ -15,6 +15,8 @@ type LiveState struct {
 	permissionMode  permissions.Mode
 	inputTokens     int
 	outputTokens    int
+	contextTokens   int
+	contextWindow   int
 	costUSD         float64
 	sessionID       string
 	rateLimitWarn   string
@@ -62,6 +64,30 @@ func (s *LiveState) Tokens() (input, output int, costUSD float64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.inputTokens, s.outputTokens, s.costUSD
+}
+
+func (s *LiveState) SetContextInputTokens(tokens int) {
+	s.mu.Lock()
+	s.contextTokens = tokens
+	s.mu.Unlock()
+}
+
+func (s *LiveState) ContextInputTokens() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextTokens
+}
+
+func (s *LiveState) SetContextWindow(tokens int) {
+	s.mu.Lock()
+	s.contextWindow = tokens
+	s.mu.Unlock()
+}
+
+func (s *LiveState) ContextWindow() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contextWindow
 }
 
 func (s *LiveState) SetSessionID(id string) {

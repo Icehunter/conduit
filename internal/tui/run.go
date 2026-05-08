@@ -239,7 +239,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return live.TurnCosts()
 		},
 		GetStatus: func() string {
-			tokens, _, cost := live.Tokens()
+			tokens := live.ContextInputTokens()
+			_, _, cost := live.Tokens()
 			mode := "default"
 			switch live.PermissionMode() {
 			case permissions.ModeAcceptEdits:
@@ -251,7 +252,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			}
 			pct := 0
 			if tokens > 0 {
-				pct = tokens * 100 / 200000
+				window := live.ContextWindow()
+				if window <= 0 {
+					window = internalmodel.ContextWindowFor(live.ModelName())
+				}
+				pct = tokens * 100 / window
 				if pct > 100 {
 					pct = 100
 				}
@@ -565,6 +570,12 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return live.PermissionMode()
 		}
 		runOpts.EnterPlan.AskEnter = func(ctx context.Context) bool {
+			// Honour any session/persisted "Always allow" rule for EnterPlanMode
+			// so we don't re-prompt every time. EnterPlanMode has no meaningful
+			// input to scope on — the rule is keyed on the bare tool name.
+			if opts.gate != nil && opts.gate.Check("EnterPlanMode", "") == permissions.DecisionAllow {
+				return true
+			}
 			reply := make(chan permissionReply, 1)
 			prog.Send(permissionAskMsg{
 				toolName:  "EnterPlanMode",
@@ -573,6 +584,12 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			})
 			select {
 			case r := <-reply:
+				if r.allow && r.alwaysAllow && opts.gate != nil {
+					opts.gate.AllowForSession("EnterPlanMode")
+					if cwd, err := os.Getwd(); err == nil && cwd != "" {
+						_ = permissions.PersistAllow("EnterPlanMode", cwd)
+					}
+				}
 				return r.allow
 			case <-ctx.Done():
 				return false
@@ -587,7 +604,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	if runOpts.ExitPlan != nil {
 		runOpts.ExitPlan.AskApprove = func(ctx context.Context, plan string) planmodetool.PlanApprovalDecision {
 			reply := make(chan planmodetool.PlanApprovalDecision, 1)
-			prog.Send(planApprovalAskMsg{reply: reply})
+			prog.Send(planApprovalAskMsg{plan: plan, reply: reply})
 			select {
 			case d := <-reply:
 				return d
@@ -622,6 +639,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			return live.PermissionMode()
 		}
 		runOpts.EnterAutoMode.AskEnter = func(ctx context.Context) bool {
+			// Honour any session/persisted "Always allow" rule for EnterAutoMode
+			// so we don't re-prompt every time.
+			if opts.gate != nil && opts.gate.Check("EnterAutoMode", "") == permissions.DecisionAllow {
+				return true
+			}
 			reply := make(chan permissionReply, 1)
 			prog.Send(permissionAskMsg{
 				toolName:  "EnterAutoMode",
@@ -630,6 +652,12 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			})
 			select {
 			case r := <-reply:
+				if r.allow && r.alwaysAllow && opts.gate != nil {
+					opts.gate.AllowForSession("EnterAutoMode")
+					if cwd, err := os.Getwd(); err == nil && cwd != "" {
+						_ = permissions.PersistAllow("EnterAutoMode", cwd)
+					}
+				}
 				return r.allow
 			case <-ctx.Done():
 				return false

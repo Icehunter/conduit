@@ -217,6 +217,7 @@ type ActiveProviderSettings struct {
 	Account       string `json:"account,omitempty"`
 	Credential    string `json:"credential,omitempty"`
 	BaseURL       string `json:"baseURL,omitempty"`
+	ContextWindow int    `json:"contextWindow,omitempty"`
 	Server        string `json:"server,omitempty"`
 	DirectTool    string `json:"directTool,omitempty"`
 	ImplementTool string `json:"implementTool,omitempty"`

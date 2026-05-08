@@ -47,14 +47,15 @@ func (t *EnterPlanMode) Execute(ctx context.Context, _ json.RawMessage) (tool.Re
 		current = t.CurrentMode()
 	}
 
-	// In council mode, stay in council — do not overwrite with plan mode.
-	// ExitPlanMode will still trigger the council debate correctly.
+	// In council mode, plan mode would be redundant — the council's debate IS
+	// the planning phase. Surfacing this as an error (not a TextResult) tells
+	// the model the call failed so it skips EnterPlanMode on subsequent turns
+	// and goes straight to ExitPlanMode.
 	if current == permissions.ModeCouncil {
-		return tool.TextResult(`You are in council mode — planning phase is active.
-Explore the codebase, then call ExitPlanMode with your complete plan.
-The council will review it before execution.
-
-When the request touches unfamiliar code, make ≤3 read-only calls (Glob, Grep, Read) to ground your plan before calling ExitPlanMode. Present a structured plan covering Approach / Risks / Alternatives. Do NOT write or edit any files yet.`), nil
+		return tool.ErrorResult(
+			"EnterPlanMode is unavailable in council mode — you are already in a read-only planning state. " +
+				"Call ExitPlanMode directly with your plan; the council will review it before execution.",
+		), nil
 	}
 
 	alreadyPlan := current == permissions.ModePlan

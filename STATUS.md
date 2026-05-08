@@ -53,11 +53,11 @@ Last updated: 2026-05-08
 | Tab completion | ✅ | |
 | Input history (↑/↓) | ✅ | |
 | Vim mode | 🚫 REMOVED | descoped — large effort (1513 LOC); use keybindings system instead |
-| Status bar | ✅ | model, context%, cost |
+| Status bar | ✅ | model, context%, cost; context meter uses current prompt/window tokens, provider `contextWindow` overrides, not summed billing tokens |
 | TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
 | Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
 | Terminal window title (OSC 2) | ✅ | internal/tui/title.go — sets "conduit · working" on task start, resets to "conduit" on completion/interrupt |
-| Plan-approval picker | ✅ | internal/tui/planapproval.go — 4-option picker shown when ExitPlanMode presents a plan; user chooses mode (auto/accept-edits/default/reject) |
+| Plan-approval picker | ✅ | internal/tui/planapproval.go — inset take-over modal with scrollable plan viewport, 4 options (auto/accept-edits/default/chat), mouse-selectable text, Tab focus toggle |
 | Assistant info row | ✅ | model, duration, per-turn cost after completed responses |
 | Tool message rendering | ✅ | one-line live/archive rows with tool-specific verbs + input/result summary; resumed tool_results pair back to tool_use; errors show details |
 | Welcome card (two-panel) | ✅ | profile fetched from oauth/profile |
@@ -127,7 +127,7 @@ Last updated: 2026-05-08
 | /clear | ✅ | |
 | /exit, /quit | ✅ | |
 | /model | ✅ | grouped provider picker; switches Claude/MCP/OpenAI-compatible via `activeProvider`, mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles; Gemini/OpenAI-compatible providers are validated, assignable, text-streamable, and tool-call translated |
-| /providers | ✅ | Settings Providers tab can add/edit/delete Gemini/OpenAI-compatible providers, rotate API keys via secure storage, canonicalize provider keys, and surface provider/role config validation; broader provider setup UI is future feature work |
+| /providers | ✅ | Settings Providers tab can add/edit/delete Gemini/OpenAI-compatible providers, set optional context windows, rotate API keys via secure storage, canonicalize provider keys, and surface provider/role config validation; broader provider setup UI is future feature work |
 | /models | ✅ | alias for /model picker |
 | /compact | ✅ | calls Haiku to summarize |
 | /permissions | ✅ | shows gate state |
@@ -248,7 +248,7 @@ Last updated: 2026-05-08
 | Swarm/coordinator | ✅ | internal/coordinator/coordinator.go; system prompt injection, task-notification XML, MCP context |
 | SendMessageTool | 🔲 | Team messaging feature; descoped |
 | RemoteTriggerTool | 🔲 | Remote-only (M10); descoped |
-| **Council mode** | ✅ | internal/tui/council.go — conduit-original; parallel debate + synthesis across N models |
+| **Council mode** | ✅ | internal/tui/council.go — conduit-original; parallel debate + synthesis across N models; chat path and ExitPlanMode path both open plan-approval picker |
 | · Parallel critique rounds | ✅ | goroutine pool; no sequential bottleneck |
 | · Cancellable context / Esc | ✅ | ctx derived from context.Background(); Ctrl+C cancels all in-flight members |
 | · Per-member timeout | ✅ | 30s default; `councilMemberTimeoutSec` in conduit.json |
@@ -261,6 +261,8 @@ Last updated: 2026-05-08
 | · Voting / weighted synthesis | ✅ | scoring pass orders plans by peer votes before synthesis |
 | · /council slash command | ✅ | mode-independent one-shot debate; /council-history lists transcripts |
 | · council_test.go | ✅ | 15 table-driven tests; regex, roster, convergence, roles, voting, cost |
+| · Council read-only gate | ✅ | ModeCouncil denies (not asks) non-read-only tools; EnterPlanMode returns error; directive updated to skip EnterPlanMode step |
+| **Plan-approval modal** | ✅ | Inset take-over overlay (1 row / 3 col padding from viewport); shows full plan in scrollable viewport; 4 options incl. "chat about this"; mouse drag-to-copy works inside modal |
 
 ---
 

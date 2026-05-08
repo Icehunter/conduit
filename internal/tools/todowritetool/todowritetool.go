@@ -128,6 +128,20 @@ func GetTodos() []Todo {
 	return out
 }
 
+// SetForTest replaces the in-memory todo list. Intended for tests only —
+// production code must go through Execute so the all-done clear logic runs.
+func SetForTest(todos []Todo) error {
+	store.mu.Lock()
+	if todos == nil {
+		store.todos = nil
+	} else {
+		store.todos = make([]Todo, len(todos))
+		copy(store.todos, todos)
+	}
+	store.mu.Unlock()
+	return nil
+}
+
 // FormatTodos renders the todo list as a compact human-readable string
 // suitable for display in the TUI status or a /todos slash command.
 func FormatTodos(todos []Todo) string {

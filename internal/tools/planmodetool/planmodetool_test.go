@@ -60,6 +60,38 @@ func TestEnterPlanMode_AlreadyPlanSkipsPrompt(t *testing.T) {
 	}
 }
 
+// TestEnterPlanMode_CouncilModeReturnsError verifies that calling
+// EnterPlanMode while already in council mode produces an error result so the
+// model self-corrects to call ExitPlanMode directly. Council mode is a
+// read-only planning state — entering plan-mode-on-top would be redundant.
+func TestEnterPlanMode_CouncilModeReturnsError(t *testing.T) {
+	var modeSet bool
+	tool := &EnterPlanMode{
+		CurrentMode: func() permissions.Mode { return permissions.ModeCouncil },
+		SetMode:     func(_ permissions.Mode) { modeSet = true },
+		AskEnter:    func(_ context.Context) bool { return true },
+	}
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.IsError {
+		t.Error("expected error result when calling EnterPlanMode in council mode")
+	}
+	if modeSet {
+		t.Error("SetMode should not be called when council mode rejects EnterPlanMode")
+	}
+	// The error message must mention ExitPlanMode so the model knows the
+	// correct alternative path.
+	if len(res.Content) == 0 {
+		t.Fatal("error result has no content")
+	}
+	got := strings.ToLower(res.Content[0].Text)
+	if !strings.Contains(got, "exitplanmode") {
+		t.Errorf("error message should reference ExitPlanMode, got: %s", got)
+	}
+}
+
 func TestEnterPlanMode_Metadata(t *testing.T) {
 	tool := &EnterPlanMode{}
 	if tool.Name() != "EnterPlanMode" {

@@ -254,17 +254,16 @@ func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.Syst
 }
 
 // CouncilModeDirective is appended to the system prompt when council mode is
-// active. It instructs the model to always route responses through the plan
-// → ExitPlanMode → council debate flow rather than answering directly.
+// active. It instructs the model to call ExitPlanMode immediately rather than
+// answering directly so the council can debate and refine the response.
 const CouncilModeDirective = `# Council Mode Active
 
 For EVERY request — whether a question, a task, or a discussion — you MUST follow this flow immediately:
 
-1. Call EnterPlanMode
-2. Write a CONCISE summary of your thoughts or approach (2–10 sentences). Do NOT run Grep/Glob/Read/Bash first — the council enriches your initial ideas.
-3. Call ExitPlanMode immediately with that concise plan
+1. Write a CONCISE summary of your thoughts or approach (2–10 sentences). Do NOT run Grep/Glob/Read/Bash first — the council enriches your initial ideas.
+2. Call ExitPlanMode immediately with that concise plan
 
-Do NOT explore the codebase before calling ExitPlanMode. Do NOT answer directly. Call ExitPlanMode FIRST — the council adds depth.`
+EnterPlanMode is unavailable in council mode — you are already in a read-only planning state. Calling it will return an error. Do NOT explore the codebase before calling ExitPlanMode. Do NOT answer directly. Call ExitPlanMode FIRST — the council adds depth.`
 
 // BuildMetadata mirrors the metadata block the real CLI sends, with
 // device/account/session identifiers. We use the supplied values and

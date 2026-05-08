@@ -24,6 +24,10 @@ import (
 //
 // compactCalls is incremented atomically on every background-model request.
 func makeCompactServer(t *testing.T, inputTokens int, toolUse bool, compactCalls *atomic.Int32) *httptest.Server {
+	return makeCompactServerWithCache(t, inputTokens, 0, toolUse, compactCalls)
+}
+
+func makeCompactServerWithCache(t *testing.T, inputTokens, cacheReadTokens int, toolUse bool, compactCalls *atomic.Int32) *httptest.Server {
 	t.Helper()
 	mainCalls := 0
 	mux := http.NewServeMux()
@@ -52,10 +56,11 @@ func makeCompactServer(t *testing.T, inputTokens int, toolUse bool, compactCalls
 
 		mainCalls++
 		toks := itoa(inputTokens)
+		cache := itoa(cacheReadTokens)
 
 		if mainCalls == 1 && toolUse {
 			// First main turn: tool_use with the given input token count.
-			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":%s,\"output_tokens\":10}}}\n\n", toks)
+			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":%s,\"cache_read_input_tokens\":%s,\"output_tokens\":10}}}\n\n", toks, cache)
 			fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\"}}\n\n")
 			fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"echo hi\\\"}\"}}\n\n")
 			fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
@@ -65,7 +70,7 @@ func makeCompactServer(t *testing.T, inputTokens int, toolUse bool, compactCalls
 		}
 
 		// end_turn response (first turn for non-toolUse, second turn otherwise).
-		fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m2\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":%s,\"output_tokens\":5}}}\n\n", toks)
+		fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m2\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":%s,\"cache_read_input_tokens\":%s,\"output_tokens\":5}}}\n\n", toks, cache)
 		fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
 		fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n")
 		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
@@ -151,6 +156,46 @@ func TestLoop_AutoCompact_ThresholdAccurate(t *testing.T) {
 				t.Errorf("compactCalls=%d; want %d", got, wantCompactCalls)
 			}
 		})
+	}
+}
+
+func TestLoop_AutoCompact_CountsCachedPromptTokens(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "50000")
+
+	modelName := "claude-sonnet-4-6"
+	threshold := internalmodel.AutoCompactThresholdFor(modelName) // 17000
+	var compactCalls atomic.Int32
+	srv := makeCompactServerWithCache(t, 1, threshold+1000, false, &compactCalls)
+	defer srv.Close()
+
+	client := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "tok"}, srv.Client())
+	lp := NewLoop(client, tool.NewRegistry(), LoopConfig{
+		Model:       modelName,
+		MaxTokens:   internalmodel.MaxTokens,
+		MaxTurns:    10,
+		AutoCompact: true,
+		BackgroundModel: func() string {
+			return "background-model"
+		},
+	})
+
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hello"}}},
+	}
+	var gotCompacted bool
+	_, err := lp.Run(context.Background(), msgs, func(ev LoopEvent) {
+		if ev.Type == EventCompacted {
+			gotCompacted = true
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !gotCompacted {
+		t.Fatal("expected cached prompt tokens to trigger auto-compact")
+	}
+	if got := compactCalls.Load(); got != 1 {
+		t.Errorf("compactCalls=%d; want 1", got)
 	}
 }
 

@@ -14,11 +14,16 @@ import (
 )
 
 type openAIChatRequest struct {
-	Model     string              `json:"model"`
-	Messages  []openAIChatMessage `json:"messages"`
-	MaxTokens int                 `json:"max_tokens,omitempty"`
-	Stream    bool                `json:"stream,omitempty"`
-	Tools     []openAITool        `json:"tools,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []openAIChatMessage  `json:"messages"`
+	MaxTokens     int                  `json:"max_tokens,omitempty"`
+	Stream        bool                 `json:"stream,omitempty"`
+	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+	Tools         []openAITool         `json:"tools,omitempty"`
+}
+
+type openAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openAIChatMessage struct {
@@ -214,6 +219,9 @@ func openAIRequestFromMessageRequest(req *MessageRequest, stream bool) openAICha
 		MaxTokens: req.MaxTokens,
 		Stream:    stream,
 	}
+	if stream {
+		out.StreamOptions = &openAIStreamOptions{IncludeUsage: true}
+	}
 	if len(req.System) > 0 {
 		out.Messages = append(out.Messages, openAIChatMessage{Role: "system", Content: systemText(req.Model, req.System)})
 	}
@@ -405,6 +413,10 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 	}
 
 	stopReason := "end_turn"
+	var finalUsage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	}
 	nextBlockIndex := 0
 	textBlockOpen := false
 	textBlockIndex := -1
@@ -464,6 +476,9 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			_ = writer.CloseWithError(fmt.Errorf("api: decode openai-compatible stream chunk: %w", err))
 			return
+		}
+		if chunk.Usage != nil {
+			finalUsage = chunk.Usage
 		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.Content != "" {
@@ -541,10 +556,15 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 			return
 		}
 	}
+	usage := map[string]any{"output_tokens": 0}
+	if finalUsage != nil {
+		usage["input_tokens"] = finalUsage.PromptTokens
+		usage["output_tokens"] = finalUsage.CompletionTokens
+	}
 	if err := writeAnthropicEvent("message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": stopReason},
-		"usage": map[string]any{"output_tokens": 0},
+		"usage": usage,
 	}); err != nil {
 		_ = writer.CloseWithError(err)
 		return

@@ -25,13 +25,13 @@ func (m Model) applyLayout() Model {
 		inputRows = 1
 	}
 	usageRows := m.usageFooterRows()
-	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows
+	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows - m.todoStripRows()
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
 	// Match the textarea's visible row count to the available chrome budget
 	// so it doesn't try to render more rows than the layout reserved.
-	visibleRows := m.height - vpHeight - chromeFixed - usageRows
+	visibleRows := m.height - vpHeight - chromeFixed - usageRows - m.todoStripRows()
 	if visibleRows < inputMinRows {
 		visibleRows = inputMinRows
 	}
@@ -233,10 +233,10 @@ func (m Model) renderModeStatus() string {
 func (m Model) renderTokenStatus() string {
 	// Plan users see tokens + cost in the Context row of the usage footer.
 	// Only show here for API-key users who have no footer.
-	if m.usageStatusEnabled || m.totalInputTokens == 0 {
+	if m.usageStatusEnabled || m.contextInputTokens == 0 {
 		return ""
 	}
-	tok := m.totalInputTokens
+	tok := m.contextInputTokens
 	var tokStr string
 	switch {
 	case tok >= 1_000_000:

@@ -122,6 +122,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 - **`/account` panel** — add, switch, remove, and delete accounts without restarting
 - **Conduit-owned account registry** — account metadata lives in `~/.conduit/conduit.json`; credentials stay in the keychain
 - **Provider registry** — Claude subscription, Anthropic API, OpenAI-compatible, and MCP providers can be assigned to roles
+- **Provider context windows** — custom providers can set `contextWindow`; OpenAI-compatible streams request usage metadata when the server supports it
 - **Role presets** — default, main, background, planning, and implement roles make it easy to run expensive work on one model and smaller work somewhere else
 
 ### In-process RTK (token savings)

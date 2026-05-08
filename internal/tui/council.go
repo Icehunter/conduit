@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
 
 // councilAgreeRE matches <council-agree/> tolerating whitespace and case variants.
@@ -453,6 +454,22 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 	newAPIClient := m.cfg.NewAPIClient
 	newProviderClient := m.cfg.NewProviderAPIClient
 
+	// Create the reply channel that the plan-approval picker will write to
+	// once the user chooses an option. The goroutine below reads the decision
+	// and applies the permission mode change back to the TUI via prog.Send.
+	replyCh := make(chan planmodetool.PlanApprovalDecision, 1)
+	var replyWrite chan<- planmodetool.PlanApprovalDecision = replyCh
+	go func() {
+		d := <-replyCh
+		if d.Approved {
+			mode := d.Mode
+			if mode == "" {
+				mode = permissions.ModeBypassPermissions
+			}
+			prog.Send(setPermissionModeMsg{mode: mode})
+		}
+	}()
+
 	maxRounds := 4
 	memberTimeout := 30 * time.Second
 	var convergenceThreshold float64
@@ -477,6 +494,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 		members := buildCouncilRoster(providerKeys, providers, accountProviders,
 			councilRoles, newAPIClient, newProviderClient)
 		if len(members) == 0 {
+			replyWrite <- planmodetool.PlanApprovalDecision{Approved: false}
 			return councilChatDoneMsg{err: fmt.Errorf("no council members configured — add providers in /model → Council tab")}
 		}
 
@@ -492,6 +510,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			[]string{"Read", "Glob", "Grep", "WebFetch", "WebSearch"}, memberTimeout, prog)
 
 		if ctx.Err() != nil {
+			replyWrite <- planmodetool.PlanApprovalDecision{Approved: false}
 			return councilChatDoneMsg{}
 		}
 
@@ -582,6 +601,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			synthesis = strings.TrimSpace(fallback.String())
 		}
 		if synthesis == "" {
+			replyWrite <- planmodetool.PlanApprovalDecision{Approved: false}
 			return councilChatDoneMsg{err: fmt.Errorf("council produced no responses — all members may have timed out or been ejected")}
 		}
 
@@ -603,7 +623,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			OutputTokens: totalUsage.OutputTokens,
 			DurationMs:   time.Since(chatStart).Milliseconds(),
 		})
-		return councilChatDoneMsg{synthesis: synthesis, usage: totalUsage, costUSD: totalCost, perMember: perMember}
+		return councilChatDoneMsg{synthesis: synthesis, usage: totalUsage, costUSD: totalCost, perMember: perMember, reply: replyWrite}
 	}
 
 	return m, cmd

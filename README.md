@@ -57,6 +57,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 - **Thinking mode** — extended reasoning via `/effort low|normal|high|max`
 - **Fast mode** — `/fast` toggles Haiku for faster/cheaper turns
 - **Coordinator mode** — Claude as orchestrator managing parallel sub-agents
+- **Council mode** — multi-model debate across N configured providers; parallel critique rounds with synthesis, convergence detection, member roles, and peer voting
 - **Exponential backoff** — automatic retry on 429 with jitter
 
 ### Tools (30+ built-in)
@@ -227,6 +228,8 @@ conduit --resume <session-id>
 | `/compact` | Summarise and compress conversation history |
 | `/clear` | Clear conversation and start fresh |
 | `/plan` | Enter plan mode — Claude proposes, doesn't edit |
+| `/council <question>` | Run a multi-model debate regardless of current mode |
+| `/council-history` | List past debate transcripts for this project |
 | `/permissions` | Manage tool permission mode |
 | `/account` | Add, switch, or remove accounts |
 | `/login` | Sign in to Claude |

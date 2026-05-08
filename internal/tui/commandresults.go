@@ -391,6 +391,16 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		return m, nil
+	case "council-chat":
+		if len(m.councilProviders) == 0 {
+			m.messages = append(m.messages, Message{
+				Role:    RoleError,
+				Content: "No council members configured — add providers in /model → Council tab.",
+			})
+			m.refreshViewport()
+			return m, nil
+		}
+		return m.handleCouncilChat(councilChatMsg{question: res.Text})
 	case "output-style":
 		return m.applyOutputStyle(res)
 	case "rewind":

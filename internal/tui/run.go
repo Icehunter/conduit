@@ -195,6 +195,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterMCPCommand(reg, runOpts.MCPManager)
 	commands.RegisterLocalCommands(reg, runOpts.MCPManager, runOpts.InitialActiveProvider, runOpts.InitialProviders)
 	commands.RegisterRTKCommands(reg)
+	commands.RegisterCouncilCommands(reg)
 	commands.RegisterBuddyCommand(reg, func() string {
 		// Use email as stable user ID for companion generation.
 		return runOpts.Profile.Email

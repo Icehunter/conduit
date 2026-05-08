@@ -206,7 +206,18 @@ func (m Model) renderModeStatus() string {
 		mode = "⏵⏵ auto"
 		style = styleModeYellow
 	case permissions.ModeCouncil:
-		mode = "⚖ council"
+		switch {
+		case m.councilSynthesizing:
+			mode = "⚖ council · synthesising…"
+		case m.councilActiveCount > 0:
+			roundLabel := "propose"
+			if m.councilRound > 0 {
+				roundLabel = fmt.Sprintf("round %d/%d", m.councilRound, m.councilMaxRounds)
+			}
+			mode = fmt.Sprintf("⚖ council · %s · %d active", roundLabel, m.councilActiveCount)
+		default:
+			mode = "⚖ council"
+		}
 		style = styleModeGreen
 	default:
 		mode = "default mode"

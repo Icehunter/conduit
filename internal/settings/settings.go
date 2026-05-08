@@ -13,9 +13,11 @@ package settings
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Permissions is the permissions section of a settings file.
@@ -177,6 +179,15 @@ type Merged struct {
 	// CouncilMaxRounds is the maximum number of debate rounds before synthesis.
 	// Zero means use the default (4).
 	CouncilMaxRounds int `json:"councilMaxRounds,omitempty"`
+	// CouncilMemberTimeoutSec caps each per-member sub-agent call. Zero → default (30s).
+	CouncilMemberTimeoutSec int `json:"councilMemberTimeoutSec,omitempty"`
+	// CouncilSynthesizer is the provider key used for synthesis. Empty → parent loop's background model.
+	CouncilSynthesizer string `json:"councilSynthesizer,omitempty"`
+	// CouncilConvergenceThreshold is the minimum Jaccard similarity (0–1) that
+	// triggers early agreement. Zero or negative disables similarity-based convergence.
+	CouncilConvergenceThreshold float64 `json:"councilConvergenceThreshold,omitempty"`
+	// CouncilRoles maps provider keys to role names ("architect", "skeptic", "perf-reviewer").
+	CouncilRoles map[string]string `json:"councilRoles,omitempty"`
 }
 
 // EffectiveCouncilMaxRounds returns the configured max debate rounds, defaulting
@@ -186,6 +197,15 @@ func (s *Merged) EffectiveCouncilMaxRounds() int {
 		return s.CouncilMaxRounds
 	}
 	return 4
+}
+
+// EffectiveCouncilMemberTimeout returns the per-member sub-agent timeout,
+// defaulting to 30 seconds when CouncilMemberTimeoutSec is zero or negative.
+func (s *Merged) EffectiveCouncilMemberTimeout() time.Duration {
+	if s.CouncilMemberTimeoutSec > 0 {
+		return time.Duration(s.CouncilMemberTimeoutSec) * time.Second
+	}
+	return 30 * time.Second
 }
 
 // ActiveProviderSettings stores conduit's provider routing selector.
@@ -227,6 +247,18 @@ func Load(cwd string) (*Merged, error) {
 		}
 		if cfg.CouncilMaxRounds > 0 {
 			merged.CouncilMaxRounds = cfg.CouncilMaxRounds
+		}
+		if cfg.CouncilMemberTimeoutSec > 0 {
+			merged.CouncilMemberTimeoutSec = cfg.CouncilMemberTimeoutSec
+		}
+		if cfg.CouncilSynthesizer != "" {
+			merged.CouncilSynthesizer = cfg.CouncilSynthesizer
+		}
+		if cfg.CouncilConvergenceThreshold > 0 {
+			merged.CouncilConvergenceThreshold = cfg.CouncilConvergenceThreshold
+		}
+		if len(cfg.CouncilRoles) > 0 {
+			merged.CouncilRoles = maps.Clone(cfg.CouncilRoles)
 		}
 	}
 	applyConduitProjectState(merged, cwd)

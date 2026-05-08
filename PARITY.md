@@ -669,6 +669,7 @@
 | M7 — MCP host | stdio/HTTP transports, tool proxy, config | ✅ Done |
 | M8 — Plugins + Skills + memdir | Plugin ecosystem, skill tool, memory/dream | ✅ Done |
 | M9 — Multi-agent | AgentTool, RunSubAgent, parallel tools | ✅ Done |
+| Council mode | **conduit-original** — no CC mapping; internal/tui/council.go. Parallel multi-model debate with synthesis, convergence detection, roles, voting, transcript persistence, and /council command. | ✅ Done |
 | M11 — Cosmetic parity | Buddy, output styles, undercover | ✅ Done |
 | M-A — CLAUDE.md loading | Dir walk, @include, .claudeignore, session cache | ✅ Done |
 | M-B — Agent/API gaps | Backoff, proxy, auto-compact, thinking budget, rate limits | ✅ Done |

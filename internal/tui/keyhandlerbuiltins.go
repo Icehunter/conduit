@@ -209,6 +209,16 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.questionAsk.reply <- nil
 			m.questionAsk = nil
 		}
+		if m.councilCancel != nil {
+			m.councilCancel()
+			m.councilCancel = nil
+			m.councilRound = 0
+			m.councilSynthesizing = false
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Council cancelled."})
+			m.refreshViewport()
+			m.input.Focus()
+			return m, nil, true
+		}
 		if m.running && m.cancelTurn != nil {
 			m.cancelTurn()
 			m.cancelled = true

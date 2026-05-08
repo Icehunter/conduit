@@ -163,6 +163,7 @@ Last updated: 2026-05-05
 | /rename | ✅ | renames current session |
 | /theme | ✅ | hot-swap palettes; persisted to conduit.json |
 | /plan | ✅ | sets plan mode; EnterPlanMode tool wired |
+| /council | ✅ | one-shot debate regardless of permission mode; /council-history lists transcripts |
 | /branch | 🚫 REMOVED | conversation branching deferred; command removed from registry |
 | /mcp | ✅ | internal/commands/mcp.go |
 | /agents | ✅ | lists active sub-agents |
@@ -247,6 +248,19 @@ Last updated: 2026-05-05
 | Swarm/coordinator | ✅ | internal/coordinator/coordinator.go; system prompt injection, task-notification XML, MCP context |
 | SendMessageTool | 🔲 | Team messaging feature; descoped |
 | RemoteTriggerTool | 🔲 | Remote-only (M10); descoped |
+| **Council mode** | ✅ | internal/tui/council.go — conduit-original; parallel debate + synthesis across N models |
+| · Parallel critique rounds | ✅ | goroutine pool; no sequential bottleneck |
+| · Cancellable context / Esc | ✅ | ctx derived from context.Background(); Ctrl+C cancels all in-flight members |
+| · Per-member timeout | ✅ | 30s default; `councilMemberTimeoutSec` in conduit.json |
+| · Convergence detection | ✅ | Jaccard similarity + `<council-agree/>` tag; threshold via `councilConvergenceThreshold` |
+| · Real Usage / cost tracking | ✅ | EventUsage accumulation in RunSubAgentTyped; displayed in footer |
+| · Round/active progress badge | ✅ | ⚖ council · round N/M · K active |
+| · Debate transcript persistence | ✅ | ~/.conduit/projects/<hash>/council/<timestamp>.md |
+| · Dedicated synthesizer model | ✅ | `councilSynthesizer` setting selects a specific provider |
+| · Member roles | ✅ | architect/skeptic/perf-reviewer via `councilRoles` map |
+| · Voting / weighted synthesis | ✅ | scoring pass orders plans by peer votes before synthesis |
+| · /council slash command | ✅ | mode-independent one-shot debate; /council-history lists transcripts |
+| · council_test.go | ✅ | 15 table-driven tests; regex, roster, convergence, roles, voting, cost |
 
 ---
 

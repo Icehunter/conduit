@@ -535,17 +535,19 @@ func runREPL(continueMode bool, resumeID string) error {
 		// appear in the sub-agent drill-in panel. RunBackgroundAgent marks
 		// entries as Background:true which hides them from the panel.
 		func(ctx context.Context, prompt string) (string, error) {
-			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				Mode: permissions.ModeBypassPermissions,
 			})
+			return r.Text, err
 		},
 		agentRegistry,
 		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
-			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				SystemPrompt: systemPrompt,
 				Model:        model,
 				Tools:        tools,
 			})
+			return r.Text, err
 		},
 	))
 	skillLoader := plugins.NewSkillLoader(loadedPlugins)
@@ -553,7 +555,8 @@ func runREPL(continueMode bool, resumeID string) error {
 		skillLoader,
 		lp.RunBackgroundAgent,
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
-			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+			return r.Text, err
 		},
 	))
 

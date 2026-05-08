@@ -211,15 +211,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case councilChatDoneMsg:
 		m.running = false
 		m.cancelTurn = nil
+		m.councilCancel = nil
+		m.councilRound = 0
+		m.councilSynthesizing = false
 		if msg.err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 		} else if msg.synthesis != "" {
-			// Add synthesis to display and to API history so follow-ups work.
 			m.messages = append(m.messages, m.assistantMessage(msg.synthesis))
 			m.history = append(m.history, api.Message{
 				Role:    "assistant",
 				Content: []api.ContentBlock{{Type: "text", Text: msg.synthesis}},
 			})
+			m.totalInputTokens += msg.usage.InputTokens
+			m.totalOutputTokens += msg.usage.OutputTokens
+			m.costUSD += msg.costUSD
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
@@ -228,6 +233,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case councilStartMsg:
 		return m.handleCouncilFlow(msg)
+
+	case councilRoundStartMsg:
+		m.councilRound = msg.round
+		m.councilMaxRounds = msg.total
+		m.councilActiveCount = msg.active
+		m.councilSynthesizing = false
+		return m, nil
 
 	case councilMemberResponseMsg:
 		if m.verboseMode {
@@ -260,6 +272,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case councilSynthesisStartMsg:
+		m.councilSynthesizing = true
 		m.messages = append(m.messages, Message{
 			Role:     RoleCouncil,
 			Content:  "Synthesising agreed points…",
@@ -269,6 +282,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case councilDoneMsg:
+		m.councilCancel = nil
+		m.councilRound = 0
+		m.councilSynthesizing = false
+		m.totalInputTokens += msg.usage.InputTokens
+		m.totalOutputTokens += msg.usage.OutputTokens
+		m.costUSD += msg.costUSD
 		m.messages = append(m.messages, Message{
 			Role:     RoleCouncil,
 			Content:  msg.plan,
@@ -279,10 +298,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		reply := m.councilReply
 		if reply != nil {
 			m.councilReply = nil
-			// Open the plan-approval picker directly — councilReply is already
-			// a send-only channel so we can't use planApprovalAskMsg (which
-			// requires a bidirectional chan). planApprovalPickerState accepts
-			// chan<- directly.
 			m.planApproval = &planApprovalPickerState{reply: reply}
 			m.refreshViewport()
 		}

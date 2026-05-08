@@ -234,12 +234,6 @@ type (
 		question string
 	}
 
-	// councilChatDoneMsg is sent when the council chat debate completes.
-	councilChatDoneMsg struct {
-		synthesis string
-		err       error
-	}
-
 	// councilMemberResponseMsg carries one council member's response.
 	councilMemberResponseMsg struct { //nolint:unused
 		label  string // model/provider display name
@@ -256,10 +250,28 @@ type (
 	// councilSynthesisStartMsg signals synthesis has begun.
 	councilSynthesisStartMsg struct{} //nolint:unused
 
+	// councilRoundStartMsg is emitted at the start of each debate round for badge updates.
+	councilRoundStartMsg struct { //nolint:unused
+		round  int // 0 = propose, 1..N = critique
+		total  int
+		active int
+	}
+
 	// councilDoneMsg carries the final synthesised plan.
 	councilDoneMsg struct { //nolint:unused
-		plan    string
-		costUSD float64
+		plan      string
+		usage     api.Usage
+		costUSD   float64
+		perMember []councilMemberStats
+	}
+
+	// councilChatDoneMsg is sent when the council chat debate completes.
+	councilChatDoneMsg struct {
+		synthesis string
+		usage     api.Usage
+		costUSD   float64
+		perMember []councilMemberStats
+		err       error
 	}
 
 	// setModelNameMsg is sent by /fast and /model to update the displayed model name.
@@ -469,6 +481,15 @@ type Model struct {
 	// Stored on the model so it can be forwarded to planApprovalAskMsg after
 	// the council synthesis completes.
 	councilReply chan<- planmodetool.PlanApprovalDecision
+
+	// councilCancel cancels the in-flight council debate context (Esc or /stop).
+	councilCancel context.CancelFunc
+
+	// Council progress state updated by councilRoundStartMsg for the badge.
+	councilRound        int
+	councilMaxRounds    int
+	councilActiveCount  int
+	councilSynthesizing bool
 
 	// trustDialog is non-nil when the workspace trust dialog is pending.
 	trustDialog *trustDialogState

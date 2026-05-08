@@ -14,6 +14,18 @@ import (
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
 
+// SubAgentResult is returned by RunSubAgentTyped.
+type SubAgentResult struct {
+	// Text is the concatenated text from the final assistant message.
+	Text string
+	// Usage is the aggregated token usage across all turns of the inner loop.
+	Usage api.Usage
+	// DurationMs is the wall-clock time spent in the child loop.
+	DurationMs int64
+	// ToolUses is the total number of tool calls made by the child loop.
+	ToolUses int
+}
+
 // SubAgentSpec configures an optionally-specialised sub-agent run.
 // Zero value is equivalent to RunBackgroundAgent (no extra system, no model
 // override, no tool restriction).
@@ -63,7 +75,7 @@ func (l *Loop) resolveModelAlias(alias string) string {
 	}
 }
 
-func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (string, error) {
+func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
 	model := l.BackgroundModel()
 	if spec.Model != "" {
 		model = l.resolveModelAlias(spec.Model)
@@ -165,7 +177,18 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	msgs := []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: prompt}}},
 	}
-	history, err := child.Run(ctx, msgs, subAgentEventHandler(childID))
+	var totalUsage api.Usage
+	baseHandler := subAgentEventHandler(childID)
+	history, err := child.Run(ctx, msgs, func(ev LoopEvent) {
+		baseHandler(ev)
+		if ev.Type == EventUsage {
+			totalUsage.InputTokens += ev.Usage.InputTokens
+			totalUsage.OutputTokens += ev.Usage.OutputTokens
+			totalUsage.CacheCreationInputTokens += ev.Usage.CacheCreationInputTokens
+			totalUsage.CacheReadInputTokens += ev.Usage.CacheReadInputTokens
+		}
+	})
+	durationMs := time.Since(start).Milliseconds()
 
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
@@ -174,30 +197,36 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 			notif := coordinator.TaskNotification(
 				agentID, "failed",
 				fmt.Sprintf("Agent failed: %v", err),
-				"", 0, 0, time.Since(start).Milliseconds(),
+				"", 0, 0, durationMs,
 			)
-			return notif, nil
+			return SubAgentResult{Text: notif, DurationMs: durationMs}, nil
 		}
 		toolUses := countToolUses(history)
-		result := extractLastAssistantText(history)
+		text := extractLastAssistantText(history)
 		notif := coordinator.TaskNotification(
 			agentID, "completed",
 			"Agent completed",
-			result, 0, toolUses, time.Since(start).Milliseconds(),
+			text, 0, toolUses, durationMs,
 		)
-		return notif, nil
+		return SubAgentResult{Text: notif, Usage: totalUsage, ToolUses: toolUses, DurationMs: durationMs}, nil
 	}
 
 	if err != nil {
-		return "", err
+		return SubAgentResult{DurationMs: durationMs}, err
 	}
-	return extractLastAssistantText(history), nil
+	return SubAgentResult{
+		Text:       extractLastAssistantText(history),
+		Usage:      totalUsage,
+		ToolUses:   countToolUses(history),
+		DurationMs: durationMs,
+	}, nil
 }
 
 // RunSubAgentWithTools is a convenience wrapper around RunSubAgentTyped that
 // only restricts the tool set, keeping the model and system prompt unchanged.
 func (l *Loop) RunSubAgentWithTools(ctx context.Context, prompt string, tools []string) (string, error) {
-	return l.RunSubAgentTyped(ctx, prompt, SubAgentSpec{Tools: tools})
+	r, err := l.RunSubAgentTyped(ctx, prompt, SubAgentSpec{Tools: tools})
+	return r.Text, err
 }
 
 // RunSubAgent runs a nested agent loop with the given prompt as the sole user

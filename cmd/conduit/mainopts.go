@@ -69,24 +69,27 @@ func runPrint(args []string) error {
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
 	reg.Register(agenttool.New(
 		func(ctx context.Context, prompt string) (string, error) {
-			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				Mode: permissions.ModeBypassPermissions,
 			})
+			return r.Text, err
 		},
 		agentRegistry,
 		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
-			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				SystemPrompt: systemPrompt,
 				Model:        model,
 				Tools:        tools,
 			})
+			return r.Text, err
 		},
 	))
 	reg.Register(skilltool.New(
 		plugins.NewSkillLoader(loadedPlugins),
 		lp.RunBackgroundAgent,
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
-			return lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+			return r.Text, err
 		},
 	))
 

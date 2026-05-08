@@ -4,16 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -129,6 +133,42 @@ func (m *Model) applyPermissionMode(mode permissions.Mode) {
 	m.refreshWelcomeCardMessage()
 }
 
+// rebuildSystemCmd returns a Cmd that asynchronously rebuilds the loop's
+// system blocks to reflect the current permission mode. Council mode appends
+// a directive telling the model to always route through ExitPlanMode.
+func (m Model) rebuildSystemCmd() tea.Cmd {
+	if m.cfg.Loop == nil {
+		return nil
+	}
+	loop := m.cfg.Loop
+	claudeMd := m.cfg.ClaudeMd
+	skills := m.cfg.Skills
+	mode := m.permissionMode
+	outputStyle := m.outputStylePrompt
+	outputStyleName := m.outputStyleName
+
+	return func() tea.Msg {
+		cwd, _ := os.Getwd()
+		mem := memdir.BuildPrompt(cwd)
+		base := agent.BuildSystemBlocks(mem, claudeMd, skills...)
+
+		if outputStyle != "" {
+			base = append(base, api.SystemBlock{
+				Type: "text",
+				Text: "# Output style: " + outputStyleName + "\n\n" + outputStyle,
+			})
+		}
+		if mode == permissions.ModeCouncil {
+			base = append(base, api.SystemBlock{
+				Type: "text",
+				Text: agent.CouncilModeDirective,
+			})
+		}
+		loop.SetSystem(base)
+		return nil
+	}
+}
+
 func (m *Model) applyEffectiveProviderForMode() {
 	provider, ok := m.providerForCurrentMode()
 	if !ok || m.cfg.Loop == nil {
@@ -158,7 +198,16 @@ func (m *Model) applyEffectiveProviderForMode() {
 		if provider.Model == "" {
 			return
 		}
-		if m.cfg.APIClient != nil {
+		// If the configured account differs from the active session account,
+		// build a fresh client using that account's stored tokens rather than
+		// reusing the active session client (which would bill the wrong account).
+		if provider.Account != "" && provider.Account != auth.ActiveEmail() && m.cfg.NewAPIClient != nil {
+			if tokens, err := auth.LoadForEmail(secure.NewDefault(), provider.Account); err == nil {
+				m.cfg.Loop.SetClient(m.cfg.NewAPIClient(tokens))
+			} else if m.cfg.APIClient != nil {
+				m.cfg.Loop.SetClient(m.cfg.APIClient)
+			}
+		} else if m.cfg.APIClient != nil {
 			m.cfg.Loop.SetClient(m.cfg.APIClient)
 		}
 		m.cfg.Loop.SetModel(provider.Model)

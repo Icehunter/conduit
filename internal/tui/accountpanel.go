@@ -23,6 +23,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/secure"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -39,8 +40,8 @@ type accountItem struct {
 	email    string
 	kind     string
 	addedAt  time.Time
-	isActive bool
 	hasToken bool
+	roles    []string // role names this account is assigned to (e.g. "planning", "main")
 }
 
 type accountAction struct {
@@ -95,6 +96,10 @@ func accountDisplayLabel(id, email, kind string) string {
 }
 
 func (p *accountPanelState) refresh() {
+	p.refreshWithRoles(nil, nil)
+}
+
+func (p *accountPanelState) refreshWithRoles(providers map[string]settings.ActiveProviderSettings, roles map[string]string) {
 	store, err := auth.LoadAccountStore()
 	if err != nil {
 		p.loadErr = err.Error()
@@ -103,16 +108,28 @@ func (p *accountPanelState) refresh() {
 	p.loadErr = ""
 	s := secure.NewDefault()
 
+	// Build a map from account email → role names that reference it.
+	accountRoles := map[string][]string{}
+	if providers != nil && roles != nil {
+		for roleName, provKey := range roles {
+			if prov, ok := providers[provKey]; ok && prov.Account != "" {
+				accountRoles[prov.Account] = append(accountRoles[prov.Account], roleName)
+			}
+		}
+	}
+
 	ids := make([]string, 0, len(store.Accounts))
 	for id := range store.Accounts {
 		ids = append(ids, id)
 	}
-	// Active account first, then alphabetical.
+	// Accounts with role assignments first, then alphabetical.
 	sort.Slice(ids, func(i, j int) bool {
-		ai := ids[i] == store.Active
-		aj := ids[j] == store.Active
-		if ai != aj {
-			return ai
+		ei := store.Accounts[ids[i]].Email
+		ej := store.Accounts[ids[j]].Email
+		ri := len(accountRoles[ei]) > 0 || len(accountRoles[ids[i]]) > 0
+		rj := len(accountRoles[ej]) > 0 || len(accountRoles[ids[j]]) > 0
+		if ri != rj {
+			return ri
 		}
 		left := accountSortLabel(ids[i], store.Accounts[ids[i]])
 		right := accountSortLabel(ids[j], store.Accounts[ids[j]])
@@ -123,13 +140,29 @@ func (p *accountPanelState) refresh() {
 	for _, id := range ids {
 		entry := store.Accounts[id]
 		_, tokenErr := auth.LoadForEmail(s, id)
+		// Collect roles assigned to this account (check both id and email).
+		var assignedRoles []string
+		seen := map[string]bool{}
+		for _, r := range accountRoles[id] {
+			if !seen[r] {
+				assignedRoles = append(assignedRoles, r)
+				seen[r] = true
+			}
+		}
+		for _, r := range accountRoles[entry.Email] {
+			if !seen[r] {
+				assignedRoles = append(assignedRoles, r)
+				seen[r] = true
+			}
+		}
+		sort.Strings(assignedRoles)
 		p.accounts = append(p.accounts, accountItem{
 			id:       id,
 			email:    entry.Email,
 			kind:     entry.Kind,
 			addedAt:  entry.AddedAt,
-			isActive: id == store.Active,
 			hasToken: tokenErr == nil,
+			roles:    assignedRoles,
 		})
 	}
 
@@ -140,21 +173,14 @@ func (p *accountPanelState) refresh() {
 }
 
 func (p *accountPanelState) openDetail(id string) {
-	store, _ := auth.LoadAccountStore()
-	isActive := store.Active == id
-
 	p.detailID = id
 	p.actionIdx = 0
-	p.actions = nil
-	if !isActive {
-		p.actions = append(p.actions, accountAction{"Switch to this account", "switch", false})
+	p.actions = []accountAction{
+		{"Add / re-login (replace token)", "login", false},
+		{"Remove from list (keep token)", "remove", false},
+		{"Delete (remove token + list entry)", "delete", true},
+		{"Back", "back", false},
 	}
-	p.actions = append(p.actions,
-		accountAction{"Add / re-login (replace token)", "login", false},
-		accountAction{"Remove from list (keep token)", "remove", false},
-		accountAction{"Delete (remove token + list entry)", "delete", true},
-		accountAction{"Back", "back", false},
-	)
 	p.view = accountViewDetail
 }
 
@@ -194,10 +220,6 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 			a.actionIdx = (a.actionIdx + 1) % len(a.actions)
 		case "enter":
 			switch a.actions[a.actionIdx].id {
-			case "switch":
-				account := a.detailID
-				m.settingsPanel = nil
-				return m, func() tea.Msg { return accountSwitchedMsg{account: account} }
 			case "login":
 				m.settingsPanel = nil
 				return m, func() tea.Msg { return commandsLoginMsg{} }
@@ -230,9 +252,11 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 
 func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState, _, _ int) {
 	if p.accts == nil {
-		p.accts = newAccountPanel()
+		p.accts = &accountPanelState{}
 	}
 	a := p.accts
+	// Refresh with current role assignments so indicators are always current.
+	a.refreshWithRoles(m.providers, m.roles)
 
 	accent := styleStatusAccent
 	dim := stylePickerDesc
@@ -264,12 +288,14 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 				emailStyle = accent
 			}
 			line := cursor + emailStyle.Render(accountDisplayLabel(acc.id, acc.email, acc.kind))
-			if acc.isActive {
-				line += "  " + accent.Render("● active")
-			} else if !acc.hasToken {
+			if !acc.hasToken {
 				line += "  " + errStyle.Render("✗ no token")
 			}
 			sb.WriteString(line + "\n")
+			// Show which modes/roles this account is assigned to.
+			if len(acc.roles) > 0 {
+				sb.WriteString("    " + accent.Render("↳ "+strings.Join(acc.roles, ", ")) + "\n")
+			}
 			sb.WriteString("    " + dim.Render("added "+acc.addedAt.Format("2006-01-02")) + "\n")
 		}
 		isSel := a.selected == len(a.accounts)

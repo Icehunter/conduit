@@ -81,7 +81,7 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			picked := p.items[p.selected].Value
 			m.picker = nil
 			m.applyPermissionMode(permissions.Mode(picked))
-			return m, nil
+			return m, m.rebuildSystemCmd()
 		}
 		if p.kind == "model" && p.role == roleCouncil {
 			// Toggle this provider key in m.councilProviders.
@@ -138,7 +138,7 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			picked := p.items[p.selected].Value
 			m.picker = nil
 			m.applyPermissionMode(permissions.Mode(picked))
-			return m, nil
+			return m, m.rebuildSystemCmd()
 		}
 		if p.kind == "model" && p.role == roleCouncil {
 			// Save the current council roster and close.

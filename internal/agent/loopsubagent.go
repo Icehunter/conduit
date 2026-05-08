@@ -28,6 +28,10 @@ type SubAgentSpec struct {
 	// Mode sets the initial permission mode for the child. "" means inherit
 	// the parent gate's current mode.
 	Mode permissions.Mode
+	// Client overrides the API client used by the child loop. nil = inherit
+	// the parent loop's client. Use this to route council members through
+	// their own provider accounts rather than the parent's active client.
+	Client *api.Client
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -67,6 +71,12 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	childClient := l.client
 	parentReg := l.reg
 	l.mu.RUnlock()
+
+	// Use the caller-supplied client when provided (e.g. council members that
+	// need their own provider account rather than the parent loop's client).
+	if spec.Client != nil {
+		childClient = spec.Client
+	}
 
 	// Strip side-effect callbacks — same as runSubAgentWithModel.
 	childCfg.NotifyOnComplete = false

@@ -146,7 +146,8 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.flashMsg = "default mode (shift+tab to cycle)"
 		}
 		m2, usageCmd := m.startPlanUsageFetch()
-		return m2, tea.Batch(usageCmd, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} })), true
+		rebuildCmd := m2.rebuildSystemCmd()
+		return m2, tea.Batch(usageCmd, rebuildCmd, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} })), true
 
 	case "tab", "esc":
 		// Clear pending images and paste placeholders on Esc.

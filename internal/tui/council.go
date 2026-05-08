@@ -9,14 +9,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/icehunter/conduit/internal/agent"
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
 // councilMember tracks a single council participant across debate rounds.
 type councilMember struct {
-	label        string // display name (model name or provider key)
-	model        string // model identifier passed to RunSubAgentTyped
+	label        string      // display name (model name or provider key)
+	model        string      // model identifier passed to RunSubAgentTyped
+	client       *api.Client // provider-specific client; nil = inherit parent's client
 	active       bool
 	lastResponse string // most recent response text; used to build critique context
 }
@@ -34,6 +38,8 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 	loop := m.cfg.Loop
 	prog := *m.cfg.Program
 	seedPlan := msg.seedPlan
+	newAPIClient := m.cfg.NewAPIClient
+	newProviderClient := m.cfg.NewProviderAPIClient
 
 	// Load max rounds from settings. Use 4 as the fallback.
 	maxRounds := 4
@@ -45,7 +51,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 		ctx := context.Background()
 
 		// --- Build the roster ---
-		members := buildCouncilRoster(providerKeys, providers)
+		members := buildCouncilRoster(providerKeys, providers, newAPIClient, newProviderClient)
 
 		if len(members) == 0 {
 			// No valid members: skip debate, forward seed plan.
@@ -187,10 +193,12 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 }
 
 // buildCouncilRoster converts the TUI's provider key list into councilMember
-// entries, skipping any provider that cannot be resolved.
+// entries with per-member API clients so each member hits its own account.
 func buildCouncilRoster(
 	keys []string,
 	providers map[string]settings.ActiveProviderSettings,
+	newAPIClient func(auth.PersistedTokens) *api.Client,
+	newProviderClient func(settings.ActiveProviderSettings) (*api.Client, error),
 ) []councilMember {
 	members := make([]councilMember, 0, len(keys))
 	for _, key := range keys {
@@ -202,16 +210,49 @@ func buildCouncilRoster(
 		if label == "" {
 			label = key
 		}
+		client := buildCouncilClient(p, newAPIClient, newProviderClient)
 		members = append(members, councilMember{
 			label:  label,
 			model:  p.Model,
+			client: client,
 			active: true,
 		})
 	}
 	return members
 }
 
-// runCouncilSubAgent runs a single council member's sub-agent call.
+// buildCouncilClient creates an API client for a council member's provider.
+// Returns nil for MCP/local providers (they cannot participate via sub-agent API calls).
+func buildCouncilClient(
+	p settings.ActiveProviderSettings,
+	newAPIClient func(auth.PersistedTokens) *api.Client,
+	newProviderClient func(settings.ActiveProviderSettings) (*api.Client, error),
+) *api.Client {
+	switch p.Kind {
+	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
+		if newAPIClient == nil || p.Account == "" {
+			return nil
+		}
+		tokens, err := auth.LoadForEmail(secure.NewDefault(), p.Account)
+		if err != nil {
+			return nil
+		}
+		return newAPIClient(tokens)
+	case settings.ProviderKindOpenAICompatible:
+		if newProviderClient == nil {
+			return nil
+		}
+		client, err := newProviderClient(p)
+		if err != nil {
+			return nil
+		}
+		return client
+	}
+	return nil // MCP/local: caller inherits parent client (will likely fail for council)
+}
+
+// runCouncilSubAgent runs a single council member's sub-agent call using that
+// member's own API client so it hits the correct provider account.
 func runCouncilSubAgent(
 	ctx context.Context,
 	loop *agent.Loop,
@@ -220,9 +261,10 @@ func runCouncilSubAgent(
 	tools []string,
 ) (string, error) {
 	return loop.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
-		Model: member.model,
-		Mode:  permissions.ModeBypassPermissions,
-		Tools: tools,
+		Model:  member.model,
+		Mode:   permissions.ModeBypassPermissions,
+		Tools:  tools,
+		Client: member.client,
 	})
 }
 

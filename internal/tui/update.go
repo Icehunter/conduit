@@ -264,7 +264,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case setPermissionModeMsg:
 		m.applyPermissionMode(msg.mode)
-		return m.startPlanUsageFetch()
+		m2, cmd := m.startPlanUsageFetch()
+		if rebuildCmd := m2.rebuildSystemCmd(); rebuildCmd != nil {
+			return m2, tea.Batch(cmd, rebuildCmd)
+		}
+		return m2, cmd
 
 	case setModelNameMsg:
 		m.modelName = msg.name

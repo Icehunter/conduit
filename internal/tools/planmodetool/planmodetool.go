@@ -42,7 +42,22 @@ func (t *EnterPlanMode) IsReadOnly(_ json.RawMessage) bool        { return true 
 func (t *EnterPlanMode) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *EnterPlanMode) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
-	alreadyPlan := t.CurrentMode != nil && t.CurrentMode() == permissions.ModePlan
+	current := permissions.ModeDefault
+	if t.CurrentMode != nil {
+		current = t.CurrentMode()
+	}
+
+	// In council mode, stay in council — do not overwrite with plan mode.
+	// ExitPlanMode will still trigger the council debate correctly.
+	if current == permissions.ModeCouncil {
+		return tool.TextResult(`You are in council mode — planning phase is active.
+Explore the codebase, then call ExitPlanMode with your complete plan.
+The council will review it before execution.
+
+Remember: DO NOT write or edit any files yet.`), nil
+	}
+
+	alreadyPlan := current == permissions.ModePlan
 	if !alreadyPlan && t.AskEnter != nil && !t.AskEnter(ctx) {
 		return tool.ErrorResult("User declined to enter plan mode."), nil
 	}

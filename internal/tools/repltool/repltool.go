@@ -29,7 +29,7 @@ type Tool struct{}
 func New() *Tool           { return &Tool{} }
 func (*Tool) Name() string { return "REPL" }
 func (*Tool) Description() string {
-	return `Execute code in a REPL environment. Supports JavaScript (node) and Python (python3).
+	return `Execute code in a REPL environment. Supports JavaScript (node), Python (python3), and Bash.
 
 Use for:
 - Quick calculations or data transformations

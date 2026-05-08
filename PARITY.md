@@ -520,7 +520,7 @@
 | ANSI to PNG | `utils/ansiToPng.ts` (334 LOC) | — | `internal/attach/ansipng.go` | ✅ | `ANSIToPNG(text) string` → base64 PNG; parses SGR (8-color, 256-color, truecolor); basicfont rendering; dark terminal theme |
 | ANSI to SVG | `utils/ansiToSvg.ts` | — | ❌ | ⬛ | No current use case; PNG covers screenshot sharing |
 | Screenshot clipboard | `utils/screenshotClipboard.ts` | — | `internal/attach/clipboard.go` | ✅ | Covered by image paste (TIFF fallback handles macOS screenshots) |
-| Asciinema recording | `utils/asciicast.ts` | — | `internal/recorder/` | ✅ | /record start/stop; asciicast v2 header + "o"/"r" events; os.Pipe() tee; SIGWINCH resize; ~/.claude/recordings/<ts>.cast |
+| Asciinema recording | `utils/asciicast.ts` | — | `internal/recorder/` | ✅ | /record start/stop; asciicast v2 header + "o"/"r" events; os.Pipe() tee; SIGWINCH resize; writes to `${CLAUDE_CONFIG_DIR:-~/.claude}/recordings/<ts>.cast` |
 | @file mention parsing | `utils/attachments.ts` | — | `internal/attach/atmention.go` | ✅ | @path @"path" #L10-20 line ranges; dirs listed; injected as file_content blocks; 7 tests |
 | IDE inbound attachments | `bridge/inboundAttachments.ts` | — | ❌ | ❌ | M13+bridge |
 
@@ -686,18 +686,18 @@
 | M-N — Memory completion | ScanMemories, RelevantMemories, /memory list\|show\|scan, age tracking | ✅ Done |
 | **M10 — Bridge (IDE)** | 21 bridge features | ❌ Not started |
 | **M12 — Hardening** | Conformance tests, benchmarks | ❌ Not started |
-| **M13 — Attachments** | Image/PDF paste, drag-drop | ❌ Not started |
+| **M13 — Attachments** | Image/PDF paste, drag-drop, @file mentions, ANSI PNG, recording | ✅ Done except bridge-only IDE inbound attachments |
 
 ---
 
 ## Key Missing Features (Not in Any Milestone Yet)
 
-These are implemented in Claude Code but not yet in conduit and not in M10/M13 (as of 2026-05-02):
+These are implemented in Claude Code but not yet in conduit and not in M10/M13 (as of 2026-05-08):
 
 1. **Vim mode** — vi keybindings in input box (`vim/`, 5 files). Medium value; large effort.
-2. **Custom keybindings** — user-defined key mappings. Low value.
+2. **Voice/STT** — deferred pending a local STT design; Claude's private endpoint is not available to Conduit.
 3. **Plugin signature verification** — git commit sig check on install (note: not in CC either; aspirational).
-4. **/terminalSetup** — installs Shift+Enter keybindings for Apple Terminal/VSCode/Cursor/Alacritty/Zed (~75KB of per-terminal config recipes).
+4. **IDE inbound attachments** — bridge-dependent and descoped with M10.
 
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 

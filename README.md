@@ -48,7 +48,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 
 ### Core agent
 
-- **Full Claude Code parity** — 249/264 scoped features implemented (94%)
+- **Full Claude Code parity** — see `PARITY.md` for the current audited feature matrix
 - **Provider-aware routing** — assign models per role from `/models`
 - **OpenAI-compatible providers** — use API-key providers such as Gemini through a local credential alias
 - **Local model support** — route turns to MCP-backed local providers, including model servers on another machine
@@ -74,7 +74,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 | `WebFetchTool` | Fetch URLs with content extraction |
 | `WebSearchTool` | Web search via Anthropic's native search API |
 | `NotebookEditTool` | Edit Jupyter notebooks cell by cell |
-| `REPLTool` | Persistent REPL sessions (Python, Node, Ruby…) |
+| `REPLTool` | Subprocess code execution for JavaScript, Python, and Bash snippets |
 | `TodoWriteTool` | Structured task tracking |
 | `TaskCreate/Get/List/Update/Stop` | Sub-agent task lifecycle |
 | `EnterPlanMode` / `ExitPlanMode` | Propose-only mode (no file edits) |
@@ -276,16 +276,17 @@ conduit --resume <session-id>
 
 ### Settings file
 
-`~/.claude/settings.json` — all settings managed via `/config` panel or edited directly.
+`~/.conduit/conduit.json` — Conduit's primary user-global settings file, managed via `/config` or edited directly. On first run, Conduit can import compatible Claude settings from `~/.claude/settings.json`; project-local settings in `.claude/` and `.conduit/` still layer on top, with `.conduit/settings.local.json` winning last.
 
 Key settings:
 
 ```json
 {
   "model": "claude-sonnet-4-6",
-  "defaultPermissionMode": "default",
-  "autoCompactEnabled": true,
-  "alwaysThinkingEnabled": true,
+  "permissions": {
+    "defaultMode": "default",
+    "allow": ["Bash(git status:*)"]
+  },
   "theme": "dark",
   "outputStyle": "default",
   "env": {
@@ -300,7 +301,7 @@ Place a `CLAUDE.md` in any directory — conduit reads from the file's directory
 
 ### Custom keybindings
 
-`~/.claude/keybindings.json`:
+`~/.conduit/keybindings.json`:
 
 ```json
 {
@@ -313,7 +314,7 @@ Place a `CLAUDE.md` in any directory — conduit reads from the file's directory
 ### Hooks
 
 ```json
-// ~/.claude/settings.json
+// ~/.conduit/conduit.json
 {
   "hooks": {
     "PreToolUse": [
@@ -337,7 +338,7 @@ Hook types: `command` (shell), `http` (POST JSON to URL), `prompt` (inject resul
 ### MCP servers
 
 ```json
-// ~/.claude/settings.json
+// ~/.conduit/mcp.json
 {
   "mcpServers": {
     "context7": {
@@ -413,7 +414,7 @@ Enables coordinator mode: Claude acts as an orchestrator that spawns sub-agents 
 
 ## Building from source
 
-Requirements: Go 1.26+
+Requirements: Go 1.26
 
 ```sh
 make build      # builds to ./conduit
@@ -426,7 +427,7 @@ make lint       # golangci-lint run
 
 ## Claude Code compatibility
 
-Conduit maintains wire compatibility with Claude Code: Anthropic OAuth, API headers and billing block, plugin format (commands, skills, hooks, agents), MCP protocol, and the tool surface the model expects. Settings files (`settings.json`, `CLAUDE.md`, `mcp.json`) are interchangeable.
+Conduit maintains wire compatibility with Claude Code: Anthropic OAuth, API headers and billing block, plugin format (commands, skills, hooks, agents), MCP protocol, and the tool surface the model expects. Claude-compatible settings can be imported or layered for projects, while Conduit-owned user state lives under `~/.conduit`.
 
 Features intentionally not implemented (Claude-internal or bridge-dependent):
 

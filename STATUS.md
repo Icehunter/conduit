@@ -1,6 +1,6 @@
 # conduit Implementation Status
 
-Last updated: 2026-05-05
+Last updated: 2026-05-08
 
 ## How to read this
 
@@ -270,15 +270,16 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 ---
 
-## M11 — Cosmetic parity 🔲
+## M11 — Cosmetic parity 🔶
 
-| Component | Status |
-|-----------|--------|
-| Image paste / drag-drop | 🔲 |
-| [N lines pasted] shortening | 🔲 |
-| Syntax highlighting | 🔲 |
-| Buddy / KAIROS | 🔲 |
-| Voice STT | 🔲 |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Image paste / drag-drop | ✅ | internal/attach/clipboard.go, dragdrop.go, resize.go |
+| PDF paste / @file handling | ✅ | internal/attach/pdf.go, atmention.go |
+| [N lines pasted] shortening | ✅ | internal/tui/updatehandlers.go stores large pastes as `[Pasted text #N +X lines]` placeholders and expands them before submit |
+| Syntax highlighting | ✅ | internal/tui/syntaxhighlight.go |
+| Buddy | ✅ | permanent /buddy command + companion rendering; one-time KAIROS promo descoped |
+| Voice STT | 🚫 REMOVED | local STT deferred; Anthropic private endpoint unavailable |
 
 ---
 
@@ -305,4 +306,4 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 | Issue | Location | Fix milestone |
 |-------|----------|---------------|
-| Conversation branching is not implemented | internal/commands/ | deferred |
+| Conversation branching is not implemented | internal/commands/ | deferred; `/branch` is not registered |

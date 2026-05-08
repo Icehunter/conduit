@@ -288,11 +288,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalInputTokens += msg.usage.InputTokens
 		m.totalOutputTokens += msg.usage.OutputTokens
 		m.costUSD += msg.costUSD
-		m.messages = append(m.messages, Message{
-			Role:     RoleCouncil,
-			Content:  msg.plan,
-			ToolName: "Council",
-		})
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
+		} else if msg.plan != "" {
+			m.messages = append(m.messages, Message{
+				Role:     RoleCouncil,
+				Content:  msg.plan,
+				ToolName: "Council",
+			})
+		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
 		reply := m.councilReply

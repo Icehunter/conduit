@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -319,3 +320,54 @@ func TestIsCouncilTrivial(t *testing.T) {
 }
 
 // ---- helpers ----
+
+// ---- buildSynthesisPrompt (empty member list) ----
+
+func TestBuildSynthesisPrompt_EmptyMembers(t *testing.T) {
+	got := buildSynthesisPrompt("preamble", nil)
+	if got != "preamble\n\n" {
+		t.Errorf("buildSynthesisPrompt with no members = %q, want preamble only", got)
+	}
+}
+
+// ---- accumulateStats with empty synthesis ----
+
+func TestAccumulateStats_EmptySynthesis(t *testing.T) {
+	members := []councilMember{
+		{label: "A", model: "claude-opus-4-7", active: true, usage: api.Usage{InputTokens: 100, OutputTokens: 50}},
+	}
+	totalUsage, totalCost, perMember := accumulateStats(members, agent.SubAgentResult{}, "")
+	if totalUsage.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100", totalUsage.InputTokens)
+	}
+	if totalUsage.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50", totalUsage.OutputTokens)
+	}
+	if len(perMember) != 1 {
+		t.Fatalf("perMember len = %d, want 1", len(perMember))
+	}
+	if totalCost <= 0 {
+		t.Errorf("totalCost = %f, want > 0 for known model", totalCost)
+	}
+}
+
+// ---- runRoundParallel — all members ejected leaves no active members ----
+
+func TestRunRoundParallel_AllEjected(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel to eject all
+
+	members := []councilMember{
+		{label: "A", model: "m", active: true},
+		{label: "B", model: "m", active: true},
+	}
+	allAgreed, atLeastOne := runRoundParallel(ctx, nil, members, func(m councilMember) string {
+		return "prompt"
+	}, nil, time.Second, nil)
+	if atLeastOne {
+		t.Error("atLeastOne should be false when all members are ejected via cancellation")
+	}
+	if allAgreed {
+		t.Error("allAgreed should be false when no members responded")
+	}
+}

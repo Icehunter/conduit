@@ -95,14 +95,18 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		if label == "" {
 			label = "Council"
 		}
-		var header string
 		if strings.HasPrefix(msg.Content, "⚠ ") {
-			// Ejection/warning messages: render the whole line in muted style.
-			header = stylePickerDesc.Render(label+": ") + stylePickerDesc.Render(msg.Content)
-		} else {
-			header = styleStatusAccent.Render(label+":") + " " + stylePickerDesc.Render(msg.Content)
+			// Ejection/warning: muted inline.
+			return pad + surfaceSpaces(2) + stylePickerDesc.Render(label+": ") + stylePickerDesc.Render(msg.Content)
 		}
-		return pad + surfaceSpaces(2) + header
+		// Multi-line responses (member plans, synthesis) get a header + markdown body.
+		// Single-line status messages ("Synthesising…", "✓ agrees…") stay inline.
+		if strings.Contains(msg.Content, "\n") || strings.HasPrefix(msg.Content, "```") {
+			header := styleStatusAccent.Render(label + ":")
+			body := renderMarkdown(msg.Content, inner)
+			return pad + surfaceSpaces(2) + header + "\n" + indentLines(body, pad+surfaceSpaces(2))
+		}
+		return pad + surfaceSpaces(2) + styleStatusAccent.Render(label+":") + " " + stylePickerDesc.Render(msg.Content)
 
 	case RoleSystem:
 		if msg.WelcomeCard {
@@ -247,7 +251,15 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 		lines = append(lines, indentLines(styleErrorText.Width(bodyWidth).Render(result), surfaceSpaces(4)))
 	}
 	if verbose && !msg.ToolError && !running && !archived && result != "" {
-		lines = append(lines, indentLines(styleStatus.Width(bodyWidth).Render(result), surfaceSpaces(4)))
+		var body string
+		if strings.HasPrefix(result, "```") {
+			// Fenced code block (e.g. FileEdit diff) — use markdown renderer
+			// so language-tagged blocks get syntax highlighting.
+			body = renderMarkdown(result, bodyWidth)
+		} else {
+			body = styleStatus.Width(bodyWidth).Render(result)
+		}
+		lines = append(lines, indentLines(body, surfaceSpaces(4)))
 	}
 	return strings.Join(lines, "\n")
 }

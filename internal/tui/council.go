@@ -120,6 +120,9 @@ func runRoundParallel(
 			}
 		}
 	}
+	if !atLeastOne {
+		allAgreed = false
+	}
 	return allAgreed, atLeastOne
 }
 
@@ -285,7 +288,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 			[]string{"Read", "Glob", "Grep", "WebFetch", "WebSearch"}, memberTimeout, prog)
 
 		if ctx.Err() != nil {
-			prog.Send(councilDoneMsg{plan: seedPlan})
+			prog.Send(councilDoneMsg{err: fmt.Errorf("council cancelled")})
 			return nil
 		}
 
@@ -334,7 +337,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 		}
 
 		if ctx.Err() != nil {
-			prog.Send(councilDoneMsg{plan: seedPlan})
+			prog.Send(councilDoneMsg{err: fmt.Errorf("council cancelled")})
 			return nil
 		}
 
@@ -487,7 +490,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 		}
 
 		if ctx.Err() != nil {
-			return councilChatDoneMsg{}
+			return councilChatDoneMsg{err: fmt.Errorf("council cancelled")}
 		}
 
 		// Voting pass when ≥3 active members.
@@ -522,6 +525,9 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 				}
 			}
 			synthesis = strings.TrimSpace(fallback.String())
+		}
+		if synthesis == "" {
+			return councilChatDoneMsg{err: fmt.Errorf("council produced no responses — all members may have timed out or been ejected")}
 		}
 
 		totalUsage, totalCost, perMember := accumulateStats(members, synthResult, synthModel)

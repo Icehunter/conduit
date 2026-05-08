@@ -263,6 +263,7 @@ type (
 		usage     api.Usage
 		costUSD   float64
 		perMember []councilMemberStats
+		err       error
 	}
 
 	// councilChatDoneMsg is sent when the council chat debate completes.

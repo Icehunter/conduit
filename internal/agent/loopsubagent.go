@@ -47,6 +47,10 @@ type SubAgentSpec struct {
 	// Background marks the sub-agent as system-initiated so it is hidden from
 	// the user-visible agent log panel and working-row badge.
 	Background bool
+	// DisableModeTools prevents EnterPlanMode/ExitPlanMode/EnterAutoMode/ExitAutoMode
+	// from being added to the child registry. Use for council members and other
+	// sub-agents that must not switch permission modes mid-run.
+	DisableModeTools bool
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -169,7 +173,9 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	childExitAuto := &automodetool.ExitAutoMode{
 		SetMode: notifyMode,
 	}
-	childReg = childReg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
+	if !spec.DisableModeTools {
+		childReg = childReg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
+	}
 
 	child := &Loop{client: childClient, reg: childReg, cfg: childCfg}
 

@@ -199,13 +199,15 @@ func (s *Merged) EffectiveCouncilMaxRounds() int {
 	return 4
 }
 
-// EffectiveCouncilMemberTimeout returns the per-member sub-agent timeout,
-// defaulting to 30 seconds when CouncilMemberTimeoutSec is zero or negative.
+// EffectiveCouncilMemberTimeout returns the per-member sub-agent timeout.
+// Returns 0 (no timeout) when CouncilMemberTimeoutSec is zero or negative,
+// which is the default. Set CouncilMemberTimeoutSec > 0 in conduit.json to
+// cap runaway members.
 func (s *Merged) EffectiveCouncilMemberTimeout() time.Duration {
 	if s.CouncilMemberTimeoutSec > 0 {
 		return time.Duration(s.CouncilMemberTimeoutSec) * time.Second
 	}
-	return 30 * time.Second
+	return 0
 }
 
 // ActiveProviderSettings stores conduit's provider routing selector.

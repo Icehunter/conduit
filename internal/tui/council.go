@@ -76,13 +76,21 @@ func runRoundParallel(
 				ch <- roundResult{idx: idx, err: parentCtx.Err()}
 				return
 			}
-			ctx, cancel := context.WithTimeout(parentCtx, timeout)
+			// timeout == 0 means no per-member cap; use the parent context directly.
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if timeout > 0 {
+				ctx, cancel = context.WithTimeout(parentCtx, timeout)
+			} else {
+				ctx, cancel = context.WithCancel(parentCtx)
+			}
 			defer cancel()
 			r, err := loop.RunSubAgentTyped(ctx, promptFn(m), agent.SubAgentSpec{
-				Model:  m.model,
-				Mode:   permissions.ModeBypassPermissions,
-				Tools:  tools,
-				Client: m.client,
+				Model:            m.model,
+				Mode:             permissions.ModeBypassPermissions,
+				Tools:            tools,
+				Client:           m.client,
+				DisableModeTools: true,
 			})
 			agreed := err == nil && councilAgreeRE.MatchString(r.Text)
 			if prog != nil {
@@ -341,6 +349,13 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 			return nil
 		}
 
+		// Bail out early if no member produced a response — don't run synthesis
+		// with an empty prompt (the synthesizer will just say it sees nothing).
+		if !anyMemberResponded(members) {
+			prog.Send(councilDoneMsg{err: fmt.Errorf("all council members failed to respond — check timeout (CouncilMemberTimeoutSec in conduit.json) or provider availability")})
+			return nil
+		}
+
 		// Voting pass (weighted synthesis) when ≥3 active members.
 		if countActive(members) >= 3 {
 			members = runVotingPass(ctx, loop, members, memberTimeout, prog)
@@ -491,6 +506,12 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 
 		if ctx.Err() != nil {
 			return councilChatDoneMsg{err: fmt.Errorf("council cancelled")}
+		}
+
+		// Bail out early if no member produced a response — synthesizing an
+		// empty prompt yields the confusing "I don't see any responses" reply.
+		if !anyMemberResponded(members) {
+			return councilChatDoneMsg{err: fmt.Errorf("all council members failed to respond — check timeout (CouncilMemberTimeoutSec in conduit.json) or provider availability")}
 		}
 
 		// Voting pass when ≥3 active members.
@@ -797,6 +818,16 @@ func buildCouncilClient(
 		return client
 	}
 	return nil
+}
+
+// anyMemberResponded returns true if at least one active member has a non-empty lastResponse.
+func anyMemberResponded(members []councilMember) bool {
+	for _, m := range members {
+		if m.lastResponse != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // countActive counts active (non-ejected) council members.

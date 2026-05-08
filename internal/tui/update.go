@@ -261,14 +261,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case councilMemberEjectedMsg:
-		if m.verboseMode {
-			m.messages = append(m.messages, Message{
-				Role:     RoleCouncil,
-				Content:  "⚠ ejected: " + msg.reason,
-				ToolName: msg.label,
-			})
-			m.refreshViewport()
-		}
+		// Always show ejections — a silent failure means synthesis gets an empty
+		// prompt and produces a confusing "I don't see any responses" reply.
+		m.messages = append(m.messages, Message{
+			Role:     RoleCouncil,
+			Content:  "⚠ ejected: " + msg.reason,
+			ToolName: msg.label,
+		})
+		m.refreshViewport()
 		return m, nil
 
 	case councilSynthesisStartMsg:

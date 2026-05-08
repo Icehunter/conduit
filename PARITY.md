@@ -596,7 +596,7 @@
 | Word utilities | `utils/words.ts` | ❌ | ⬛ | Used by tab-wrap in CC Ink; not needed in Bubble Tea |
 | Context analysis | `utils/analyzeContext.ts` | ❌ | ⬛ | Analytics/GrowthBook context classification |
 | CLAUDE.md loading | `utils/claudemd.ts` (1479 LOC) | `internal/claudemd/claudemd.go` | ✅ | Done in M-A |
-| Auto-updater | `utils/autoUpdater.ts` | ❌ | ⬛ | |
+| Auto-updater | `utils/autoUpdater.ts` | `internal/updater/` | ✅ | Divergence: CC self-replaces via npm. Conduit ships as a single binary via Homebrew/Scoop/winget; updater is a passive notifier that queries GitHub Releases (24h cache) and prints an install-method-aware hint. Skipped when AppVersion=="dev". |
 | Platform detection | `utils/platform.ts` | `cmd/claude/util.go` | ✅ | OS/arch; full GOOS/GOARCH available; no browser/node checks needed |
 | Glob utilities | `utils/glob.ts` | `internal/tools/globtool/` | ✅ | Embedded in globtool; no standalone port needed (Go stdlib covers it) |
 

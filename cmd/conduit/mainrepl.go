@@ -42,6 +42,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	"github.com/icehunter/conduit/internal/tui"
+	"github.com/icehunter/conduit/internal/updater"
 )
 
 // runREPL launches the full-screen Bubble Tea TUI.
@@ -78,6 +79,22 @@ func runREPL(continueMode bool, resumeID string) error {
 				_ = resp.Body.Close()
 			}
 		}
+	}()
+
+	// Update check runs in parallel with the rest of startup. Result is
+	// drained just before the TUI is built; if the check is still in
+	// flight at that point we skip the notice (no blocking on slow
+	// networks). The goroutine writes at most one value to a buffered
+	// channel, so there's no leak if the receive is skipped.
+	updateCh := make(chan string, 1)
+	go func() {
+		updCtx, cancelUpd := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelUpd()
+		res, err := updater.New().Check(updCtx, AppVersion)
+		if err != nil || !res.HasUpdate {
+			return
+		}
+		updateCh <- fmt.Sprintf("conduit %s available (current %s) — %s", res.Latest, res.Current, res.UpgradeCmd)
 	}()
 
 	// Try auth — failure is not fatal here. The TUI handles the no-auth state.
@@ -564,6 +581,15 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Wire a session-scoped async group so async hooks are cancellable and
 	// drainable at shutdown instead of leaking as untracked goroutines.
 	hooks.DefaultAsyncGroup = hooks.NewAsyncGroup(ctx)
+
+	// Drain the update-check result. Non-blocking: if the goroutine is
+	// still running we proceed without a notice (it'll surface next launch
+	// from cache).
+	select {
+	case msg := <-updateCh:
+		startupWarnings = append(startupWarnings, msg)
+	default:
+	}
 
 	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust), tui.RunOptions{
 		AuthErr:                   authErr,

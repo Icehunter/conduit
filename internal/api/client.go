@@ -107,7 +107,7 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 
 	// withRetry handles 429 with exponential backoff, mirroring StreamMessage.
 	resp, err := withRetry(ctx, func() (*http.Response, error) {
-		return c.do(ctx, body)
+		return c.do(ctx, body, req.Model)
 	})
 	if err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 			return nil, fmt.Errorf("api: refresh on 401: %w", err)
 		}
 		resp, err = withRetry(ctx, func() (*http.Response, error) {
-			return c.do(ctx, body)
+			return c.do(ctx, body, req.Model)
 		})
 		if err != nil {
 			return nil, err
@@ -142,13 +142,13 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 
 // do builds and sends the request. The body is buffered, so retries simply
 // rebuild a fresh reader from the same bytes.
-func (c *Client) do(ctx context.Context, body []byte) (*http.Response, error) {
+func (c *Client) do(ctx context.Context, body []byte, model string) (*http.Response, error) {
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages?beta=true"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("api: build request: %w", err)
 	}
-	c.applyHeaders(httpReq.Header)
+	c.applyHeaders(httpReq.Header, model)
 
 	if os.Getenv("CLAUDE_GO_DEBUG_HTTP") == "1" {
 		fmt.Fprintf(os.Stderr, "\n[CLAUDE_GO_DEBUG_HTTP] >>> POST %s\n", url)
@@ -175,7 +175,7 @@ func (c *Client) do(ctx context.Context, body []byte) (*http.Response, error) {
 	return resp, nil
 }
 
-func (c *Client) applyHeaders(h http.Header) {
+func (c *Client) applyHeaders(h http.Header, model string) {
 	c.mu.Lock()
 	tok := c.cfg.AuthToken
 	apiKey := c.cfg.APIKey
@@ -190,9 +190,12 @@ func (c *Client) applyHeaders(h http.Header) {
 		h.Set("X-Claude-Code-Session-Id", c.cfg.SessionID)
 	}
 	if len(c.cfg.BetaHeaders) > 0 {
-		// Decoded reference joins with comma-no-space via Array.toString
-		// (decoded/0158.js:55,67,84). Match exactly for byte equivalence.
-		h.Set("anthropic-beta", strings.Join(c.cfg.BetaHeaders, ","))
+		betas := filterBetasForModel(c.cfg.BetaHeaders, model)
+		if len(betas) > 0 {
+			// Decoded reference joins with comma-no-space via Array.toString
+			// (decoded/0158.js:55,67,84). Match exactly for byte equivalence.
+			h.Set("anthropic-beta", strings.Join(betas, ","))
+		}
 	}
 
 	// Stainless SDK fingerprint headers. The official CLI ships these on

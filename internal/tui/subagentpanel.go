@@ -254,7 +254,7 @@ func (m Model) renderSubagentDetail() string {
 	if titleW < 8 {
 		titleW = 8
 	}
-	sb.WriteString(panelHeader("↳ "+title, titleW))
+	sb.WriteString(panelHeader(title, titleW))
 	fmt.Fprintf(&sb, "  %s  %s\n\n", modeBadge(e.Mode), statusTag)
 
 	// Available event rows: panel height - chrome rows.

@@ -61,7 +61,7 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 	}
 
 	resp, err := withRetry(ctx, func() (*http.Response, error) {
-		return c.doStream(ctx, body)
+		return c.doStream(ctx, body, req2.Model)
 	})
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 			return nil, fmt.Errorf("api: refresh on 401: %w", err)
 		}
 		resp, err = withRetry(ctx, func() (*http.Response, error) {
-			return c.doStream(ctx, body)
+			return c.doStream(ctx, body, req2.Model)
 		})
 		if err != nil {
 			return nil, err
@@ -105,13 +105,13 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 
 // doStream is the streaming counterpart to do(). It uses the same headers
 // but does not buffer the response body.
-func (c *Client) doStream(ctx context.Context, body []byte) (*http.Response, error) {
+func (c *Client) doStream(ctx context.Context, body []byte, model string) (*http.Response, error) {
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages?beta=true"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("api: build stream request: %w", err)
 	}
-	c.applyHeaders(httpReq.Header)
+	c.applyHeaders(httpReq.Header, model)
 
 	if os.Getenv("CLAUDE_GO_DEBUG_HTTP") == "1" {
 		fmt.Fprintf(os.Stderr, "\n[CLAUDE_GO_DEBUG_HTTP] >>> POST %s\n", url)

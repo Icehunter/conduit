@@ -309,6 +309,9 @@ Descoped for now — not part of the "orchestration and brains" core.
 | Tool | Status | Notes |
 |------|--------|-------|
 | Wire-fingerprint drift detector | ✅ | `scripts/wire-check/` — `make verify-wire` decodes the installed claude binary (via bun-demincer), extracts headers/betas/cch/OAuth/tools by string-anchor pattern matching, diffs against conduit's pinned constants. Tracks history in `scripts/wire-check/history/`. Last tracked upstream: **v2.1.133** (cch=`00000`). |
+| GoReleaser config | ✅ | `.goreleaser.yml` — darwin/linux/windows × amd64/arm64, macOS universal binary, ad-hoc codesign on darwin, SBOMs (syft), source archive. Publishers: Homebrew tap, Scoop bucket, winget PR. |
+| Update notifier | ✅ | `internal/updater/` — GitHub Releases polling, 24h cache, install-method detection (brew/scoop/winget/go-install/direct). Async startup check + `conduit update` subcommand. Skipped on `AppVersion=="dev"`. |
+| Distribution channels | 🔶 | GitHub Releases ✅. Homebrew tap (`Icehunter/homebrew-tap`) and Scoop bucket (`Icehunter/scoop-bucket`) require GitHub repo creation + `HOMEBREW_TAP_TOKEN`/`SCOOP_TOKEN`/`WINGET_TOKEN` secrets before next release. See `docs/release.md`. |
 
 ---
 

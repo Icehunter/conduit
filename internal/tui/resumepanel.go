@@ -54,7 +54,7 @@ func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if p.selected < len(p.filtered)-1 {
 			p.selected++
 		}
-	case "enter", "space":
+	case "enter":
 		if len(p.filtered) == 0 {
 			break
 		}
@@ -72,6 +72,11 @@ func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			}
 			msgs, err := session.LoadMessages(loadPath)
 			return resumeLoadMsg{msgs: msgs, filePath: loadPath, err: err}
+		}
+	case "space":
+		if p.filter != "" {
+			p.filter += " "
+			p.applyFilter()
 		}
 	case "esc", "ctrl+c":
 		if p.filter != "" {
@@ -112,7 +117,7 @@ func (m Model) renderResumePicker() string {
 	if p.filter != "" {
 		countHint := stylePickerDesc.Render(fmt.Sprintf("  (%d/%d)", len(p.filtered), len(p.sessions)))
 		titleW := contentW - lipgloss.Width(countHint) - 4
-		sb.WriteString(panelHeader("❯ "+p.filter, titleW) + countHint + "\n\n")
+		sb.WriteString(panelHeader(fmt.Sprintf("Resume: %q", p.filter), titleW) + countHint + "\n\n")
 	} else {
 		sb.WriteString(panelHeader("Resume a previous conversation", contentW) + "\n\n")
 	}

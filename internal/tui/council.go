@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -92,12 +93,18 @@ func runRoundParallel(
 				Client:           m.client,
 				DisableModeTools: true,
 			})
+			if err == nil && substantiveLen(r.Text) < councilMinResponseChars {
+				err = errEmptyCouncilResponse
+			}
 			agreed := err == nil && councilAgreeRE.MatchString(r.Text)
 			if prog != nil {
 				if err != nil {
 					reason := err.Error()
-					if errors.Is(err, context.DeadlineExceeded) {
+					switch {
+					case errors.Is(err, context.DeadlineExceeded):
 						reason = "timeout"
+					case errors.Is(err, errEmptyCouncilResponse):
+						reason = "empty response"
 					}
 					prog.Send(councilMemberEjectedMsg{label: m.label, reason: reason})
 				} else {
@@ -134,17 +141,44 @@ func runRoundParallel(
 	return allAgreed, atLeastOne
 }
 
-// rolePreamble returns a role-specific instruction prefix for council prompts.
+// councilMinResponseChars is the minimum non-whitespace character count for
+// a council response to be considered substantive. Members returning less
+// than this (e.g. silent failure, tool-call preamble only) are ejected from
+// the round so they cannot poison synthesis or convergence scoring.
+const councilMinResponseChars = 40
+
+// errEmptyCouncilResponse is the sentinel ejection reason when a member
+// returns an effectively empty answer.
+var errEmptyCouncilResponse = errors.New("empty council response")
+
+// substantiveLen returns the count of non-whitespace runes in s.
+func substantiveLen(s string) int {
+	n := 0
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// councilGroundingRule is appended to every council member prompt so that
+// citations stay verifiable. Without this, members can copy each other's
+// hallucinated file paths during critique rounds and false consensus emerges.
+const councilGroundingRule = "Grounding rule: any file path, line number, function, or symbol you cite must either be confirmed by a tool call (Read/Grep/Glob) in this turn, or explicitly marked \"unverified — from memory\". Do not echo paths cited by other members without checking them yourself. "
+
+// rolePreamble returns a role-specific instruction prefix for council prompts,
+// followed by the universal grounding rule.
 func rolePreamble(role string) string {
 	switch role {
 	case "architect":
-		return "Focus on overall structure, component boundaries, and sequencing. "
+		return "Focus on overall structure, component boundaries, and sequencing. " + councilGroundingRule
 	case "skeptic":
-		return "Challenge assumptions; identify what could go wrong; surface unstated requirements. "
+		return "Challenge assumptions; identify what could go wrong; surface unstated requirements. " + councilGroundingRule
 	case "perf-reviewer":
-		return "Critique for runtime cost, hot paths, allocation patterns, and scalability. "
+		return "Critique for runtime cost, hot paths, allocation patterns, and scalability. " + councilGroundingRule
 	default:
-		return ""
+		return councilGroundingRule
 	}
 }
 
@@ -776,17 +810,27 @@ func buildCouncilRoster(
 }
 
 // resolveAccountProvider finds an account-based provider whose canonical key
-// matches the given council key.
+// matches the given council key. The expected key format is
+// "provider:<kind>.<account>.<model>" — we derive the per-provider prefix and
+// extract the trailing model rather than enumerating a hardcoded model list.
 func resolveAccountProvider(key string, accountProviders []settings.ActiveProviderSettings) (settings.ActiveProviderSettings, bool) {
-	knownModels := []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
 	for _, ap := range accountProviders {
-		for _, model := range knownModels {
-			candidate := ap
-			candidate.Model = model
-			if "provider:"+settings.ProviderKey(candidate) == key {
-				return candidate, true
-			}
+		if ap.Account == "" {
+			continue
 		}
+		probe := settings.ActiveProviderSettings{Kind: ap.Kind, Account: ap.Account, Model: "x"}
+		canonical := "provider:" + settings.ProviderKey(probe)
+		prefix := strings.TrimSuffix(canonical, "x")
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		model := strings.TrimPrefix(key, prefix)
+		if model == "" {
+			continue
+		}
+		resolved := ap
+		resolved.Model = model
+		return resolved, true
 	}
 	return settings.ActiveProviderSettings{}, false
 }
@@ -853,8 +897,9 @@ func buildDebateContext(members []councilMember) string {
 	return sb.String()
 }
 
-// trivialRE matches one-to-five-word inputs or common short acknowledgements
-// that do not benefit from a multi-model council debate.
+// trivialRE matches common short acknowledgements and greetings that do not
+// benefit from a multi-model council debate. The pattern is a strict
+// allowlist — it does not perform word-count heuristics.
 var trivialRE = regexp.MustCompile(
 	`(?i)^\s*(hi|hello|hey|thanks|thank you|ok|okay|yes|no|sure|bye|goodbye|great|perfect|got it|makes sense|understood|sounds good)[\s?!.]*$`,
 )

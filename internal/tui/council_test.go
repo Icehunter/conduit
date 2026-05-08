@@ -219,16 +219,24 @@ func TestRolePreamble(t *testing.T) {
 		"architect":     "Focus on overall structure",
 		"skeptic":       "Challenge assumptions",
 		"perf-reviewer": "Critique for runtime cost",
-		"":              "",
-		"unknown":       "",
 	}
 	for role, wantSubstr := range cases {
 		got := rolePreamble(role)
-		if wantSubstr != "" && !contains(got, wantSubstr) {
-			t.Errorf("rolePreamble(%q) = %q, missing %q", role, got, wantSubstr)
+		if !contains(got, wantSubstr) {
+			t.Errorf("rolePreamble(%q) = %q, missing role-specific text %q", role, got, wantSubstr)
 		}
-		if wantSubstr == "" && got != "" {
-			t.Errorf("rolePreamble(%q) = %q, want empty", role, got)
+		if !contains(got, "Grounding rule") {
+			t.Errorf("rolePreamble(%q) = %q, missing grounding rule", role, got)
+		}
+	}
+
+	// Unknown / empty roles return the grounding rule alone — never the empty
+	// string, since every council member must receive citation-grounding
+	// guidance regardless of role.
+	for _, role := range []string{"", "unknown"} {
+		got := rolePreamble(role)
+		if !contains(got, "Grounding rule") {
+			t.Errorf("rolePreamble(%q) = %q, missing grounding rule", role, got)
 		}
 	}
 }
@@ -369,5 +377,99 @@ func TestRunRoundParallel_AllEjected(t *testing.T) {
 	}
 	if allAgreed {
 		t.Error("allAgreed should be false when no members responded")
+	}
+}
+
+// ---- substantiveLen ----
+
+func TestSubstantiveLen(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"", 0},
+		{"   ", 0},
+		{"\t\n  \r\n", 0},
+		{"abc", 3},
+		{"  abc  ", 3},
+		{"a b c", 3},
+		{"hello, world!", 12},
+	}
+	for _, tc := range cases {
+		if got := substantiveLen(tc.in); got != tc.want {
+			t.Errorf("substantiveLen(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// ---- resolveAccountProvider ----
+
+func TestResolveAccountProvider(t *testing.T) {
+	accounts := []settings.ActiveProviderSettings{
+		{Kind: settings.ProviderKindClaudeSubscription, Account: "user@example.com"},
+		{Kind: settings.ProviderKindAnthropicAPI, Account: "ops.team@corp.io"},
+	}
+
+	cases := []struct {
+		name      string
+		key       string
+		wantOK    bool
+		wantModel string
+		wantKind  string
+	}{
+		{
+			name:      "claude subscription with dotted email",
+			key:       "provider:" + settings.ProviderKindClaudeSubscription + ".user@example.com.claude-opus-4-7",
+			wantOK:    true,
+			wantModel: "claude-opus-4-7",
+			wantKind:  settings.ProviderKindClaudeSubscription,
+		},
+		{
+			name:      "anthropic api with dotted email and dotted model",
+			key:       "provider:" + settings.ProviderKindAnthropicAPI + ".ops.team@corp.io.claude-haiku-4-5-20251001",
+			wantOK:    true,
+			wantModel: "claude-haiku-4-5-20251001",
+			wantKind:  settings.ProviderKindAnthropicAPI,
+		},
+		{
+			name:      "model not in any hardcoded list still resolves",
+			key:       "provider:" + settings.ProviderKindClaudeSubscription + ".user@example.com.future-model-99",
+			wantOK:    true,
+			wantModel: "future-model-99",
+			wantKind:  settings.ProviderKindClaudeSubscription,
+		},
+		{
+			name:   "unknown account does not match",
+			key:    "provider:" + settings.ProviderKindClaudeSubscription + ".other@example.com.claude-opus-4-7",
+			wantOK: false,
+		},
+		{
+			name:   "missing model rejected",
+			key:    "provider:" + settings.ProviderKindClaudeSubscription + ".user@example.com.",
+			wantOK: false,
+		},
+		{
+			name:   "completely unrelated key",
+			key:    "provider:openai-compatible.gpt-4",
+			wantOK: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := resolveAccountProvider(tc.key, accounts)
+			if ok != tc.wantOK {
+				t.Fatalf("resolveAccountProvider(%q) ok = %v, want %v", tc.key, ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				return
+			}
+			if got.Model != tc.wantModel {
+				t.Errorf("Model = %q, want %q", got.Model, tc.wantModel)
+			}
+			if got.Kind != tc.wantKind {
+				t.Errorf("Kind = %q, want %q", got.Kind, tc.wantKind)
+			}
+		})
 	}
 }

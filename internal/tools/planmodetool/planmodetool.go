@@ -54,7 +54,7 @@ func (t *EnterPlanMode) Execute(ctx context.Context, _ json.RawMessage) (tool.Re
 Explore the codebase, then call ExitPlanMode with your complete plan.
 The council will review it before execution.
 
-Remember: DO NOT write or edit any files yet.`), nil
+When the request touches unfamiliar code, make ≤3 read-only calls (Glob, Grep, Read) to ground your plan before calling ExitPlanMode. Present a structured plan covering Approach / Risks / Alternatives. Do NOT write or edit any files yet.`), nil
 	}
 
 	alreadyPlan := current == permissions.ModePlan

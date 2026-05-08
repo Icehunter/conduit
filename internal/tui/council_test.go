@@ -270,4 +270,52 @@ func TestCostUSDForModel_UnknownModel(t *testing.T) {
 	}
 }
 
+// ---- isCouncilTrivial ----
+
+func TestIsCouncilTrivial(t *testing.T) {
+	trivial := []string{
+		"hi",
+		"Hi!",
+		"hello",
+		"hey",
+		"thanks",
+		"thank you",
+		"ok",
+		"okay",
+		"yes",
+		"no",
+		"sure",
+		"bye",
+		"goodbye",
+		"great",
+		"perfect",
+		"got it",
+		"makes sense",
+		"understood",
+		"sounds good",
+		"  ok  ",
+		"Thanks!",
+		"OK?",
+	}
+	for _, s := range trivial {
+		if !isCouncilTrivial(s) {
+			t.Errorf("isCouncilTrivial(%q) = false, want true", s)
+		}
+	}
+
+	nontrivial := []string{
+		"how do I implement a council debate loop in Go?",
+		"explain the architecture of the TUI package",
+		"fix the bug in run.go",
+		"what is the best approach for streaming SSE responses?",
+		"",
+		"can you help me with the planmodetool",
+	}
+	for _, s := range nontrivial {
+		if isCouncilTrivial(s) {
+			t.Errorf("isCouncilTrivial(%q) = true, want false", s)
+		}
+	}
+}
+
 // ---- helpers ----

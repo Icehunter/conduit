@@ -455,7 +455,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 		// Council mode: bypass the agent loop entirely and ask all council
 		// members directly. The synthesis becomes the assistant response.
-		if m.permissionMode == permissions.ModeCouncil && !usingMCPProvider {
+		// Trivial inputs (greetings, single-word acks) fall through to the
+		// normal agent loop to avoid unnecessary latency and cost.
+		if m.permissionMode == permissions.ModeCouncil && !usingMCPProvider && !isCouncilTrivial(text) {
 			m.history = append(m.history, api.Message{
 				Role:    "user",
 				Content: []api.ContentBlock{{Type: "text", Text: m.expandPastePlaceholders(text)}},

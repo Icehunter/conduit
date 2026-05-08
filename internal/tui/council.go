@@ -290,6 +290,8 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 		}
 
 		// Rounds 1..maxRounds: parallel critique.
+		flowRoundsRun := 0
+		flowConverged := false
 		if countActive(members) > 1 {
 			for round := 1; round <= maxRounds; round++ {
 				prog.Send(councilRoundStartMsg{round: round, total: maxRounds, active: countActive(members)})
@@ -306,6 +308,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 				}
 				allAgreed, atLeastOne := runRoundParallel(ctx, loop, members, critiquePromptFn,
 					[]string{"Read", "Glob", "Grep"}, memberTimeout, prog)
+				flowRoundsRun++
 				if ctx.Err() != nil {
 					break
 				}
@@ -313,6 +316,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 				// Similarity-based early convergence.
 				if convergenceThreshold > 0 && !allAgreed && convergenceScore(members) >= convergenceThreshold {
 					allAgreed = true
+					flowConverged = true
 					prog.Send(councilMemberResponseMsg{
 						label:  "council",
 						text:   fmt.Sprintf("(convergence detected — similarity ≥ %.0f%%)", convergenceThreshold*100),
@@ -321,6 +325,9 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 				}
 
 				if !atLeastOne || allAgreed || countActive(members) <= 1 {
+					if allAgreed {
+						flowConverged = true
+					}
 					break
 				}
 			}
@@ -346,6 +353,7 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 
 		synthClient, synthModel := buildSynthesizerClient(synthesizerKey, providers, accountProviders,
 			newAPIClient, newProviderClient, loop)
+		flowStart := time.Now()
 		synthResult, synthErr := loop.RunSubAgentTyped(ctx, synthPrompt, agent.SubAgentSpec{
 			Mode:       permissions.ModeBypassPermissions,
 			Tools:      []string{"Read", "Glob", "Grep"},
@@ -365,6 +373,16 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 			synthesis: synthesis,
 			usage:     totalUsage,
 			costUSD:   totalCost,
+		})
+		appendCouncilLogEntry(councilLogEntry{
+			Kind:         "flow",
+			Members:      len(members),
+			RoundsRun:    flowRoundsRun,
+			Converged:    flowConverged,
+			CostUSD:      totalCost,
+			InputTokens:  totalUsage.InputTokens,
+			OutputTokens: totalUsage.OutputTokens,
+			DurationMs:   time.Since(flowStart).Milliseconds(),
 		})
 		return councilDoneMsg{plan: synthesis, usage: totalUsage, costUSD: totalCost, perMember: perMember}
 	}
@@ -426,6 +444,8 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 		}
 
 		// Rounds 1..maxRounds: parallel critique.
+		chatRoundsRun := 0
+		chatConverged := false
 		if countActive(members) > 1 {
 			for round := 1; round <= maxRounds; round++ {
 				prog.Send(councilRoundStartMsg{round: round, total: maxRounds, active: countActive(members)})
@@ -441,6 +461,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 				}
 				allAgreed, atLeastOne := runRoundParallel(ctx, loop, members, critiquePromptFn,
 					[]string{"Read", "Glob", "Grep"}, memberTimeout, prog)
+				chatRoundsRun++
 				if ctx.Err() != nil {
 					break
 				}
@@ -448,6 +469,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 				// Similarity-based early convergence.
 				if convergenceThreshold > 0 && !allAgreed && convergenceScore(members) >= convergenceThreshold {
 					allAgreed = true
+					chatConverged = true
 					prog.Send(councilMemberResponseMsg{
 						label:  "council",
 						text:   fmt.Sprintf("(convergence detected — similarity ≥ %.0f%%)", convergenceThreshold*100),
@@ -456,6 +478,9 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 				}
 
 				if !atLeastOne || allAgreed || countActive(members) <= 1 {
+					if allAgreed {
+						chatConverged = true
+					}
 					break
 				}
 			}
@@ -480,6 +505,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 
 		synthClient, synthModel := buildSynthesizerClient(synthesizerKey, providers, accountProviders,
 			newAPIClient, newProviderClient, loop)
+		chatStart := time.Now()
 		synthResult, synthErr := loop.RunSubAgentTyped(ctx, synthPrompt, agent.SubAgentSpec{
 			Mode:       permissions.ModeBypassPermissions,
 			Tools:      []string{"Read", "Glob", "Grep"},
@@ -505,6 +531,16 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			synthesis: synthesis,
 			usage:     totalUsage,
 			costUSD:   totalCost,
+		})
+		appendCouncilLogEntry(councilLogEntry{
+			Kind:         "chat",
+			Members:      len(members),
+			RoundsRun:    chatRoundsRun,
+			Converged:    chatConverged,
+			CostUSD:      totalCost,
+			InputTokens:  totalUsage.InputTokens,
+			OutputTokens: totalUsage.OutputTokens,
+			DurationMs:   time.Since(chatStart).Milliseconds(),
 		})
 		return councilChatDoneMsg{synthesis: synthesis, usage: totalUsage, costUSD: totalCost, perMember: perMember}
 	}
@@ -778,4 +814,17 @@ func buildDebateContext(members []councilMember) string {
 		}
 	}
 	return sb.String()
+}
+
+// trivialRE matches one-to-five-word inputs or common short acknowledgements
+// that do not benefit from a multi-model council debate.
+var trivialRE = regexp.MustCompile(
+	`(?i)^\s*(hi|hello|hey|thanks|thank you|ok|okay|yes|no|sure|bye|goodbye|great|perfect|got it|makes sense|understood|sounds good)[\s?!.]*$`,
+)
+
+// isCouncilTrivial reports whether a user message is too short or simple to
+// warrant a full council debate. When true, the message is routed to the
+// normal single-model agent loop instead.
+func isCouncilTrivial(text string) bool {
+	return trivialRE.MatchString(strings.TrimSpace(text))
 }

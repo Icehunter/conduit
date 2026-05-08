@@ -1,0 +1,16 @@
+{
+  "name": "wire-check",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Wire-fingerprint drift detector for conduit vs upstream claude binary",
+  "scripts": {
+    "extract": "node extract.mjs",
+    "verify": "node verify.mjs",
+    "check": "node run.mjs"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}

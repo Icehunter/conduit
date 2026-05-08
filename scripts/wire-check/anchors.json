@@ -1,0 +1,58 @@
+{
+  "version": {
+    "description": "Claude Code VERSION from inline macro object",
+    "anchor": "VERSION:",
+    "regex": "VERSION:\\s*\"([\\d.]+)\"",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "cch": {
+    "description": "cch per-build identifier in billing header template",
+    "anchor": "cch=",
+    "regex": "cch=([0-9a-f]+);",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "client_id": {
+    "description": "OAuth ClientID (rarely rotated)",
+    "anchor": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    "regex": "\"(9d1c250a-e61b-44d9-88ed-5944d1962f5e)\"",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "oauth_beta_header": {
+    "description": "OAUTH_BETA_HEADER value",
+    "anchor": "oauth-2025-",
+    "regex": "\"(oauth-[\\d-]+)\"",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "token_url": {
+    "description": "OAuth token endpoint URL",
+    "anchor": "platform.claude.com/v1/oauth/token",
+    "regex": "\"(https://platform\\.claude\\.com/v1/oauth/token)\"",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "claude_ai_authorize_url": {
+    "description": "Claude.ai OAuth authorize URL (upstream uses claude.com/cai bounce; conduit goes direct)",
+    "anchor": "CLAUDE_AI_AUTHORIZE_URL",
+    "regex": "CLAUDE_AI_AUTHORIZE_URL:\\s*\"(https://[^\"]+)\"",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "system_prompt_preamble": {
+    "description": "You are Claude Code system prompt preamble",
+    "anchor": "You are Claude Code, Anthropic",
+    "regex": "\"(You are Claude Code, Anthropic[^\"]+)\"",
+    "group": 1,
+    "exclude_vendor": true
+  },
+  "anthropic_version": {
+    "description": "anthropic-version header value",
+    "anchor": "anthropic-version",
+    "regex": "\"anthropic-version\"[^\"]*\"([\\d-]+)\"",
+    "group": 1,
+    "exclude_vendor": true
+  }
+}

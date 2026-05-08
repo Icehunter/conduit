@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -203,7 +205,19 @@ func (c *Client) applyHeaders(h http.Header) {
 	h.Set("X-Stainless-OS", stainlessOS())
 	h.Set("X-Stainless-Arch", stainlessArch())
 	h.Set("X-Stainless-Runtime", "node")
-	h.Set("X-Stainless-Runtime-Version", "v22.0.0") // matches Bun's reported node compatibility
+	h.Set("X-Stainless-Runtime-Version", "v24.3.0") // matches Bun's reported node compatibility (v133)
+
+	// Per-request correlation ID — new in v133 (CLIENT_REQUEST_ID_HEADER).
+	var reqID [16]byte
+	_, _ = crand.Read(reqID[:])
+	reqID[6] = (reqID[6] & 0x0f) | 0x40
+	reqID[8] = (reqID[8] & 0x3f) | 0x80
+	h.Set("x-client-request-id",
+		hex.EncodeToString(reqID[:4])+"-"+
+			hex.EncodeToString(reqID[4:6])+"-"+
+			hex.EncodeToString(reqID[6:8])+"-"+
+			hex.EncodeToString(reqID[8:10])+"-"+
+			hex.EncodeToString(reqID[10:]))
 
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)

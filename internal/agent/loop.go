@@ -172,6 +172,12 @@ type LoopConfig struct {
 	// BackgroundModel returns the model used for helper calls such as
 	// compaction, memory extraction, and Task sub-agents. Empty means use Model.
 	BackgroundModel func() string
+
+	// IsOAuthSubscription, when true, enables the dynamic per-request billing
+	// suffix computation (SHA256 of the first user message). Set for Claude.ai
+	// Max subscription accounts only; leave false for Console API key and
+	// OpenAI-compatible providers so their billing block is unchanged.
+	IsOAuthSubscription bool
 }
 
 // Loop drives the agentic query cycle.
@@ -341,6 +347,16 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		if turn == 0 && sessionReminderBlock != nil {
 			reqSystem = append(append([]api.SystemBlock(nil), system...), *sessionReminderBlock)
 		}
+		// For Claude.ai OAuth (Max subscription) accounts, replace the static
+		// billing block (index 0) with a dynamically computed one using the
+		// SHA256 of the first user message. Other account types are unaffected.
+		if l.cfg.IsOAuthSubscription && len(reqSystem) > 0 {
+			if firstMsg := firstUserMessageText(msgs); firstMsg != "" {
+				updated := append([]api.SystemBlock(nil), reqSystem...)
+				updated[0] = DynamicBillingBlock(firstMsg)
+				reqSystem = updated
+			}
+		}
 		req := &api.MessageRequest{
 			Model:     model,
 			MaxTokens: l.cfg.MaxTokens,
@@ -484,4 +500,20 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		})
 
 	}
+}
+
+// firstUserMessageText returns the text content of the first user message in
+// the conversation. Used to compute the dynamic billing suffix for OAuth accounts.
+func firstUserMessageText(msgs []api.Message) string {
+	for _, m := range msgs {
+		if m.Role != "user" {
+			continue
+		}
+		for _, blk := range m.Content {
+			if blk.Type == "text" && blk.Text != "" {
+				return blk.Text
+			}
+		}
+	}
+	return ""
 }

@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-05-08T07:52:45Z",
+  "method": "mitmproxy 8888 via HTTPS_PROXY",
+  "binary_version": "2.1.133",
+  "headers_sent": {
+    "User-Agent": "claude-cli/2.1.133 (external, sdk-cli)",
+    "X-Stainless-Runtime-Version": "v24.3.0",
+    "X-Stainless-Package-Version": "0.81.0",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "MacOS",
+    "X-Stainless-Arch": "arm64",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Timeout": "600",
+    "X-Claude-Code-Session-Id": "(uuid per session)",
+    "x-client-request-id": "(uuid per request — new in v133)",
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,context-1m-2025-08-07,effort-2025-11-24,extended-cache-ttl-2025-04-11",
+    "anthropic-dangerous-direct-browser-access": "true",
+    "x-app": "cli",
+    "Authorization": "Bearer (redacted)"
+  },
+  "billing_header_example": "x-anthropic-billing-header: cc_version=2.1.133.49e; cc_entrypoint=sdk-cli; cch=adcd5;",
+  "billing_notes": {
+    "cc_version_suffix": "SHA256('59cf53e54c78' + firstMsg[4,7,20] + '2.1.133').slice(0,3) — verified: msg='say the word hello and nothing else', K='t  ', result='49e'",
+    "cch": "adcd5 — Bun compile-time macro, static per-build; decoded JS shows '00000' placeholder",
+    "cch_formula": "unknown — not in decoded JS source; baked into Bun binary at build time"
+  },
+  "system_blocks": [
+    {"index": 0, "description": "billing header text", "cache_control": null},
+    {"index": 1, "description": "identity: You are a Claude agent, built on Anthropic's Claude Agent SDK.", "cache_control": null},
+    {"index": 2, "description": "main system prompt (truncated)", "cache_control": {"type": "ephemeral", "ttl": "1h", "scope": "global"}},
+    {"index": 3, "description": "output guidance", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+  ],
+  "conduit_diff": {
+    "X-Stainless-Runtime-Version": {"conduit": "v22.0.0", "upstream": "v24.3.0", "action": "update in internal/api/client.go"},
+    "cch": {"conduit": "0f7c5", "upstream": "adcd5", "action": "update BillingHeader in internal/agent/systemprompt.go"},
+    "x-client-request-id": {"conduit": "missing", "upstream": "UUID per-request", "action": "add to ExtraHeaders map in internal/app/auth.go"},
+    "betas_added": ["context-1m-2025-08-07", "extended-cache-ttl-2025-04-11"],
+    "betas_removed": ["cache-diagnosis-2026-04-07"],
+    "billing_suffix": {"conduit": "static .824", "upstream": "dynamic SHA256", "action": "implement ox8() in internal/agent/systemprompt.go"}
+  }
+}

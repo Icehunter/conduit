@@ -37,8 +37,9 @@ func NewAPIClient(tok auth.PersistedTokens, wireVersion string) *api.Client {
 		"prompt-caching-scope-2026-01-05",
 		"advisor-tool-2026-03-01",
 		"advanced-tool-use-2025-11-20",
+		"context-1m-2025-08-07",
 		"effort-2025-11-24",
-		"cache-diagnosis-2026-04-07",
+		"extended-cache-ttl-2025-04-11",
 	}
 	if apiKey != "" {
 		betaHeaders = removeString(betaHeaders, "oauth-2025-04-20")

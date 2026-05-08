@@ -302,6 +302,14 @@ Descoped for now — not part of the "orchestration and brains" core.
 
 ---
 
+## Tooling
+
+| Tool | Status | Notes |
+|------|--------|-------|
+| Wire-fingerprint drift detector | ✅ | `scripts/wire-check/` — `make verify-wire` decodes the installed claude binary (via bun-demincer), extracts headers/betas/cch/OAuth/tools by string-anchor pattern matching, diffs against conduit's pinned constants. Tracks history in `scripts/wire-check/history/`. Last tracked upstream: **v2.1.133** (cch=`00000`). |
+
+---
+
 ## Known lies / misleading behavior
 
 | Issue | Location | Fix milestone |

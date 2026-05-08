@@ -526,6 +526,7 @@ func runREPL(continueMode bool, resumeID string) error {
 				_ = sess.SetSummary(summary)
 			}
 		},
+		IsOAuthSubscription: auth.InferAccountKind(tok) == auth.AccountKindClaudeAI,
 	})
 
 	// Register AgentTool and SkillTool now that the loop exists.

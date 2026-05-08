@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/sse"
@@ -110,6 +112,24 @@ func (c *Client) doStream(ctx context.Context, body []byte) (*http.Response, err
 		return nil, fmt.Errorf("api: build stream request: %w", err)
 	}
 	c.applyHeaders(httpReq.Header)
+
+	if os.Getenv("CLAUDE_GO_DEBUG_HTTP") == "1" {
+		fmt.Fprintf(os.Stderr, "\n[CLAUDE_GO_DEBUG_HTTP] >>> POST %s\n", url)
+		keys := make([]string, 0, len(httpReq.Header))
+		for k := range httpReq.Header {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			v := httpReq.Header.Get(k)
+			if isCredentialHeader(k) {
+				v = "(redacted)"
+			}
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", k, v)
+		}
+		fmt.Fprintf(os.Stderr, "  body bytes: %d\n", len(body))
+	}
+
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("api: send stream: %w", err)

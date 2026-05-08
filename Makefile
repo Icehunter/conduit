@@ -1,5 +1,6 @@
 .PHONY: all build install test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
-        version version-patch version-minor version-major help
+        version version-patch version-minor version-major help \
+        verify-wire verify-wire-fast verify-wire-fresh
 
 BIN    := bin/conduit
 PKG    := ./...
@@ -119,6 +120,18 @@ version-major:
 	git push && git push origin "v$$NEW"; \
 	echo "Bumped $$V -> $$NEW (tagged and pushed v$$NEW)"
 
+# Wire-fingerprint drift detection against the installed claude binary.
+# Requires: claude on PATH, ../bun-demincer cloned.
+# BUN_DEMINCER_DIR overrides the default ../bun-demincer path.
+verify-wire:
+	node scripts/wire-check/run.mjs
+
+verify-wire-fast:
+	node scripts/wire-check/run.mjs --skip-decode
+
+verify-wire-fresh:
+	node scripts/wire-check/run.mjs --force
+
 help:
 	@echo "Targets:"
 	@echo "  all              verify + build (default)"
@@ -139,3 +152,6 @@ help:
 	@echo "  version-patch    Bump patch (1.0.0 → 1.0.1), tag, push → triggers release"
 	@echo "  version-minor    Bump minor (1.0.0 → 1.1.0), tag, push → triggers release"
 	@echo "  version-major    Bump major (1.0.0 → 2.0.0), tag, push → triggers release"
+	@echo "  verify-wire      Decode+extract+diff vs conduit (skip-if-version-known)"
+	@echo "  verify-wire-fast Skip decode phase; require existing decoded-<v>/"
+	@echo "  verify-wire-fresh Force re-decode even if decoded-<v>/ exists"

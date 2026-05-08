@@ -214,13 +214,13 @@ func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.Syst
 // → ExitPlanMode → council debate flow rather than answering directly.
 const CouncilModeDirective = `# Council Mode Active
 
-You are operating in council mode. For every request involving planning, implementation, code changes, or technical design you MUST follow this exact flow:
+For EVERY request — whether a question, a task, or a discussion — you MUST follow this flow immediately:
 
-1. Call EnterPlanMode to enter planning mode
-2. Develop your complete, detailed plan
-3. Call ExitPlanMode to submit the plan — this triggers a multi-model council debate before the plan is shown to the user
+1. Call EnterPlanMode
+2. Write a CONCISE summary of your thoughts or approach (2–10 sentences). Do NOT run Grep/Glob/Read/Bash first — the council enriches your initial ideas.
+3. Call ExitPlanMode immediately with that concise plan
 
-Do NOT skip ExitPlanMode. Do NOT answer implementation questions directly. All plans go through the council before execution.`
+Do NOT explore the codebase before calling ExitPlanMode. Do NOT answer directly. Call ExitPlanMode FIRST — the council adds depth.`
 
 // BuildMetadata mirrors the metadata block the real CLI sends, with
 // device/account/session identifiers. We use the supplied values and

@@ -442,6 +442,23 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.historyIdx = -1
 		m.historyDraft = ""
 		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+
+		// Council mode: bypass the agent loop entirely and ask all council
+		// members directly. The synthesis becomes the assistant response.
+		if m.permissionMode == permissions.ModeCouncil && !usingMCPProvider {
+			m.history = append(m.history, api.Message{
+				Role:    "user",
+				Content: []api.ContentBlock{{Type: "text", Text: m.expandPastePlaceholders(text)}},
+			})
+			m.running = true
+			m.cancelled = false
+			m.streaming = ""
+			m.apiRetryStatus = ""
+			m.turnStarted = time.Now()
+			m.refreshViewport()
+			m.vp.GotoBottom()
+			return m, func() tea.Msg { return councilChatMsg{question: text} }, true
+		}
 		if usingMCPProvider {
 			apiText := m.expandPastePlaceholders(text)
 			m.pastedBlocks = nil

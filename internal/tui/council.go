@@ -192,6 +192,100 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleCouncilChat runs the council debate for a direct user chat message.
+// Unlike handleCouncilFlow (which waits for ExitPlanMode), this fires
+// immediately when the user submits a message in council mode.
+func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
+	providerKeys := append([]string(nil), m.councilProviders...)
+	providers := cloneProviderMap(m.providers)
+	loop := m.cfg.Loop
+	prog := *m.cfg.Program
+	question := msg.question
+	newAPIClient := m.cfg.NewAPIClient
+	newProviderClient := m.cfg.NewProviderAPIClient
+
+	maxRounds := 1 // chat council: propose only, no critique rounds
+	if s, err := settings.Load(""); err == nil && s.EffectiveCouncilMaxRounds() > 0 {
+		maxRounds = 1 // keep chat council fast: single round regardless of setting
+	}
+	_ = maxRounds
+
+	cmd := func() tea.Msg {
+		ctx := context.Background()
+
+		members := buildCouncilRoster(providerKeys, providers, newAPIClient, newProviderClient)
+		if len(members) == 0 {
+			return councilChatDoneMsg{err: fmt.Errorf("no council members configured — add providers in /model → Council tab")}
+		}
+
+		type proposeResult struct {
+			idx  int
+			text string
+			err  error
+		}
+
+		resultCh := make(chan proposeResult, len(members))
+		var wg sync.WaitGroup
+		for i := range members {
+			if !members[i].active {
+				continue
+			}
+			wg.Add(1)
+			go func(idx int, member councilMember) {
+				defer wg.Done()
+				text, err := runCouncilSubAgent(ctx, loop, member,
+					"Answer the following question concisely and directly:\n\n"+question,
+					[]string{"Read", "Glob", "Grep", "WebFetch", "WebSearch"})
+				resultCh <- proposeResult{idx: idx, text: text, err: err}
+			}(i, members[i])
+		}
+		wg.Wait()
+		close(resultCh)
+
+		for r := range resultCh {
+			if r.err != nil {
+				members[r.idx].active = false
+				prog.Send(councilMemberEjectedMsg{label: members[r.idx].label, reason: r.err.Error()})
+			} else {
+				members[r.idx].lastResponse = r.text
+				prog.Send(councilMemberResponseMsg{label: members[r.idx].label, text: r.text})
+			}
+		}
+
+		// Synthesize all member responses into a single answer.
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Multiple AI models were asked: %q\n\nHere are their responses:\n\n", question)
+		for _, mem := range members {
+			if mem.lastResponse != "" {
+				fmt.Fprintf(&sb, "=== %s ===\n%s\n\n", mem.label, mem.lastResponse)
+			}
+		}
+		fmt.Fprintf(&sb,
+			"Synthesise the above responses into a single comprehensive answer. "+
+				"Incorporate the strongest points from each perspective. "+
+				"Be direct and concise — this is a chat answer, not a formal plan.")
+
+		synthesis, err := loop.RunSubAgentTyped(ctx, sb.String(), agent.SubAgentSpec{
+			Mode:  permissions.ModeBypassPermissions,
+			Tools: []string{"Read", "Glob", "Grep"},
+		})
+		if err != nil {
+			// If synthesis fails, concatenate member responses.
+			var fallback strings.Builder
+			for _, mem := range members {
+				if mem.lastResponse != "" {
+					fmt.Fprintf(&fallback, "**%s**: %s\n\n", mem.label, mem.lastResponse)
+				}
+			}
+			synthesis = strings.TrimSpace(fallback.String())
+		}
+
+		return councilChatDoneMsg{synthesis: synthesis}
+	}
+
+	return m, cmd
+}
+
 // buildCouncilRoster converts the TUI's provider key list into councilMember
 // entries with per-member API clients so each member hits its own account.
 func buildCouncilRoster(

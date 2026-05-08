@@ -227,6 +227,19 @@ type (
 		reply    chan<- planmodetool.PlanApprovalDecision
 	}
 
+	// councilChatMsg triggers council debate directly from a user chat message.
+	// Unlike councilStartMsg (which goes through ExitPlanMode), this fires
+	// immediately when the user submits a message while in council mode.
+	councilChatMsg struct {
+		question string
+	}
+
+	// councilChatDoneMsg is sent when the council chat debate completes.
+	councilChatDoneMsg struct {
+		synthesis string
+		err       error
+	}
+
 	// councilMemberResponseMsg carries one council member's response.
 	councilMemberResponseMsg struct { //nolint:unused
 		label  string // model/provider display name

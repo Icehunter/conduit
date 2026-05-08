@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
@@ -202,6 +203,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.buddyFrame++
 			return m, buddyTick()
 		}
+		return m, nil
+
+	case councilChatMsg:
+		return m.handleCouncilChat(msg)
+
+	case councilChatDoneMsg:
+		m.running = false
+		m.cancelTurn = nil
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
+		} else if msg.synthesis != "" {
+			// Add synthesis to display and to API history so follow-ups work.
+			m.messages = append(m.messages, m.assistantMessage(msg.synthesis))
+			m.history = append(m.history, api.Message{
+				Role:    "assistant",
+				Content: []api.ContentBlock{{Type: "text", Text: msg.synthesis}},
+			})
+		}
+		m.refreshViewport()
+		m.vp.GotoBottom()
+		m.input.Focus()
 		return m, nil
 
 	case councilStartMsg:

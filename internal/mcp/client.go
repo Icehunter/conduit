@@ -272,6 +272,9 @@ type httpClient struct {
 	headers map[string]string
 	http    *http.Client
 	nextID  atomic.Int64
+
+	sessionMu sync.Mutex
+	sessionID string // Mcp-Session-Id from Initialize response; sent on all subsequent requests
 }
 
 // NewHTTPClient creates a Client that sends JSON-RPC requests to url via HTTP POST.
@@ -285,14 +288,24 @@ func NewHTTPClient(url string, headers map[string]string) Client {
 	}
 }
 
+// call is the standard entry point for all calls after Initialize.
+// It injects the session ID (if any) and discards the response headers.
 func (c *httpClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	raw, _, err := c.callWithHeaders(ctx, method, params)
+	return raw, err
+}
+
+// callWithHeaders performs one JSON-RPC request and returns the result along
+// with the Mcp-Session-Id response header value (empty string if absent).
+// Used by Initialize so it can capture the session ID on first contact.
+func (c *httpClient) callWithHeaders(ctx context.Context, method string, params any) (json.RawMessage, string, error) {
 	id := c.nextID.Add(1)
 
 	var rawParams json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		rawParams = b
 	}
@@ -305,24 +318,33 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range c.headers {
 		httpReq.Header.Set(k, v)
 	}
+	// Include the session ID on all calls after Initialize.
+	c.sessionMu.Lock()
+	sid := c.sessionID
+	c.sessionMu.Unlock()
+	if sid != "" {
+		httpReq.Header.Set("Mcp-Session-Id", sid)
+	}
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("mcp http: %w", err)
+		return nil, "", fmt.Errorf("mcp http: %w", err)
 	}
 	defer resp.Body.Close()
+
+	respSessionID := resp.Header.Get("Mcp-Session-Id")
 
 	// Auth-required: 401 is the canonical signal but several MCPs return
 	// 403 for missing/invalid bearer (especially when the server is
@@ -330,7 +352,7 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	// as ErrUnauthorized so the caller can drive OAuth.
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, ErrUnauthorized
+		return nil, "", ErrUnauthorized
 	}
 
 	// SSE detection: some MCPs ship `data: {...}` framing under content
@@ -340,7 +362,8 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	// the SSE reader.
 	ct := resp.Header.Get("Content-Type")
 	if strings.Contains(ct, "event-stream") {
-		return c.readSSEResponse(resp.Body)
+		raw, err := c.readSSEResponse(resp.Body)
+		return raw, respSessionID, err
 	}
 
 	// Non-2xx with a non-JSON body: surface the status + a body excerpt
@@ -349,7 +372,7 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	// "invalid character '<' looking for beginning of value".
 	if resp.StatusCode/100 != 2 {
 		excerpt := readBodyExcerpt(resp.Body, 200)
-		return nil, fmt.Errorf("mcp http: server returned %d %s%s",
+		return nil, "", fmt.Errorf("mcp http: server returned %d %s%s",
 			resp.StatusCode, http.StatusText(resp.StatusCode), excerpt)
 	}
 
@@ -359,12 +382,12 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	buf, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	var rpcResp jsonrpcResponse
 	if err := json.Unmarshal(buf, &rpcResp); err != nil {
-		return nil, fmt.Errorf("mcp http decode: %w%s", err, formatBodyExcerpt(buf, 200))
+		return nil, "", fmt.Errorf("mcp http decode: %w%s", err, formatBodyExcerpt(buf, 200))
 	}
 	if rpcResp.Error != nil {
-		return nil, rpcResp.Error
+		return nil, "", rpcResp.Error
 	}
-	return rpcResp.Result, nil
+	return rpcResp.Result, respSessionID, nil
 }
 
 // readBodyExcerpt drains up to max bytes from r and returns a "; body: …"
@@ -427,9 +450,15 @@ func (c *httpClient) Initialize(ctx context.Context) (string, error) {
 			"version": "1.0",
 		},
 	}
-	raw, err := c.call(ctx, "initialize", params)
+	raw, sessionID, err := c.callWithHeaders(ctx, "initialize", params)
 	if err != nil {
 		return "", fmt.Errorf("mcp initialize: %w", err)
+	}
+	// Persist the session ID so all subsequent calls include it.
+	if sessionID != "" {
+		c.sessionMu.Lock()
+		c.sessionID = sessionID
+		c.sessionMu.Unlock()
 	}
 	var result struct {
 		Instructions string `json:"instructions"`

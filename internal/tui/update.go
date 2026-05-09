@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image"
 	"strings"
 	"time"
@@ -159,6 +160,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Enqueue the feedback message so it fires as the next user turn
 		// once the agent-done transition clears the running state.
 		m.pendingMessages = append(m.pendingMessages, msg.text)
+		return m, nil
+
+	case mcpReconnectDoneMsg:
+		// Reconnect finished — re-open the /mcp panel with fresh server state.
+		if m.cfg.Commands != nil {
+			if res, ok := m.cfg.Commands.Dispatch("/mcp"); ok {
+				m2, cmd := m.applyCommandResult(res)
+				return m2, cmd
+			}
+		}
+		return m, nil
+
+	case mcpAuthDoneMsg:
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("MCP OAuth failed for %q: %v", msg.name, msg.err)})
+		} else if msg.reconnectErr != nil {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("OAuth tokens saved for %q. Reconnect failed (%v) — run /mcp auth %s to retry.", msg.name, msg.reconnectErr, msg.name)})
+		} else {
+			m.flashMsg = fmt.Sprintf("Authenticated %q ✓", msg.name)
+		}
+		m.refreshViewport()
 		return m, nil
 
 	case compactDoneMsg:

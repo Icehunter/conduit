@@ -135,7 +135,7 @@ type ContentBlock struct {
 func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any, 8)
 	m["type"] = b.Type
-	if b.Text != "" {
+	if b.Text != "" && b.Type != "tool_result" {
 		m["text"] = b.Text
 	}
 	if b.Thinking != "" {

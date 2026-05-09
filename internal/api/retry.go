@@ -19,6 +19,7 @@ type RetryEvent struct {
 	Attempt    int
 	Delay      time.Duration
 	RetryAfter time.Duration
+	ResetAt    time.Time
 	Err        error
 }
 
@@ -101,6 +102,20 @@ func parseRetryAfter(h string) float64 {
 	return 0
 }
 
+func parseRateLimitReset(h string) time.Time {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339, h); err == nil {
+		return t
+	}
+	if t, err := http.ParseTime(h); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
 // withRetry wraps a function that returns (*http.Response, error), retrying
 // on 429 with exponential backoff. On 401 it is not retried here; the caller
 // handles 401 separately.
@@ -134,6 +149,7 @@ func withRetry(ctx context.Context, fn func() (*http.Response, error)) (*http.Re
 				Attempt:    attempt + 1,
 				Delay:      d,
 				RetryAfter: retryAfterDuration,
+				ResetAt:    parseRateLimitReset(resp.Header.Get("anthropic-ratelimit-unified-reset")),
 				Err:        decodeErr,
 			}) {
 				return nil, decodeErr

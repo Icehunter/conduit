@@ -40,7 +40,6 @@ func (m Model) renderPanel() string {
 		sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · Esc back"))
 	case panelViewTools:
 		m.renderPanelTools(&sb, p, innerW)
-		sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter view · Esc back"))
 	case panelViewToolDetail:
 		m.renderPanelToolDetail(&sb, p, innerW)
 		sb.WriteString("\n" + stylePickerDesc.Render("Esc back"))
@@ -137,6 +136,9 @@ func mcpActions(item *panelMCPItem) []string {
 	if !item.disabled && item.status == "connected" && item.toolCount > 0 {
 		actions = append(actions, "View tools")
 	}
+	if item.status == "needs-auth" {
+		actions = append(actions, "Authenticate")
+	}
 	if !item.disabled {
 		actions = append(actions, "Reconnect")
 	}
@@ -160,7 +162,25 @@ func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
 		sb.WriteString(stylePickerDesc.Render("No tools loaded (server may not be connected)."))
 		return
 	}
-	for i, t := range item.tools {
+
+	// Header is 4 rows, footer is 2 rows, and panelFrameStyle contributes
+	// top/bottom border plus top/bottom padding. Keep the list inside the
+	// visible panel rect instead of letting long tool lists paint under the
+	// input/footer chrome.
+	visible := m.panelHeight() - 11
+	visible = max(visible, 3)
+	total := len(item.tools)
+	start := p.selected - visible/2
+	start = max(start, 0)
+	end := start + visible
+	if end > total {
+		end = total
+		start = end - visible
+		start = max(start, 0)
+	}
+
+	for i := start; i < end; i++ {
+		t := item.tools[i]
 		cursor := "  "
 		nameStyle := stylePickerItem
 		if i == p.selected {
@@ -178,6 +198,12 @@ func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
 		attrs := stylePickerDesc.Render("read-only, open-world")
 		fmt.Fprintf(sb, "%s%d. %s%s\n", cursor, i+1, nameStyle.Render(paddedName), attrs)
 	}
+
+	footer := "↑/↓ navigate · Enter view · Esc back"
+	if total > visible {
+		footer = fmt.Sprintf("↑/↓ scroll (%d–%d/%d) · Enter view · Esc back", start+1, end, total)
+	}
+	sb.WriteString("\n" + stylePickerDesc.Render(footer))
 }
 
 func (m Model) renderPanelToolDetail(sb *strings.Builder, p *panelState, innerW int) {

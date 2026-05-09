@@ -19,6 +19,7 @@ import (
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/subagent"
+	"github.com/icehunter/conduit/internal/tools/todowritetool"
 )
 
 // handleWindowSize recalculates layout after a terminal resize.
@@ -222,8 +223,9 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		// cleanup history (for example interrupted tool_result blocks), so
 		// adopt it when it extends the TUI's current history.
 		if len(msg.history) > len(m.history) {
-			m.history = m.annotateTurnProvider(msg.history)
-			m.persistNewMessages(msg.history)
+			cleaned := session.FilterUnresolvedToolUses(msg.history)
+			m.history = m.annotateTurnProvider(cleaned)
+			m.persistNewMessages(cleaned)
 			if msg.usage.InputTokens > 0 || msg.usage.OutputTokens > 0 {
 				m.applyAPIUsage(msg.usage, msg.contextInputTokens)
 			} else {
@@ -276,6 +278,24 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	m.refreshViewport()
 	m.input.Focus()
 
+	if !msg.cancelled && !isCancelError(msg.err) && msg.err == nil && len(m.pendingMessages) == 0 {
+		if prompt, ok := m.unfinishedTodoContinuePrompt(); ok {
+			if m.todoAutoContinues < maxTodoAutoContinues {
+				m.todoAutoContinues++
+				m.pendingMessages = append(m.pendingMessages, prompt)
+				m.flashMsg = "continuing unfinished todo list"
+			} else {
+				m.messages = append(m.messages, Message{
+					Role:    RoleSystem,
+					Content: "Todo list still has unfinished items. Send a message to continue, or update the todos if the work is actually complete.",
+				})
+				m.refreshViewport()
+			}
+		} else {
+			m.todoAutoContinues = 0
+		}
+	}
+
 	// Drain pending messages: if the user typed while we were running,
 	// auto-submit the first queued message now. Subsequent ones will be
 	// sent in future agentDoneMsg cycles.
@@ -307,6 +327,39 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+const maxTodoAutoContinues = 2
+
+func (m Model) unfinishedTodoContinuePrompt() (string, bool) {
+	if _, usingMCPProvider := m.activeMCPProvider(); usingMCPProvider {
+		return "", false
+	}
+	todos := todowritetool.GetTodos()
+	if len(todos) == 0 {
+		return "", false
+	}
+	active := ""
+	pending := 0
+	for _, td := range todos {
+		switch td.Status {
+		case todowritetool.StatusCompleted:
+			continue
+		case todowritetool.StatusInProgress:
+			if active == "" {
+				active = td.Content
+			}
+		default:
+			pending++
+		}
+	}
+	if active == "" && pending == 0 {
+		return "", false
+	}
+	if active != "" {
+		return "Continue the unfinished todo list. The current in-progress item is: " + active + ". Mark todos complete with TodoWrite as each item finishes, then continue with any remaining work.", true
+	}
+	return fmt.Sprintf("Continue the unfinished todo list. There are %d pending item(s). Start the next item, mark it in_progress with TodoWrite, and keep going until the list is complete.", pending), true
 }
 
 // handleLoginMsg dispatches all auth-flow messages. Returns (Model, Cmd,

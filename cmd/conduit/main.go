@@ -6,6 +6,7 @@
 //	conduit --print "prompt"     One-shot streaming response.
 //	conduit version              Print binary version.
 //	conduit update               Check GitHub for a newer release.
+//	conduit mcp <subcommand>     Manage MCP servers (add/list/get/remove/add-json).
 package main
 
 import (
@@ -57,6 +58,8 @@ func run() error {
 		return nil
 	case "update":
 		return runUpdate()
+	case "mcp":
+		return runMCPCmd(args[1:])
 	default:
 		flag.Usage()
 		return fmt.Errorf("unknown subcommand: %s", args[0])

@@ -383,21 +383,22 @@ type Model struct {
 	height int
 	panelH int
 
-	running          bool
-	cancelled        bool // true after Ctrl+C; cleared when next turn starts
-	cancelTurn       context.CancelFunc
-	streaming        string
-	apiRetryStatus   string
-	turnID           int                      // incremented each turn; agentDoneMsg with stale ID is ignored
-	turnStarted      time.Time                // wall time when the current agent turn started
-	turnAssistant    string                   // display label captured for the provider answering the current turn
-	turnProvider     string                   // provider/model captured for transcript display metadata
-	turnProviderKind string                   // provider kind captured for transcript display metadata
-	pendingMessages  []string                 // messages typed while agent is running; drained after turn ends
-	questionAsk      *questionAskState        // non-nil when AskUserQuestion is waiting for user input
-	planApproval     *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
-	diffReview       *diffReviewState         // non-nil when diff-first review gate is open
-	todoStripHidden  bool                     // ctrl+t toggles; strip is shown by default when todos present
+	running           bool
+	cancelled         bool // true after Ctrl+C; cleared when next turn starts
+	cancelTurn        context.CancelFunc
+	streaming         string
+	apiRetryStatus    string
+	turnID            int                      // incremented each turn; agentDoneMsg with stale ID is ignored
+	turnStarted       time.Time                // wall time when the current agent turn started
+	turnAssistant     string                   // display label captured for the provider answering the current turn
+	turnProvider      string                   // provider/model captured for transcript display metadata
+	turnProviderKind  string                   // provider kind captured for transcript display metadata
+	pendingMessages   []string                 // messages typed while agent is running; drained after turn ends
+	questionAsk       *questionAskState        // non-nil when AskUserQuestion is waiting for user input
+	planApproval      *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
+	diffReview        *diffReviewState         // non-nil when diff-first review gate is open
+	todoStripHidden   bool                     // ctrl+t toggles; strip is shown by default when todos present
+	todoAutoContinues int                      // bounded auto-nudges when a turn ends with unfinished todos
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands

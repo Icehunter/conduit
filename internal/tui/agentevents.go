@@ -102,6 +102,7 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		m.syncLive()
 
 	case agent.EventAPIRetry:
+		m = m.applyAPIRateLimitToPlanUsage(ev)
 		delay := ev.RetryDelay.Round(time.Second)
 		if delay < time.Second {
 			delay = time.Second
@@ -132,6 +133,33 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		})
 		m.refreshViewport()
 	}
+	return m
+}
+
+func (m Model) applyAPIRateLimitToPlanUsage(ev agent.LoopEvent) Model {
+	if !m.usageStatusEnabled {
+		return m
+	}
+	if _, ok := m.planUsageProviderSettings(); !ok {
+		return m
+	}
+	errText := ""
+	if ev.RetryErr != nil {
+		errText = strings.ToLower(ev.RetryErr.Error())
+	}
+	if ev.RetryAfter <= 0 && !strings.Contains(errText, "rate_limit") && !strings.Contains(errText, "rate limited") {
+		return m
+	}
+	reset := ev.RateLimitResetAt
+	if reset.IsZero() && ev.RetryAfter > 0 {
+		reset = time.Now().Add(ev.RetryAfter)
+	}
+	m.planUsage.FiveHour.Utilization = 100
+	if !reset.IsZero() {
+		m.planUsage.FiveHour.ResetsAt = reset
+	}
+	m.planUsageCachedAt = time.Now()
+	m.planUsageErr = ""
 	return m
 }
 

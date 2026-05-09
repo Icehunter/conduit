@@ -54,6 +54,7 @@ Last updated: 2026-05-09
 | Input history (↑/↓) | ✅ | |
 | Vim mode | 🚫 REMOVED | descoped — large effort (1513 LOC); use keybindings system instead |
 | Status bar | ✅ | model, context%, cost; context meter uses current prompt/window tokens, provider `contextWindow` overrides, not summed billing tokens |
+| Todo strip / chat alignment | ✅ | unfinished TodoWrite state now auto-nudges the next turn instead of silently ending with in-progress todos |
 | TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
 | Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
 | Terminal window title (OSC 2) | ✅ | internal/tui/title.go — sets "conduit · working" on task start, resets to "conduit" on completion/interrupt |
@@ -156,7 +157,7 @@ Last updated: 2026-05-09
 | /fix | ✅ | prompt-inject issue fix |
 | /export | ✅ | writes markdown file to disk |
 | /usage | ✅ | token/cost breakdown by turn |
-| /toggle-usage | ✅ | conduit-only: toggles Claude plan usage footer + fetcher |
+| /toggle-usage | ✅ | conduit-only: toggles Claude plan usage footer + fetcher; API 429 rate-limit resets immediately mark current-session usage as saturated |
 | /vim | 🚫 REMOVED | descoped with vim mode — command removed from registry |
 | /resume | ✅ | lists Conduit sessions with Claude history fallback/import; use --continue to restore |
 | /rewind | ✅ | conversation snapshots via JSONL |
@@ -215,8 +216,10 @@ Last updated: 2026-05-09
 | HTTP transport | ✅ |
 | Connection manager | ✅ |
 | OAuth for MCP servers | ✅ |
-| Server discovery | ✅ Claude/project/plugin + Conduit `~/.conduit/mcp.json` overlay |
+| Server discovery | ✅ Claude/project/plugin + Conduit `~/.conduit/mcp.json` (user) + `~/.conduit/conduit.json` (local) overlays |
 | /mcp command | ✅ |
+| `conduit mcp add/list/get/remove/add-json` CLI | ✅ Claude-parity surface; supports project (default), user, local scopes |
+| /mcp add/remove/list/get/add-json (slash) | ✅ Same surface inside the TUI; live reconnect/disconnect after change |
 
 ---
 

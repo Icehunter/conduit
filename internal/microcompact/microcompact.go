@@ -90,15 +90,15 @@ func Apply(messages []api.Message, lastAssistantTime time.Time, threshold time.D
 		}
 		var newContent []api.ContentBlock
 		for j, b := range m.Content {
-			if b.Type != "tool_result" || keepSet[b.ToolUseID] || b.Text == ClearedMessage {
+			if b.Type != "tool_result" || keepSet[b.ToolUseID] || b.ResultContent == ClearedMessage {
 				continue
 			}
 			if newContent == nil {
 				newContent = make([]api.ContentBlock, len(m.Content))
 				copy(newContent, m.Content)
 			}
-			saved += tokens.Estimate(newContent[j].Text)
-			newContent[j].Text = ClearedMessage
+			saved += tokens.Estimate(newContent[j].ResultContent)
+			newContent[j].ResultContent = ClearedMessage
 			cleared++
 		}
 		if newContent != nil {

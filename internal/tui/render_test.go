@@ -611,6 +611,37 @@ func TestRenderUsageFooterBackoffOnlyCacheShowsRateLimited(t *testing.T) {
 	}
 }
 
+func TestRenderPanelToolsClipsLongToolList(t *testing.T) {
+	tools := make([]panelToolItem, 31)
+	for i := range tools {
+		tools[i] = panelToolItem{name: fmt.Sprintf("tool%02d", i+1)}
+	}
+	m := Model{width: 120, panelH: 20}
+	p := &panelState{
+		view:     panelViewTools,
+		selected: 23,
+		mcpItems: []panelMCPItem{{
+			name:  "atlassian",
+			tools: tools,
+		}},
+	}
+	m.panel = p
+
+	out := plainText(m.renderPanel())
+	if strings.Contains(out, "31. tool31") {
+		t.Fatalf("tool list was not clipped: %q", out)
+	}
+	if !strings.Contains(out, "24. tool24") {
+		t.Fatalf("selected tool missing from clipped window: %q", out)
+	}
+	if !strings.Contains(out, "↑/↓ scroll") || !strings.Contains(out, "/31") {
+		t.Fatalf("scroll footer missing: %q", out)
+	}
+	if got := renderedLineCount(out); got > m.panelH {
+		t.Fatalf("rendered lines = %d; want <= panelH %d", got, m.panelH)
+	}
+}
+
 func TestLocalPromptFromContentIncludesAtMentionContent(t *testing.T) {
 	dir := t.TempDir()
 	oldwd, err := os.Getwd()

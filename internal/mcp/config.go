@@ -43,17 +43,19 @@ func globalClaudeFile() string {
 // LoadConfigs loads MCP server configs from all config sources, in priority
 // order (later entries override earlier ones with the same name):
 //
-//  1. user   — ~/.claude.json → mcpServers  (global)
-//  2. local  — ~/.claude.json → projects[cwd].mcpServers  (per-project)
+//  1. user    — ~/.claude.json → mcpServers  (Claude global, compat)
+//  2. local-claude — ~/.claude.json → projects[cwd].mcpServers  (Claude per-project, compat)
 //  3. project — every .mcp.json from filesystem root down to cwd (closer wins)
-//  4. plugin — enabled plugin .mcp.json files (skipped when trusted=false)
-//  5. conduit — ~/.conduit/mcp.json
+//  4. plugin  — enabled plugin .mcp.json files (skipped when trusted=false)
+//  5. local   — ~/.conduit/conduit.json → projects[cwd].mcpServers (conduit per-project)
+//  6. user    — ~/.conduit/mcp.json (conduit global; highest priority)
 //
 // trusted mirrors the same workspace-trust flag used by FilterUntrustedHooks:
 // when false (workspace not yet trusted), plugin MCP servers are not loaded.
 // This prevents auto-executing plugin code from an untrusted checkout.
 //
-// Mirrors getMcpConfigsByScope() in src/services/mcp/config.ts.
+// Mirrors getMcpConfigsByScope() in src/services/mcp/config.ts; conduit adds
+// scopes 5 and 6 so users can manage MCP servers without touching Claude files.
 func LoadConfigs(cwd string, trusted bool) (map[string]ServerConfig, error) {
 	merged := make(map[string]ServerConfig)
 
@@ -102,8 +104,24 @@ func LoadConfigs(cwd string, trusted bool) (map[string]ServerConfig, error) {
 	// These show as scope "plugin" in the manager.
 	loadPluginMCPServers(merged, trusted)
 
-	// 5. Conduit global MCP config. This is conduit's own overlay and wins
-	// over Claude/project/plugin sources when server names collide.
+	// 5. Conduit local scope: ~/.conduit/conduit.json projects[cwd].mcpServers.
+	// Wins over plugin/project entries (closest to the user's intent).
+	if cwd != "" {
+		if localRaw, localPath, err := settings.LoadConduitProjectMCPServersRaw(cwd); err == nil {
+			for name, encoded := range localRaw {
+				var srv ServerConfig
+				if err := json.Unmarshal(encoded, &srv); err != nil {
+					continue
+				}
+				srv.Source = localPath
+				srv.Scope = "local"
+				merged[name] = srv
+			}
+		}
+	}
+
+	// 6. Conduit user MCP config (~/.conduit/mcp.json). Highest priority — wins
+	// over Claude/project/plugin/local sources when server names collide.
 	loadConduitMCPServers(merged)
 
 	return merged, nil

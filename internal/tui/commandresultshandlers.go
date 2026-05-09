@@ -17,6 +17,7 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
+	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
@@ -125,6 +126,55 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 	}
 	m.refreshViewport()
 	return m.startPlanUsageFetch()
+}
+
+// applyMCPAuth starts an OAuth flow as an off-loop tea.Cmd so the TUI stays
+// responsive while the user completes the browser authorisation step.
+// res.Text = server name, res.Model = server URL.
+func (m Model) applyMCPAuth(res commands.Result) (Model, tea.Cmd) {
+	name := res.Text
+	serverURL := res.Model
+	if name == "" || serverURL == "" {
+		m.messages = append(m.messages, Message{Role: RoleError, Content: "mcp-auth: missing server name or URL (wiring bug)"})
+		m.refreshViewport()
+		return m, nil
+	}
+	manager := m.cfg.MCPManager
+	if manager == nil {
+		m.messages = append(m.messages, Message{Role: RoleError, Content: "mcp-auth: no MCP manager configured"})
+		m.refreshViewport()
+		return m, nil
+	}
+	m.messages = append(m.messages, Message{
+		Role:    RoleSystem,
+		Content: fmt.Sprintf("Opening browser for OAuth with %q — complete the flow in your browser, then return here.", name),
+	})
+	m.refreshViewport()
+	store := manager.SecureStore()
+	cwd, _ := os.Getwd()
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		tokens, err := mcp.PerformOAuthFlow(ctx, name, serverURL, nil, nil)
+		if err != nil {
+			return mcpAuthDoneMsg{name: name, err: err}
+		}
+		if err := mcp.SaveServerToken(store, name, tokens); err != nil {
+			return mcpAuthDoneMsg{name: name, err: fmt.Errorf("save tokens: %w", err)}
+		}
+		// trusted=true: user reached /mcp auth after workspace trust was granted.
+		if err := manager.Reconnect(context.Background(), name, cwd, true); err != nil {
+			return mcpAuthDoneMsg{name: name, reconnectErr: err}
+		}
+		return mcpAuthDoneMsg{name: name}
+	}
+}
+
+// mcpAuthDoneMsg is sent by the OAuth goroutine when the flow completes.
+type mcpAuthDoneMsg struct {
+	name         string
+	err          error // OAuth or token-save failure
+	reconnectErr error // tokens saved but reconnect failed
 }
 
 // applyCompactResult handles the "compact" command result.

@@ -99,7 +99,7 @@
 | API pre-connect optimization | `utils/apiPreconnect.ts` | — | `cmd/conduit/main.go` | ✅ | Background HEAD to api.anthropic.com during startup |
 | Rate limit quota tracking | `services/claudeAiLimits.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | Parse anthropic-ratelimit-* headers, <20% warning in status bar |
 | Rate limit messages | `services/rateLimitMessages.ts` | — | `internal/ratelimit/ratelimit.go` | ✅ | WarningMessage() in status bar |
-| Claude plan usage footer | `statusLine` user command + oauth usage endpoint | — | `internal/planusage/`, `/toggle-usage` | ✅ | conduit-only native footer: 5h/7d usage windows, reset times, cached 60s fetch loop |
+| Claude plan usage footer | `statusLine` user command + oauth usage endpoint | — | `internal/planusage/`, `/toggle-usage` | ✅ | conduit-only native footer: 5h/7d usage windows, reset times, cached 60s fetch loop; API 429 reset metadata is reflected immediately in the current-session row |
 | Token estimation | `services/tokenEstimation.ts` | — | `internal/tokens/tokens.go` | ✅ | cl100k_base via tiktoken-go; falls back to chars/4 if encoder init fails |
 | Cost tracking | `cost-tracker.ts` (323 LOC) | — | `internal/session/extras.go` | ✅ | AppendCost per turn, LoadCost on resume |
 
@@ -346,6 +346,7 @@
 | Tool discovery & proxy | `services/mcp/`, `tools/MCPTool/` | `0402.js` | `internal/tools/mcptool/` | ✅ | |
 | Config loading (claude.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | |
 | Config loading (.mcp.json) | `services/mcp/` | — | `internal/mcp/config.go` | ✅ | Includes conduit `~/.conduit/mcp.json` overlay after Claude/project/plugin sources |
+| `claude mcp add/list/get/remove/add-json` CLI | `commands/mcp/` | — | `cmd/conduit/mcp_cli.go` + `internal/mcp/writer.go` | ✅ | Claude-parity CLI; default scope `project`; conduit also exposes the same surface as `/mcp add ...` slash commands |
 | Plugin MCP server registration | `services/mcp/` | — | `internal/mcp/manager.go` `SyncPluginServers` | ✅ | |
 | Server lifecycle (connect/disconnect) | `services/mcp/` | — | `internal/mcp/manager.go` | ✅ | |
 | MCP server approval dialog | `components/MCPServerApprovalDialog.tsx` | — | `internal/mcp/manager.go`, `internal/tui/model.go`, `internal/commands/mcp.go` | ✅ | Project-scope (.mcp.json) servers gated on user approval; startup picker offers Yes/Yes-All/No; persisted to `~/.conduit/conduit.json` project state |

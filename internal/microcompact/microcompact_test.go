@@ -22,7 +22,7 @@ func msgs() []api.Message {
 		out = append(out, api.Message{
 			Role: "user",
 			Content: []api.ContentBlock{
-				{Type: "tool_result", ToolUseID: id, Text: strings.Repeat("output line\n", 100)},
+				{Type: "tool_result", ToolUseID: id, ResultContent: strings.Repeat("output line\n", 100)},
 			},
 		})
 	}
@@ -70,7 +70,7 @@ func TestApply_ClearsOlderToolResults(t *testing.T) {
 			if b.Type != "tool_result" {
 				continue
 			}
-			if b.Text == ClearedMessage {
+			if b.ResultContent == ClearedMessage {
 				cleared++
 			} else {
 				intact++
@@ -89,7 +89,7 @@ func TestApply_NoOpWhenAllInKeepWindow(t *testing.T) {
 	// Only 3 tool_uses but keepRecent=5 — nothing eligible to clear.
 	in := []api.Message{
 		{Role: "assistant", Content: []api.ContentBlock{{Type: "tool_use", ID: "a"}}},
-		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "a", Text: "x"}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "a", ResultContent: "x"}}},
 	}
 	got := Apply(in, time.Now().Add(-2*time.Hour), DefaultThreshold, DefaultKeepRecent)
 	if got.Triggered {

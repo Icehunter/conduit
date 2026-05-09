@@ -79,9 +79,11 @@ type LoopEvent struct {
 	RateLimitInfo    ratelimit.Info
 
 	// EventAPIRetry
-	RetryAttempt int
-	RetryDelay   time.Duration
-	RetryErr     error
+	RetryAttempt     int
+	RetryDelay       time.Duration
+	RetryAfter       time.Duration
+	RateLimitResetAt time.Time
+	RetryErr         error
 
 	// EventPartial — fired before a stream error bubbles up so callers
 	// can persist whatever assistant content was streamed before the
@@ -398,10 +400,12 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			// Fire on a goroutine so a slow/blocked TUI channel can't stall
 			// the retry sleep. EventAPIRetry is informational; order doesn't matter.
 			go handler(LoopEvent{
-				Type:         EventAPIRetry,
-				RetryAttempt: ev.Attempt,
-				RetryDelay:   ev.Delay,
-				RetryErr:     ev.Err,
+				Type:             EventAPIRetry,
+				RetryAttempt:     ev.Attempt,
+				RetryDelay:       ev.Delay,
+				RetryAfter:       ev.RetryAfter,
+				RateLimitResetAt: ev.ResetAt,
+				RetryErr:         ev.Err,
 			})
 			// Short 429s are usually transient. Long retry-after values are
 			// plan/quota exhaustion; surfacing the error is clearer than

@@ -424,6 +424,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if text == "" {
 			return m, nil, true
 		}
+		if !strings.HasPrefix(text, "Continue the unfinished todo list.") {
+			m.todoAutoContinues = 0
+		}
 
 		// Dispatch slash commands before sending to the agent.
 		if strings.HasPrefix(text, "/") {

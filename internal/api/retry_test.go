@@ -90,6 +90,48 @@ func TestStreamMessage_429MaxRetries(t *testing.T) {
 	}
 }
 
+func TestRetryHandlerReceivesUnifiedReset(t *testing.T) {
+	sleepFn = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() {
+		sleepFn = func(ctx context.Context, d time.Duration) error {
+			select {
+			case <-time.After(d):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+
+	resetAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	var got RetryEvent
+	ctx := WithRetryHandler(context.Background(), func(ev RetryEvent) bool {
+		got = ev
+		return false
+	})
+	_, err := withRetry(ctx, func() (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"type":"error","error":{"type":"rate_limit_error","message":"rate limited"}}`))
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Status:     "429 Too Many Requests",
+			Header: http.Header{
+				"Retry-After":                       []string{"60"},
+				"Anthropic-Ratelimit-Unified-Reset": []string{resetAt.Format(time.RFC3339)},
+			},
+			Body: body,
+		}, nil
+	})
+	if err == nil {
+		t.Fatal("expected retry handler to abort with rate-limit error")
+	}
+	if got.RetryAfter != time.Minute {
+		t.Fatalf("RetryAfter = %s; want 1m", got.RetryAfter)
+	}
+	if !got.ResetAt.Equal(resetAt) {
+		t.Fatalf("ResetAt = %s; want %s", got.ResetAt, resetAt)
+	}
+}
+
 func TestStreamMessage_429RetryHandlerNotified(t *testing.T) {
 	oldSleep := sleepFn
 	t.Cleanup(func() { sleepFn = oldSleep })

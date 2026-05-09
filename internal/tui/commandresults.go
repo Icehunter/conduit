@@ -26,6 +26,10 @@ const (
 
 var panelTabNames = []string{"MCP"}
 
+// mcpReconnectDoneMsg is sent after a panel "Reconnect" action completes
+// so the TUI can re-open the /mcp panel with fresh server state.
+type mcpReconnectDoneMsg struct{}
+
 // panelMCPItem is one MCP server row — carries all info for detail view.
 type panelMCPItem struct {
 	name      string
@@ -216,15 +220,25 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:u
 					}
 					p.view = panelViewTools
 					p.selected = 0
+				case "Authenticate":
+					// Kick off the OAuth flow off the event loop exactly like /mcp auth.
+					// Close the panel first so the user can see the progress message.
+					m.panel = nil
+					m.refreshViewport()
+					res := commands.Result{Type: "mcp-auth", Text: item.name, Model: item.command}
+					return m.applyMCPAuth(res)
 				case "Reconnect":
 					if m.cfg.MCPManager != nil {
 						cwd, _ := os.Getwd()
 						srvName := item.name
 						mgr := m.cfg.MCPManager
 						trusted := !m.cfg.NeedsTrust
-						go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
-						p.mcpItems[p.serverIdx].status = "pending"
-						p.mcpItems[p.serverIdx].err = ""
+						m.panel = nil
+						m.refreshViewport()
+						return m, func() tea.Msg {
+							_ = mgr.Reconnect(context.Background(), srvName, cwd, trusted)
+							return mcpReconnectDoneMsg{}
+						}
 					}
 					p.view = panelViewList
 					p.selected = 0
@@ -414,6 +428,8 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		return m, nil
+	case "mcp-auth":
+		return m.applyMCPAuth(res)
 	case "flash":
 		// Briefly surface in the working row, then queue the next pending
 		// MCP approval if any are still waiting after this one resolved.

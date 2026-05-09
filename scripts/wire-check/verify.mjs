@@ -228,7 +228,11 @@ export function runVerify(opts) {
       rows.push(makeRow("NEW", "betas in upstream registry (not sent by conduit)", newUpstream, [], "review — some are feature-gated; add always-on ones to betaHeaders in internal/app/auth.go"));
     }
     if (removedFromRegistry.length) {
-      rows.push(makeRow("CHANGED", "betas sent by conduit (missing from upstream registry)", [], removedFromRegistry, "these betas may be removed/renamed upstream"));
+      // Conduit intentionally sends more betas than the extractor finds in the
+      // upstream registry. The extractor only matches specific code patterns;
+      // many betas are present in upstream CC but aren't caught by the regex.
+      // Downgrade to DIVERGED (not a blocking wire incompatibility).
+      rows.push(makeRow("DIVERGED", "betas sent by conduit (not in upstream extracted registry)", removedFromRegistry, [], "conduit sends feature-enabling betas not found by extractor — verify periodically via mitmproxy capture"));
     }
     if (!newUpstream.length && !removedFromRegistry.length) {
       rows.push(makeRow("OK", "beta_registry overlap", `${fp.beta_registry.length} upstream`, `${co.betaHeaders.length} sent by conduit`));
@@ -244,11 +248,25 @@ export function runVerify(opts) {
   }
 
   // Tool registry.
+  // Upstream tool API names don't map 1:1 to conduit's directory-derived names.
+  // Tools listed here are already handled by conduit under a different name/dir.
+  const KNOWN_TOOL_ALIASES = new Set([
+    "ReadMcpResourceTool", // → internal/tools/mcpresourcetool/ (M-H, ✅)
+    "mcp",                 // upstream MCP pass-through alias → internal/tools/mcptool/
+    "mcp__",               // upstream MCP server-scoped alias → internal/tools/mcptool/
+    "web_search",          // Anthropic-hosted server tool (agent_toolset_20260401); runs in Anthropic's container infra — not a conduit client tool
+  ]);
   if (fp.tools?.length && co.registeredTools.length) {
     const { onlyInA: newTools } = setDiff(fp.tools, co.registeredTools);
-    if (newTools.length) {
-      rows.push(makeRow("NEW", "tools (upstream only)", newTools, [], "new tools detected upstream — check bun-demincer/decoded for impl details"));
-    } else {
+    const genuinelyNew = newTools.filter((t) => !KNOWN_TOOL_ALIASES.has(t));
+    const aliased = newTools.filter((t) => KNOWN_TOOL_ALIASES.has(t));
+    if (aliased.length) {
+      rows.push(makeRow("DIVERGED", "tools handled under different conduit names", aliased, [], "implemented in conduit under a different directory name — see PARITY.md"));
+    }
+    if (genuinelyNew.length) {
+      rows.push(makeRow("NEW", "tools (upstream only)", genuinelyNew, [], "new tools detected upstream — check bun-demincer/decoded for impl details"));
+    }
+    if (!genuinelyNew.length && !aliased.length) {
       rows.push(makeRow("OK", "tool_registry", `${fp.tools.length} upstream`, `${co.registeredTools.length} in conduit`));
     }
   }

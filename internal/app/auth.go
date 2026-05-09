@@ -40,6 +40,7 @@ func NewAPIClient(tok auth.PersistedTokens, wireVersion string) *api.Client {
 		"context-1m-2025-08-07",
 		"effort-2025-11-24",
 		"extended-cache-ttl-2025-04-11",
+		"oidc-federation-2026-04-01",
 	}
 	if apiKey != "" {
 		betaHeaders = removeString(betaHeaders, "oauth-2025-04-20")

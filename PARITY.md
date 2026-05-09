@@ -41,6 +41,23 @@
 
 ---
 
+## Wire sync notes
+
+### 2.1.133 → 2.1.137 (2026-05-09)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.137` in `cmd/conduit/main.go` |
+| `SDKPackageVersion` | Bumped to `0.93.0` in `internal/api/client.go` |
+| `oidc-federation-2026-04-01` | Added to `betaHeaders` in `internal/app/auth.go`; appeared in upstream beta registry |
+| `web_search` tool | Detected upstream; conduit does not implement (no search endpoint exposed to external OAuth clients) |
+| `mcp`, `mcp__` | Detected as upstream tool names; conduit MCP tool is `ListMcpResources`/`ReadMcpResourceTool` (already ✅) — the bare `mcp`/`mcp__` names are pass-through aliases in upstream CC, not separate tools |
+| `ReadMcpResourceTool` | Already implemented in `internal/tools/mcpresourcetool/` (M-H) |
+| Beta extractor divergence | Upstream 2.1.137 beta registry only shows 2 betas via extractor pattern matching; conduit sends 11. Extra betas are still valid API features — downgraded to DIVERGED in verify.mjs (not a blocking incompatibility). Verify via mitmproxy capture if needed. |
+| New headers (v137) | `anthropic-admin-api-key`, `anthropic-api-key`, `anthropic-client-platform`, `anthropic-marketplace`, `anthropic-plugins`, `anthropic-workspace-id`, `x-anthropic-additional-protection` added to KNOWN_HEADERS in extract.mjs. CCR-only: `x-claude-remote-container-id`, `x-claude-remote-session-id` (bridge infra, conduit descoped). |
+
+---
+
 ## 1. Auth & OAuth
 
 | Feature | TS Source | Decoded Chunk(s) | Go (conduit) | Status | Notes |

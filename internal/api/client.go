@@ -21,10 +21,10 @@ import (
 const AnthropicVersion = "2023-06-01"
 
 // SDKPackageVersion is the @anthropic-ai/sdk version we identify as. The
-// real CLI bundles SDK 0.81.0 (decoded/0133.js:7); since Anthropic's API
-// rate-limits clients whose Stainless headers don't look like the official
+// real CLI bundles SDK 0.93.0 (wire-fingerprint 2.1.137); since Anthropic's
+// API rate-limits clients whose Stainless headers don't look like the official
 // CLI's, we report the same string.
-const SDKPackageVersion = "0.81.0"
+const SDKPackageVersion = "0.93.0"
 
 // Config configures a Client.
 type Config struct {

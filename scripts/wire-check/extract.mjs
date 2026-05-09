@@ -115,6 +115,18 @@ const KNOWN_HEADERS = new Set([
   "x-should-retry", "x-service-name",
   // Per-request UUID header (sent by v133+, maps to CLIENT_REQUEST_ID_HEADER)
   "x-client-request-id",
+  // Auth / identity headers (v137+)
+  "anthropic-admin-api-key",    // admin API key variant
+  "anthropic-api-key",          // alternate API key header name
+  "anthropic-client-platform",  // client platform identifier
+  "anthropic-marketplace",      // marketplace feature routing
+  "anthropic-plugins",          // plugin manifest header
+  "anthropic-workspace-id",     // workspace/org scoping
+  // Security / protection headers (v137+)
+  "x-anthropic-additional-protection",  // extra rate-limit / abuse protection
+  // CCR (Claude Code Remote) bridge headers — not sent by conduit (bridge-only)
+  "x-claude-remote-container-id",
+  "x-claude-remote-session-id",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

@@ -140,8 +140,8 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 func newProviderForm() *providerFormState {
 	f := &providerFormState{
 		step:    providerFormStepCredential,
-		baseURL: "https://provider-url",
-		model:   "model-name",
+		baseURL: "",
+		model:   "",
 	}
 	f.input = f.credential
 	return f

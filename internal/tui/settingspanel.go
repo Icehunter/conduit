@@ -92,10 +92,11 @@ type settingsPanelState struct {
 	configItems []settingItem
 	filteredIdx []int
 
-	statsSubTab statsSubTab
-	statsRange  statsDateRange
-	statsData   sessionStats
-	statsLoaded bool
+	statsSubTab  statsSubTab
+	statsRange   statsDateRange
+	statsData    sessionStats
+	statsLoaded  bool
+	modelsScroll int // scroll offset for Models subtab (in pairs of rows)
 
 	// dirtyIDs tracks config items the user changed this session.
 	// rebuildConfigItemsFromSnap does not overwrite these.

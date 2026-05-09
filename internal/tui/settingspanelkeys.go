@@ -201,11 +201,22 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 	case settingsTabStats:
 		switch key {
 		case "up":
-			p.cfgFocus = configFocusHeader
+			if p.statsSubTab == statsSubModels {
+				if p.modelsScroll > 0 {
+					p.modelsScroll--
+				}
+			} else {
+				p.cfgFocus = configFocusHeader
+			}
 		case "down":
-			p.cfgFocus = configFocusList
+			if p.statsSubTab == statsSubModels {
+				p.modelsScroll++
+			} else {
+				p.cfgFocus = configFocusList
+			}
 		case "tab":
 			p.statsSubTab = statsSubTab((int(p.statsSubTab) + 1) % len(statsSubTabNames))
+			p.modelsScroll = 0
 		case "r":
 			p.statsRange = statsDateRange((int(p.statsRange) + 1) % len(statsDateRangeLabels))
 			var days int

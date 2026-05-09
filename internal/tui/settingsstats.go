@@ -49,7 +49,7 @@ func (m Model) renderSettingsStats(sb *strings.Builder, p *settingsPanelState, i
 	case statsSubOverview:
 		m.renderStatsOverview(sb, &stats, innerW)
 	case statsSubModels:
-		m.renderStatsModels(sb, &stats, innerW)
+		m.renderStatsModels(sb, p, &stats, innerW)
 	}
 }
 
@@ -106,7 +106,7 @@ func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, inn
 	}
 }
 
-func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, innerW int) {
+func (m Model) renderStatsModels(sb *strings.Builder, p *settingsPanelState, stats *sessionStats, innerW int) {
 	if len(stats.ModelUsage) == 0 {
 		sb.WriteString(stylePickerDesc.Render("  No model usage data found."))
 		return
@@ -156,17 +156,21 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 		return
 	}
 
-	for i := 0; i < len(rows); i += 2 {
-		l1, l2 := renderModelEntry(i, rows[i])
-		if i+1 < len(rows) {
-			r1, r2 := renderModelEntry(i+1, rows[i+1])
-			// Pad left column to colW visible chars using spaces.
+	const pageSize = 4 // models per page (2 columns × 2 rows)
+	scroll := min(p.modelsScroll, max(0, len(rows)-pageSize))
+	// clamp scroll so we don't scroll past the end
+	p.modelsScroll = scroll
+	visible := rows[scroll:min(scroll+pageSize, len(rows))]
+
+	for i := 0; i < len(visible); i += 2 {
+		absIdx := scroll + i
+		l1, l2 := renderModelEntry(absIdx, visible[i])
+		if i+1 < len(visible) {
+			r1, r2 := renderModelEntry(absIdx+1, visible[i+1])
 			l1vis := lipgloss.Width(l1)
 			l2vis := lipgloss.Width(l2)
-			pad1 := colW - l1vis
-			pad2 := colW - l2vis
-			pad1 = max(pad1, 1)
-			pad2 = max(pad2, 1)
+			pad1 := max(colW-l1vis, 1)
+			pad2 := max(colW-l2vis, 1)
 			sb.WriteString(surfaceSpaces(2) + l1 + surfaceSpaces(pad1) + r1 + "\n")
 			sb.WriteString(surfaceSpaces(2) + l2 + surfaceSpaces(pad2) + r2 + "\n")
 		} else {
@@ -175,8 +179,11 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 		}
 		sb.WriteByte('\n')
 	}
-	if len(rows) > 4 {
-		sb.WriteString(stylePickerDesc.Render(fmt.Sprintf("  ↓ 1–4 of %d models (↑/↓ to scroll)", len(rows))) + "\n")
+	if len(rows) > pageSize {
+		first := scroll + 1
+		last := min(scroll+pageSize, len(rows))
+		hint := fmt.Sprintf("  ↑/↓ %d–%d of %d models", first, last, len(rows))
+		sb.WriteString(stylePickerDesc.Render(hint) + "\n")
 	}
 }
 

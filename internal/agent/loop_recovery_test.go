@@ -17,7 +17,7 @@ func TestBuildContentBlocks_TextAndToolUse(t *testing.T) {
 		1: bld(`{"cmd":"ls"}`),
 	}
 
-	got := buildContentBlocks(metas, texts)
+	got := buildContentBlocks(metas, texts, map[int]string{})
 	if len(got) != 2 {
 		t.Fatalf("expected 2 blocks; got %d", len(got))
 	}
@@ -44,7 +44,7 @@ func TestBuildContentBlocks_DropsEmptyText(t *testing.T) {
 		1: bld("kept"),
 	}
 
-	got := buildContentBlocks(metas, texts)
+	got := buildContentBlocks(metas, texts, map[int]string{})
 	if len(got) != 1 {
 		t.Fatalf("expected 1 block (empty dropped); got %d", len(got))
 	}
@@ -64,7 +64,7 @@ func TestBuildContentBlocks_DropsTruncatedToolUse(t *testing.T) {
 		0: bld(`{"cmd":"l`), // truncated mid-string
 	}
 
-	got := buildContentBlocks(metas, texts)
+	got := buildContentBlocks(metas, texts, map[int]string{})
 	if len(got) != 0 {
 		t.Fatalf("expected 0 blocks (truncated dropped); got %d (%+v)", len(got), got)
 	}
@@ -84,7 +84,7 @@ func TestBuildContentBlocks_PreservesOrder(t *testing.T) {
 		2: bld("third"),
 	}
 
-	got := buildContentBlocks(metas, texts)
+	got := buildContentBlocks(metas, texts, map[int]string{})
 	if len(got) != 3 {
 		t.Fatalf("expected 3 blocks; got %d", len(got))
 	}
@@ -104,7 +104,7 @@ func TestBuildContentBlocks_EmptyToolUseInput(t *testing.T) {
 		0: bld(""), // no deltas yet — buildContentBlocks defaults to "{}"
 	}
 
-	got := buildContentBlocks(metas, texts)
+	got := buildContentBlocks(metas, texts, map[int]string{})
 	if len(got) != 1 {
 		t.Fatalf("expected 1 block; got %d", len(got))
 	}

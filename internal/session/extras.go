@@ -395,3 +395,29 @@ func LoadFileAccess(path string) ([]FileAccessEntry, error) {
 	}
 	return out, nil
 }
+
+// PendingEditResultEntry records one per-file decision from the diff-first
+// review gate. Written after each user decision so the session transcript
+// shows which agent writes were actually accepted.
+type PendingEditResultEntry struct {
+	Path     string `json:"path"`
+	Op       string `json:"op"`     // "edit" | "write" | "delete"
+	Action   string `json:"action"` // "approved" | "reverted" | "requested"
+	ToolName string `json:"tool_name"`
+	Ts       string `json:"ts"` // RFC3339
+}
+
+// AppendPendingEditResult records one file decision from the diff-review overlay.
+func (s *Session) AppendPendingEditResult(path, op, action, toolName string) error {
+	raw, err := json.Marshal(PendingEditResultEntry{
+		Path:     path,
+		Op:       op,
+		Action:   action,
+		ToolName: toolName,
+		Ts:       time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return err
+	}
+	return s.Append(Entry{Type: "pending-edit-result", Message: raw})
+}

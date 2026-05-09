@@ -264,7 +264,7 @@ Last updated: 2026-05-09
 | · Council read-only gate | ✅ | ModeCouncil denies (not asks) non-read-only tools; EnterPlanMode returns error; directive updated to skip EnterPlanMode step |
 | **Decision Journal** | ✅ | `internal/decisionlog/` + `RecordDecision` tool — conduit-original; council auto-records verdicts; block 9 in system prompt feeds entries back across sessions |
 | **Plan-approval council bug** | ✅ | Empty/error synthesis no longer opens a blank approval modal; `councilSynthesizerMaxTokens` (default 8192) prevents silent truncation |
-| **Diff-First Review Gate** | 🔲 | Design spec at `docs/design/diff-review-gate.md`; implementation planned for v1.6 |
+| **Diff-First Review Gate** | ✅ | `internal/pendingedits/` + `GatedStager` + FileEdit/Write stager injection + TUI overlay (`diffreview.go`) + session JSONL `pending-edit-result`; active in `acceptEdits` mode |
 | **Plan-approval modal** | ✅ | Inset take-over overlay (1 row / 3 col padding from viewport); shows full plan in scrollable viewport; 4 options incl. "chat about this"; mouse drag-to-copy works inside modal |
 
 ---

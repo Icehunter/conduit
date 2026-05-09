@@ -56,6 +56,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.diffReview != nil {
+			switch mouse.Button {
+			case tea.MouseWheelUp:
+				m.diffReview.diffVP.ScrollUp(3)
+			case tea.MouseWheelDown:
+				m.diffReview.diffVP.ScrollDown(3)
+			}
+			return m, nil
+		}
 		// Otherwise fall through to sub-component propagation for the main viewport.
 
 	case tea.KeyPressMsg:
@@ -138,6 +147,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planApproval = newPlanApprovalState(msg.plan, msg.reply, 60, 12)
 		m.refreshViewport()
 		m.vp.GotoBottom()
+		return m, nil
+
+	case diffReviewAskMsg:
+		// Diff-first review gate: open the per-file approve/revert overlay.
+		m.diffReview = newDiffReviewState(msg.entries, msg.reply, 80, 24)
+		m.refreshViewport()
 		return m, nil
 
 	case compactDoneMsg:

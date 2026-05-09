@@ -88,6 +88,14 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 		m.planApproval.recordPlanRect(modalRect)
 		drawFloatingRendered(scr, modalRect, rendered)
 	}
+	if m.diffReview != nil {
+		modalRect := image.Rect(area.Min.X+1, area.Min.Y+1, area.Max.X-1, layout.panel.Max.Y)
+		if modalRect.Dx() < 30 || modalRect.Dy() < 8 {
+			modalRect = layout.panel
+		}
+		rendered := m.renderDiffReview(modalRect.Dx(), modalRect.Dy())
+		drawFloatingRendered(scr, modalRect, rendered)
+	}
 	if m.companionBubble != "" && panel == "" && picker == "" && modal == "" {
 		drawCompanionOverlay(scr, layout, m.renderCompanionBubble())
 	}

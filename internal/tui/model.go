@@ -396,6 +396,7 @@ type Model struct {
 	pendingMessages  []string                 // messages typed while agent is running; drained after turn ends
 	questionAsk      *questionAskState        // non-nil when AskUserQuestion is waiting for user input
 	planApproval     *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
+	diffReview       *diffReviewState         // non-nil when diff-first review gate is open
 	todoStripHidden  bool                     // ctrl+t toggles; strip is shown by default when todos present
 
 	// slash command picker state

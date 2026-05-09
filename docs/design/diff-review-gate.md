@@ -162,5 +162,36 @@ This is correctly sized as a standalone v1.6 milestone. It touches four packages
 1. `FileEditTool.New()` / `FileWriteTool.New()` must accept an optional `Stager` — either via functional options or a second constructor `NewWithStager(s Stager)`.
 2. `internal/app/registry.go` `BuildRegistry` needs the stager wired in when mode == `accept-edits`. The stager is created in `cmd/conduit/mainrepl.go` and passed through `RunOptions`.
 3. `agent.LoopConfig` gains `Stager pendingedits.Stager` — nil for sub-agents.
-4. New `tea.Msg` types: `diffReviewAskMsg`, `diffReviewDoneMsg`.
+4. New `tea.Msg` types: `diffReviewAskMsg`, `DiffReviewResult`.
 5. New `agent.OnEndTurn` hook fires *after* all tool results, *before* next user turn — this already exists; we add a `StagedEditsReady` callback to it.
+
+---
+
+## Implementation Notes (v1.6 — shipped)
+
+**Status:** ✅ Implemented and verified.
+
+### Open-question resolutions
+
+1. **Partial approval mid-edit-chain** — Composite-merge in `Table.Stage`: when a path is staged twice, `NewContent` is updated but `OrigContent` is kept from the first stage. The diff shown is always disk→final. No "incoherent middle" risk.
+2. **Parallel tool calls** — `Table` is mutex-protected; concurrent stages are safe.
+3. **Hook interaction** — PostToolUse hooks fire on the "Staged: …" result (existing flow). No `PostFileFlush` event in v1.6; scheduled for v1.7.
+4. **Sub-agent writes** — `GatedStager` returns `ErrNotStaging` when mode ≠ `acceptEdits`; tools fall through to the direct-write path. Sub-agent registries use `New()` (no stager) so they always write directly regardless of mode.
+5. **`/rewind` interaction** — No special handling needed.
+
+### Divergences from design spec
+
+- `Esc` in the overlay approves pending entries (not revert-all) — `Ctrl+C` reverts. This avoids accidental data loss from habitually pressing Esc.
+- "Requested" entries are logged to JSONL but not yet injected as a follow-up user turn (deferred to v1.7).
+- `GatedStager` replaces the spec's "Stager nil for non-acceptEdits modes" pattern — the stager is always wired for the foreground loop; the gate check is inside `GatedStager.Stage`.
+
+### Key packages
+
+| Package | Role |
+|---------|------|
+| `internal/pendingedits/` | `Table`, `Entry`, `Stager`, `GatedStager`, `Flush`, Myers diff |
+| `internal/tui/diffreview.go` | Overlay state, key handler, renderer |
+| `internal/tui/diffreviewhook.go` | `DiffReviewHook` stub (wired by `run.go` after prog starts) |
+| `internal/session/extras.go` | `AppendPendingEditResult` JSONL record |
+| `internal/app/registry.go` | `RegistryOpts.Stager` → `NewWithStager` wiring |
+| `cmd/conduit/mainrepl.go` | `pendingTable`, `diffReviewHook`, OnEndTurn trigger |

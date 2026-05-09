@@ -26,6 +26,7 @@ import (
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/migrations"
 	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
@@ -349,6 +350,12 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	c := app.NewAPIClient(tok, Version)
 
+	// pending-edits table for the diff-first review gate. The GatedStager
+	// wraps it with a mode check so staging only activates in acceptEdits mode.
+	// gate is defined below; the stager captures a pointer to it via the Gate field.
+	pendingTable := pendingedits.NewTable()
+	diffReviewHook := &tui.DiffReviewHook{}
+
 	// Build interactive-tool stubs with nil callbacks; the TUI wires the real
 	// callbacks after prog.Start() via the same send-to-channel pattern used
 	// by SetAskPermission. Nil callbacks produce graceful error results.
@@ -365,6 +372,7 @@ func runREPL(continueMode bool, resumeID string) error {
 			d, _ := os.Getwd()
 			return d
 		}, OriginalCwd: cwd},
+		Stager:     &pendingedits.GatedStager{Table: pendingTable, Gate: gate},
 		SessionEnv: sessionEnv,
 	}
 
@@ -484,6 +492,37 @@ func runREPL(continueMode bool, resumeID string) error {
 		OnEndTurn: func(history []api.Message) {
 			snapshot := make([]api.Message, len(history))
 			copy(snapshot, history)
+
+			// Diff-first review gate: if staged edits are pending, open the
+			// overlay and block until the user approves or reverts each file.
+			// This runs synchronously before memory extraction so the agent
+			// doesn't start a new turn while the user is reviewing.
+			if pendingTable.Len() > 0 && diffReviewHook.AskReview != nil {
+				ctx2, cancel2 := context.WithTimeout(bgCtx, 10*time.Minute)
+				result := diffReviewHook.AskReview(ctx2)
+				cancel2()
+				// Flush approved entries to disk.
+				if len(result.Approved) > 0 {
+					flushResults := pendingedits.Flush(result.Approved)
+					for i, fr := range flushResults {
+						if fr.Applied {
+							if sess != nil {
+								_ = sess.AppendFileAccess("write", fr.Path)
+								_ = sess.AppendPendingEditResult(fr.Path, result.Approved[i].Op.String(), "approved", result.Approved[i].ToolName)
+							}
+						} else if fr.Err != nil && sess != nil {
+							_ = sess.AppendPendingEditResult(fr.Path, result.Approved[i].Op.String(), "flush-failed", result.Approved[i].ToolName)
+						}
+					}
+				}
+				// Record reverted entries in the JSONL (no disk action needed).
+				// Requested entries are marked too; follow-up injection is future work.
+				for _, e := range result.Requested {
+					if sess != nil {
+						_ = sess.AppendPendingEditResult(e.Path, e.Op.String(), "requested", e.ToolName)
+					}
+				}
+			}
 
 			// Memory extraction (every Stop, single-flighted). Mirrors
 			// src/services/extractMemories/extractMemories.ts inProgress guard.
@@ -653,6 +692,8 @@ func runREPL(continueMode bool, resumeID string) error {
 			importLegacySessions()
 			return nil
 		},
+		PendingEdits: pendingTable,
+		DiffReview:   diffReviewHook,
 	})
 
 	// Drain async hooks: cancel their context and wait up to 5s for them to

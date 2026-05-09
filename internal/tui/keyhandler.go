@@ -43,6 +43,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m2, cmd := m.handlePlanApprovalKey(msg)
 		return m2, cmd, true
 	}
+	// Diff-review overlay intercepts all keys when active.
+	if m.diffReview != nil {
+		m2, cmd := m.handleDiffReviewKey(msg)
+		return m2, cmd, true
+	}
 	// Generic picker (/theme /model /output-style) intercepts keys.
 	if m.picker != nil {
 		m2, cmd := m.handlePickerKey(msg)

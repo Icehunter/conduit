@@ -727,4 +727,4 @@ Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loadin
 | Feature | Package | Notes |
 |---------|---------|-------|
 | Decision Journal | `internal/decisionlog/`, `internal/tools/decisiontool/` | Append-only JSONL per-project; `RecordDecision` tool; system prompt block 9; council auto-records verdicts |
-| Diff-First Review Gate | `docs/design/diff-review-gate.md` (🔲 v1.6) | Staging layer between tool writes and disk; per-file approve/revert overlay |
+| Diff-First Review Gate | `internal/pendingedits/`, `internal/tui/diffreview.go` | Conduit-original; no CC precedent. Staging layer between tool writes and disk; `GatedStager` activates in acceptEdits mode only; per-file approve/revert/request overlay; session JSONL `pending-edit-result` records decisions |

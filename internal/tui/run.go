@@ -20,6 +20,7 @@ import (
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/outputstyles"
+	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
@@ -121,6 +122,16 @@ type RunOptions struct {
 	ClaudeMd string
 	// Skills is the skill listing from the initial BuildSystemBlocks call.
 	Skills []agent.SkillEntry
+
+	// PendingEdits is the staging table for the diff-first review gate.
+	// When non-nil, end-of-turn triggers the diff review overlay if staged
+	// edits are present (only in acceptEdits mode — GatedStager handles gating).
+	PendingEdits *pendingedits.Table
+
+	// DiffReview is a stub whose AskReview field Run() wires after prog starts.
+	// mainrepl creates one, passes it here, and calls DiffReview.AskReview
+	// from OnEndTurn when PendingEdits.Len() > 0.
+	DiffReview *DiffReviewHook
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -695,6 +706,26 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				return answers
 			case <-ctx.Done():
 				return nil
+			}
+		}
+	}
+
+	// Wire diff-first review gate: set DiffReview.AskReview so mainrepl's
+	// OnEndTurn can call it when staged edits are ready.
+	if runOpts.PendingEdits != nil && runOpts.DiffReview != nil {
+		pendingTable := runOpts.PendingEdits
+		runOpts.DiffReview.AskReview = func(ctx context.Context) DiffReviewResult {
+			reply := make(chan DiffReviewResult, 1)
+			prog.Send(diffReviewAskMsg{
+				entries: pendingTable.Drain(),
+				reply:   reply,
+			})
+			select {
+			case r := <-reply:
+				return r
+			case <-ctx.Done():
+				// Cancelled — approve whatever is left so nothing is silently lost.
+				return DiffReviewResult{Approved: pendingTable.Drain()}
 			}
 		}
 	}

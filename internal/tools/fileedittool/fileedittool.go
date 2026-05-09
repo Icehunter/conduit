@@ -12,21 +12,31 @@ package fileedittool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-// Tool implements the Edit tool.
-type Tool struct{}
+// Tool implements the Edit tool. When stager is non-nil writes are routed
+// through the diff-first review gate instead of touching disk directly.
+type Tool struct {
+	stager pendingedits.Stager
+}
 
-// New returns a fresh Edit tool.
+// New returns a fresh Edit tool that writes directly to disk. Used by
+// sub-agent registries (council, summariser, Task) that should never stage.
 func New() *Tool { return &Tool{} }
+
+// NewWithStager returns an Edit tool that stages writes through s. When s is
+// nil the tool behaves identically to New().
+func NewWithStager(s pendingedits.Stager) *Tool { return &Tool{stager: s} }
 
 func (*Tool) Name() string { return "Edit" }
 
@@ -138,6 +148,24 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("Edit produced no change — old_string may not be unique enough."), nil
 	}
 
+	if t.stager != nil {
+		err := t.stager.Stage(pendingedits.Entry{
+			Path:        in.FilePath,
+			OrigContent: append([]byte(nil), content...),
+			OrigExisted: true,
+			NewContent:  []byte(updated),
+			Op:          pendingedits.OpEdit,
+			ToolName:    "Edit",
+		})
+		if err == nil {
+			return tool.TextResult(stagedMessage(in.FilePath, fileStr, updated)), nil
+		}
+		if !errors.Is(err, pendingedits.ErrNotStaging) {
+			return tool.ErrorResult(fmt.Sprintf("cannot stage edit: %v", err)), nil
+		}
+		// ErrNotStaging → fall through to direct write.
+	}
+
 	if err := writeAtomic(in.FilePath, updated); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
@@ -147,6 +175,23 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 
 // createFile creates a new file (or overwrites) with the given content.
 func (t *Tool) createFile(path, content string) (tool.Result, error) {
+	if t.stager != nil {
+		err := t.stager.Stage(pendingedits.Entry{
+			Path:        path,
+			OrigContent: nil,
+			OrigExisted: false,
+			NewContent:  []byte(content),
+			Op:          pendingedits.OpEdit,
+			ToolName:    "Edit",
+		})
+		if err == nil {
+			return tool.TextResult(stagedMessage(path, "", content)), nil
+		}
+		if !errors.Is(err, pendingedits.ErrNotStaging) {
+			return tool.ErrorResult(fmt.Sprintf("cannot stage create: %v", err)), nil
+		}
+		// ErrNotStaging → fall through to direct write.
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot create directory: %v", err)), nil
 	}
@@ -154,6 +199,24 @@ func (t *Tool) createFile(path, content string) (tool.Result, error) {
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
 	return tool.TextResult(editDiff(path, "", content)), nil
+}
+
+// stagedMessage formats the tool result for a staged edit. The "Staged: …"
+// prefix is the marker downstream layers (PostToolUse hooks, the TUI tool
+// renderer) use to recognise pending-edit results.
+func stagedMessage(path, oldContent, newContent string) string {
+	return "Staged: " + displayPath(path) + " — awaiting review\n\n" + editDiff(path, oldContent, newContent)
+}
+
+// displayPath shortens paths under $HOME to ~/ form for display. Mirrors the
+// labelling logic used by editDiff so messages render consistently.
+func displayPath(path string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			return "~" + strings.TrimPrefix(path, home)
+		}
+	}
+	return path
 }
 
 // editDiff generates a unified diff between old and new content wrapped in a

@@ -95,13 +95,17 @@ type Message struct {
 }
 
 // ContentBlock is one block of content in a message.
-// Union of text | image | document | tool_use | tool_result. Fields are set according to Type.
+// Union of text | image | document | tool_use | tool_result | thinking. Fields are set according to Type.
 type ContentBlock struct {
 	// Common
-	Type string `json:"type"` // "text" | "image" | "document" | "tool_use" | "tool_result"
+	Type string `json:"type"` // "text" | "image" | "document" | "tool_use" | "tool_result" | "thinking"
 
 	// type=text
 	Text string `json:"text,omitempty"`
+
+	// type=thinking (extended thinking block — must be round-tripped to the API verbatim)
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"` // opaque Anthropic signature on the thinking block
 
 	// type=image or type=document (user-sent content — clipboard paste, file attach)
 	// For documents: source.media_type = "application/pdf"
@@ -128,6 +132,12 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	m["type"] = b.Type
 	if b.Text != "" {
 		m["text"] = b.Text
+	}
+	if b.Thinking != "" {
+		m["thinking"] = b.Thinking
+	}
+	if b.Signature != "" {
+		m["signature"] = b.Signature
 	}
 	if b.Source != nil {
 		m["source"] = b.Source

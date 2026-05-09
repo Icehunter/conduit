@@ -9,19 +9,29 @@ package filewritetool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
-// Tool implements the Write tool.
-type Tool struct{}
+// Tool implements the Write tool. When stager is non-nil writes are routed
+// through the diff-first review gate instead of touching disk directly.
+type Tool struct {
+	stager pendingedits.Stager
+}
 
-// New returns a fresh FileWrite tool.
+// New returns a fresh FileWrite tool that writes directly to disk. Used by
+// sub-agent registries that should never stage.
 func New() *Tool { return &Tool{} }
+
+// NewWithStager returns a Write tool that stages writes through s. When s is
+// nil the tool behaves identically to New().
+func NewWithStager(s pendingedits.Stager) *Tool { return &Tool{stager: s} }
 
 // Name implements tool.Tool.
 func (*Tool) Name() string { return "Write" }
@@ -82,6 +92,32 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	default:
 	}
 
+	// Stage path: capture original content (if any) and hand off to the table.
+	// We don't create parent dirs here — flush will mkdir at apply time.
+	if t.stager != nil {
+		var orig []byte
+		var existed bool
+		if b, err := os.ReadFile(in.FilePath); err == nil {
+			orig = b
+			existed = true
+		}
+		err := t.stager.Stage(pendingedits.Entry{
+			Path:        in.FilePath,
+			OrigContent: orig,
+			OrigExisted: existed,
+			NewContent:  []byte(in.Content),
+			Op:          pendingedits.OpWrite,
+			ToolName:    "Write",
+		})
+		if err == nil {
+			return tool.TextResult(fmt.Sprintf("Staged: %s — awaiting review", displayPath(in.FilePath))), nil
+		}
+		if !errors.Is(err, pendingedits.ErrNotStaging) {
+			return tool.ErrorResult(fmt.Sprintf("cannot stage write: %v", err)), nil
+		}
+		// ErrNotStaging → fall through to direct write.
+	}
+
 	// Create parent directories as needed.
 	dir := filepath.Dir(in.FilePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -112,4 +148,14 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	return tool.TextResult(fmt.Sprintf("File written successfully at: %s", in.FilePath)), nil
+}
+
+// displayPath shortens paths under $HOME to ~/ form for staging messages.
+func displayPath(path string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			return "~" + strings.TrimPrefix(path, home)
+		}
+	}
+	return path
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
@@ -83,6 +84,12 @@ type RegistryOpts struct {
 	EnterWorktree *worktreetool.EnterWorktree
 	ExitWorktree  *worktreetool.ExitWorktree
 
+	// Stager, when non-nil, routes file-write tool output through the
+	// diff-first review gate instead of writing to disk immediately.
+	// Set only for the foreground agent loop in acceptEdits mode.
+	// Sub-agent registries leave this nil so they write directly.
+	Stager pendingedits.Stager
+
 	// SessionEnv is passed directly to bashtool.New so that subprocess
 	// environment injection is stored on the Tool instance rather than a
 	// package-level global.
@@ -93,8 +100,10 @@ type RegistryOpts struct {
 func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *RegistryOpts, implementProvider func() *settings.ActiveProviderSettings) *tool.Registry {
 	reg := tool.NewRegistry()
 	var sessionEnv map[string]string
+	var stager pendingedits.Stager
 	if rOpts != nil {
 		sessionEnv = rOpts.SessionEnv
+		stager = rOpts.Stager
 	}
 	// On Windows, register the PowerShell Shell tool; on Unix/macOS use Bash.
 	if runtime.GOOS == "windows" {
@@ -102,9 +111,9 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	} else {
 		reg.Register(bashtool.New(sessionEnv))
 	}
-	reg.Register(fileedittool.New())
+	reg.Register(fileedittool.NewWithStager(stager))
 	reg.Register(filereadtool.New())
-	reg.Register(filewritetool.New())
+	reg.Register(filewritetool.NewWithStager(stager))
 	reg.Register(globtool.New())
 	reg.Register(greptool.New())
 	reg.Register(notebookedittool.New())

@@ -50,12 +50,14 @@ type ContentBlockDeltaEvent struct {
 }
 
 // ContentDelta is one of: text_delta (most common), input_json_delta
-// (tool inputs streaming in), thinking_delta (extended thinking).
+// (tool inputs streaming in), thinking_delta (extended thinking),
+// signature_delta (thinking block signature — delivered once at block end).
 type ContentDelta struct {
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`         // text_delta
 	PartialJSON string `json:"partial_json,omitempty"` // input_json_delta
 	Thinking    string `json:"thinking,omitempty"`     // thinking_delta
+	Signature   string `json:"signature,omitempty"`    // signature_delta
 }
 
 // ContentBlockStopEvent — content block closed.

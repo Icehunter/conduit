@@ -30,6 +30,9 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 	// blockTexts accumulates text/input_json across deltas per block index.
 	blockTexts := map[int]*strings.Builder{}
 	metas := map[int]blockMeta{}
+	// blockSignatures stores the signature_delta value for thinking blocks.
+	// Keyed by block index; only set when the block is a thinking block.
+	blockSignatures := map[int]string{}
 
 	stopReason := "end_turn"
 	var totalUsage api.Usage // sum across all turns in this stream
@@ -39,7 +42,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 
 	for {
 		if ctx.Err() != nil {
-			return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, ctx.Err()
+			return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, ctx.Err()
 		}
 
 		ev, err := stream.Next()
@@ -49,7 +52,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 		if err != nil {
 			// Conversation recovery: build whatever blocks we accumulated
 			// before the error so the caller can persist them.
-			return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, err
+			return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, err
 		}
 
 		switch ev.Type {
@@ -109,6 +112,16 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			case "text_delta":
 				sb.WriteString(cbd.Delta.Text)
 				handler(LoopEvent{Type: EventText, Text: cbd.Delta.Text})
+			case "thinking_delta":
+				// Accumulate thinking text into the block builder (preserved for
+				// the API round-trip) and surface it to the TUI via EventText
+				// so the working indicator and thinking display can show it.
+				sb.WriteString(cbd.Delta.Thinking)
+				handler(LoopEvent{Type: EventText, Text: cbd.Delta.Thinking})
+			case "signature_delta":
+				// The thinking block signature must be round-tripped to the API
+				// verbatim. Store it keyed by block index.
+				blockSignatures[cbd.Index] = cbd.Delta.Signature
 			case "input_json_delta":
 				sb.WriteString(cbd.Delta.PartialJSON)
 			}
@@ -176,17 +189,18 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 	// Surface an error so the agent loop doesn't silently treat a truncated
 	// response as a completed turn.
 	if gotMessageStart && !gotMessageStop {
-		return buildContentBlocks(metas, blockTexts), stopReason, totalUsage,
+		return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage,
 			fmt.Errorf("sse: stream closed before message_stop")
 	}
 
-	return buildContentBlocks(metas, blockTexts), stopReason, totalUsage, nil
+	return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, nil
 }
 
 // buildContentBlocks materializes accumulated stream state into api.ContentBlocks.
 // Used both for the success path and for partial-block recovery on stream error.
-// metas is keyed by block index; blockTexts holds the accumulated text/json.
-func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Builder) []api.ContentBlock {
+// metas is keyed by block index; blockTexts holds the accumulated text/json;
+// blockSignatures holds the signature for thinking blocks.
+func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Builder, blockSignatures map[int]string) []api.ContentBlock {
 	blocks := make([]api.ContentBlock, 0, len(metas))
 	for i := 0; i < len(metas); i++ {
 		meta, ok := metas[i]
@@ -205,6 +219,19 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 				continue
 			}
 			blocks = append(blocks, api.ContentBlock{Type: "text", Text: text})
+		case "thinking":
+			// Thinking blocks must be preserved verbatim and round-tripped to
+			// the API in subsequent turns — the model uses them for context.
+			// An empty thinking block is valid (budget used but no output).
+			thinkingText := ""
+			if sb != nil {
+				thinkingText = sb.String()
+			}
+			blocks = append(blocks, api.ContentBlock{
+				Type:      "thinking",
+				Thinking:  thinkingText,
+				Signature: blockSignatures[i],
+			})
 		case "tool_use":
 			inputStr := "{}"
 			if sb != nil && sb.Len() > 0 {

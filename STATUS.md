@@ -57,7 +57,7 @@ Last updated: 2026-05-09
 | TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
 | Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
 | Terminal window title (OSC 2) | ✅ | internal/tui/title.go — sets "conduit · working" on task start, resets to "conduit" on completion/interrupt |
-| Plan-approval picker | ✅ | internal/tui/planapproval.go — inset take-over modal with scrollable plan viewport, 4 options (auto/accept-edits/default/chat), mouse-selectable text, Tab focus toggle |
+| Plan-approval picker | ✅ | internal/tui/planapproval.go — inset take-over modal with scrollable plan viewport, 5 options (auto/accept-edits/live-review/default/chat), mouse-selectable text, Tab focus toggle |
 | Assistant info row | ✅ | model, duration, per-turn cost after completed responses |
 | Tool message rendering | ✅ | one-line live/archive rows with tool-specific verbs + input/result summary; resumed tool_results pair back to tool_use; errors show details |
 | Welcome card (two-panel) | ✅ | profile fetched from oauth/profile |
@@ -264,7 +264,7 @@ Last updated: 2026-05-09
 | · Council read-only gate | ✅ | ModeCouncil denies (not asks) non-read-only tools; EnterPlanMode returns error; directive updated to skip EnterPlanMode step |
 | **Decision Journal** | ✅ | `internal/decisionlog/` + `RecordDecision` tool — conduit-original; council auto-records verdicts; block 9 in system prompt feeds entries back across sessions |
 | **Plan-approval council bug** | ✅ | Empty/error synthesis no longer opens a blank approval modal; `councilSynthesizerMaxTokens` (default 8192) prevents silent truncation |
-| **Diff-First Review Gate** | ✅ | `internal/pendingedits/` + `GatedStager` + FileEdit/Write stager injection + TUI overlay (`diffreview.go`) + session JSONL `pending-edit-result`; active in `acceptEdits` mode |
+| **Diff-First Review Gate** | ✅ | `internal/pendingedits/` — hunk-level Myers diff (`hunks.go`), partial-apply (`apply.go`); `GatedStager` stages in `acceptEdits` + `acceptEditsLive` modes; TUI overlay (`diffreview.go`) — per-hunk cursor, `a`/`r`/`x` actions, `n` note minibuffer; rejected hunks with notes produce structured `<diff_feedback>` follow-up injected as next user turn; `acceptEditsLive` mode adds mid-turn pause via `OnToolBatchComplete` when staged-edit count ≥ threshold (default 3, override via `CONDUIT_DIFF_REVIEW_THRESHOLD`); plan-approval picker has dedicated "live review" option |
 | **Plan-approval modal** | ✅ | Inset take-over overlay (1 row / 3 col padding from viewport); shows full plan in scrollable viewport; 4 options incl. "chat about this"; mouse drag-to-copy works inside modal |
 
 ---

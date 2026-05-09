@@ -12,29 +12,56 @@ import (
 	"github.com/icehunter/conduit/internal/pendingedits"
 )
 
-// diffReviewAction is the user's per-file decision.
+// hunkContextLines is how many equal-line context rows we render around each
+// change region. Matches conventional `git diff -U3`.
+const hunkContextLines = 3
+
+// diffReviewAction is the user's per-hunk decision.
 type diffReviewAction int
 
 const (
 	diffReviewPending   diffReviewAction = iota
-	diffReviewApproved                   // write to disk
-	diffReviewReverted                   // discard, don't write
-	diffReviewRequested                  // return to agent as follow-up
+	diffReviewApproved                   // include hunk in the flushed file
+	diffReviewReverted                   // drop hunk, keep original lines
+	diffReviewRequested                  // ask the agent to redo this hunk
 )
 
-// diffReviewEntry pairs a pending edit with the user's decision and the
-// pre-computed diff lines used for display.
+// hunkReview pairs a single hunk with the user's decision on it and an
+// optional free-text note the user can attach via the 'n' minibuffer before
+// rejecting. The note travels back to the agent in the follow-up message.
+type hunkReview struct {
+	hunk   pendingedits.Hunk
+	action diffReviewAction
+	note   string
+}
+
+// diffReviewEntry pairs a pending edit with its hunk-level review state and
+// the pre-computed diff lines used for display.
 type diffReviewEntry struct {
 	entry     pendingedits.Entry
-	action    diffReviewAction
 	diffLines []pendingedits.DiffLine
+	hunks     []hunkReview
 }
 
 // DiffReviewResult is sent back to the caller once the user finishes the review.
+//
+// Approved holds entries with their NewContent rebuilt from only the hunks the
+// user approved (Apply collapses any rejected hunks back to original lines).
+// Entries where the user approved zero hunks are omitted entirely so the
+// flusher does not perform a no-op write.
+//
+// Requested holds entries that contained at least one hunk the user marked
+// "request change". The Entry's NewContent reflects the proposed diff (what
+// the agent wrote) so callers can show the agent the original proposal when
+// asking it to redo the work.
+//
+// FollowupMessage is non-empty when any hunk was marked "requested". It is a
+// ready-to-send user message describing each rejected hunk (including any
+// inline notes) so the caller can enqueue it as the agent's next turn input.
 type DiffReviewResult struct {
-	Approved  []pendingedits.Entry // caller should Flush these
-	Requested []pendingedits.Entry // caller queues these as follow-up user message
-	// Reverted entries are silently dropped.
+	Approved        []pendingedits.Entry
+	Requested       []pendingedits.Entry
+	FollowupMessage string
 }
 
 // diffReviewAskMsg is sent by the end-of-turn wiring to open the overlay.
@@ -43,34 +70,48 @@ type diffReviewAskMsg struct {
 	reply   chan<- DiffReviewResult
 }
 
+// diffReviewFollowupMsg is sent when the diff-review result contains a
+// FollowupMessage. The TUI appends it to pendingMessages so it fires as the
+// next user turn immediately after agentDoneMsg is processed.
+type diffReviewFollowupMsg struct{ text string }
+
 // diffReviewState drives the diff-review full-screen overlay.
+//
+// The cursor identifies a (file, hunk) pair. Files with zero hunks (which
+// occur when an Entry was staged but the proposed content equals the original)
+// are still listed but their hunk slice is empty; the cursor skips over them.
 type diffReviewState struct {
 	reply     chan<- DiffReviewResult
 	entries   []diffReviewEntry
-	cursor    int  // which entry has keyboard focus in the file list
-	diffFocus bool // true → Tab has moved focus to the diff viewport
+	fileIdx   int  // which file is focused
+	hunkIdx   int  // which hunk inside that file is focused
+	diffFocus bool // true → Tab moved focus to the diff viewport (free-scroll)
+
+	// noteMode is true while the user is typing a note for the focused hunk.
+	// In note mode all keys go to noteInput except Enter (commit) and Esc (cancel).
+	noteMode  bool
+	noteInput string
 
 	diffVP viewport.Model
 }
 
 // newDiffReviewState constructs the overlay from a list of drained pending edits.
-func newDiffReviewState(entries []pendingedits.Entry, reply chan<- DiffReviewResult, vpW, vpH int) *diffReviewState {
-	if vpW < 1 {
-		vpW = 1
-	}
-	if vpH < 1 {
-		vpH = 1
-	}
+// Initial viewport dimensions are placeholders — the first renderDiffReview
+// call resizes them to fit the modal frame.
+func newDiffReviewState(entries []pendingedits.Entry, reply chan<- DiffReviewResult) *diffReviewState {
+	const initW, initH = 80, 24
 	dr := &diffReviewState{reply: reply}
 	dr.entries = make([]diffReviewEntry, len(entries))
 	for i, e := range entries {
-		dr.entries[i] = diffReviewEntry{
-			entry:     e,
-			action:    diffReviewPending,
-			diffLines: pendingedits.Diff(e.OrigContent, e.NewContent),
+		lines := pendingedits.Diff(e.OrigContent, e.NewContent)
+		hunks := pendingedits.Hunks(lines, hunkContextLines)
+		hrs := make([]hunkReview, len(hunks))
+		for j, h := range hunks {
+			hrs[j] = hunkReview{hunk: h, action: diffReviewPending}
 		}
+		dr.entries[i] = diffReviewEntry{entry: e, diffLines: lines, hunks: hrs}
 	}
-	dr.diffVP = viewport.New(viewport.WithWidth(vpW), viewport.WithHeight(vpH))
+	dr.diffVP = viewport.New(viewport.WithWidth(initW), viewport.WithHeight(initH))
 	dr.diffVP.Style = lipgloss.NewStyle().Background(colorWindowBg)
 	dr.diffVP.KeyMap = viewport.KeyMap{}
 	dr.diffVP.MouseWheelEnabled = false
@@ -78,15 +119,21 @@ func newDiffReviewState(entries []pendingedits.Entry, reply chan<- DiffReviewRes
 	return dr
 }
 
-// syncDiffVP re-renders the diff for the current cursor entry into diffVP.
+// syncDiffVP re-renders the current file's diff into the viewport, marking
+// the focused hunk so the user can see which one a/r/x will act on.
 func (dr *diffReviewState) syncDiffVP() {
 	if dr == nil || len(dr.entries) == 0 {
 		return
 	}
-	e := dr.entries[dr.cursor]
-	rendered := renderDiffLines(e.diffLines, dr.diffVP.Width())
+	e := dr.entries[dr.fileIdx]
+	rendered, focusedTopLine := renderHunkDiff(e, dr.hunkIdx, dr.diffVP.Width())
 	dr.diffVP.SetContent(rendered)
-	dr.diffVP.GotoTop()
+	// Auto-scroll so the focused hunk is visible.
+	if focusedTopLine >= 0 {
+		dr.diffVP.SetYOffset(focusedTopLine)
+	} else {
+		dr.diffVP.GotoTop()
+	}
 }
 
 // resizeDiffVP updates the diff viewport dimensions on window resize.
@@ -103,6 +150,76 @@ func (dr *diffReviewState) resizeDiffVP(w, h int) {
 	dr.diffVP.SetWidth(w)
 	dr.diffVP.SetHeight(h)
 	dr.syncDiffVP()
+}
+
+// currentHunk returns a pointer to the focused hunkReview, or nil if the
+// focused file has no hunks.
+func (dr *diffReviewState) currentHunk() *hunkReview {
+	if dr.fileIdx < 0 || dr.fileIdx >= len(dr.entries) {
+		return nil
+	}
+	e := &dr.entries[dr.fileIdx]
+	if dr.hunkIdx < 0 || dr.hunkIdx >= len(e.hunks) {
+		return nil
+	}
+	return &e.hunks[dr.hunkIdx]
+}
+
+// advanceHunk moves the cursor to the next hunk, crossing file boundaries.
+// Returns false when already at the last hunk of the last file.
+func (dr *diffReviewState) advanceHunk() bool {
+	if dr.fileIdx >= len(dr.entries) {
+		return false
+	}
+	if dr.hunkIdx+1 < len(dr.entries[dr.fileIdx].hunks) {
+		dr.hunkIdx++
+		return true
+	}
+	for f := dr.fileIdx + 1; f < len(dr.entries); f++ {
+		if len(dr.entries[f].hunks) > 0 {
+			dr.fileIdx = f
+			dr.hunkIdx = 0
+			return true
+		}
+	}
+	return false
+}
+
+// retreatHunk moves the cursor to the previous hunk, crossing file boundaries.
+func (dr *diffReviewState) retreatHunk() bool {
+	if dr.hunkIdx > 0 {
+		dr.hunkIdx--
+		return true
+	}
+	for f := dr.fileIdx - 1; f >= 0; f-- {
+		if len(dr.entries[f].hunks) > 0 {
+			dr.fileIdx = f
+			dr.hunkIdx = len(dr.entries[f].hunks) - 1
+			return true
+		}
+	}
+	return false
+}
+
+// nextFile / prevFile jump file boundaries (`]` / `[`).
+func (dr *diffReviewState) nextFile() {
+	for f := dr.fileIdx + 1; f < len(dr.entries); f++ {
+		if len(dr.entries[f].hunks) > 0 {
+			dr.fileIdx = f
+			dr.hunkIdx = 0
+			return
+		}
+	}
+}
+
+func (dr *diffReviewState) prevFile() {
+	for f := dr.fileIdx - 1; f >= 0; f-- {
+		if len(dr.entries[f].hunks) > 0 {
+			dr.fileIdx = f
+			dr.hunkIdx = 0
+			return
+		}
+	}
 }
 
 // handleDiffReviewKey handles keyboard input while the diff-review overlay is active.
@@ -124,35 +241,63 @@ func (m Model) handleDiffReviewKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	pendingToApproved := func() {
 		for i := range dr.entries {
-			if dr.entries[i].action == diffReviewPending {
-				dr.entries[i].action = diffReviewApproved
+			for j := range dr.entries[i].hunks {
+				if dr.entries[i].hunks[j].action == diffReviewPending {
+					dr.entries[i].hunks[j].action = diffReviewApproved
+				}
 			}
 		}
 	}
 
-	setAction := func(a diffReviewAction) {
-		if dr.cursor >= 0 && dr.cursor < len(dr.entries) {
-			dr.entries[dr.cursor].action = a
+	setAll := func(a diffReviewAction) {
+		for i := range dr.entries {
+			for j := range dr.entries[i].hunks {
+				dr.entries[i].hunks[j].action = a
+			}
 		}
 	}
 
-	advance := func() {
-		if dr.cursor < len(dr.entries)-1 {
-			dr.cursor++
-			dr.syncDiffVP()
+	setHunk := func(a diffReviewAction) {
+		if h := dr.currentHunk(); h != nil {
+			h.action = a
 		}
 	}
 
 	key := msg.String()
 
-	// Tab / shift+tab: toggle focus between file list and diff viewport.
+	// Note-mode: the user pressed 'n' to attach a note to the focused hunk.
+	// All printable keys feed into noteInput; Enter commits, Esc cancels.
+	if dr.noteMode {
+		switch key {
+		case "enter":
+			if h := dr.currentHunk(); h != nil {
+				h.note = dr.noteInput
+			}
+			dr.noteMode = false
+			dr.noteInput = ""
+		case "esc", "ctrl+c":
+			dr.noteMode = false
+			dr.noteInput = ""
+		case "backspace":
+			if len(dr.noteInput) > 0 {
+				runes := []rune(dr.noteInput)
+				dr.noteInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(key) == 1 {
+				dr.noteInput += key
+			}
+		}
+		m.diffReview = dr
+		return m, nil
+	}
+
 	if key == "tab" || key == "shift+tab" {
 		dr.diffFocus = !dr.diffFocus
 		m.diffReview = dr
 		return m, nil
 	}
 
-	// Diff-viewport scrolling when focused.
 	if dr.diffFocus {
 		switch key {
 		case "up", "k":
@@ -172,46 +317,60 @@ func (m Model) handleDiffReviewKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// File-list navigation and per-file actions.
 	switch key {
 	case "up", "k":
-		if dr.cursor > 0 {
-			dr.cursor--
+		if dr.retreatHunk() {
 			dr.syncDiffVP()
 		}
 	case "down", "j":
-		if dr.cursor < len(dr.entries)-1 {
-			dr.cursor++
+		if dr.advanceHunk() {
 			dr.syncDiffVP()
 		}
+	case "]":
+		dr.nextFile()
+		dr.syncDiffVP()
+	case "[":
+		dr.prevFile()
+		dr.syncDiffVP()
 	case "a":
-		setAction(diffReviewApproved)
-		advance()
-	case "r":
-		setAction(diffReviewRequested)
-		advance()
-	case "x":
-		setAction(diffReviewReverted)
-		advance()
-	case "A":
-		for i := range dr.entries {
-			dr.entries[i].action = diffReviewApproved
+		setHunk(diffReviewApproved)
+		if dr.advanceHunk() {
+			dr.syncDiffVP()
 		}
+	case "r":
+		setHunk(diffReviewRequested)
+		if dr.advanceHunk() {
+			dr.syncDiffVP()
+		}
+	case "x":
+		setHunk(diffReviewReverted)
+		if dr.advanceHunk() {
+			dr.syncDiffVP()
+		}
+	case "n":
+		// Open the note minibuffer for the focused hunk. The note is saved
+		// on Enter and travels to the agent in the follow-up feedback message.
+		if dr.currentHunk() != nil {
+			dr.noteMode = true
+			if h := dr.currentHunk(); h != nil {
+				dr.noteInput = h.note // pre-fill with any existing note
+			}
+		}
+	case "A":
+		setAll(diffReviewApproved)
 		return close(buildDiffReviewResult(dr))
 	case "X":
-		for i := range dr.entries {
-			dr.entries[i].action = diffReviewReverted
-		}
+		setAll(diffReviewReverted)
 		return close(buildDiffReviewResult(dr))
 	case "enter", "esc":
-		// Approve all undecided entries, then close.
 		pendingToApproved()
 		return close(buildDiffReviewResult(dr))
 	case "ctrl+c":
-		// Emergency escape: revert all undecided entries.
 		for i := range dr.entries {
-			if dr.entries[i].action == diffReviewPending {
-				dr.entries[i].action = diffReviewReverted
+			for j := range dr.entries[i].hunks {
+				if dr.entries[i].hunks[j].action == diffReviewPending {
+					dr.entries[i].hunks[j].action = diffReviewReverted
+				}
 			}
 		}
 		return close(buildDiffReviewResult(dr))
@@ -221,19 +380,95 @@ func (m Model) handleDiffReviewKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// buildDiffReviewResult maps per-entry decisions into the result.
+// buildDiffReviewResult maps per-hunk decisions into approved/requested entries.
+// For each file we Apply only the approved hunks against the original content;
+// rejected hunks fall back to the original. Files with zero approved hunks are
+// omitted from Approved (no-op write avoided).
 func buildDiffReviewResult(dr *diffReviewState) DiffReviewResult {
 	var result DiffReviewResult
+	var feedbackItems []agentFollowupItem
 	for _, e := range dr.entries {
-		switch e.action {
-		case diffReviewApproved, diffReviewPending:
-			result.Approved = append(result.Approved, e.entry)
-		case diffReviewRequested:
+		if len(e.hunks) == 0 {
+			continue
+		}
+		approvedMask := make([]bool, len(e.hunks))
+		anyApproved := false
+		anyRequested := false
+		hunks := make([]pendingedits.Hunk, len(e.hunks))
+		for i, hr := range e.hunks {
+			hunks[i] = hr.hunk
+			// Treat any still-pending hunk as approved (Enter/Esc fall-through).
+			if hr.action == diffReviewApproved || hr.action == diffReviewPending {
+				approvedMask[i] = true
+				anyApproved = true
+			}
+			if hr.action == diffReviewRequested {
+				anyRequested = true
+				feedbackItems = append(feedbackItems, agentFollowupItem{
+					path: e.entry.Path,
+					hunk: hr.hunk,
+					note: hr.note,
+				})
+			}
+		}
+		if anyApproved {
+			rebuilt := pendingedits.Apply(
+				e.entry.OrigContent, e.entry.NewContent,
+				e.diffLines, hunks, approvedMask,
+			)
+			out := e.entry
+			out.NewContent = rebuilt
+			result.Approved = append(result.Approved, out)
+		}
+		if anyRequested {
 			result.Requested = append(result.Requested, e.entry)
-			// diffReviewReverted → dropped
 		}
 	}
+	if len(feedbackItems) > 0 {
+		result.FollowupMessage = buildFollowupText(feedbackItems)
+	}
 	return result
+}
+
+// agentFollowupItem holds one rejected hunk's data for the follow-up message.
+type agentFollowupItem struct {
+	path string
+	hunk pendingedits.Hunk
+	note string
+}
+
+// buildFollowupText produces the user-facing follow-up message text from a
+// list of rejected hunks. Kept in the tui package to avoid a circular import
+// with internal/agent; the text format is identical to what
+// agent.BuildDiffFeedbackMessage would produce.
+func buildFollowupText(items []agentFollowupItem) string {
+	var sb strings.Builder
+	sb.WriteString("The following edits were rejected during diff review. Please address each before continuing:\n\n")
+	sb.WriteString("<diff_feedback>\n")
+	for _, item := range items {
+		fmt.Fprintf(&sb, "  <hunk path=%q old_start=%d old_length=%d new_start=%d new_length=%d>\n",
+			item.path, item.hunk.OldStart, item.hunk.OldLength, item.hunk.NewStart, item.hunk.NewLength)
+		// Render the proposed diff lines.
+		sb.WriteString("    <proposed>\n")
+		for _, ln := range item.hunk.Lines {
+			switch ln.Op {
+			case pendingedits.DiffInsert:
+				fmt.Fprintf(&sb, "      +%s\n", ln.Text)
+			case pendingedits.DiffDelete:
+				fmt.Fprintf(&sb, "      -%s\n", ln.Text)
+			default:
+				fmt.Fprintf(&sb, "       %s\n", ln.Text)
+			}
+		}
+		sb.WriteString("    </proposed>\n")
+		sb.WriteString("    <decision>rejected</decision>\n")
+		if item.note != "" {
+			fmt.Fprintf(&sb, "    <note>%s</note>\n", strings.TrimSpace(item.note))
+		}
+		sb.WriteString("  </hunk>\n")
+	}
+	sb.WriteString("</diff_feedback>")
+	return sb.String()
 }
 
 // renderDiffReview renders the diff-review overlay into a string.
@@ -252,42 +487,40 @@ func (m Model) renderDiffReview(rectWidth, rectHeight int) string {
 		innerH = 6
 	}
 
-	// Fixed chrome rows: header + subtitle + rule + rule + hint = 5
 	const fixedRows = 5
 	contentH := innerH - fixedRows
 	if contentH < 3 {
 		contentH = 3
 	}
 
-	// File list ~35% of width; diff gets the rest.
 	listW := innerW * 35 / 100
 	if listW < 14 {
 		listW = 14
 	}
-	diffW := innerW - listW - 3 // separator (1) + two gaps (2)
+	diffW := innerW - listW - 3
 	if diffW < 10 {
 		diffW = 10
 	}
 
-	// Resize diff VP if dimensions changed.
 	if dr.diffVP.Width() != diffW || dr.diffVP.Height() != contentH {
 		dr.resizeDiffVP(diffW, contentH)
 	}
 
 	var sb strings.Builder
 
+	totalHunks, decidedHunks := dr.tallyHunks()
 	plural := "s"
-	if len(dr.entries) == 1 {
+	if totalHunks == 1 {
 		plural = ""
 	}
 	fmt.Fprintf(&sb, "%s\n", panelHeader("Diff Review", innerW))
 	fmt.Fprintf(&sb, "%s\n", stylePickerDesc.Render(
-		fmt.Sprintf("  %d file%s pending — a approve · r request · x revert", len(dr.entries), plural),
+		fmt.Sprintf("  %d/%d hunk%s decided — a approve · r request · x revert · ] / [ next/prev file",
+			decidedHunks, totalHunks, plural),
 	))
 	fmt.Fprintf(&sb, "%s\n", panelRule(innerW))
 
-	// Side-by-side: file list (left) │ diff (right).
-	fileListStr := renderDiffFileList(dr, listW, contentH)
+	fileListStr := renderHunkFileList(dr, listW, contentH)
 	diffViewStr := dr.diffVP.View()
 
 	listLines := splitToHeight(fileListStr, contentH)
@@ -308,29 +541,61 @@ func (m Model) renderDiffReview(rectWidth, rectHeight int) string {
 
 	fmt.Fprintf(&sb, "%s\n", panelRule(innerW))
 
-	var focusHint string
-	if dr.diffFocus {
-		focusHint = "↑/↓ scroll diff · tab: files"
+	// Bottom row: note minibuffer when active, otherwise keybinding hint.
+	if dr.noteMode {
+		cursor := "█"
+		notePrompt := fmt.Sprintf("note> %s%s", dr.noteInput, cursor)
+		fmt.Fprintf(&sb, "%s", stylePickerItemSelected.Width(innerW).Render(diffTrimRunes(notePrompt, innerW)))
 	} else {
-		focusHint = "↑/↓ files · tab: scroll diff"
+		var focusHint string
+		if dr.diffFocus {
+			focusHint = "↑/↓ scroll diff · tab: hunks"
+		} else {
+			focusHint = "↑/↓ hunks · n note · tab: scroll diff"
+		}
+		hint := fmt.Sprintf("%s · A all · X revert all · Enter/Esc done · ^C abort", focusHint)
+		fmt.Fprintf(&sb, "%s", stylePickerDesc.Width(innerW).Render(hint))
 	}
-	hint := fmt.Sprintf("%s · A all · X revert all · Enter/Esc done · ^C abort", focusHint)
-	fmt.Fprintf(&sb, "%s", stylePickerDesc.Width(innerW).Render(hint))
 
 	return panelFrameStyle(rectWidth, rectHeight).Render(sb.String())
 }
 
-// renderDiffFileList renders the left-panel file list column.
-func renderDiffFileList(dr *diffReviewState, width, height int) string {
+// tallyHunks returns (total, decided) hunk counts across all files.
+func (dr *diffReviewState) tallyHunks() (int, int) {
+	total, decided := 0, 0
+	for _, e := range dr.entries {
+		for _, hr := range e.hunks {
+			total++
+			if hr.action != diffReviewPending {
+				decided++
+			}
+		}
+	}
+	return total, decided
+}
+
+// renderHunkFileList renders the left-panel: each file with its hunk decision
+// summary (e.g. "main.go (2/5)"). The currently focused file is highlighted.
+func renderHunkFileList(dr *diffReviewState, width, height int) string {
 	var sb strings.Builder
 	for i, e := range dr.entries {
 		if i >= height {
 			break
 		}
-		badge := diffActionBadge(e.action)
-		name := diffShortPath(e.entry.Path, width-5)
-		line := badge + " " + name
-		if i == dr.cursor {
+		approved, total := 0, len(e.hunks)
+		for _, hr := range e.hunks {
+			if hr.action == diffReviewApproved {
+				approved++
+			}
+		}
+		summary := fmt.Sprintf(" %d/%d", approved, total)
+		nameWidth := width - len(summary) - 4
+		if nameWidth < 4 {
+			nameWidth = 4
+		}
+		name := diffShortPath(e.entry.Path, nameWidth)
+		line := name + summary
+		if i == dr.fileIdx {
 			fmt.Fprintf(&sb, "%s\n", stylePickerItemSelected.Render("❯ "+diffTrimRunes(line, width-2)))
 		} else {
 			fmt.Fprintf(&sb, "%s\n", stylePickerItem.Render("  "+diffTrimRunes(line, width-2)))
@@ -339,47 +604,86 @@ func renderDiffFileList(dr *diffReviewState, width, height int) string {
 	return sb.String()
 }
 
-// diffActionBadge returns a one-rune status indicator.
-func diffActionBadge(a diffReviewAction) string {
+// renderHunkDiff renders the focused entry's diff with a marker on the
+// focused hunk. Returns (rendered string, top-line index of focused hunk in
+// the rendered output) so the viewport can scroll to it.
+func renderHunkDiff(e diffReviewEntry, focusedHunk, width int) (string, int) {
+	if len(e.hunks) == 0 {
+		return stylePickerDesc.Render("(no changes — file staged but identical to disk)"), -1
+	}
+
+	var sb strings.Builder
+	focusedTop := -1
+	currentLine := 0
+
+	for i, hr := range e.hunks {
+		// Hunk header line: "@@ -<oldStart>,<oldLen> +<newStart>,<newLen> @@  [action]"
+		marker := "  "
+		if i == focusedHunk {
+			marker = "▶ "
+			focusedTop = currentLine
+		}
+		header := fmt.Sprintf("%s@@ -%d,%d +%d,%d @@  [%s]",
+			marker,
+			hr.hunk.OldStart, hr.hunk.OldLength,
+			hr.hunk.NewStart, hr.hunk.NewLength,
+			hunkActionLabel(hr.action),
+		)
+		fmt.Fprintf(&sb, "%s\n", styleHunkHeader(hr.action, i == focusedHunk).Render(diffTrimRunes(header, width)))
+		currentLine++
+
+		for _, ln := range hr.hunk.Lines {
+			var prefix string
+			var style lipgloss.Style
+			switch ln.Op {
+			case pendingedits.DiffInsert:
+				prefix = "+"
+				style = cDiffAdd
+			case pendingedits.DiffDelete:
+				prefix = "-"
+				style = cDiffDel
+			default:
+				prefix = " "
+				style = stylePickerDesc
+			}
+			text := prefix + ln.Text
+			if width > 2 && len([]rune(text)) > width {
+				text = string([]rune(text)[:width])
+			}
+			fmt.Fprintf(&sb, "%s\n", style.Render(text))
+			currentLine++
+		}
+		if i < len(e.hunks)-1 {
+			fmt.Fprintf(&sb, "%s\n", stylePickerDesc.Render(strings.Repeat("·", min(width, 20))))
+			currentLine++
+		}
+	}
+	return strings.TrimRight(sb.String(), "\n"), focusedTop
+}
+
+// hunkActionLabel returns a short tag for the per-hunk decision badge.
+func hunkActionLabel(a diffReviewAction) string {
 	switch a {
 	case diffReviewApproved:
-		return "✓"
+		return "approve"
 	case diffReviewReverted:
-		return "✗"
+		return "revert"
 	case diffReviewRequested:
-		return "↺"
+		return "request"
 	default:
-		return "?"
+		return "pending"
 	}
 }
 
-// renderDiffLines converts DiffLine records into a color-coded string for the viewport.
-func renderDiffLines(lines []pendingedits.DiffLine, width int) string {
-	if len(lines) == 0 {
-		return stylePickerDesc.Render("(no changes)")
+// styleHunkHeader returns a lipgloss style for the @@ header line. Focused
+// hunks get the picker-selected style; unfocused fall back to the muted desc
+// style. Action-specific colouring rides on the badge inside the line text
+// rather than the whole row.
+func styleHunkHeader(_ diffReviewAction, focused bool) lipgloss.Style {
+	if focused {
+		return stylePickerItemSelected
 	}
-	var sb strings.Builder
-	for _, ln := range lines {
-		var prefix string
-		var style lipgloss.Style
-		switch ln.Op {
-		case pendingedits.DiffInsert:
-			prefix = "+"
-			style = cDiffAdd
-		case pendingedits.DiffDelete:
-			prefix = "-"
-			style = cDiffDel
-		default:
-			prefix = " "
-			style = stylePickerDesc
-		}
-		text := prefix + ln.Text
-		if width > 2 && len([]rune(text)) > width {
-			text = string([]rune(text)[:width])
-		}
-		fmt.Fprintf(&sb, "%s\n", style.Render(text))
-	}
-	return strings.TrimRight(sb.String(), "\n")
+	return stylePickerDesc
 }
 
 // splitToHeight splits a rendered string into exactly h lines.

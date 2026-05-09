@@ -104,6 +104,7 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	// Strip side-effect callbacks — same as runSubAgentWithModel.
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
+	childCfg.OnToolBatchComplete = nil
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
 	childCfg.Model = model
@@ -282,6 +283,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	// or re-trigger memory extraction / session-memory updates.
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
+	childCfg.OnToolBatchComplete = nil
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
 

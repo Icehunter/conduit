@@ -728,6 +728,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				return DiffReviewResult{Approved: pendingTable.Drain()}
 			}
 		}
+		runOpts.DiffReview.EnqueueFollowup = func(text string) {
+			prog.Send(diffReviewFollowupMsg{text: text})
+		}
 	}
 
 	// Re-enter alt-screen after SIGWINCH (iTerm2 resize) so the terminal

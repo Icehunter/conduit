@@ -21,6 +21,7 @@ type planApprovalKind int
 const (
 	planApprovalKindBypass planApprovalKind = iota
 	planApprovalKindAcceptEdits
+	planApprovalKindAcceptEditsLive
 	planApprovalKindDefault
 	planApprovalKindChat
 )
@@ -33,6 +34,7 @@ type planApprovalOption struct {
 var planApprovalOptions = []planApprovalOption{
 	{"Approve — auto mode (run all tools without prompts)", planApprovalKindBypass},
 	{"Approve — accept edits only (writes auto, shell still asks)", planApprovalKindAcceptEdits},
+	{"Approve — live review (pause mid-turn to review each hunk)", planApprovalKindAcceptEditsLive},
 	{"Approve — default mode (prompt for each tool call)", planApprovalKindDefault},
 	{"💬 Chat about this — keep planning, share more context", planApprovalKindChat},
 }
@@ -138,6 +140,8 @@ func (o planApprovalOption) decision() planmodetool.PlanApprovalDecision {
 		return planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeBypassPermissions}
 	case planApprovalKindAcceptEdits:
 		return planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEdits}
+	case planApprovalKindAcceptEditsLive:
+		return planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEditsLive}
 	case planApprovalKindDefault:
 		return planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}
 	case planApprovalKindChat:
@@ -171,7 +175,7 @@ func (m Model) handlePlanApprovalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		// Esc collapses to the "chat about this" path: rejected, user can
 		// type a follow-up that the model will treat as plan refinement.
 		return send(planmodetool.PlanApprovalDecision{Approved: false})
-	case "1", "2", "3", "4":
+	case "1", "2", "3", "4", "5":
 		idx := int(key[0] - '1')
 		if idx >= 0 && idx < len(planApprovalOptions) {
 			return send(planApprovalOptions[idx].decision())
@@ -292,7 +296,7 @@ func (m Model) renderPlanApprovalPicker(rectWidth, rectHeight int) string {
 }
 
 func planApprovalHint() string {
-	return "↑/↓ select · Enter approve · 1-4 quick · Esc chat"
+	return "↑/↓ select · Enter approve · 1-5 quick · Esc chat"
 }
 
 // recordPlanApprovalRect stores the absolute screen rect of the plan viewport

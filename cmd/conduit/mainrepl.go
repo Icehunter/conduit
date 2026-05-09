@@ -515,12 +515,16 @@ func runREPL(continueMode bool, resumeID string) error {
 						}
 					}
 				}
-				// Record reverted entries in the JSONL (no disk action needed).
-				// Requested entries are marked too; follow-up injection is future work.
+				// Record reverted/requested entries in the JSONL.
 				for _, e := range result.Requested {
 					if sess != nil {
 						_ = sess.AppendPendingEditResult(e.Path, e.Op.String(), "requested", e.ToolName)
 					}
+				}
+				// If any hunks were rejected, inject the feedback message as the
+				// agent's next user turn so it can address each rejection.
+				if result.FollowupMessage != "" && diffReviewHook.EnqueueFollowup != nil {
+					diffReviewHook.EnqueueFollowup(result.FollowupMessage)
 				}
 			}
 
@@ -581,6 +585,44 @@ func runREPL(continueMode bool, resumeID string) error {
 			if sess != nil && summary != "" {
 				_ = sess.SetSummary(summary)
 			}
+		},
+		OnToolBatchComplete: func(pendingEdits int) bool {
+			// In acceptEditsLive mode, pause for mid-turn hunk review when
+			// the staged-edit count hits the configured threshold.
+			if gate.Mode() != permissions.ModeAcceptEditsLive {
+				return false
+			}
+			n := pendingTable.Len()
+			threshold := settings.DiffReviewMidTurnThreshold()
+			if n < threshold {
+				return false
+			}
+			if diffReviewHook.AskReview == nil {
+				return false
+			}
+			ctx2, cancel2 := context.WithTimeout(bgCtx, 10*time.Minute)
+			result := diffReviewHook.AskReview(ctx2)
+			cancel2()
+			if len(result.Approved) > 0 {
+				for i, fr := range pendingedits.Flush(result.Approved) {
+					if fr.Applied {
+						if sess != nil {
+							_ = sess.AppendFileAccess("write", fr.Path)
+							_ = sess.AppendPendingEditResult(fr.Path, result.Approved[i].Op.String(), "approved", result.Approved[i].ToolName)
+						}
+					}
+				}
+			}
+			for _, e := range result.Requested {
+				if sess != nil {
+					_ = sess.AppendPendingEditResult(e.Path, e.Op.String(), "requested", e.ToolName)
+				}
+			}
+			if result.FollowupMessage != "" && diffReviewHook.EnqueueFollowup != nil {
+				diffReviewHook.EnqueueFollowup(result.FollowupMessage)
+			}
+			// Return true to pause the loop — the TUI will re-submit after review.
+			return true
 		},
 		IsOAuthSubscription: auth.InferAccountKind(tok) == auth.AccountKindClaudeAI,
 	})

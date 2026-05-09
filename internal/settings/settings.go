@@ -225,6 +225,25 @@ func (s *Merged) EffectiveCouncilSynthesizerMaxTokens() int {
 	return 8192
 }
 
+// DiffReviewMidTurnThreshold returns the minimum number of staged pending-edit
+// files that triggers a mid-turn diff review pause in acceptEditsLive mode.
+// Override via CONDUIT_DIFF_REVIEW_THRESHOLD env var; default is 3.
+func DiffReviewMidTurnThreshold() int {
+	if v := os.Getenv("CONDUIT_DIFF_REVIEW_THRESHOLD"); v != "" {
+		n := 0
+		for _, c := range v {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n > 0 {
+			return n
+		}
+	}
+	return 3
+}
+
 // ActiveProviderSettings stores conduit's provider routing selector.
 type ActiveProviderSettings struct {
 	Kind          string `json:"kind"`

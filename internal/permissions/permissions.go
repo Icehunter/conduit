@@ -25,6 +25,7 @@ type Mode string
 const (
 	ModeDefault           Mode = "default"
 	ModeAcceptEdits       Mode = "acceptEdits"
+	ModeAcceptEditsLive   Mode = "acceptEditsLive" // acceptEdits + mid-turn hunk review
 	ModeBypassPermissions Mode = "bypassPermissions"
 	ModePlan              Mode = "plan"
 	ModeCouncil           Mode = "council"
@@ -250,7 +251,7 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 	switch mode {
 	case ModeBypassPermissions:
 		return DecisionAllow
-	case ModeAcceptEdits:
+	case ModeAcceptEdits, ModeAcceptEditsLive:
 		if toolIsEdit(toolName) {
 			return DecisionAllow
 		}

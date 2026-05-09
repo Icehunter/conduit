@@ -155,6 +155,17 @@ type LoopConfig struct {
 	// blocking or detaching to a goroutine.
 	OnEndTurn func(history []api.Message)
 
+	// OnToolBatchComplete fires after each batch of tool results is appended
+	// to history, before the next API request. pendingEdits is the number of
+	// staged-but-not-yet-flushed file edits. If the callback returns true, the
+	// loop treats the current turn as if end_turn was reached: it calls
+	// OnEndTurn, then returns the current history. The caller is responsible
+	// for re-submitting if it wants the agent to continue.
+	//
+	// Only fires for the foreground loop; loopsubagent.go zeros this field
+	// for every child loop (same pattern as OnEndTurn).
+	OnToolBatchComplete func(pendingEdits int) bool
+
 	// OnCompact fires when auto-compaction runs and provides the summary text.
 	// Used by the TUI to persist the summary to the session transcript.
 	OnCompact func(summary string)
@@ -511,6 +522,21 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			Role:    "user",
 			Content: toolResults,
 		})
+
+		// Mid-turn pause hook (acceptEditsLive mode). If the callback signals
+		// that the user wants to review now, treat this as an end_turn: run
+		// OnEndTurn then return. The TUI re-submits the updated history after
+		// the review overlay closes and any follow-up message is enqueued.
+		// pendingEdits is passed as 0 — the callback owns the pending-edits
+		// table and reads Len() itself; the arg is reserved for future use.
+		if l.cfg.OnToolBatchComplete != nil {
+			if pause := l.cfg.OnToolBatchComplete(0); pause {
+				if l.cfg.OnEndTurn != nil {
+					l.cfg.OnEndTurn(msgs)
+				}
+				return msgs, nil
+			}
+		}
 
 	}
 }

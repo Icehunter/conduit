@@ -29,12 +29,13 @@ func TestPlanApproval_RenderShowsPlanAndOptions(t *testing.T) {
 
 	out := plainText(m.renderPlanApprovalPicker(96, 30))
 
-	// All four options must be present and numbered.
+	// All five options must be present and numbered.
 	for _, want := range []string{
 		"1. Approve — auto mode",
 		"2. Approve — accept edits",
-		"3. Approve — default mode",
-		"4. 💬 Chat about this",
+		"3. Approve — live review",
+		"4. Approve — default mode",
+		"5. 💬 Chat about this",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan-approval modal missing option %q\nrendered:\n%s", want, out)
@@ -61,10 +62,11 @@ func TestPlanApproval_QuickPickReturnsCorrectDecision(t *testing.T) {
 	}{
 		{"1", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeBypassPermissions}, true},
 		{"2", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEdits}, true},
-		{"3", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}, true},
-		{"4", planmodetool.PlanApprovalDecision{Approved: false}, true},
+		{"3", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEditsLive}, true},
+		{"4", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}, true},
+		{"5", planmodetool.PlanApprovalDecision{Approved: false}, true},
 		{"esc", planmodetool.PlanApprovalDecision{Approved: false}, true},
-		{"5", planmodetool.PlanApprovalDecision{}, false}, // out of range, no send
+		{"6", planmodetool.PlanApprovalDecision{}, false}, // out of range, no send
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {

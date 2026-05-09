@@ -14,10 +14,15 @@ type GatedStager struct {
 	Gate  interface{ Mode() permissions.Mode }
 }
 
-// Stage implements Stager. It forwards to the table only in acceptEdits mode;
-// otherwise it returns ErrNotStaging so the caller falls through to direct write.
+// Stage implements Stager. It forwards to the table only in acceptEdits or
+// acceptEditsLive mode; otherwise it returns ErrNotStaging so the caller
+// falls through to direct write.
 func (g *GatedStager) Stage(e Entry) error {
-	if g.Gate == nil || g.Gate.Mode() != permissions.ModeAcceptEdits {
+	if g.Gate == nil {
+		return ErrNotStaging
+	}
+	m := g.Gate.Mode()
+	if m != permissions.ModeAcceptEdits && m != permissions.ModeAcceptEditsLive {
 		return ErrNotStaging
 	}
 	return g.Table.Stage(e)

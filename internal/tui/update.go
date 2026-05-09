@@ -151,8 +151,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case diffReviewAskMsg:
 		// Diff-first review gate: open the per-file approve/revert overlay.
-		m.diffReview = newDiffReviewState(msg.entries, msg.reply, 80, 24)
+		m.diffReview = newDiffReviewState(msg.entries, msg.reply)
 		m.refreshViewport()
+		return m, nil
+
+	case diffReviewFollowupMsg:
+		// Enqueue the feedback message so it fires as the next user turn
+		// once the agent-done transition clears the running state.
+		m.pendingMessages = append(m.pendingMessages, msg.text)
 		return m, nil
 
 	case compactDoneMsg:

@@ -218,7 +218,18 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		m.streaming = ""
 	}
 	if msg.cancelled || isCancelError(msg.err) {
-		// Context was cancelled — Ctrl+C already committed partial history.
+		// Context was cancelled. The loop may still have built resolved
+		// cleanup history (for example interrupted tool_result blocks), so
+		// adopt it when it extends the TUI's current history.
+		if len(msg.history) > len(m.history) {
+			m.history = m.annotateTurnProvider(msg.history)
+			m.persistNewMessages(msg.history)
+			if msg.usage.InputTokens > 0 || msg.usage.OutputTokens > 0 {
+				m.applyAPIUsage(msg.usage, msg.contextInputTokens)
+			} else {
+				m.tallyTokens()
+			}
+		}
 	} else if msg.err != nil {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 		if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {

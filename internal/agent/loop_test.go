@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -154,6 +155,88 @@ func TestLoop_ToolUseDispatchAndContinue(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(texts, ""), "Done!") {
 		t.Errorf("expected 'Done!' in final text")
+	}
+}
+
+func TestLoop_ToolUseDoesNotDependOnStopReason(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&fakeTool{name: "Bash", result: "command output"})
+
+	firstTurn := strings.Replace(singleToolUseSSE("toolu_stop_reason_mismatch"), `"stop_reason":"tool_use"`, `"stop_reason":"end_turn"`, 1)
+	lp, srv := newTestLoop(t, []string{firstTurn, textOnlySSE("done")}, reg)
+	defer srv.Close()
+
+	var toolResults int
+	history, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "run something"}}},
+	}, func(ev LoopEvent) {
+		if ev.Type == EventToolResult {
+			toolResults++
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if toolResults != 1 {
+		t.Fatalf("tool result events = %d; want 1", toolResults)
+	}
+	foundResult := false
+	for _, msg := range history {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" && block.ToolUseID == "toolu_stop_reason_mismatch" {
+				foundResult = true
+			}
+		}
+	}
+	if !foundResult {
+		t.Fatal("history missing tool_result for mismatched-stop-reason tool_use")
+	}
+}
+
+func TestLoop_SessionStartAdditionalContextInjectedOnFirstRequest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hook command runner uses sh")
+	}
+	reg := tool.NewRegistry()
+	var capturedSystem []api.SystemBlock
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			System []api.SystemBlock `json:"system"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		capturedSystem = body.System
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(textOnlySSE("done")))
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "m",
+		MaxTokens: 1024,
+		System:    []api.SystemBlock{{Type: "text", Text: "base"}},
+		Hooks: &settings.HooksSettings{
+			SessionStart: []settings.HookMatcher{{
+				Matcher: "startup",
+				Hooks: []settings.Hook{{
+					Type:    "command",
+					Command: `printf '{"additionalContext":"startup context"}'`,
+				}},
+			}},
+		},
+	})
+
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hi"}}},
+	}, func(LoopEvent) {})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(capturedSystem) != 2 {
+		t.Fatalf("system block count = %d; want 2 (%+v)", len(capturedSystem), capturedSystem)
+	}
+	if !strings.Contains(capturedSystem[1].Text, "startup context") {
+		t.Fatalf("session-start context not injected: %+v", capturedSystem)
 	}
 }
 

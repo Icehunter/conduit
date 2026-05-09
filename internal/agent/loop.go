@@ -365,7 +365,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		reqSystem := system
-		if turn == 0 && sessionReminderBlock != nil {
+		if turn == 1 && sessionReminderBlock != nil {
 			reqSystem = append(append([]api.SystemBlock(nil), system...), *sessionReminderBlock)
 		}
 		// For Claude.ai OAuth (Max subscription) accounts, replace the static
@@ -431,7 +431,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			})
 		}
 
-		assistantBlocks, stopReason, usage, err := l.drainStream(ctx, stream, handler)
+		assistantBlocks, _, usage, err := l.drainStream(ctx, stream, handler)
 		inputTokens := usage.PromptInputTokens()
 		_ = stream.Close()
 		if err != nil {
@@ -476,7 +476,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		})
 		lastAssistantTime = time.Now()
 
-		if stopReason != "tool_use" {
+		if !hasToolUse(assistantBlocks) {
 			// end_turn or unknown — we're done.
 			// Auto-compact check: if context is approaching capacity, compact
 			// so future turns don't hit the limit. Non-fatal if it fails.
@@ -539,6 +539,15 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 	}
+}
+
+func hasToolUse(blocks []api.ContentBlock) bool {
+	for _, block := range blocks {
+		if block.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
 }
 
 // firstUserMessageText returns the text content of the first user message in

@@ -60,15 +60,15 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 			p.providerForm = nil
 			f.err = ""
 		case "enter":
-			if err := m.advanceProviderForm(f, false); err != nil {
+			if err := m.advanceProviderForm(f, false, false); err != nil {
 				f.err = err.Error()
 				return done()
 			}
 			m, _ = m.commitProviderFormIfComplete(f)
 		case "up", "left", "shift+tab":
-			_ = m.advanceProviderForm(f, true)
+			_ = m.advanceProviderForm(f, true, true)
 		case "down", "right", "tab":
-			_ = m.advanceProviderForm(f, false)
+			_ = m.advanceProviderForm(f, false, true)
 		case "backspace":
 			if len(f.input) > 0 {
 				f.input = f.input[:len(f.input)-1]
@@ -194,29 +194,35 @@ func (m Model) refreshModelCommandProviders() {
 	)
 }
 
-func (m Model) advanceProviderForm(f *providerFormState, backwards bool) error {
+func (m Model) advanceProviderForm(f *providerFormState, backwards bool, navigate bool) error {
 	value := strings.TrimSpace(f.input)
 	switch f.step {
 	case providerFormStepCredential:
-		if value == "" {
+		if !navigate && value == "" {
 			return fmt.Errorf("credential name is required")
 		}
-		if providerCredentialAliasLooksSecret(value) {
+		if !navigate && providerCredentialAliasLooksSecret(value) {
 			return fmt.Errorf("credential is an alias, not the API key; put the secret in the API key field")
 		}
-		f.credential = value
+		if value != "" {
+			f.credential = value
+		}
 		f.input = f.baseURL
 	case providerFormStepBaseURL:
-		if value == "" {
+		if !navigate && value == "" {
 			return fmt.Errorf("base URL is required")
 		}
-		f.baseURL = strings.TrimRight(value, "/") + "/"
+		if value != "" {
+			f.baseURL = strings.TrimRight(value, "/") + "/"
+		}
 		f.input = f.model
 	case providerFormStepModel:
-		if value == "" {
+		if !navigate && value == "" {
 			return fmt.Errorf("model is required")
 		}
-		f.model = value
+		if value != "" {
+			f.model = value
+		}
 		f.input = providerFormValue(f, providerFormStepContextWindow)
 	case providerFormStepContextWindow:
 		if value == "" {
@@ -228,10 +234,12 @@ func (m Model) advanceProviderForm(f *providerFormState, backwards bool) error {
 		}
 		f.input = ""
 	case providerFormStepAPIKey:
-		if value == "" && f.editKey == "" {
+		if !navigate && value == "" && f.editKey == "" {
 			return fmt.Errorf("API key is required")
 		}
-		f.apiKey = value
+		if value != "" {
+			f.apiKey = value
+		}
 		f.input = ""
 	}
 	f.err = ""

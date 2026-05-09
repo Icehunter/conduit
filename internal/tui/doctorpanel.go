@@ -36,6 +36,6 @@ func (m Model) renderDoctorPanel() string {
 		sb.WriteString(line + "\n")
 	}
 	sb.WriteString("\n" + stylePickerDesc.Render("q / Esc  close"))
-	panelHeight := lipgloss.Height(sb.String());
+	panelHeight := lipgloss.Height(sb.String())
 	return panelFrameStyle(m.width, panelHeight).Render(sb.String())
 }

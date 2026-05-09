@@ -301,14 +301,22 @@ func renderLine(line string, width int) string {
 }
 
 // applyInline applies all inline GFM styles: bold, italic, strikethrough, code.
+// Backtick spans are processed first so their content is protected from the
+// subsequent italic passes (underscore-delimited words inside code spans must
+// not be italicised).
 func applyInline(line string) string {
+	line = applyDelim(line, "`", styleInlineCode)
 	line = applyDelim(line, "**", lipgloss.NewStyle().Background(colorWindowBg).Bold(true))
 	line = applyDelim(line, "__", lipgloss.NewStyle().Background(colorWindowBg).Bold(true))
 	line = applyDelim(line, "~~", styleStrike)
-	line = applyDelim(line, "`", styleInlineCode)
-	// Italic: single * or _ (applied after ** to avoid conflict)
-	line = applyDelimSingle(line, "*", styleItalic)
-	line = applyDelimSingle(line, "_", styleItalic)
+	// Italic: single * or _ (applied after ** to avoid conflict).
+	// Skip entirely if the line already has ANSI escapes (e.g. from a code
+	// span above) — scanning for _ across escape sequences mis-fires on
+	// identifiers like CONDUIT_FORCE_DIFF_REVIEW.
+	if !strings.Contains(line, "\x1b[") {
+		line = applyDelimSingle(line, "*", styleItalic)
+		line = applyDelimSingle(line, "_", styleItalic)
+	}
 	return line
 }
 

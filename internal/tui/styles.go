@@ -96,7 +96,7 @@ func RebuildStyles() {
 	styleToolBadge = lipgloss.NewStyle().Foreground(colorTool).Background(colorWindowBg).Bold(true)
 	styleErrorText = lipgloss.NewStyle().Foreground(colorError).Background(colorWindowBg)
 	styleSystemText = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg).Italic(true)
-	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF")).Background(colorWindowBg)
+	styleInlineCode = lipgloss.NewStyle().Foreground(lipgloss.Color("#79C0FF"))
 	styleCodeBorder = lipgloss.NewStyle().Background(colorWindowBg).PaddingLeft(2)
 	styleCodeLang = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg)
 

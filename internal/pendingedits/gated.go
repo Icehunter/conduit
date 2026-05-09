@@ -1,6 +1,11 @@
 package pendingedits
 
-import "github.com/icehunter/conduit/internal/permissions"
+import (
+	"strings"
+
+	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
+)
 
 // GatedStager is a Stager that only stages writes when the permission gate's
 // current mode is ModeAcceptEdits. In all other modes it returns ErrNotStaging
@@ -17,12 +22,19 @@ type GatedStager struct {
 // Stage implements Stager. It forwards to the table only in acceptEdits or
 // acceptEditsLive mode; otherwise it returns ErrNotStaging so the caller
 // falls through to direct write.
+//
+// Writes to conduit's own config directory (~/.conduit/…) are never staged —
+// memory files and session state should always go to disk immediately.
 func (g *GatedStager) Stage(e Entry) error {
 	if g.Table == nil || g.Gate == nil {
 		return ErrNotStaging
 	}
 	m := g.Gate.Mode()
 	if m != permissions.ModeAcceptEdits && m != permissions.ModeAcceptEditsLive {
+		return ErrNotStaging
+	}
+	conduitDir := settings.ConduitDir()
+	if strings.HasPrefix(e.Path, conduitDir+"/") || e.Path == conduitDir {
 		return ErrNotStaging
 	}
 	return g.Table.Stage(e)

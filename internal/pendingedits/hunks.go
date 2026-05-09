@@ -1,8 +1,7 @@
 package pendingedits
 
-// DefaultHunkContext is the number of equal lines kept around each change
-// region when splitting a DiffLine stream into hunks. Matches the conventional
-// `git diff -U3` default.
+// DefaultHunkContext is the number of unchanged context lines kept on each
+// side of a change region. Three matches the `git diff -U3` default.
 const DefaultHunkContext = 3
 
 // Hunk is a contiguous run of DiffLine records (changes plus surrounding
@@ -58,9 +57,9 @@ func Hunks(lines []DiffLine, context int) []Hunk {
 	}
 
 	// Build [start,end] line-index ranges by expanding each change index by
-	// `context` and merging overlaps.
-	type rng struct{ start, end int }
-	var ranges []rng
+	// `context` and merging overlapping windows.
+	type hunkRange struct{ start, end int }
+	var ranges []hunkRange
 	for _, ci := range changeIdx {
 		s := ci - context
 		if s < 0 {
@@ -71,7 +70,7 @@ func Hunks(lines []DiffLine, context int) []Hunk {
 			e = len(lines) - 1
 		}
 		if len(ranges) == 0 || s > ranges[len(ranges)-1].end+1 {
-			ranges = append(ranges, rng{s, e})
+			ranges = append(ranges, hunkRange{s, e})
 		} else if e > ranges[len(ranges)-1].end {
 			ranges[len(ranges)-1].end = e
 		}
@@ -81,8 +80,7 @@ func Hunks(lines []DiffLine, context int) []Hunk {
 	for _, r := range ranges {
 		segment := lines[r.start : r.end+1]
 		h := Hunk{Lines: append([]DiffLine(nil), segment...)}
-		// Compute old/new start+length from the first/last lines that have
-		// numbering on each side.
+		// Compute 1-based start+length for both sides by scanning the segment.
 		for _, ln := range segment {
 			if ln.OldLine > 0 {
 				if h.OldStart == 0 {

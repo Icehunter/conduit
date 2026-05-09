@@ -3,9 +3,7 @@ package pendingedits
 import "bytes"
 
 // Apply rebuilds a file's content by replaying only the approved hunks against
-// the original DiffLine stream. Hunks not in approvedIdx are treated as
-// rejected — original lines from the rejected region survive, inserted lines
-// from the rejected region are dropped.
+// the original DiffLine stream. Unapproved hunks fall back to original lines.
 //
 // `lines` must be the full DiffLine stream produced by Diff(orig, updated).
 // `hunks` must be the result of Hunks(lines, ctx) for the same stream.
@@ -57,11 +55,10 @@ func Apply(orig, updated []byte, lines []DiffLine, hunks []Hunk, approvedIdx []b
 		return approvedIdx[hi]
 	}
 
-	// lastFromUpdated reports whether the most recently appended output line
-	// came from the `updated` side (an Insert in an approved hunk, or an
-	// Equal line — equal lines exist on both sides identically).
+	// Walk the full diff stream. Lines outside any hunk are passed through
+	// unchanged. Lines inside a hunk are filtered by the approval mask.
 	var out []string
-	lastFromUpdated := false // only meaningful when len(out) > 0
+	lastFromUpdated := false
 	for i, ln := range lines {
 		hi := hunkOf[i]
 		if hi == -1 {
@@ -105,7 +102,7 @@ func Apply(orig, updated []byte, lines []DiffLine, hunks []Hunk, approvedIdx []b
 		}
 		buf.WriteString(s)
 	}
-	// Trailing newline: pick the side that contributed the last line.
+	// Trailing newline: match the side that provided the last line.
 	addNL := false
 	if lastFromUpdated {
 		addNL = bytes.HasSuffix(updated, []byte{'\n'})

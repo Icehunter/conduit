@@ -4,9 +4,9 @@ import (
 	"strings"
 )
 
-// MaxDiffLines is the soft cap above which Diff returns a synthetic
-// "file too large to render" line list rather than running the full
-// O(N*D) Myers comparison. Each side counted separately.
+// MaxDiffLines is the line-count threshold above which Diff skips the Myers
+// comparison and returns a single placeholder line. Both sides are counted
+// independently; either exceeding the limit triggers the fallback.
 const MaxDiffLines = 10_000
 
 // DiffOp tags one line in a unified diff.

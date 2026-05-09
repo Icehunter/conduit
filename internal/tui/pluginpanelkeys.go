@@ -37,10 +37,47 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 	// Structural/action keys are always handled directly; everything else
 	// (including letters used for nav when search is empty) goes to the search box.
 	if p.tab == pluginTabDiscover {
+		// "i" installs space-toggled items if any are selected AND search is empty;
+		// otherwise it's a search character (appends to search box).
+		if key == "i" {
+			if len(p.discoverSearch) == 0 {
+				var toInstall []string
+				for _, item := range p.discoverItems {
+					if item.selected {
+						toInstall = append(toInstall, item.pluginID)
+					}
+				}
+				if len(toInstall) > 0 {
+					cwd, _ := os.Getwd()
+					trusted := !m.cfg.NeedsTrust
+					cmds := make([]tea.Cmd, 0, len(toInstall))
+					mgr := m.cfg.MCPManager
+					for _, pluginID := range toInstall {
+						pid := pluginID
+						cmds = append(cmds, func() tea.Msg {
+							_, err := plugins.Install(context.Background(), pid, "user", cwd)
+							if err == nil && mgr != nil {
+								mgr.SyncPluginServers(context.Background(), cwd, trusted)
+							}
+							return pluginInstallMsg{pluginID: pid, err: err}
+						})
+					}
+					m.pluginPanel = p
+					return m, tea.Batch(cmds...)
+				}
+			}
+			// Search active, or no items toggled — treat "i" as a search character.
+			p.discoverSearch += "i"
+			p.applyDiscoverFilter()
+			p.selected = min(p.selected, max(0, len(p.discoverFiltered)-1))
+			m.pluginPanel = p
+			return m, nil
+		}
+
 		isStructural := key == "esc" || key == "ctrl+c" || key == "enter" ||
 			key == "up" || key == "down" || key == "left" || key == "right" ||
 			key == " " || key == "backspace" || key == "ctrl+h" ||
-			key == "tab" || key == "i" || len(key) > 1 // multi-char = special key
+			key == "tab" || len(key) > 1 // multi-char = special key
 
 		if !isStructural && len(key) == 1 {
 			p.discoverSearch += key
@@ -85,35 +122,6 @@ func (m Model) handlePluginListKey(p *pluginPanelState, key string) (Model, tea.
 		if p.tab == pluginTabDiscover && len(p.discoverFiltered) > 0 {
 			idx := p.discoverFiltered[p.selected]
 			p.discoverItems[idx].selected = !p.discoverItems[idx].selected
-		}
-	case "i":
-		if p.tab == pluginTabDiscover && len(p.discoverSearch) > 0 {
-			// Only install space-toggled items — never the cursor row implicitly.
-			var toInstall []string
-			for _, item := range p.discoverItems {
-				if item.selected {
-					toInstall = append(toInstall, item.pluginID)
-				}
-			}
-			if len(toInstall) == 0 {
-				break
-			}
-			cwd, _ := os.Getwd()
-			trusted := !m.cfg.NeedsTrust
-			var cmds []tea.Cmd
-			mgr := m.cfg.MCPManager
-			for _, pluginID := range toInstall {
-				pid := pluginID
-				cmds = append(cmds, func() tea.Msg {
-					_, err := plugins.Install(context.Background(), pid, "user", cwd)
-					if err == nil && mgr != nil {
-						mgr.SyncPluginServers(context.Background(), cwd, trusted)
-					}
-					return pluginInstallMsg{pluginID: pid, err: err}
-				})
-			}
-			m.pluginPanel = p
-			return m, tea.Batch(cmds...)
 		}
 	case "enter":
 		n := p.currentListLen()

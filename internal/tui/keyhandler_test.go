@@ -159,10 +159,10 @@ func TestHandleKey_RunningUp_NotConsumed(t *testing.T) {
 
 func TestPluginDiscoverIRequiresSpaceToggle(t *testing.T) {
 	m := idleModel()
-	newState := func() *pluginPanelState {
+	newState := func(search string) *pluginPanelState {
 		p := &pluginPanelState{
 			tab:            pluginTabDiscover,
-			discoverSearch: "front",
+			discoverSearch: search,
 			discoverItems: []discoverItem{
 				{pluginID: "frontend-design@claude-plugins-official", name: "frontend-design"},
 			},
@@ -171,26 +171,43 @@ func TestPluginDiscoverIRequiresSpaceToggle(t *testing.T) {
 		return p
 	}
 
-	// Without a space-toggled item, i is structural but does nothing.
-	p1 := newState()
+	// No toggles, no search — i appends to search.
+	p1 := newState("")
 	_, cmd := m.handlePluginListKey(p1, "i")
 	if cmd != nil {
 		t.Fatal("i without toggled items should not install anything")
 	}
-	// Search must be unchanged — i never types into the search box.
-	if p1.discoverSearch != "front" {
-		t.Fatalf("i without toggles modified search: %q", p1.discoverSearch)
+	if p1.discoverSearch != "i" {
+		t.Fatalf("i without toggles should append to search, got: %q", p1.discoverSearch)
 	}
 
-	// With a space-toggled item and an active search, i should install.
-	p2 := newState()
-	p2.discoverItems[0].selected = true
-	m2, cmd2 := m.handlePluginListKey(p2, "i")
-	if cmd2 == nil {
-		t.Fatal("i with toggled item and active search should install")
+	// No toggles, search active — i appends to search.
+	p2 := newState("front")
+	_, cmd2 := m.handlePluginListKey(p2, "i")
+	if cmd2 != nil {
+		t.Fatal("i with search active but no toggles should not install")
 	}
-	if m2.pluginPanel.discoverSearch != "front" {
-		t.Fatalf("search changed after install shortcut: %q", m2.pluginPanel.discoverSearch)
+	if p2.discoverSearch != "fronti" {
+		t.Fatalf("i should append to search, got: %q", p2.discoverSearch)
+	}
+
+	// Toggled item, search active — i appends to search (not install).
+	p3 := newState("front")
+	p3.discoverItems[0].selected = true
+	m3, cmd3 := m.handlePluginListKey(p3, "i")
+	if cmd3 != nil {
+		t.Fatal("i with search active should not install even if items are toggled")
+	}
+	if m3.pluginPanel.discoverSearch != "fronti" {
+		t.Fatalf("i with search+toggles should append to search, got: %q", m3.pluginPanel.discoverSearch)
+	}
+
+	// Toggled item, no search — i installs.
+	p4 := newState("")
+	p4.discoverItems[0].selected = true
+	_, cmd4 := m.handlePluginListKey(p4, "i")
+	if cmd4 == nil {
+		t.Fatal("i with toggled item and no search should install")
 	}
 }
 

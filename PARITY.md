@@ -719,3 +719,12 @@ These are implemented in Claude Code but not yet in conduit and not in M10/M13 (
 **Newly descoped (KAIROS/GrowthBook-gated — not in external builds):** BriefTool, ScheduleCronTool, RemoteTriggerTool (remote-only).
 
 Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loading, auto-compact, HTTP proxy, rate limit tracking, AskUserQuestion, EnterPlanMode/ExitPlanMode, MCP resources, effort/fast modes, /memory /context /status /tasks /session /agents /thinkback /color /copy /search /diff /doctor /files /review /usage /stats /theme /rename /pr-comments /tag, worktree tools, HTTP/prompt/agent hooks, XDG paths, cost persistence, transcript search, SyntheticOutputTool, Stats panel (asciigraph chart, per-model series, Overview heatmap), session activity tracking (idle reporting in /session), visual pickers for /theme /model /output-style, conversation recovery (partial assistant message persisted on stream error + orphan tool_use filter on /resume), MCP server approval dialog (project-scope security gate with startup picker + persisted Yes/Yes-All/No), memory extraction (RunExtract sub-agent fired on each end_turn, single-flighted; manual /memory extract), session memory service (per-session summary.md updated by sub-agent every 3 end_turns; loaded as system block on --continue/resume), accurate token counting (cl100k_base via tiktoken-go), API preconnect now honors HTTP(S)_PROXY skips and ANTHROPIC_BASE_URL, time-based micro-compaction (clears older tool_results after 60min idle, keeps last 5), first-run onboarding overlay (auth status + key commands; persisted via onboardingComplete), MCP OAuth (RFC 8414 discovery + RFC 7591 DCR + PKCE + token refresh; McpAuthTool pseudo-tool + /mcp auth manual command; 401 on connect → StatusNeedsAuth).
+
+---
+
+## Conduit-Only Features (No CC Counterpart)
+
+| Feature | Package | Notes |
+|---------|---------|-------|
+| Decision Journal | `internal/decisionlog/`, `internal/tools/decisiontool/` | Append-only JSONL per-project; `RecordDecision` tool; system prompt block 9; council auto-records verdicts |
+| Diff-First Review Gate | `docs/design/diff-review-gate.md` (🔲 v1.6) | Staging layer between tool writes and disk; per-file approve/revert overlay |

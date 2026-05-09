@@ -51,6 +51,10 @@ type SubAgentSpec struct {
 	// from being added to the child registry. Use for council members and other
 	// sub-agents that must not switch permission modes mid-run.
 	DisableModeTools bool
+	// MaxTokens overrides the child's max_tokens budget when > 0. Use for
+	// long-form sub-agent runs (council synthesis, summarisation) where the
+	// inherited parent budget would truncate the response.
+	MaxTokens int
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -103,6 +107,9 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
 	childCfg.Model = model
+	if spec.MaxTokens > 0 {
+		childCfg.MaxTokens = spec.MaxTokens
+	}
 
 	// Append agent-specific system block when provided.
 	if spec.SystemPrompt != "" {

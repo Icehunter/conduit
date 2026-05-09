@@ -1,6 +1,6 @@
 # conduit Implementation Status
 
-Last updated: 2026-05-08
+Last updated: 2026-05-09
 
 ## How to read this
 
@@ -262,6 +262,9 @@ Last updated: 2026-05-08
 | · /council slash command | ✅ | mode-independent one-shot debate; /council-history lists transcripts |
 | · council_test.go | ✅ | 15 table-driven tests; regex, roster, convergence, roles, voting, cost |
 | · Council read-only gate | ✅ | ModeCouncil denies (not asks) non-read-only tools; EnterPlanMode returns error; directive updated to skip EnterPlanMode step |
+| **Decision Journal** | ✅ | `internal/decisionlog/` + `RecordDecision` tool — conduit-original; council auto-records verdicts; block 9 in system prompt feeds entries back across sessions |
+| **Plan-approval council bug** | ✅ | Empty/error synthesis no longer opens a blank approval modal; `councilSynthesizerMaxTokens` (default 8192) prevents silent truncation |
+| **Diff-First Review Gate** | 🔲 | Design spec at `docs/design/diff-review-gate.md`; implementation planned for v1.6 |
 | **Plan-approval modal** | ✅ | Inset take-over overlay (1 row / 3 col padding from viewport); shows full plan in scrollable viewport; 4 options incl. "chat about this"; mouse drag-to-copy works inside modal |
 
 ---

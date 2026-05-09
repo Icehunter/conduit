@@ -42,6 +42,7 @@ type ConduitConfig struct {
 	CouncilMaxRounds            int                               `json:"councilMaxRounds,omitempty"`
 	CouncilMemberTimeoutSec     int                               `json:"councilMemberTimeoutSec,omitempty"`
 	CouncilSynthesizer          string                            `json:"councilSynthesizer,omitempty"`
+	CouncilSynthesizerMaxTokens int                               `json:"councilSynthesizerMaxTokens,omitempty"`
 	CouncilConvergenceThreshold float64                           `json:"councilConvergenceThreshold,omitempty"`
 	CouncilRoles                map[string]string                 `json:"councilRoles,omitempty"`
 

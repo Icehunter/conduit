@@ -183,6 +183,10 @@ type Merged struct {
 	CouncilMemberTimeoutSec int `json:"councilMemberTimeoutSec,omitempty"`
 	// CouncilSynthesizer is the provider key used for synthesis. Empty → parent loop's background model.
 	CouncilSynthesizer string `json:"councilSynthesizer,omitempty"`
+	// CouncilSynthesizerMaxTokens overrides max_tokens for the synthesis call.
+	// Council debates produce long transcripts; the parent loop's MaxTokens can
+	// truncate the synthesis. Zero → default (8192).
+	CouncilSynthesizerMaxTokens int `json:"councilSynthesizerMaxTokens,omitempty"`
 	// CouncilConvergenceThreshold is the minimum Jaccard similarity (0–1) that
 	// triggers early agreement. Zero or negative disables similarity-based convergence.
 	CouncilConvergenceThreshold float64 `json:"councilConvergenceThreshold,omitempty"`
@@ -208,6 +212,17 @@ func (s *Merged) EffectiveCouncilMemberTimeout() time.Duration {
 		return time.Duration(s.CouncilMemberTimeoutSec) * time.Second
 	}
 	return 0
+}
+
+// EffectiveCouncilSynthesizerMaxTokens returns the synthesis max_tokens budget,
+// defaulting to 8192 when unset. Synthesis runs after every debate round and
+// produces a single coherent plan; an undersized budget silently truncates
+// the response and breaks the plan-approval flow.
+func (s *Merged) EffectiveCouncilSynthesizerMaxTokens() int {
+	if s.CouncilSynthesizerMaxTokens > 0 {
+		return s.CouncilSynthesizerMaxTokens
+	}
+	return 8192
 }
 
 // ActiveProviderSettings stores conduit's provider routing selector.
@@ -256,6 +271,9 @@ func Load(cwd string) (*Merged, error) {
 		}
 		if cfg.CouncilSynthesizer != "" {
 			merged.CouncilSynthesizer = cfg.CouncilSynthesizer
+		}
+		if cfg.CouncilSynthesizerMaxTokens > 0 {
+			merged.CouncilSynthesizerMaxTokens = cfg.CouncilSynthesizerMaxTokens
 		}
 		if cfg.CouncilConvergenceThreshold > 0 {
 			merged.CouncilConvergenceThreshold = cfg.CouncilConvergenceThreshold

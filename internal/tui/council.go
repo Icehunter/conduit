@@ -292,12 +292,14 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 	memberTimeout := 30 * time.Second
 	var convergenceThreshold float64
 	var synthesizerKey string
+	synthesizerMaxTokens := 8192
 	councilRoles := map[string]string{}
 	if s, err := settings.Load(""); err == nil {
 		maxRounds = s.EffectiveCouncilMaxRounds()
 		memberTimeout = s.EffectiveCouncilMemberTimeout()
 		convergenceThreshold = s.CouncilConvergenceThreshold
 		synthesizerKey = s.CouncilSynthesizer
+		synthesizerMaxTokens = s.EffectiveCouncilSynthesizerMaxTokens()
 		if s.CouncilRoles != nil {
 			councilRoles = s.CouncilRoles
 		}
@@ -413,10 +415,17 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 			Background: true,
 			Client:     synthClient,
 			Model:      synthModel,
+			MaxTokens:  synthesizerMaxTokens,
 		})
-		synthesis := synthResult.Text
-		if synthErr != nil || synthesis == "" {
-			synthesis = seedPlan
+		synthesis := strings.TrimSpace(synthResult.Text)
+		// Surface synthesis failure explicitly. Falling back to seedPlan
+		// (the user's question) silently turned the question into the "plan"
+		// the user was asked to approve — a confusing dead end.
+		if synthErr != nil {
+			return councilDoneMsg{err: fmt.Errorf("council synthesis failed: %w", synthErr)}
+		}
+		if synthesis == "" {
+			return councilDoneMsg{err: fmt.Errorf("council synthesis returned an empty plan (synthesizer=%s); try raising councilSynthesizerMaxTokens or narrowing the question", synthModel)}
 		}
 
 		totalUsage, totalCost, perMember := accumulateStats(members, synthResult, synthModel)
@@ -474,12 +483,14 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 	memberTimeout := 30 * time.Second
 	var convergenceThreshold float64
 	var synthesizerKey string
+	synthesizerMaxTokens := 8192
 	councilRoles := map[string]string{}
 	if s, err := settings.Load(""); err == nil {
 		maxRounds = s.EffectiveCouncilMaxRounds()
 		memberTimeout = s.EffectiveCouncilMemberTimeout()
 		convergenceThreshold = s.CouncilConvergenceThreshold
 		synthesizerKey = s.CouncilSynthesizer
+		synthesizerMaxTokens = s.EffectiveCouncilSynthesizerMaxTokens()
 		if s.CouncilRoles != nil {
 			councilRoles = s.CouncilRoles
 		}
@@ -589,6 +600,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 			Background: true,
 			Client:     synthClient,
 			Model:      synthModel,
+			MaxTokens:  synthesizerMaxTokens,
 		})
 		synthesis := synthResult.Text
 		if synthErr != nil || synthesis == "" {

@@ -14,6 +14,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
 	"github.com/icehunter/conduit/internal/tools/configtool"
+	"github.com/icehunter/conduit/internal/tools/decisiontool"
 	"github.com/icehunter/conduit/internal/tools/fileedittool"
 	"github.com/icehunter/conduit/internal/tools/filereadtool"
 	"github.com/icehunter/conduit/internal/tools/filewritetool"
@@ -116,6 +117,7 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(tasktool.NewOutput())
 	reg.Register(tasktool.NewStop())
 	reg.Register(todowritetool.New())
+	reg.Register(decisiontool.New())
 	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
 	reg.Register(websearchtool.New(client))

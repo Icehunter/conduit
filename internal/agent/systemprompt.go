@@ -16,6 +16,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/coordinator"
+	"github.com/icehunter/conduit/internal/decisionlog"
 	"github.com/icehunter/conduit/internal/undercover"
 )
 
@@ -141,6 +142,11 @@ IMPORTANT: Assist with authorized security testing, defensive security, CTF chal
  - Your responses should be short and concise.
  - Don't narrate your internal deliberation. State what you're doing, then do it.
  - End-of-turn summary: one or two sentences. What changed and what's next.
+
+# Decision journal
+ - When you make a load-bearing technical decision — choosing a pattern, ruling out an approach, internalising a project constraint, or noting a surprising discovery — call RecordDecision.
+ - Do not record trivia, narrate steps, or duplicate what is already in CLAUDE.md or the diff.
+ - Aim for entries your future self would thank you for. One sentence what, one sentence why.
 `
 
 // MinimalOutputGuidance is the fourth system block. Covers output formatting
@@ -203,6 +209,7 @@ var CoordinatorMCPNames []string
 //  7. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
 //     Includes type taxonomy, how-to-save instructions, and MEMORY.md content.
 //  8. [optional] Skills reminder (skills non-empty)
+//  9. [optional] Recent project decisions from decisionlog (conduit-only)
 func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
@@ -246,6 +253,17 @@ func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.Syst
 	}
 	if reminder := SkillsReminder(skills); reminder != "" {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: reminder})
+	}
+	// Block 9: recent project decisions (conduit-only).
+	// Loaded from the per-project decision journal so the agent inherits prior
+	// decisions across sessions without re-discovering them. Capped at 3 KB so
+	// the block never crowds out higher-priority content.
+	if cwd, err := os.Getwd(); err == nil {
+		if recent, err := decisionlog.Recent(cwd, 20); err == nil && len(recent) > 0 {
+			if block := decisionlog.FormatPromptBlock(recent, 3072); block != "" {
+				blocks = append(blocks, api.SystemBlock{Type: "text", Text: block})
+			}
+		}
 	}
 	if instructions := undercover.GetUndercoverInstructions(); instructions != "" {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: instructions})

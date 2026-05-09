@@ -2,10 +2,12 @@ package tui
 
 import (
 	"image"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
@@ -315,9 +317,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.totalInputTokens += msg.usage.InputTokens
 		m.totalOutputTokens += msg.usage.OutputTokens
 		m.costUSD += msg.costUSD
+
+		// A plan is "valid" only if there's no error AND the synthesis is
+		// non-empty after trimming. Empty/error plans must NOT open the
+		// approval modal — doing so leaves the user staring at a blank
+		// viewport whose Approve button fires a decision against nothing.
+		trimmedPlan := strings.TrimSpace(msg.plan)
+		validPlan := msg.err == nil && trimmedPlan != ""
+
 		if msg.err != nil {
 			m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
-		} else if msg.plan != "" {
+		} else if !validPlan {
+			m.messages = append(m.messages, Message{
+				Role:    RoleError,
+				Content: "Council synthesis returned an empty plan. Try a more focused question, raise councilSynthesizerMaxTokens in conduit.json, or check the synthesizer model's availability.",
+			})
+		} else {
 			m.messages = append(m.messages, Message{
 				Role:     RoleCouncil,
 				Content:  msg.plan,
@@ -326,11 +341,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		m.vp.GotoBottom()
+
 		reply := m.councilReply
 		if reply != nil {
 			m.councilReply = nil
-			m.planApproval = newPlanApprovalState(msg.plan, reply, 60, 12)
-			m.refreshViewport()
+			if validPlan {
+				m.planApproval = newPlanApprovalState(msg.plan, reply, 60, 12)
+				m.refreshViewport()
+			} else {
+				// Release the waiting goroutine — without this the chat-path
+				// reader in handleCouncilChat blocks forever on replyCh.
+				go func() {
+					reply <- planmodetool.PlanApprovalDecision{
+						Approved: false,
+						Feedback: "council synthesis failed",
+					}
+				}()
+			}
 		}
 		return m, nil
 

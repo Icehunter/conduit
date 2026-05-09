@@ -26,7 +26,7 @@ func (m Model) renderDoctorPanel() string {
 		return ""
 	}
 	dp := m.doctorPanel
-	innerW := m.width - 8
+	innerW := m.width - 4
 	var sb strings.Builder
 	sb.WriteString(panelHeader("Conduit Diagnostics", innerW) + "\n\n")
 	if dp.platform != "" {
@@ -36,5 +36,6 @@ func (m Model) renderDoctorPanel() string {
 		sb.WriteString(line + "\n")
 	}
 	sb.WriteString("\n" + stylePickerDesc.Render("q / Esc  close"))
-	return panelFrameStyle(m.width, lipgloss.Height(sb.String())+4).Render(sb.String())
+	panelHeight := lipgloss.Height(sb.String());
+	return panelFrameStyle(m.width, panelHeight).Render(sb.String())
 }

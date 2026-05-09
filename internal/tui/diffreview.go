@@ -334,19 +334,19 @@ func (m Model) handleDiffReviewKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		dr.syncDiffVP()
 	case "a":
 		setHunk(diffReviewApproved)
-		if dr.advanceHunk() {
-			dr.syncDiffVP()
-		}
+		dr.syncDiffVP()
+		dr.advanceHunk()
+		dr.syncDiffVP()
 	case "r":
 		setHunk(diffReviewRequested)
-		if dr.advanceHunk() {
-			dr.syncDiffVP()
-		}
+		dr.syncDiffVP()
+		dr.advanceHunk()
+		dr.syncDiffVP()
 	case "x":
 		setHunk(diffReviewReverted)
-		if dr.advanceHunk() {
-			dr.syncDiffVP()
-		}
+		dr.syncDiffVP()
+		dr.advanceHunk()
+		dr.syncDiffVP()
 	case "n":
 		// Open the note minibuffer for the focused hunk. The note is saved
 		// on Enter and travels to the agent in the follow-up feedback message.

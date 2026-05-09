@@ -26,9 +26,7 @@ func renderWelcomeCard(content string, width int) string {
 	subscriptionType := get(6)
 
 	outerW := width - outerPad*2
-	if outerW < 42 {
-		outerW = 42
-	}
+	outerW = max(outerW, 42)
 	innerW := outerW - 4 // 1 border + 1 pad on each side
 
 	titleStyle := fgOnBg(colorFg).Bold(true)
@@ -58,9 +56,7 @@ func renderWelcomeCard(content string, width int) string {
 	addBlank()
 
 	sectionW := innerW
-	if sectionW > 72 {
-		sectionW = 72
-	}
+	sectionW = min(sectionW, 72)
 
 	account := subscriptionType
 	if account == "" {
@@ -100,9 +96,7 @@ func renderWelcomeCard(content string, width int) string {
 
 	// Top: ╭─ title ───────────────╮
 	afterTitle := outerW - 2 - 1 - titleW // corners(2) + leading dash(1) + title
-	if afterTitle < 0 {
-		afterTitle = 0
-	}
+	afterTitle = max(afterTitle, 0)
 	topBorder := borderStyle.Render("╭─") + titleRendered +
 		borderStyle.Render(strings.Repeat("─", afterTitle)+"╮")
 
@@ -151,9 +145,7 @@ func renderWelcomeLogo(width int) string {
 			ornamentGradientText(renderSlashFill(width-8))
 	}
 	slashW := width - maxLogoW - 2
-	if slashW < 0 {
-		slashW = 0
-	}
+	slashW = max(slashW, 0)
 	var out []string
 	for i, line := range logoLines {
 		tail := ""
@@ -170,9 +162,7 @@ func renderWelcomeSection(label string, width int) string {
 		return fgOnBg(colorWindowTitle).Bold(true).Render(label)
 	}
 	ruleW := width - lipgloss.Width(label) - 3
-	if ruleW < 0 {
-		ruleW = 0
-	}
+	ruleW = max(ruleW, 0)
 	return brandGradientText(label+" ") +
 		ornamentGradientText(strings.Repeat("─", ruleW))
 }

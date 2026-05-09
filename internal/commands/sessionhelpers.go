@@ -22,9 +22,7 @@ func min(a, b int) int {
 func humanDuration(d time.Duration) string {
 	if d < time.Minute {
 		s := int(d.Seconds())
-		if s < 1 {
-			s = 1
-		}
+		s = max(s, 1)
 		return fmt.Sprintf("%ds", s)
 	}
 	if d < time.Hour {

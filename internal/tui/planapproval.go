@@ -79,12 +79,8 @@ type planApprovalAskMsg struct {
 // width and height are the inner content dimensions of the plan viewport
 // (border and surrounding chrome already deducted by the caller).
 func newPlanApprovalState(plan string, reply chan<- planmodetool.PlanApprovalDecision, vpWidth, vpHeight int) *planApprovalPickerState {
-	if vpWidth < 1 {
-		vpWidth = 1
-	}
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
+	vpWidth = max(vpWidth, 1)
+	vpHeight = max(vpHeight, 1)
 	rendered := renderMarkdown(plan, vpWidth)
 	if strings.TrimSpace(rendered) == "" {
 		rendered = stylePickerDesc.Render("(empty plan)")
@@ -109,12 +105,8 @@ func (pa *planApprovalPickerState) resize(vpWidth, vpHeight int) {
 	if pa == nil {
 		return
 	}
-	if vpWidth < 1 {
-		vpWidth = 1
-	}
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
+	vpWidth = max(vpWidth, 1)
+	vpHeight = max(vpHeight, 1)
 	yOff := pa.vp.YOffset()
 	rendered := renderMarkdown(pa.plan, vpWidth)
 	if strings.TrimSpace(rendered) == "" {
@@ -225,14 +217,10 @@ func (m Model) renderPlanApprovalPicker(rectWidth, rectHeight int) string {
 
 	// Frame chrome: rounded border (2) + horizontal padding (4) → inner width.
 	innerW := rectWidth - 6
-	if innerW < 10 {
-		innerW = 10
-	}
+	innerW = max(innerW, 10)
 	// Inner content height = rectHeight - border (2) - vertical padding (2).
 	innerH := rectHeight - 4
-	if innerH < 5 {
-		innerH = 5
-	}
+	innerH = max(innerH, 5)
 
 	// Fixed chrome rows inside the frame:
 	//   header (1) + blank (1) + "Here is the plan:" (1)
@@ -243,21 +231,15 @@ func (m Model) renderPlanApprovalPicker(rectWidth, rectHeight int) string {
 	hint := planApprovalHint()
 	hintRendered := stylePickerDesc.Width(innerW).Render(hint)
 	hintRows := lipgloss.Height(hintRendered)
-	if hintRows < 1 {
-		hintRows = 1
-	}
+	hintRows = max(hintRows, 1)
 	const baseFixedRows = 1 + 1 + 1 + 1 + 1 + 1 + 1 // 7 non-vp rows + dashed borders (excludes hint)
 	optionRows := len(planApprovalOptions)
 	vpHeight := innerH - baseFixedRows - optionRows - hintRows
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
+	vpHeight = max(vpHeight, 3)
 
 	// Plan viewport content width: inner minus dashed-border (2) = innerW - 2.
 	vpInnerW := innerW - 2
-	if vpInnerW < 10 {
-		vpInnerW = 10
-	}
+	vpInnerW = max(vpInnerW, 10)
 
 	// Resize viewport if dimensions changed.
 	if pa.vp.Width() != vpInnerW || pa.vp.Height() != vpHeight {

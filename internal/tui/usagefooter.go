@@ -14,9 +14,7 @@ func (m Model) renderUsageFooter(width int) string {
 	if !m.usageStatusEnabled {
 		return ""
 	}
-	if width < 20 {
-		width = 20
-	}
+	width = max(width, 20)
 	providerLine := m.renderProviderUsageWindow()
 	if _, ok := m.activeMCPProvider(); ok {
 		return padStatusLine(m.renderContextUsageWindow(), width) + "\n" +
@@ -158,9 +156,7 @@ func renderUsageWindow(label string, w planusage.Window) string {
 }
 
 func usageBar(pct, width int) string {
-	if width < 1 {
-		width = 1
-	}
+	width = max(width, 1)
 
 	pct = clampInt(pct, 0, 100)
 	filled := width * pct / 100

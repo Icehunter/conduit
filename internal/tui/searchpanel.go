@@ -77,16 +77,12 @@ func (m Model) renderSearchPanel() string {
 
 	const maxVisible = 10
 	start := p.selected - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + maxVisible
 	if end > len(p.results) {
 		end = len(p.results)
 		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 
 	if len(p.results) == 0 {

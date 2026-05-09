@@ -702,9 +702,7 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 	// Each removed turn corresponds to 2 JSONL lines (user + assistant).
 	if removed > 0 && m.cfg.Session != nil && linesBefore > 0 {
 		keep := linesBefore - removed*2
-		if keep < 0 {
-			keep = 0
-		}
+		keep = max(keep, 0)
 		_ = m.cfg.Session.TruncateLines(keep)
 	}
 

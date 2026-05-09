@@ -110,12 +110,8 @@ func floatingRect(area image.Rectangle, width, height int) image.Rectangle {
 	if height > area.Dy() {
 		height = area.Dy()
 	}
-	if width < 1 {
-		width = 1
-	}
-	if height < 1 {
-		height = 1
-	}
+	width = max(width, 1)
+	height = max(height, 1)
 	x := area.Min.X + (area.Dx()-width)/2
 	y := area.Min.Y + (area.Dy()-height)/2
 	return image.Rect(x, y, x+width, y+height)
@@ -127,27 +123,17 @@ func floatingRectAbove(area image.Rectangle, width, height int) image.Rectangle 
 }
 
 func renderFloatingWindow(content string, width, height int) string {
-	if width < 1 {
-		width = 1
-	}
-	if height < 1 {
-		height = 1
-	}
+	width = max(width, 1)
+	height = max(height, 1)
 	content = decorateFloatingHeader(content, width)
 	innerW := width - floatingWindowStyle().GetHorizontalFrameSize()
-	if innerW < 1 {
-		innerW = 1
-	}
+	innerW = max(innerW, 1)
 	innerH := height - floatingWindowStyle().GetVerticalFrameSize()
-	if innerH < 1 {
-		innerH = 1
-	}
+	innerH = max(innerH, 1)
 	header, body := splitFloatingContent(content)
 	renderedHeader := floatingHeaderStyle().Width(innerW).MaxWidth(innerW).Render(header)
 	bodyH := innerH - lipgloss.Height(renderedHeader)
-	if bodyH < 1 {
-		bodyH = 1
-	}
+	bodyH = max(bodyH, 1)
 	renderedBody := floatingBodyStyle().Width(innerW).Height(bodyH).Render(body)
 	return floatingWindowStyle().Width(width).Height(height).Render(renderedHeader + "\n" + renderedBody)
 }

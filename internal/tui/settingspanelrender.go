@@ -32,9 +32,7 @@ func (m Model) renderSettingsPanel() string {
 	}
 
 	w := m.width
-	if w < 10 {
-		w = 10
-	}
+	w = max(w, 10)
 	panelH := m.panelHeight() - 1
 	if panelH < 8 {
 		panelH = m.panelHeight()
@@ -43,7 +41,7 @@ func (m Model) renderSettingsPanel() string {
 	// Outer style: Width(w-2), border 1 each side (2), padding 2 each side (4)
 	// → content area = (w-2) - 2 - 4 = w - 8. v1 was w-6 because Width was
 	// content-only there.
-	innerW := w - 4
+	innerW := w - 8
 
 	var sb strings.Builder
 
@@ -51,17 +49,13 @@ func (m Model) renderSettingsPanel() string {
 	title := panelTitle("Settings")
 	tabs := settingsColorTabs(settingsTabNames, int(p.tab))
 
-	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
-	if ornW < 6 {
-		ornW = 6
-	}
+	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 4
+	ornW = max(ornW, 6)
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 	sb.WriteString("\n\n")
 
 	contentH := panelH - 3
-	if contentH < 4 {
-		contentH = 4
-	}
+	contentH = max(contentH, 4)
 
 	// ── Tab body ───────────────────────────────────────────────────────────────
 	switch p.tab {
@@ -197,9 +191,7 @@ func (m Model) renderSettingsConfig(sb *strings.Builder, p *settingsPanelState, 
 	}
 
 	visible := contentH - 2
-	if visible < 3 {
-		visible = 3
-	}
+	visible = max(visible, 3)
 
 	start := 0
 	if p.cfgFocus == configFocusList && p.selected >= visible {

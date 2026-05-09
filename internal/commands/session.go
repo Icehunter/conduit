@@ -665,9 +665,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			pct := 0
 			if inputTokens > 0 {
 				pct = inputTokens * 100 / maxCtx
-				if pct > 100 {
-					pct = 100
-				}
+				pct = min(pct, 100)
 			}
 
 			bar := makeBar(pct, 40)
@@ -682,9 +680,7 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				fmt.Fprintf(&sb, "  Estimated cost: $%.4f\n", costUSD)
 			}
 			remaining := maxCtx - inputTokens
-			if remaining < 0 {
-				remaining = 0
-			}
+			remaining = max(remaining, 0)
 			fmt.Fprintf(&sb, "  Remaining: ~%d tokens", remaining)
 			return Result{Type: "text", Text: sb.String()}
 		},

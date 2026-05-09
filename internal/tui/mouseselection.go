@@ -231,9 +231,7 @@ func runeCount(s string) int {
 }
 
 func clampSelectionInt(v, hi int) int {
-	if hi < 0 {
-		hi = 0
-	}
+	hi = max(hi, 0)
 	if v < 0 {
 		return 0
 	}

@@ -140,8 +140,8 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 func newProviderForm() *providerFormState {
 	f := &providerFormState{
 		step:    providerFormStepCredential,
-		baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-		model:   "gemini-flash-latest",
+		baseURL: "https://provider-url",
+		model:   "model-name",
 	}
 	f.input = f.credential
 	return f
@@ -321,9 +321,7 @@ func (m Model) renderSettingsProviders(sb *strings.Builder, p *settingsPanelStat
 	}
 	rows := m.providerRows()
 	visible := contentH - 2
-	if visible < 3 {
-		visible = 3
-	}
+	visible = max(visible, 3)
 	start := 0
 	if p.providerSel >= visible {
 		start = p.providerSel - visible + 1

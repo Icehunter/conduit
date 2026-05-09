@@ -24,22 +24,16 @@ func (m Model) renderCommandPicker() string {
 
 	// Compute visible window around the selected index.
 	start := m.cmdSelected - commandPickerMaxItems/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + commandPickerMaxItems
 	if end > len(m.cmdMatches) {
 		end = len(m.cmdMatches)
 		start = end - commandPickerMaxItems
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 
 	contentW := commandPickerContentWidth(m.width)
-	if contentW < 20 {
-		contentW = 20
-	}
+	contentW = max(contentW, 20)
 
 	if len(m.cmdMatches) == 0 {
 		lines := []string{}
@@ -131,9 +125,7 @@ func commandPickerBodyLines() int {
 }
 
 func renderCommandPickerFrame(lines []string, footer string, bodyLines, contentW int) string {
-	if bodyLines < 1 {
-		bodyLines = 1
-	}
+	bodyLines = max(bodyLines, 1)
 	if len(lines) > bodyLines-1 {
 		lines = lines[:bodyLines-1]
 	}
@@ -228,16 +220,12 @@ func (m Model) renderAtPicker() string {
 	const maxItems = 8
 	cwd, _ := os.Getwd()
 	start := m.atSelected - maxItems/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + maxItems
 	if end > len(m.atMatches) {
 		end = len(m.atMatches)
 		start = end - maxItems
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 
 	contentW := floatingInnerWidth(m.width, floatingPickerSpec)

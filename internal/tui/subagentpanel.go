@@ -130,9 +130,7 @@ func (m Model) handleSubagentDetailKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 	case "down", "j":
 		maxScroll := len(evs) - subagentPanelMaxVisible
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll = max(maxScroll, 0)
 		if p.scroll < maxScroll {
 			p.scroll++
 		}
@@ -140,9 +138,7 @@ func (m Model) handleSubagentDetailKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		p.scroll = 0
 	case "G":
 		maxScroll := len(evs) - subagentPanelMaxVisible
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		maxScroll = max(maxScroll, 0)
 		p.scroll = maxScroll
 	}
 	m.subagentPanel = p
@@ -230,9 +226,7 @@ func (m Model) renderSubagentDetail() string {
 
 	e, isKnown := byID[currentID]
 	w := m.width
-	if w < 20 {
-		w = 20
-	}
+	w = max(w, 20)
 	innerW := w - 8 // panel padding: border(2) + padding(4) each side = 8 total
 
 	var sb strings.Builder
@@ -251,18 +245,14 @@ func (m Model) renderSubagentDetail() string {
 		statusTag = styleModeYellow.Render("● running")
 	}
 	titleW := innerW - lipgloss.Width(statusTag) - lipgloss.Width(modeBadge(e.Mode)) - 4
-	if titleW < 8 {
-		titleW = 8
-	}
+	titleW = max(titleW, 8)
 	sb.WriteString(panelHeader(title, titleW))
 	fmt.Fprintf(&sb, "  %s  %s\n\n", modeBadge(e.Mode), statusTag)
 
 	// Available event rows: panel height - chrome rows.
 	chromeRows := 5 // header + blank + footer-blank + footer + bottom padding
 	visibleEvents := m.panelH - chromeRows
-	if visibleEvents < 3 {
-		visibleEvents = 3
-	}
+	visibleEvents = max(visibleEvents, 3)
 
 	// Event list.
 	evs := subagent.Default.GetEvents(currentID)

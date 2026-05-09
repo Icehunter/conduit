@@ -21,14 +21,10 @@ func (m Model) applyLayout() Model {
 		return m
 	}
 	inputRows := m.input.LineCount()
-	if inputRows < 1 {
-		inputRows = 1
-	}
+	inputRows = max(inputRows, 1)
 	usageRows := m.usageFooterRows()
 	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows - m.todoStripRows()
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
+	vpHeight = max(vpHeight, 1)
 	// Match the textarea's visible row count to the available chrome budget
 	// so it doesn't try to render more rows than the layout reserved.
 	visibleRows := m.height - vpHeight - chromeFixed - usageRows - m.todoStripRows()
@@ -41,9 +37,7 @@ func (m Model) applyLayout() Model {
 	m.input.SetHeight(visibleRows)
 	// Input inner width: full width minus left+right border (2) minus left+right padding (2).
 	inputW := m.width - 4
-	if inputW < 10 {
-		inputW = 10
-	}
+	inputW = max(inputW, 10)
 
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))

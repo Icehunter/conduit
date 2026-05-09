@@ -192,12 +192,8 @@ func rollStats(rng func() float64, floor int) map[string]int {
 		default:
 			val = floor + int(rng()*40) // floor+0 to floor+39
 		}
-		if val < 1 {
-			val = 1
-		}
-		if val > 100 {
-			val = 100
-		}
+		val = max(val, 1)
+		val = min(val, 100)
 		stats[name] = val
 	}
 	return stats

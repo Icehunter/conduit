@@ -16,9 +16,7 @@ func (m Model) renderPluginPanel() string {
 	}
 
 	w := m.width
-	if w < 10 {
-		w = 10
-	}
+	w = max(w, 10)
 	panelH := pluginPanelHeight(m.panelHeight())
 	// lipgloss v2's Width() is total block width (including border + padding).
 	// Outer style: Width(w), border 1 each side (2), padding 2 each side (4)
@@ -30,16 +28,12 @@ func (m Model) renderPluginPanel() string {
 	title := panelTitle("Plugins")
 	tabs := settingsColorTabs(pluginTabNames, int(p.tab))
 	ornW := innerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
-	if ornW < 6 {
-		ornW = 6
-	}
+	ornW = max(ornW, 6)
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 	sb.WriteString("\n\n")
 
 	contentH := panelH - 3
-	if contentH < 4 {
-		contentH = 4
-	}
+	contentH = max(contentH, 4)
 
 	var body strings.Builder
 	switch p.view {
@@ -122,24 +116,18 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 
 	// Each item is 2 lines. Compute how many fit.
 	availableLines := contentH - overhead
-	if availableLines < 2 {
-		availableLines = 2
-	}
+	availableLines = max(availableLines, 2)
 	maxItems := availableLines / 2
 
 	// Scroll window: keep selected visible.
 	total := len(p.discoverFiltered)
 	start := p.selected - maxItems/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + maxItems
 	if end > total {
 		end = total
 		start = end - maxItems
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 
 	// Scroll indicator.
@@ -206,21 +194,15 @@ func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState, cont
 		return
 	}
 	available := contentH - 2
-	if available < 1 {
-		available = 1
-	}
+	available = max(available, 1)
 	total := len(p.installedItems)
 	start := p.selected - available/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + available
 	if end > total {
 		end = total
 		start = end - available
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 	for i := start; i < end; i++ {
 		item := p.installedItems[i]
@@ -270,21 +252,15 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState, c
 	fmt.Fprintf(sb, "%s%s\n\n", addCursor, addStyle.Render("+ Add Marketplace"))
 
 	maxItems := (contentH - 4) / 2
-	if maxItems < 1 {
-		maxItems = 1
-	}
+	maxItems = max(maxItems, 1)
 	total := len(p.marketplaceItems)
 	start := p.selected - 1 - maxItems/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + maxItems
 	if end > total {
 		end = total
 		start = end - maxItems
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 
 	for i := start; i < end; i++ {
@@ -319,9 +295,7 @@ func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState, content
 		return
 	}
 	maxItems := contentH - 1
-	if maxItems < 1 {
-		maxItems = 1
-	}
+	maxItems = max(maxItems, 1)
 	total := len(p.errors)
 	end := total
 	if end > maxItems {

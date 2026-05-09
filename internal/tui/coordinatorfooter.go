@@ -35,13 +35,10 @@ func renderCoordinatorPanel(width int) string {
 		elapsed := time.Since(t.CreatedAt).Round(time.Second)
 		// Truncate label so [elapsed] fits without wrapping.
 		const tailMax = 12 // " · 999s"-ish
-		max := width - outerPad*2 - 4 - tailMax
-		if max < 10 {
-			max = 10
-		}
+		labelMax := max(width-outerPad*2-4-tailMax, 10)
 		runes := []rune(label)
-		if len(runes) > max {
-			label = string(runes[:max-1]) + "…"
+		if len(runes) > labelMax {
+			label = string(runes[:labelMax-1]) + "…"
 		}
 		line := pad + styleStatusAccent.Render("⚙ ") + styleStatus.Render(label) + " " + stylePickerDesc.Render("· "+elapsed.String())
 		sb.WriteString(line)

@@ -15,12 +15,8 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 	const leftPad = 5 // "Mon  " = 5
 
 	weeks := (innerW - leftPad) / 2
-	if weeks < 8 {
-		weeks = 8
-	}
-	if weeks > 26 {
-		weeks = 26
-	}
+	weeks = max(weeks, 8)
+	weeks = min(weeks, 26)
 
 	now := time.Now()
 
@@ -61,9 +57,7 @@ func buildHeatmap(sb *strings.Builder, dailyCounts map[string]int, innerW int) {
 
 		// Map 1..maxCount onto 0..len(heatChars)-1.
 		level := (count - 1) * len(heatChars) / maxCount
-		if level < 0 {
-			level = 0
-		}
+		level = max(level, 0)
 		if level >= len(heatChars) {
 			level = len(heatChars) - 1
 		}
@@ -200,12 +194,8 @@ func buildTokensLineChart(sb *strings.Builder, dailyModelTokens []dailyModelEntr
 	const yAxisWidth = 7
 	availW := innerW - yAxisWidth - 2 // -2 for indent
 	chartW := availW
-	if chartW > 52 {
-		chartW = 52
-	}
-	if chartW < 10 {
-		chartW = 10
-	}
+	chartW = min(chartW, 52)
+	chartW = max(chartW, 10)
 
 	// Distribute data across chartW: if fewer points than width, repeat each;
 	// if more, take the most recent chartW entries. Mirrors CC's generateTokenChart.
@@ -302,13 +292,9 @@ func generateChartXLabels(data []dailyModelEntry, yAxisOffset int) string {
 		numLabels = 2
 	}
 	usableLength := len(data) - 6 // reserve space for last label
-	if usableLength < 1 {
-		usableLength = 1
-	}
+	usableLength = max(usableLength, 1)
 	step := usableLength / (numLabels - 1)
-	if step < 1 {
-		step = 1
-	}
+	step = max(step, 1)
 
 	result := strings.Repeat(" ", yAxisOffset)
 	currentPos := 0
@@ -323,9 +309,7 @@ func generateChartXLabels(data []dailyModelEntry, yAxisOffset int) string {
 		}
 		label := t.Format("Jan 2")
 		spaces := idx - currentPos
-		if spaces < 1 {
-			spaces = 1
-		}
+		spaces = max(spaces, 1)
 		result += strings.Repeat(" ", spaces) + label
 		currentPos = idx + len(label)
 	}

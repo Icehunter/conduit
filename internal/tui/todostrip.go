@@ -42,9 +42,7 @@ func (m Model) renderTodoStrip() string {
 	}
 
 	w := m.width
-	if w < 10 {
-		w = 10
-	}
+	w = max(w, 10)
 
 	var sb strings.Builder
 
@@ -57,9 +55,7 @@ func (m Model) renderTodoStrip() string {
 	titleW := lipgloss.Width(title)
 	summaryW := lipgloss.Width(summary)
 	gap := w - titleW - 1 - summaryW - hintW
-	if gap < 1 {
-		gap = 1
-	}
+	gap = max(gap, 1)
 	fmt.Fprintf(&sb, "%s %s%s%s\n",
 		title,
 		stylePickerDesc.Render(summary),
@@ -109,9 +105,7 @@ func renderTodoRow(td todowritetool.Todo, w int) string {
 	// Max content width: icon (2) + space (1) + content + badge
 	badgeW := len(badge)
 	maxContent := w - 3 - badgeW
-	if maxContent < 4 {
-		maxContent = 4
-	}
+	maxContent = max(maxContent, 4)
 	content := td.Content
 	if len([]rune(content)) > maxContent {
 		runes := []rune(content)
@@ -123,9 +117,7 @@ func renderTodoRow(td todowritetool.Todo, w int) string {
 		// Right-align the "now" badge.
 		labelW := lipgloss.Width(label)
 		pad := w - labelW - badgeW
-		if pad < 1 {
-			pad = 1
-		}
+		pad = max(pad, 1)
 		line := label + strings.Repeat(" ", pad) + badge
 		return stylePickerItemSelected.Render(line)
 	}

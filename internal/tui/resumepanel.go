@@ -124,16 +124,12 @@ func (m Model) renderResumePicker() string {
 
 	const maxVisible = 12
 	start := p.selected - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start + maxVisible
 	if end > len(p.filtered) {
 		end = len(p.filtered)
 		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
+		start = max(start, 0)
 	}
 
 	if len(p.filtered) == 0 {

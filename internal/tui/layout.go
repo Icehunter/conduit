@@ -16,17 +16,11 @@ type uiLayout struct {
 func (m Model) computeLayout(area image.Rectangle) uiLayout {
 	width := area.Dx()
 	height := area.Dy()
-	if width < 1 {
-		width = 1
-	}
-	if height < 1 {
-		height = 1
-	}
+	width = max(width, 1)
+	height = max(height, 1)
 
 	footerRows := m.footerChromeRows()
-	if footerRows < 1 {
-		footerRows = 1
-	}
+	footerRows = max(footerRows, 1)
 	if footerRows > height {
 		footerRows = height
 	}

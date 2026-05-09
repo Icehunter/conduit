@@ -243,9 +243,7 @@ func renderLine(line string, width int) string {
 		(len(trimmed) >= 3 && strings.Count(trimmed, string(trimmed[0])) == len(trimmed) &&
 			(trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '_')) {
 		w := width
-		if w < 1 {
-			w = 1
-		}
+		w = max(w, 1)
 		return styleSep.Render(ornamentGradientText(strings.Repeat("─", w)))
 	}
 
@@ -264,9 +262,7 @@ func renderLine(line string, width int) string {
 	if strings.HasPrefix(line, "> ") {
 		inner := strings.TrimPrefix(line, "> ")
 		innerW := width - 4 // "  │ " = 4 cols
-		if innerW < 10 {
-			innerW = 10
-		}
+		innerW = max(innerW, 10)
 		wrapped := styleBQ.Width(innerW).Render(inner)
 		bqLines := strings.Split(wrapped, "\n")
 		var sb strings.Builder
@@ -365,8 +361,6 @@ func applyDelim(line, delim string, style lipgloss.Style) string {
 
 // separator returns a full-width dim rule.
 func separator(width int) string {
-	if width < 1 {
-		width = 1
-	}
+	width = max(width, 1)
 	return styleSep.Render(ornamentGradientText(strings.Repeat("─", width)))
 }

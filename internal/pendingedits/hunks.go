@@ -41,9 +41,7 @@ func Hunks(lines []DiffLine, context int) []Hunk {
 	if len(lines) == 0 {
 		return nil
 	}
-	if context < 0 {
-		context = 0
-	}
+	context = max(context, 0)
 
 	// Locate every index where Op != DiffEqual.
 	var changeIdx []int
@@ -62,9 +60,7 @@ func Hunks(lines []DiffLine, context int) []Hunk {
 	var ranges []hunkRange
 	for _, ci := range changeIdx {
 		s := ci - context
-		if s < 0 {
-			s = 0
-		}
+		s = max(s, 0)
 		e := ci + context
 		if e > len(lines)-1 {
 			e = len(lines) - 1

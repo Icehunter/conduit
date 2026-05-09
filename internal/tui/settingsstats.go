@@ -96,9 +96,7 @@ func (m Model) renderStatsOverview(sb *strings.Builder, stats *sessionStats, inn
 		rPart := dim.Render(fmt.Sprintf("%-18s", r.label+":")) + surfaceSpaces(1) + acc(r.value)
 		lVis := lipgloss.Width(lPart)
 		pad := leftColW - lVis
-		if pad < 2 {
-			pad = 2
-		}
+		pad = max(pad, 2)
 		sb.WriteString(surfaceSpaces(2) + lPart + surfaceSpaces(pad) + rPart + "\n")
 	}
 
@@ -167,12 +165,8 @@ func (m Model) renderStatsModels(sb *strings.Builder, stats *sessionStats, inner
 			l2vis := lipgloss.Width(l2)
 			pad1 := colW - l1vis
 			pad2 := colW - l2vis
-			if pad1 < 1 {
-				pad1 = 1
-			}
-			if pad2 < 1 {
-				pad2 = 1
-			}
+			pad1 = max(pad1, 1)
+			pad2 = max(pad2, 1)
 			sb.WriteString(surfaceSpaces(2) + l1 + surfaceSpaces(pad1) + r1 + "\n")
 			sb.WriteString(surfaceSpaces(2) + l2 + surfaceSpaces(pad2) + r2 + "\n")
 		} else {
@@ -232,17 +226,10 @@ func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, i
 			row("Cache write:", formatNum(snap.cacheWriteTok))
 		}
 		if snap.inputTokens > 0 {
-			pct := snap.inputTokens * 100 / 200000
-			if pct > 100 {
-				pct = 100
-			}
-			barW := innerW - 28
-			if barW < 8 {
-				barW = 8
-			}
+			pct := min(snap.inputTokens*100/200000, 100)
+			barW := max(innerW-28, 8)
 			filled := barW * pct / 100
-			bar := styleStatusAccent.Render(strings.Repeat("█", filled)) +
-				dim.Render(strings.Repeat("░", barW-filled))
+			bar := styleStatusAccent.Render(strings.Repeat("█", filled)) + dim.Render(strings.Repeat("░", barW-filled))
 			fmt.Fprintf(sb, "\n  %-22s %s %d%%\n", "Context:", bar, pct)
 		}
 	}
@@ -266,12 +253,8 @@ func (m Model) renderSettingsUsage(sb *strings.Builder, p *settingsPanelState, i
 
 func renderLimitBar(label string, pctUsed, remaining, limit, innerW int) string {
 	barW := innerW - 24
-	if barW < 8 {
-		barW = 8
-	}
-	if pctUsed > 100 {
-		pctUsed = 100
-	}
+	barW = max(barW, 8)
+	pctUsed = min(pctUsed, 100)
 	filled := barW * pctUsed / 100
 	style := styleStatusAccent
 	if pctUsed >= 80 {

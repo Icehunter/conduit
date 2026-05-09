@@ -16,9 +16,7 @@ func (m Model) renderPanel() string {
 	}
 
 	w := m.width
-	if w < 10 {
-		w = 10
-	}
+	w = max(w, 10)
 	// Available height for the panel content = terminal height minus the
 	// shared footer stack.
 	panelH := m.panelHeight()
@@ -111,9 +109,7 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 		// this, OAuth errors (which can be hundreds of chars long with
 		// a URL chain) get clipped at the right edge.
 		wrapW := innerW - 2
-		if wrapW < 20 {
-			wrapW = 20
-		}
+		wrapW = max(wrapW, 20)
 		errStyle := fgOnBg(colorError).Width(wrapW)
 		sb.WriteString("\n" + errStyle.Render("Error: "+item.err) + "\n")
 	}

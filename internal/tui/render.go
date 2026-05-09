@@ -26,9 +26,7 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		width = 80
 	}
 	inner := width - outerPad*2
-	if inner < 10 {
-		inner = 10
-	}
+	inner = max(inner, 10)
 	pad := surfaceSpaces(outerPad)
 
 	switch msg.Role {

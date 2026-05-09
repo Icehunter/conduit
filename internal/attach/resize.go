@@ -82,11 +82,7 @@ func scaledDims(w, h, maxW, maxH int) (int, int) {
 	}
 	newW := int(float64(w) * ratio)
 	newH := int(float64(h) * ratio)
-	if newW < 1 {
-		newW = 1
-	}
-	if newH < 1 {
-		newH = 1
-	}
+	newW = max(newW, 1)
+	newH = max(newH, 1)
 	return newW, newH
 }

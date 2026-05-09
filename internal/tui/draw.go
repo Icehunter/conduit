@@ -175,16 +175,12 @@ func drawFloatingExactWidth(scr uv.Screen, area image.Rectangle, content string,
 		return
 	}
 	width := area.Dx()
-	if width < 1 {
-		width = 1
-	}
+	width = max(width, 1)
 	height := spec.maxHeight
 	if height <= 0 || height > area.Dy() {
 		height = area.Dy()
 	}
-	if height < 1 {
-		height = 1
-	}
+	height = max(height, 1)
 	rendered := renderFloatingWindow(content, width, height)
 	drawFloatingRenderedAt(scr, area, rendered, above)
 }
@@ -202,9 +198,7 @@ func drawFloatingRenderedAt(scr uv.Screen, area image.Rectangle, rendered string
 	if width < 1 {
 		width = area.Dx()
 	}
-	if height < 1 {
-		height = 1
-	}
+	height = max(height, 1)
 	if width > area.Dx() {
 		width = area.Dx()
 	}
@@ -289,9 +283,7 @@ func (m Model) renderWorkingRow() string {
 		hint := stylePickerDesc.Render("  Enter ↵ to view log")
 		hintW := lipgloss.Width(hint)
 		spinnerW := m.width - hintW
-		if spinnerW < 10 {
-			spinnerW = 10
-		}
+		spinnerW = max(spinnerW, 10)
 		main := styleStatus.Width(spinnerW).Render(m.working.Render()) + hint
 		var sb strings.Builder
 		sb.WriteString(main)
@@ -338,9 +330,7 @@ func (m Model) renderInputBox() string {
 	innerView := m.input.View()
 	{
 		innerW := m.width - 4
-		if innerW < 1 {
-			innerW = 1
-		}
+		innerW = max(innerW, 1)
 		bgEsc := theme.AnsiBG(windowBgHex)
 		fgEsc := theme.AnsiFG(theme.Active().Primary)
 		const fullReset = "\x1b[0m"
@@ -386,9 +376,7 @@ func (m Model) renderFooter() string {
 		mid = surfaceSpaces(1) + mid + surfaceSpaces(1)
 	}
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(mid) - lipgloss.Width(right)
-	if pad < 1 {
-		pad = 1
-	}
+	pad = max(pad, 1)
 	statusBar := left + surfaceSpaces(pad) + mid + right
 	usageFooter := m.renderUsageFooter(m.width)
 	return m.renderFooterStack(usageFooter, statusBar)

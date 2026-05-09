@@ -124,9 +124,7 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		pct := 100
 		if ev.CompactedThreshold > 0 {
 			pct = ev.CompactedInputTokens * 100 / ev.CompactedThreshold
-			if pct > 100 {
-				pct = 100
-			}
+			pct = min(pct, 100)
 		}
 		m.messages = append(m.messages, Message{
 			Role:    RoleSystem,

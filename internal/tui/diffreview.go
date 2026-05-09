@@ -141,12 +141,8 @@ func (dr *diffReviewState) resizeDiffVP(w, h int) {
 	if dr == nil {
 		return
 	}
-	if w < 1 {
-		w = 1
-	}
-	if h < 1 {
-		h = 1
-	}
+	w = max(w, 1)
+	h = max(h, 1)
 	dr.diffVP.SetWidth(w)
 	dr.diffVP.SetHeight(h)
 	dr.syncDiffVP()
@@ -479,28 +475,18 @@ func (m Model) renderDiffReview(rectWidth, rectHeight int) string {
 	}
 
 	innerW := rectWidth - 6
-	if innerW < 20 {
-		innerW = 20
-	}
+	innerW = max(innerW, 20)
 	innerH := rectHeight - 4
-	if innerH < 6 {
-		innerH = 6
-	}
+	innerH = max(innerH, 6)
 
 	const fixedRows = 5
 	contentH := innerH - fixedRows
-	if contentH < 3 {
-		contentH = 3
-	}
+	contentH = max(contentH, 3)
 
 	listW := innerW * 35 / 100
-	if listW < 14 {
-		listW = 14
-	}
+	listW = max(listW, 14)
 	diffW := innerW - listW - 3
-	if diffW < 10 {
-		diffW = 10
-	}
+	diffW = max(diffW, 10)
 
 	if dr.diffVP.Width() != diffW || dr.diffVP.Height() != contentH {
 		dr.resizeDiffVP(diffW, contentH)
@@ -590,9 +576,7 @@ func renderHunkFileList(dr *diffReviewState, width, height int) string {
 		}
 		summary := fmt.Sprintf(" %d/%d", approved, total)
 		nameWidth := width - len(summary) - 4
-		if nameWidth < 4 {
-			nameWidth = 4
-		}
+		nameWidth = max(nameWidth, 4)
 		name := diffShortPath(e.entry.Path, nameWidth)
 		line := name + summary
 		if i == dr.fileIdx {

@@ -254,9 +254,7 @@ func (m Model) renderModelPicker() string {
 		return ""
 	}
 	contentW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingBodyPadX*2
-	if contentW < 40 {
-		contentW = 40
-	}
+	contentW = max(contentW, 40)
 	headerW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingHeaderPadX*2
 	if headerW < contentW {
 		headerW = contentW
@@ -266,16 +264,12 @@ func (m Model) renderModelPicker() string {
 	title := panelTitle("Switch Model")
 	tabs := renderProviderRoleTabs(p.role)
 	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
-	if ornW < 6 {
-		ornW = 6
-	}
+	ornW = max(ornW, 6)
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 
 	bodyRows := modelPickerBodyRows()
 	listRows := bodyRows - 6
-	if listRows < 6 {
-		listRows = 6
-	}
+	listRows = max(listRows, 6)
 	start, end := modelPickerWindow(p.items, p.selected, listRows)
 	body := []string{
 		"",
@@ -374,9 +368,7 @@ func modelPickerBodyRows() int {
 }
 
 func modelPickerWindow(items []pickerItem, selected, visibleLines int) (int, int) {
-	if visibleLines < 6 {
-		visibleLines = 6
-	}
+	visibleLines = max(visibleLines, 6)
 	if selected < 0 {
 		selected = firstPickerSelectable(items)
 	}
@@ -398,9 +390,7 @@ func modelPickerWindow(items []pickerItem, selected, visibleLines int) (int, int
 			}
 		}
 	}
-	if start < 0 {
-		start = 0
-	}
+	start = max(start, 0)
 	end := start
 	for end < len(items) && modelPickerRenderedLines(items, start, end+1) <= visibleLines {
 		end++
@@ -525,9 +515,7 @@ func renderModelPickerSection(label string, configured bool, width int) string {
 	}
 	labelPart := stylePickerDesc.Render(label)
 	ruleW := width - lipgloss.Width(labelPart) - lipgloss.Width(status) - 4
-	if ruleW < 4 {
-		ruleW = 4
-	}
+	ruleW = max(ruleW, 4)
 	return labelPart + surfaceSpaces(2) + panelRule(ruleW) + status
 }
 
@@ -539,9 +527,7 @@ func renderModelPickerRow(it pickerItem, selected, current bool, width int) stri
 	label := marker + it.Label
 	provider := modelPickerProviderLabel(it.Value)
 	gap := width - lipgloss.Width("❯ "+label) - lipgloss.Width(provider) - 2
-	if gap < 2 {
-		gap = 2
-	}
+	gap = max(gap, 2)
 	line := "  " + label + surfaceSpaces(gap) + provider
 	if selected {
 		return stylePickerItemSelected.Render("❯ " + label + surfaceSpaces(gap) + provider)

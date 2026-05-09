@@ -65,9 +65,7 @@ func retryDelay(n int, retryAfterSecs float64) time.Duration {
 		// Still add a small jitter (±10%) so many clients don't thunderherd.
 		jitter := time.Duration(rand.Float64()*0.1*float64(d)) - time.Duration(0.05*float64(d))
 		d += jitter
-		if d < 0 {
-			d = 0
-		}
+		d = max(d, 0)
 		return d
 	}
 	base := float64(retryBase) * math.Pow(retryMultiplier, float64(n))
@@ -77,9 +75,7 @@ func retryDelay(n int, retryAfterSecs float64) time.Duration {
 	// ±25% jitter
 	jitter := (rand.Float64()*0.5 - 0.25) * base
 	d := time.Duration(base + jitter)
-	if d < 0 {
-		d = 0
-	}
+	d = max(d, 0)
 	return d
 }
 

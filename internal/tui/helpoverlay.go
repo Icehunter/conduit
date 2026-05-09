@@ -73,9 +73,7 @@ type helpOverlayState struct {
 func openHelpOverlay(width, panelH int, query string) *helpOverlayState {
 	inner := width - 6 // rounded border (1 each side) + padding (2 each side)
 	vpH := panelH - 7
-	if vpH < 3 {
-		vpH = 3
-	}
+	vpH = max(vpH, 3)
 	vp := viewport.New(viewport.WithWidth(inner), viewport.WithHeight(vpH))
 	vp.SetContent(buildHelpContent(inner, query))
 	return &helpOverlayState{vp: vp, query: strings.TrimSpace(query)}

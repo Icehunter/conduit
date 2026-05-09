@@ -268,9 +268,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 					window = internalmodel.ContextWindowFor(live.ModelName())
 				}
 				pct = tokens * 100 / window
-				if pct > 100 {
-					pct = 100
-				}
+				pct = min(pct, 100)
 			}
 			modelDisplay := live.ModelName()
 			if live.FastMode() {

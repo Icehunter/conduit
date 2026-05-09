@@ -42,24 +42,18 @@ func (m Model) renderOnboarding() string {
 		return ""
 	}
 	panelW := m.width - 8
-	if panelW > 92 {
-		panelW = 92
-	}
+	panelW = min(panelW, 92)
 	if panelW < 48 {
 		panelW = max(24, m.width)
 	}
 	innerW := panelW - 4
 	wrapW := innerW
-	if wrapW > 76 {
-		wrapW = 76
-	}
+	wrapW = min(wrapW, 76)
 
 	var sb strings.Builder
 	title := panelTitle("Welcome to conduit")
 	ornW := innerW - lipgloss.Width(title) - 4
-	if ornW < 8 {
-		ornW = 8
-	}
+	ornW = max(ornW, 8)
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + "\n\n")
 
 	intro := "Conduit is a local-first coding agent for the terminal: Claude-compatible at the core, provider-aware where it matters, and built as a single Go binary. Use Claude subscriptions or API keys, OpenAI-compatible providers like Gemini, local MCP-backed models, plugins, and MCP servers from one TUI."
@@ -92,8 +86,6 @@ func (m Model) renderOnboarding() string {
 func writeOnboardingCommand(sb *strings.Builder, command, desc string) {
 	sb.WriteString("  " + styleStatusAccent.Render(command))
 	gap := 11 - lipgloss.Width(command)
-	if gap < 2 {
-		gap = 2
-	}
+	gap = max(gap, 2)
 	sb.WriteString(surfaceSpaces(gap) + stylePickerDesc.Render(desc) + "\n")
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/icehunter/conduit/internal/pendingedits"
+	"github.com/icehunter/conduit/internal/permissions"
 )
 
 // fakeStager records every Stage call without applying anything to disk.
@@ -164,6 +165,92 @@ func TestFileEdit_StagerFailureSurfacedAsError(t *testing.T) {
 	}
 	if got := readFile(t, path); got != "x\n" {
 		t.Errorf("disk content = %q (must be unchanged on stager failure)", got)
+	}
+}
+
+func TestFileEdit_WithGatedStager_ComposesSequentialStagedEdits(t *testing.T) {
+	path := writeFile(t, "hello world\nsecond line\n")
+	table := pendingedits.NewTable()
+	gate := permissions.New("", nil, permissions.ModeAcceptEdits, nil, nil, nil)
+	tt := NewWithStager(&pendingedits.GatedStager{Table: table, Gate: gate})
+
+	res, err := tt.Execute(context.Background(), input(t, map[string]any{
+		"file_path":  path,
+		"old_string": "hello",
+		"new_string": "goodbye",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("first edit IsError: %v", res.Content)
+	}
+	res, err = tt.Execute(context.Background(), input(t, map[string]any{
+		"file_path":  path,
+		"old_string": "goodbye world",
+		"new_string": "farewell world",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("second edit IsError: %v", res.Content)
+	}
+
+	if got := readFile(t, path); got != "hello world\nsecond line\n" {
+		t.Fatalf("disk content changed while staging: %q", got)
+	}
+	e, ok := table.Get(path)
+	if !ok {
+		t.Fatal("missing staged entry")
+	}
+	if string(e.OrigContent) != "hello world\nsecond line\n" {
+		t.Errorf("OrigContent = %q", e.OrigContent)
+	}
+	if string(e.NewContent) != "farewell world\nsecond line\n" {
+		t.Errorf("NewContent = %q", e.NewContent)
+	}
+}
+
+func TestFileEdit_WithGatedStager_EditsStagedCreate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new.txt")
+	table := pendingedits.NewTable()
+	gate := permissions.New("", nil, permissions.ModeAcceptEdits, nil, nil, nil)
+	tt := NewWithStager(&pendingedits.GatedStager{Table: table, Gate: gate})
+
+	res, err := tt.Execute(context.Background(), input(t, map[string]any{
+		"file_path":  path,
+		"old_string": "",
+		"new_string": "alpha\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create IsError: %v", res.Content)
+	}
+	res, err = tt.Execute(context.Background(), input(t, map[string]any{
+		"file_path":  path,
+		"old_string": "alpha",
+		"new_string": "beta",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("edit staged create IsError: %v", res.Content)
+	}
+
+	e, ok := table.Get(path)
+	if !ok {
+		t.Fatal("missing staged entry")
+	}
+	if e.OrigExisted {
+		t.Error("OrigExisted changed for staged create")
+	}
+	if string(e.NewContent) != "beta\n" {
+		t.Errorf("NewContent = %q", e.NewContent)
 	}
 }
 

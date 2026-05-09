@@ -92,3 +92,58 @@ func TestFlushOne_EmptyPathReturnsError(t *testing.T) {
 		t.Fatal("expected error for empty path")
 	}
 }
+
+func TestFlushOne_ExistingFileConflict(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("orig"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user change"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := FlushOne(Entry{
+		Path:        path,
+		OrigContent: []byte("orig"),
+		OrigExisted: true,
+		NewContent:  []byte("agent change"),
+		Op:          OpEdit,
+	})
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	if got := string(mustReadFile(t, path)); got != "user change" {
+		t.Fatalf("conflict overwrote disk content: %q", got)
+	}
+}
+
+func TestFlushOne_NewFileConflict(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new.txt")
+	if err := os.WriteFile(path, []byte("user file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := FlushOne(Entry{
+		Path:        path,
+		OrigExisted: false,
+		NewContent:  []byte("agent file"),
+		Op:          OpWrite,
+	})
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	if got := string(mustReadFile(t, path)); got != "user file" {
+		t.Fatalf("conflict overwrote disk content: %q", got)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}

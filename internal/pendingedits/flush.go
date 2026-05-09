@@ -1,6 +1,7 @@
 package pendingedits
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +49,9 @@ func flushOne(e Entry) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("pendingedits: mkdir %s: %w", dir, err)
 	}
+	if err := ensureNoFlushConflict(e); err != nil {
+		return err
+	}
 
 	tmp, err := os.CreateTemp(dir, ".pending-*.tmp")
 	if err != nil {
@@ -78,6 +82,25 @@ func flushOne(e Entry) error {
 
 	if err := os.Rename(tmpPath, e.Path); err != nil {
 		return fmt.Errorf("pendingedits: rename %s: %w", e.Path, err)
+	}
+	return nil
+}
+
+func ensureNoFlushConflict(e Entry) error {
+	if e.OrigExisted {
+		current, err := os.ReadFile(e.Path)
+		if err != nil {
+			return fmt.Errorf("pendingedits: conflict reading %s: %w", e.Path, err)
+		}
+		if !bytes.Equal(current, e.OrigContent) {
+			return fmt.Errorf("pendingedits: conflict on %s: file changed since edit was staged", e.Path)
+		}
+		return nil
+	}
+	if _, err := os.Lstat(e.Path); err == nil {
+		return fmt.Errorf("pendingedits: conflict on %s: file appeared since edit was staged", e.Path)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("pendingedits: conflict checking %s: %w", e.Path, err)
 	}
 	return nil
 }

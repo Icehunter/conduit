@@ -501,9 +501,10 @@ func runREPL(continueMode bool, resumeID string) error {
 				ctx2, cancel2 := context.WithTimeout(bgCtx, 10*time.Minute)
 				result := diffReviewHook.AskReview(ctx2)
 				cancel2()
+				var flushResults []pendingedits.FlushResult
 				// Flush approved entries to disk.
 				if len(result.Approved) > 0 {
-					flushResults := pendingedits.Flush(result.Approved)
+					flushResults = pendingedits.Flush(result.Approved)
 					for i, fr := range flushResults {
 						if fr.Applied {
 							if sess != nil {
@@ -521,10 +522,10 @@ func runREPL(continueMode bool, resumeID string) error {
 						_ = sess.AppendPendingEditResult(e.Path, e.Op.String(), "requested", e.ToolName)
 					}
 				}
-				// If any hunks were rejected, inject the feedback message as the
-				// agent's next user turn so it can address each rejection.
-				if result.FollowupMessage != "" && diffReviewHook.EnqueueFollowup != nil {
-					diffReviewHook.EnqueueFollowup(result.FollowupMessage)
+				// If hunks were rejected or approved edits failed to flush, inject
+				// feedback as the agent's next user turn so it can address it.
+				if followup := diffReviewFollowupText(result, flushResults); followup != "" && diffReviewHook.EnqueueFollowup != nil {
+					diffReviewHook.EnqueueFollowup(followup)
 				}
 			}
 
@@ -603,13 +604,17 @@ func runREPL(continueMode bool, resumeID string) error {
 			ctx2, cancel2 := context.WithTimeout(bgCtx, 10*time.Minute)
 			result := diffReviewHook.AskReview(ctx2)
 			cancel2()
+			var flushResults []pendingedits.FlushResult
 			if len(result.Approved) > 0 {
-				for i, fr := range pendingedits.Flush(result.Approved) {
+				flushResults = pendingedits.Flush(result.Approved)
+				for i, fr := range flushResults {
 					if fr.Applied {
 						if sess != nil {
 							_ = sess.AppendFileAccess("write", fr.Path)
 							_ = sess.AppendPendingEditResult(fr.Path, result.Approved[i].Op.String(), "approved", result.Approved[i].ToolName)
 						}
+					} else if fr.Err != nil && sess != nil {
+						_ = sess.AppendPendingEditResult(fr.Path, result.Approved[i].Op.String(), "flush-failed", result.Approved[i].ToolName)
 					}
 				}
 			}
@@ -618,11 +623,13 @@ func runREPL(continueMode bool, resumeID string) error {
 					_ = sess.AppendPendingEditResult(e.Path, e.Op.String(), "requested", e.ToolName)
 				}
 			}
-			if result.FollowupMessage != "" && diffReviewHook.EnqueueFollowup != nil {
-				diffReviewHook.EnqueueFollowup(result.FollowupMessage)
+			if followup := diffReviewFollowupText(result, flushResults); followup != "" && diffReviewHook.EnqueueFollowup != nil {
+				diffReviewHook.EnqueueFollowup(followup)
 			}
-			// Return true to pause the loop — the TUI will re-submit after review.
-			return true
+			// Pause only when there is a synthetic follow-up to submit. An
+			// all-approved review can continue in the same loop now that the
+			// staged edits are flushed to disk.
+			return diffReviewShouldPause(result, flushResults)
 		},
 		IsOAuthSubscription: auth.InferAccountKind(tok) == auth.AccountKindClaudeAI,
 	})
@@ -766,4 +773,29 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 
 	return tuiErr
+}
+
+func diffReviewShouldPause(result tui.DiffReviewResult, flushResults []pendingedits.FlushResult) bool {
+	return diffReviewFollowupText(result, flushResults) != ""
+}
+
+func diffReviewFollowupText(result tui.DiffReviewResult, flushResults []pendingedits.FlushResult) string {
+	var parts []string
+	if failures := diffReviewFlushFailures(flushResults); len(failures) > 0 {
+		parts = append(parts, "<diff_apply_errors>\n"+strings.Join(failures, "\n")+"\n</diff_apply_errors>")
+	}
+	if strings.TrimSpace(result.FollowupMessage) != "" {
+		parts = append(parts, result.FollowupMessage)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func diffReviewFlushFailures(results []pendingedits.FlushResult) []string {
+	failures := make([]string, 0)
+	for _, result := range results {
+		if result.Err != nil {
+			failures = append(failures, fmt.Sprintf("- %s: %v", result.Path, result.Err))
+		}
+	}
+	return failures
 }

@@ -18,7 +18,7 @@ type GatedStager struct {
 // acceptEditsLive mode; otherwise it returns ErrNotStaging so the caller
 // falls through to direct write.
 func (g *GatedStager) Stage(e Entry) error {
-	if g.Gate == nil {
+	if g.Table == nil || g.Gate == nil {
 		return ErrNotStaging
 	}
 	m := g.Gate.Mode()
@@ -26,4 +26,18 @@ func (g *GatedStager) Stage(e Entry) error {
 		return ErrNotStaging
 	}
 	return g.Table.Stage(e)
+}
+
+// Pending returns the staged entry for path when staging is currently active.
+// File tools use this as a virtual file layer so sequential staged edits compose
+// against the latest staged content instead of stale disk bytes.
+func (g *GatedStager) Pending(path string) (Entry, bool) {
+	if g.Table == nil || g.Gate == nil {
+		return Entry{}, false
+	}
+	m := g.Gate.Mode()
+	if m != permissions.ModeAcceptEdits && m != permissions.ModeAcceptEditsLive {
+		return Entry{}, false
+	}
+	return g.Table.Get(path)
 }

@@ -522,7 +522,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 
 		if ctx.Err() != nil {
 			replyWrite <- planmodetool.PlanApprovalDecision{Approved: false}
-			return councilChatDoneMsg{}
+			return councilChatDoneMsg{err: fmt.Errorf("council cancelled")}
 		}
 
 		// Rounds 1..maxRounds: parallel critique.

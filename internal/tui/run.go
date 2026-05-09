@@ -715,18 +715,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	if runOpts.PendingEdits != nil && runOpts.DiffReview != nil {
 		pendingTable := runOpts.PendingEdits
 		runOpts.DiffReview.AskReview = func(ctx context.Context) DiffReviewResult {
-			reply := make(chan DiffReviewResult, 1)
-			prog.Send(diffReviewAskMsg{
-				entries: pendingTable.Drain(),
-				reply:   reply,
+			return askDiffReview(ctx, pendingTable, func(entries []pendingedits.Entry, reply chan<- DiffReviewResult) {
+				prog.Send(diffReviewAskMsg{entries: entries, reply: reply})
 			})
-			select {
-			case r := <-reply:
-				return r
-			case <-ctx.Done():
-				// Cancelled — approve whatever is left so nothing is silently lost.
-				return DiffReviewResult{Approved: pendingTable.Drain()}
-			}
 		}
 		runOpts.DiffReview.EnqueueFollowup = func(text string) {
 			prog.Send(diffReviewFollowupMsg{text: text})
@@ -752,4 +743,23 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	signal.Stop(winch)
 	close(winch)
 	return err
+}
+
+func askDiffReview(
+	ctx context.Context,
+	pendingTable *pendingedits.Table,
+	send func(entries []pendingedits.Entry, reply chan<- DiffReviewResult),
+) DiffReviewResult {
+	entries := pendingTable.Drain()
+	reply := make(chan DiffReviewResult, 1)
+	send(entries, reply)
+	select {
+	case r := <-reply:
+		return r
+	case <-ctx.Done():
+		// The table has already been drained into the overlay message. If the
+		// request is cancelled before the TUI replies, preserve those entries by
+		// approving the drained snapshot instead of draining the now-empty table.
+		return DiffReviewResult{Approved: entries}
+	}
 }

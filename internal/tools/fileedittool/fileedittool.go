@@ -30,6 +30,10 @@ type Tool struct {
 	stager pendingedits.Stager
 }
 
+type pendingLookup interface {
+	Pending(path string) (pendingedits.Entry, bool)
+}
+
 // New returns a fresh Edit tool that writes directly to disk. Used by
 // sub-agent registries (council, summariser, Task) that should never stage.
 func New() *Tool { return &Tool{} }
@@ -108,6 +112,12 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// The model must supply old_string to edit existing content, or use Write to
 	// explicitly overwrite. This prevents clobbering via acceptEdits mode bypass.
 	if in.OldString == "" {
+		if _, ok := stagedPending(t.stager, in.FilePath); ok {
+			return tool.ErrorResult(
+				"file already has staged edits; supply a non-empty old_string to edit the staged content, " +
+					"or use Write to explicitly overwrite",
+			), nil
+		}
 		if _, err := os.Lstat(in.FilePath); err == nil {
 			return tool.ErrorResult(
 				"file already exists; supply a non-empty old_string to edit it, " +
@@ -117,13 +127,9 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return t.createFile(in.FilePath, in.NewString)
 	}
 
-	// Read existing file.
-	content, err := os.ReadFile(in.FilePath)
+	content, origContent, origExisted, err := t.readEditBase(in.FilePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return tool.ErrorResult(fmt.Sprintf("file not found: %s", in.FilePath)), nil
-		}
-		return tool.ErrorResult(fmt.Sprintf("cannot read file: %v", err)), nil
+		return tool.ErrorResult(err.Error()), nil
 	}
 
 	fileStr := string(content)
@@ -151,8 +157,8 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if t.stager != nil {
 		err := t.stager.Stage(pendingedits.Entry{
 			Path:        in.FilePath,
-			OrigContent: append([]byte(nil), content...),
-			OrigExisted: true,
+			OrigContent: origContent,
+			OrigExisted: origExisted,
 			NewContent:  []byte(updated),
 			Op:          pendingedits.OpEdit,
 			ToolName:    "Edit",
@@ -171,6 +177,31 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	return tool.TextResult(editDiff(in.FilePath, fileStr, updated)), nil
+}
+
+func (t *Tool) readEditBase(path string) (content, origContent []byte, origExisted bool, err error) {
+	if e, ok := stagedPending(t.stager, path); ok {
+		return append([]byte(nil), e.NewContent...), append([]byte(nil), e.OrigContent...), e.OrigExisted, nil
+	}
+	content, err = os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, false, fmt.Errorf("file not found: %s", path)
+		}
+		return nil, nil, false, fmt.Errorf("cannot read file: %w", err)
+	}
+	return content, append([]byte(nil), content...), true, nil
+}
+
+func stagedPending(s pendingedits.Stager, path string) (pendingedits.Entry, bool) {
+	if s == nil {
+		return pendingedits.Entry{}, false
+	}
+	lookup, ok := s.(pendingLookup)
+	if !ok {
+		return pendingedits.Entry{}, false
+	}
+	return lookup.Pending(path)
 }
 
 // createFile creates a new file (or overwrites) with the given content.

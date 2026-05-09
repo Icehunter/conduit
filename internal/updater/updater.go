@@ -34,7 +34,7 @@ type Result struct {
 	Latest     string    // e.g. "1.5.0" — empty when check failed or no newer release
 	HasUpdate  bool      // true when Latest > Current
 	CheckedAt  time.Time // wall-clock time the check completed
-	UpgradeCmd string    // suggested command, e.g. "brew upgrade conduit"
+	UpgradeCmd string    // suggested command, e.g. "brew upgrade icehunter/tap/conduit"
 }
 
 // Checker queries GitHub Releases. Use [New] to construct one with sensible defaults.

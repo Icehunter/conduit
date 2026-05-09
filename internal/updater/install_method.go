@@ -63,7 +63,7 @@ func detectInstallMethod() InstallMethod {
 func upgradeCmd(m InstallMethod) string {
 	switch m {
 	case InstallHomebrew:
-		return "brew upgrade conduit"
+		return "brew upgrade icehunter/tap/conduit"
 	case InstallScoop:
 		return "scoop update conduit"
 	case InstallWinget:

@@ -13,9 +13,10 @@ import (
 
 // blockMeta stores the block type and tool metadata per stream block index.
 type blockMeta struct {
-	blockType string
-	toolID    string
-	toolName  string
+	blockType        string
+	toolID           string
+	toolName         string
+	thoughtSignature string // Gemini thought_signature from content_block_start (OpenAI-compat path)
 }
 
 // drainStream reads all SSE events from the stream and returns the accumulated
@@ -79,16 +80,18 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			}
 			// Parse the content block to learn its type.
 			var raw struct {
-				Type string `json:"type"`
-				ID   string `json:"id"`
-				Name string `json:"name"`
+				Type             string `json:"type"`
+				ID               string `json:"id"`
+				Name             string `json:"name"`
+				ThoughtSignature string `json:"thought_signature"`
 			}
 			if e := json.Unmarshal(cbs.ContentBlock, &raw); e == nil {
 				blockTexts[cbs.Index] = &strings.Builder{}
 				metas[cbs.Index] = blockMeta{
-					blockType: raw.Type,
-					toolID:    raw.ID,
-					toolName:  raw.Name,
+					blockType:        raw.Type,
+					toolID:           raw.ID,
+					toolName:         raw.Name,
+					thoughtSignature: raw.ThoughtSignature,
 				}
 				if raw.Type == "tool_use" {
 					handler(LoopEvent{
@@ -244,12 +247,16 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 				// it anyway via FilterUnresolvedToolUses.
 				continue
 			}
-			blocks = append(blocks, api.ContentBlock{
+			block := api.ContentBlock{
 				Type:  "tool_use",
 				ID:    meta.toolID,
 				Name:  meta.toolName,
 				Input: inputMap,
-			})
+			}
+			if meta.thoughtSignature != "" {
+				block.ThoughtSignature = meta.thoughtSignature
+			}
+			blocks = append(blocks, block)
 		}
 	}
 	return blocks

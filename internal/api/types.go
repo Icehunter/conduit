@@ -116,6 +116,11 @@ type ContentBlock struct {
 	Name  string         `json:"name,omitempty"`  // tool name
 	Input map[string]any `json:"input,omitempty"` // parsed tool input
 
+	// ThoughtSignature carries the Gemini thought_signature for tool_use blocks.
+	// It is NOT sent to the Anthropic API (json:"-") but is round-tripped to
+	// Gemini's OpenAI-compatible endpoint on the first tool_call in each turn.
+	ThoughtSignature string `json:"-"`
+
 	// type=tool_result (us → assistant, in a user-role message)
 	ToolUseID string `json:"tool_use_id,omitempty"` // matches ID from tool_use block
 	IsError   bool   `json:"is_error,omitempty"`

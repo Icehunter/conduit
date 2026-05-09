@@ -44,10 +44,22 @@ type openAIFunction struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
+// openAIExtraContentGoogle holds Gemini-specific fields nested inside extra_content.
+type openAIExtraContentGoogle struct {
+	ThoughtSignature string `json:"thought_signature,omitempty"`
+}
+
+// openAIExtraContent is a non-standard extension used by Gemini's OpenAI-compat endpoint.
+// It is present on the first tool_call when the model has a thinking budget enabled.
+type openAIExtraContent struct {
+	Google *openAIExtraContentGoogle `json:"google,omitempty"`
+}
+
 type openAIToolCall struct {
-	ID       string             `json:"id,omitempty"`
-	Type     string             `json:"type"`
-	Function openAIToolFunction `json:"function"`
+	ID           string              `json:"id,omitempty"`
+	Type         string              `json:"type"`
+	Function     openAIToolFunction  `json:"function"`
+	ExtraContent *openAIExtraContent `json:"extra_content,omitempty"`
 }
 
 type openAIToolFunction struct {
@@ -89,10 +101,11 @@ type openAIStreamChunk struct {
 }
 
 type openAIStreamToolCallDelta struct {
-	Index    int                `json:"index"`
-	ID       string             `json:"id"`
-	Type     string             `json:"type"`
-	Function openAIToolFunction `json:"function"`
+	Index        int                 `json:"index"`
+	ID           string              `json:"id"`
+	Type         string              `json:"type"`
+	Function     openAIToolFunction  `json:"function"`
+	ExtraContent *openAIExtraContent `json:"extra_content,omitempty"`
 }
 
 func (c *Client) createOpenAICompatible(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
@@ -269,14 +282,22 @@ func openAIMessagesFromMessage(msg Message) []openAIChatMessage {
 				textParts = append(textParts, block.Text)
 			}
 		case "tool_use":
-			toolCalls = append(toolCalls, openAIToolCall{
+			tc := openAIToolCall{
 				ID:   block.ID,
 				Type: "function",
 				Function: openAIToolFunction{
 					Name:      block.Name,
 					Arguments: marshalToolArguments(block.Input),
 				},
-			})
+			}
+			if block.ThoughtSignature != "" {
+				tc.ExtraContent = &openAIExtraContent{
+					Google: &openAIExtraContentGoogle{
+						ThoughtSignature: block.ThoughtSignature,
+					},
+				}
+			}
+			toolCalls = append(toolCalls, tc)
 		case "tool_result":
 			if block.ResultContent != "" {
 				out = append(out, openAIChatMessage{
@@ -322,12 +343,16 @@ func openAIToolCallsToContentBlocks(calls []openAIToolCall) []ContentBlock {
 		if input == nil {
 			input = map[string]any{}
 		}
-		blocks = append(blocks, ContentBlock{
+		block := ContentBlock{
 			Type:  "tool_use",
 			ID:    call.ID,
 			Name:  call.Function.Name,
 			Input: input,
-		})
+		}
+		if call.ExtraContent != nil && call.ExtraContent.Google != nil {
+			block.ThoughtSignature = call.ExtraContent.Google.ThoughtSignature
+		}
+		blocks = append(blocks, block)
 	}
 	return blocks
 }
@@ -422,6 +447,8 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 	textBlockIndex := -1
 	toolBlocks := map[int]int{}
 	toolArgs := map[int]string{}
+	// toolSignatures stores thought_signature per call index (first tool_call only).
+	toolSignatures := map[int]string{}
 	startTextBlock := func() error {
 		if textBlockOpen {
 			return nil
@@ -447,14 +474,19 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 			id = fmt.Sprintf("call_%d", call.Index)
 		}
 		name := call.Function.Name
+		contentBlock := map[string]any{
+			"type": "tool_use",
+			"id":   id,
+			"name": name,
+		}
+		if call.ExtraContent != nil && call.ExtraContent.Google != nil && call.ExtraContent.Google.ThoughtSignature != "" {
+			toolSignatures[call.Index] = call.ExtraContent.Google.ThoughtSignature
+			contentBlock["thought_signature"] = call.ExtraContent.Google.ThoughtSignature
+		}
 		return writeAnthropicEvent("content_block_start", map[string]any{
-			"type":  "content_block_start",
-			"index": blockIndex,
-			"content_block": map[string]any{
-				"type": "tool_use",
-				"id":   id,
-				"name": name,
-			},
+			"type":          "content_block_start",
+			"index":         blockIndex,
+			"content_block": contentBlock,
 		})
 	}
 	scanner := bufio.NewScanner(body)
@@ -500,6 +532,12 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 					if err := startToolBlock(call); err != nil {
 						_ = writer.CloseWithError(err)
 						return
+					}
+				}
+				// Capture thought_signature if it arrives on a later delta chunk.
+				if call.ExtraContent != nil && call.ExtraContent.Google != nil && call.ExtraContent.Google.ThoughtSignature != "" {
+					if _, already := toolSignatures[call.Index]; !already {
+						toolSignatures[call.Index] = call.ExtraContent.Google.ThoughtSignature
 					}
 				}
 				if call.Function.Arguments != "" {

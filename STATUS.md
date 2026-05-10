@@ -35,9 +35,9 @@ see `PARITY.md` (frozen reference).
 | Manual provider entry (URL + key) | ✅ | Settings Providers tab |
 | Provider validation on save | ✅ | Test-call before persisting |
 | Model picker (`/model`) | ✅ | Grouped by provider; Ctrl+M assigns roles |
-| Model capability display | 🔲 | C-O2: context window, cost, tool-use, vision flags |
-| Models.dev / Catwalk catalog | 🔲 | C-O2: cached catalog; pre-fills provider setup |
-| Catalog refresh command | 🔲 | C-O2: `update-providers` or `/models --refresh` |
+| Model capability display | ✅ | Context window, cost, tool-use, vision, thinking — shown in model picker with `?` key toggle |
+| Models.dev / Catwalk catalog | ✅ | `internal/catalog/` — OpenRouter fetch + 24h disk cache + built-in Anthropic snapshot |
+| Catalog refresh command | ✅ | `/models --refresh` fetches & caches; shows count flash on completion |
 
 ---
 
@@ -248,7 +248,7 @@ see `PARITY.md` (frozen reference).
 |-----------|-------|--------|
 | C-O0: Documentation governance | STATUS.md + PARITY.md → capability matrix + compatibility contract | ✅ This update |
 | C-O1: LSP confidence | `internal/lsp/` tests; status indicator; 15+ server registry; config overrides; documentSymbol/workspaceSymbol | ✅ |
-| C-O2: Model catalog | Models.dev / Catwalk catalog package; `/models --refresh`; capability display in picker | 🔲 |
+| C-O2: Model catalog | Models.dev / Catwalk catalog package; `/models --refresh`; capability display in picker | ✅ |
 | C-O3: Provider auth | Provider-auth interface; `/accounts` expansion; API-key flows; Copilot/OpenAI OAuth investigation | 🔲 |
 | C-O4: Local server spine | `conduit serve`; `conduit attach`; session/message/permission/event endpoints; file-read tracker | 🔲 |
 | C-O4.5: Runtime polish | Config JSON schema; background job tracking; broader project instruction file support | 🔲 |

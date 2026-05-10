@@ -14,6 +14,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
@@ -763,4 +764,20 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 	}
 	m.refreshViewport()
 	return m, nil
+}
+
+// catalogFetch fetches and caches the model catalog. Called from a tea.Cmd goroutine.
+func catalogFetch(conduitDir string) (*catalog.Catalog, error) {
+	return catalog.FetchAndCache(context.Background(), conduitDir)
+}
+
+// applyCatalogRefresh kicks off an async catalog fetch and shows a flash.
+func (m Model) applyCatalogRefresh() (Model, tea.Cmd) {
+	m.flashMsg = "Refreshing model catalog…"
+	m.refreshViewport()
+	conduitDir := settings.ConduitDir()
+	return m, func() tea.Msg {
+		cat, err := catalogFetch(conduitDir)
+		return catalogRefreshedMsg{cat: cat, err: err}
+	}
 }

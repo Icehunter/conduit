@@ -13,6 +13,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/keybindings"
@@ -138,6 +139,10 @@ type RunOptions struct {
 	// This lets the user steer the conversation without interrupting the agent.
 	// Provided by mainrepl via lp.InjectSteerMessage.
 	SteerMessage func(string)
+
+	// InitialCatalog is the model capability catalog loaded from disk at startup.
+	// When nil the TUI starts without capability data; /models --refresh populates it.
+	InitialCatalog *catalog.Catalog
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -524,6 +529,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	}
 
 	m := New(cfg)
+	// Apply the pre-loaded catalog (from disk cache). Nil is fine — the
+	// picker will show without capability data until /models --refresh runs.
+	m.catalogData = runOpts.InitialCatalog
 	// Apply saved output style at startup.
 	// Plugin styles are lowest priority; user/project styles override them.
 	if runOpts.InitialOutputStyle != "" {

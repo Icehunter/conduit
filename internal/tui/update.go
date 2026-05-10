@@ -262,6 +262,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case catalogRefreshedMsg:
+		if msg.err != nil {
+			m.flashMsg = "Catalog refresh failed: " + msg.err.Error()
+		} else if msg.cat != nil {
+			m.catalogData = msg.cat
+			m.flashMsg = fmt.Sprintf("Model catalog updated — %d models", len(msg.cat.Models))
+		}
+		m.refreshViewport()
+		return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+
 	case councilChatMsg:
 		return m.handleCouncilChat(msg)
 

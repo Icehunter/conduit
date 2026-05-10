@@ -446,6 +446,8 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmd, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearFlash{} }))
+	case "catalog-refresh":
+		return m.applyCatalogRefresh()
 	default: // "text"
 		if res.Text != "" {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})

@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/keybindings"
 	"github.com/icehunter/conduit/internal/mcp"
@@ -604,6 +605,10 @@ type Model struct {
 	// textarea removes the entire placeholder token.
 	pastedBlocks map[int]string // placeholder# → raw text
 	pastedSeq    int            // monotonic counter for placeholder numbers
+
+	// catalogData is the last-loaded model capability catalog.
+	// Nil until loaded from disk or refreshed. Used by the model picker.
+	catalogData *catalog.Catalog
 }
 
 // New builds the initial Model.
@@ -812,3 +817,9 @@ type coordTickMsg struct{}
 
 // buddyTickMsg is sent on each companion animation frame tick.
 type buddyTickMsg struct{}
+
+// catalogRefreshedMsg is sent when an async catalog fetch completes.
+type catalogRefreshedMsg struct {
+	cat *catalog.Catalog
+	err error
+}

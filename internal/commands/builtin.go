@@ -64,6 +64,12 @@ func RegisterModelCommand(
 ) {
 	modelHandler := func(args string) Result {
 		args = strings.TrimSpace(args)
+
+		// --refresh triggers an async catalog fetch, not the picker.
+		if args == "--refresh" {
+			return Result{Type: "catalog-refresh"}
+		}
+
 		role := settings.RoleDefault
 		if strings.HasPrefix(args, "--role ") {
 			rest := strings.TrimSpace(strings.TrimPrefix(args, "--role "))
@@ -183,12 +189,12 @@ func RegisterModelCommand(
 	}
 	r.Register(Command{
 		Name:        "model",
-		Description: "Show or switch the active model (/model [name])",
+		Description: "Show or switch the active model (/model [name] | --refresh)",
 		Handler:     modelHandler,
 	})
 	r.Register(Command{
 		Name:        "models",
-		Description: "Open the model picker",
+		Description: "Open the model picker (/models | --refresh to update catalog)",
 		Handler:     modelHandler,
 	})
 }

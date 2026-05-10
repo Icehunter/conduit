@@ -17,6 +17,7 @@ import (
 	"github.com/icehunter/conduit/internal/app"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/buddy"
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/claudemd"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/globalconfig"
@@ -692,6 +693,9 @@ func runREPL(continueMode bool, resumeID string) error {
 	default:
 	}
 
+	// Load the model capability catalog from disk (best-effort; never blocks startup).
+	initialCatalog := catalog.Load(settings.ConduitDir())
+
 	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust), tui.RunOptions{
 		AuthErr:                   authErr,
 		Profile:                   prof,
@@ -754,9 +758,10 @@ func runREPL(continueMode bool, resumeID string) error {
 			importLegacySessions()
 			return nil
 		},
-		PendingEdits: pendingTable,
-		DiffReview:   diffReviewHook,
-		SteerMessage: lp.InjectSteerMessage,
+		PendingEdits:   pendingTable,
+		DiffReview:     diffReviewHook,
+		SteerMessage:   lp.InjectSteerMessage,
+		InitialCatalog: initialCatalog,
 	})
 
 	// Drain async hooks: cancel their context and wait up to 5s for them to

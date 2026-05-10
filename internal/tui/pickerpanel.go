@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -24,12 +25,13 @@ type pickerItem struct {
 // on Enter it dispatches `/<kind> <value>` back through the command
 // registry, so the underlying command does the actual work.
 type pickerState struct {
-	kind     string       // "theme" | "model" | "output-style"
-	title    string       // header line
-	items    []pickerItem // options (caller-ordered)
-	selected int          // current cursor row
-	current  string       // value to highlight as "active"
-	role     string       // provider role for model picker
+	kind             string       // "theme" | "model" | "output-style"
+	title            string       // header line
+	items            []pickerItem // options (caller-ordered)
+	selected         int          // current cursor row
+	current          string       // value to highlight as "active"
+	role             string       // provider role for model picker
+	showCapabilities bool         // ? key toggles capability badges in model picker
 }
 
 func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -177,6 +179,13 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.picker = nil
 		m.refreshViewport()
 		return m, nil
+	case "?":
+		if p.kind == "model" {
+			p.showCapabilities = !p.showCapabilities
+			m.picker = p
+			m.refreshViewport()
+			return m, nil
+		}
 	}
 	m.picker = p
 	return m, nil
@@ -272,7 +281,13 @@ func (m Model) renderModelPicker() string {
 	bodyRows := modelPickerBodyRows()
 	listRows := bodyRows - 6
 	listRows = max(listRows, 6)
-	start, end := modelPickerWindow(p.items, p.selected, listRows)
+	// When capabilities are shown, the selected row gains an extra info line —
+	// reserve one row so it isn't clipped by the body row budget.
+	capListRows := listRows
+	if p.showCapabilities {
+		capListRows = max(listRows-1, 4)
+	}
+	start, end := modelPickerWindow(p.items, p.selected, capListRows)
 	body := []string{
 		"",
 		stylePickerDesc.Render("› " + providerRolePrompt(p.role)),
@@ -286,9 +301,9 @@ func (m Model) renderModelPicker() string {
 	if p.role == roleCouncil {
 		body = append(body, renderModelPickerCouncilRows(p.items, m.councilProviders, p.selected, start, end, contentW)...)
 	} else {
-		body = append(body, renderModelPickerRows(p.items, p.current, p.selected, start, end, contentW)...)
+		body = append(body, renderModelPickerRows(p.items, p.current, p.selected, start, end, contentW, m.catalogData, p.showCapabilities)...)
 	}
-	for modelPickerBodyListRows(body) < listRows {
+	for modelPickerBodyListRows(body) < capListRows {
 		body = append(body, "")
 	}
 	if end < len(p.items) {
@@ -296,20 +311,31 @@ func (m Model) renderModelPicker() string {
 	} else {
 		body = append(body, "")
 	}
+	// bodyRows includes 1 line for the footer.
 	for len(body) < bodyRows-1 {
 		body = append(body, "")
+	}
+	capHint := ""
+	if m.catalogData != nil {
+		if p.showCapabilities {
+			capHint = " · ? hide caps"
+		} else {
+			capHint = " · ? capabilities"
+		}
+	} else {
+		capHint = " · ? (refresh catalog first)"
 	}
 	if p.role == roleCouncil {
 		body = append(body, stylePickerDesc.Render("↑/↓ choose · Space toggle · Enter save · Esc close"))
 	} else {
-		body = append(body, stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"))
+		body = append(body, stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"+capHint))
 	}
 	if len(body) > bodyRows {
 		body = body[:bodyRows]
 		if p.role == roleCouncil {
 			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Space toggle · Enter save · Esc close")
 		} else {
-			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close")
+			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close" + capHint)
 		}
 	}
 	sb.WriteString("\n" + strings.Join(body, "\n"))
@@ -338,7 +364,7 @@ func renderModelPickerCouncilRows(items []pickerItem, councilProviders []string,
 	return rows
 }
 
-func renderModelPickerRows(items []pickerItem, current string, selected, start, end, contentW int) []string {
+func renderModelPickerRows(items []pickerItem, current string, selected, start, end, contentW int, cat *catalog.Catalog, showCaps bool) []string {
 	rows := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		it := items[i]
@@ -349,7 +375,18 @@ func renderModelPickerRows(items []pickerItem, current string, selected, start, 
 			rows = append(rows, renderModelPickerSection(it.Label, sectionHasCurrent(items, i, current), contentW))
 			continue
 		}
-		rows = append(rows, renderModelPickerRow(it, i == selected, it.Value == current, contentW))
+		isSelected := i == selected
+		rows = append(rows, renderModelPickerRow(it, isSelected, it.Value == current, contentW))
+		// Capability badge: emitted as a separate slice entry so the body
+		// line-count arithmetic stays accurate (lipgloss clips by line count).
+		if showCaps && isSelected && cat != nil {
+			modelID := modelIDFromPickerValue(it.Value)
+			if info, ok := cat.Lookup(modelID); ok {
+				if badge := formatModelCapBadge(info); badge != "" {
+					rows = append(rows, stylePickerDesc.Render(badge))
+				}
+			}
+		}
 	}
 	return rows
 }
@@ -611,4 +648,79 @@ func selectedPickerIndex(items []pickerItem, value string) int {
 		}
 	}
 	return firstPickerSelectable(items)
+}
+
+// modelIDFromPickerValue extracts a bare model ID from a picker value string
+// of the form "claude-subscription:model-id", "anthropic-api:model-id",
+// or "provider:key" (falls back to the value itself).
+func modelIDFromPickerValue(value string) string {
+	for _, prefix := range []string{
+		"claude-subscription:",
+		"anthropic-api:",
+		"provider:claude-subscription.",
+		"provider:anthropic-api.",
+	} {
+		if strings.HasPrefix(value, prefix) {
+			// For "provider:..." keys the remainder is "kind.account.model" — extract
+			// the last segment after the final dot, or return as-is.
+			rest := strings.TrimPrefix(value, prefix)
+			if prefix == "claude-subscription:" || prefix == "anthropic-api:" {
+				return rest
+			}
+			// provider key format: kind.account.model — take the last component.
+			parts := strings.Split(rest, ".")
+			return parts[len(parts)-1]
+		}
+	}
+	return value
+}
+
+// formatModelCapBadge formats a single-line capability summary for a model.
+// Example: "1M ctx · $3/$15 /1M · tools vision"
+func formatModelCapBadge(info catalog.ModelInfo) string {
+	var parts []string
+
+	// Context window.
+	ctx := info.ContextWindow
+	switch {
+	case ctx >= 1_000_000:
+		parts = append(parts, fmt.Sprintf("%dM ctx", ctx/1_000_000))
+	case ctx >= 1_000:
+		parts = append(parts, fmt.Sprintf("%dk ctx", ctx/1_000))
+	}
+
+	// Pricing.
+	if info.InputCostPer1M > 0 || info.OutputCostPer1M > 0 {
+		in := formatCost(info.InputCostPer1M)
+		out := formatCost(info.OutputCostPer1M)
+		parts = append(parts, fmt.Sprintf("$%s/$%s /1M", in, out))
+	}
+
+	// Capability flags — compact text, no emoji.
+	var flags []string
+	if info.ToolUse {
+		flags = append(flags, "tools")
+	}
+	if info.Vision {
+		flags = append(flags, "vision")
+	}
+	if info.Thinking {
+		flags = append(flags, "thinking")
+	}
+	if len(flags) > 0 {
+		parts = append(parts, strings.Join(flags, " "))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return "    " + strings.Join(parts, " · ")
+}
+
+// formatCost renders a per-1M USD price compactly (drops trailing zeros).
+func formatCost(v float64) string {
+	if v == float64(int(v)) {
+		return fmt.Sprintf("%d", int(v))
+	}
+	return fmt.Sprintf("%.2g", v)
 }

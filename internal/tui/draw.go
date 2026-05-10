@@ -12,6 +12,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/subagent"
 	"github.com/icehunter/conduit/internal/theme"
+	"github.com/icehunter/conduit/internal/tools/todowritetool"
 )
 
 func makeTeaView(content string) tea.View {
@@ -278,11 +279,21 @@ func (m Model) renderWorkingRow() string {
 	case m.running:
 		m.working.SetLabel("Thinking")
 		entries := subagent.Default.Snapshot()
+		tasksHint := m.hiddenTasksHint()
 		if len(entries) == 0 {
-			return styleStatus.Width(m.width).Render(m.working.Render())
+			if tasksHint == "" {
+				return styleStatus.Width(m.width).Render(m.working.Render())
+			}
+			hintW := lipgloss.Width(tasksHint)
+			spinnerW := m.width - hintW
+			spinnerW = max(spinnerW, 10)
+			return styleStatus.Width(spinnerW).Render(m.working.Render()) + tasksHint
 		}
 		// Right-align the hint so spinner width never clips it.
 		hint := stylePickerDesc.Render("  Enter ↵ to view log")
+		if tasksHint != "" {
+			hint = tasksHint + hint
+		}
 		hintW := lipgloss.Width(hint)
 		spinnerW := m.width - hintW
 		spinnerW = max(spinnerW, 10)
@@ -305,8 +316,32 @@ func (m Model) renderWorkingRow() string {
 		}
 		return styleStatusAccent.Width(m.width).Render("  ● " + noun + " ready — Enter to view")
 	default:
+		if hint := m.hiddenTasksHint(); hint != "" {
+			return styleStatus.Width(m.width-lipgloss.Width(hint)).Render("") + hint
+		}
 		return styleStatus.Width(m.width).Render("")
 	}
+}
+
+// hiddenTasksHint returns a right-aligned hint string when tasks exist but the
+// todo strip is collapsed. Returns "" when the strip is visible or there are no tasks.
+func (m Model) hiddenTasksHint() string {
+	if !m.todoStripHidden {
+		return ""
+	}
+	todos := todowritetool.GetTodos()
+	if len(todos) == 0 {
+		return ""
+	}
+	counts := todoStatusCounts(todos)
+	var label string
+	switch {
+	case counts.inProgress > 0:
+		label = fmt.Sprintf("  ▶ %d task(s) · ctrl+t to view", len(todos))
+	default:
+		label = fmt.Sprintf("  ○ %d task(s) · ctrl+t to view", len(todos))
+	}
+	return stylePickerDesc.Render(label)
 }
 
 // modeBadge returns a short styled badge string for the given permission mode,

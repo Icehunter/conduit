@@ -234,6 +234,16 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		}
 	} else if msg.err != nil {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
+		// Persist any assistant turns that completed before the error (e.g.
+		// a 401 that fires mid-session after several successful turns). The
+		// returned history may be longer than m.history when the loop made
+		// progress before failing — save those turns so /resume picks them up.
+		if len(msg.history) > len(m.history) {
+			cleaned := session.FilterUnresolvedToolUses(msg.history)
+			m.history = m.annotateTurnProvider(cleaned)
+			m.persistNewMessages(cleaned)
+		}
+		// Drop the final user message so it is not replayed on /resume.
 		if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
 			m.history = m.history[:len(m.history)-1]
 		}
@@ -331,6 +341,12 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 
 const maxTodoAutoContinues = 2
 
+// autoPromptPrefix is prepended to synthetic todo-continue messages so the
+// submit handler can display a terse system notice instead of the raw
+// instruction text as a "You" message. Uses a Unicode private-use character
+// that won't appear in normal user input and survives textarea round-trips.
+const autoPromptPrefix = "\uE000auto:"
+
 func (m Model) unfinishedTodoContinuePrompt() (string, bool) {
 	if _, usingMCPProvider := m.activeMCPProvider(); usingMCPProvider {
 		return "", false
@@ -357,9 +373,9 @@ func (m Model) unfinishedTodoContinuePrompt() (string, bool) {
 		return "", false
 	}
 	if active != "" {
-		return "Continue the unfinished todo list. The current in-progress item is: " + active + ". Mark todos complete with TodoWrite as each item finishes, then continue with any remaining work.", true
+		return autoPromptPrefix + "Continue the unfinished todo list. The current in-progress item is: " + active + ". Mark todos complete with TodoWrite as each item finishes, then continue with any remaining work.", true
 	}
-	return fmt.Sprintf("Continue the unfinished todo list. There are %d pending item(s). Start the next item, mark it in_progress with TodoWrite, and keep going until the list is complete.", pending), true
+	return autoPromptPrefix + fmt.Sprintf("Continue the unfinished todo list. There are %d pending item(s). Start the next item, mark it in_progress with TodoWrite, and keep going until the list is complete.", pending), true
 }
 
 // handleLoginMsg dispatches all auth-flow messages. Returns (Model, Cmd,

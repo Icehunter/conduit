@@ -45,7 +45,7 @@ func (m Model) activeContexts() []string {
 //
 // "command:*" actions dispatch a slash command as if the user had typed it.
 // Other IDs mirror the built-in switch in handleKey.
-func (m Model) dispatchKeybindingAction(action string, _ tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	// "command:help" → run /help, "command:compact" → run /compact, etc.
 	if strings.HasPrefix(action, "command:") {
 		cmdName := strings.TrimPrefix(action, "command:")
@@ -103,12 +103,24 @@ func (m Model) dispatchKeybindingAction(action string, _ tea.KeyPressMsg) (Model
 		return m, nil, true
 
 	case "select:next":
+		// When the command picker is active the user is typing a command name.
+		// Printable single-char keys (j, space, …) must fall through to the
+		// textarea so the name can be typed; only arrow/ctrl combos navigate.
+		if m.commandPickerActive() && isPrintableKey(msg) {
+			return m, nil, false
+		}
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyDown})
 		return m2, cmd, true
 	case "select:previous":
+		if m.commandPickerActive() && isPrintableKey(msg) {
+			return m, nil, false
+		}
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyUp})
 		return m2, cmd, true
 	case "select:accept":
+		if m.commandPickerActive() && isPrintableKey(msg) {
+			return m, nil, false
+		}
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: tea.KeyEnter})
 		return m2, cmd, true
 	case "select:cancel":
@@ -124,4 +136,11 @@ func (m Model) dispatchKeybindingAction(action string, _ tea.KeyPressMsg) (Model
 	}
 
 	return m, nil, false
+}
+
+// isPrintableKey returns true when msg carries a visible character with no
+// modifier held. Used to distinguish "j pressed to type" from "j pressed to
+// navigate a picker".
+func isPrintableKey(msg tea.KeyPressMsg) bool {
+	return msg.Mod == 0 && msg.Code >= ' '
 }

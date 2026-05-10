@@ -74,7 +74,7 @@ func TestHandleAgentDoneQueuesUnfinishedTodoContinuation(t *testing.T) {
 		history: append([]api.Message(nil), m.history...),
 	})
 
-	if got := m2.input.Value(); !strings.HasPrefix(got, "Continue the unfinished todo list.") {
+	if got := m2.input.Value(); !strings.HasPrefix(got, autoPromptPrefix) {
 		t.Fatalf("unexpected continuation prompt: %q", got)
 	}
 	if m2.todoAutoContinues != 1 {

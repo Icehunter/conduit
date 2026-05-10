@@ -424,7 +424,14 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if text == "" {
 			return m, nil, true
 		}
-		if !strings.HasPrefix(text, "Continue the unfinished todo list.") {
+
+		// Synthetic todo-continue nudge: show a terse system notice instead
+		// of the raw instruction as a "You" message, then strip the sentinel
+		// so the model receives only the instruction.
+		isAutoPrompt := strings.HasPrefix(text, autoPromptPrefix)
+		if isAutoPrompt {
+			text = strings.TrimPrefix(text, autoPromptPrefix)
+		} else {
 			m.todoAutoContinues = 0
 		}
 
@@ -458,13 +465,18 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 		m.dismissWelcome()
 		m.input.Reset()
-		// Append to history only if it differs from the last entry.
-		if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != text {
-			m.inputHistory = append(m.inputHistory, text)
+		if isAutoPrompt {
+			// Don't pollute input history or show raw instruction text.
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "↻ Continuing unfinished tasks…"})
+		} else {
+			// Append to history only if it differs from the last entry.
+			if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != text {
+				m.inputHistory = append(m.inputHistory, text)
+			}
+			m.historyIdx = -1
+			m.historyDraft = ""
+			m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 		}
-		m.historyIdx = -1
-		m.historyDraft = ""
-		m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 
 		// Council mode: bypass the agent loop entirely and ask all council
 		// members directly. The synthesis becomes the assistant response.

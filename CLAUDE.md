@@ -24,8 +24,9 @@ CI runs vet + race tests on linux/macos/windows + golangci-lint + govulncheck. D
 
 Before making non-trivial changes, read:
 
-- **`PARITY.md`** — reference map of CC TS source → Go packages. Use when you need to understand CC's original behavior; note where conduit diverges intentionally.
-- **`STATUS.md`** — milestone status for every tool, command, and subsystem (✅/🔶/❌/🔲). Check before assuming something works — some features are intentional stubs.
+- **`STATUS.md`** — Conduit capability matrix and roadmap (✅/🔶/🔲/🚫). Check before assuming something works — some features are intentional stubs or planned C-Ox milestones.
+- **`COMPATIBILITY.md`** — Claude wire/auth compatibility contract. Read this when touching OAuth, API headers, beta flags, or anything that must stay compatible with Claude Max/Pro subscriptions.
+- **`PARITY.md`** — frozen historical CC TS source → Go mapping. Useful if you need to understand CC's original behavior for a specific feature; not the active product tracker.
 - **`README.md`** — feature overview and installation.
 
 ## Package Layout
@@ -47,8 +48,8 @@ internal/commands/        # Slash command handlers
 
 ## Hard Rules
 
-- **Wire compatibility over cleverness** — the Anthropic API wire format (billing header, request shape, OAuth headers) must remain compliant. For behavior and features, conduit is free to diverge; note intentional divergences in `PARITY.md`.
-- **Update `STATUS.md`** whenever you complete, partially complete, or discover a stub for any tracked component. It's how humans know what works.
+- **Wire compatibility over cleverness** — the Anthropic API wire format (billing header, request shape, OAuth headers) must remain compliant. For behavior and features, conduit is free to diverge; note intentional divergences in `COMPATIBILITY.md`.
+- **Update `STATUS.md`** whenever you complete, partially complete, or discover a stub for any tracked capability. It's how humans know what works.
 - **RTK filtering is in-process** (`internal/rtk/`). Don't shell out to the standalone `rtk` binary. Don't trim bash output ad-hoc at call sites — add a classifier in `internal/rtk/` instead.
 - **`make verify` must pass** before any task is done. Zero lint errors, tests pass with `-race`.
 - **`./conduit`** at repo root is a build artifact. `make build` overwrites it. Don't edit it.

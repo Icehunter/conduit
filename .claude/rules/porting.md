@@ -23,19 +23,30 @@ Conduit maintains wire compatibility with Claude Code (Anthropic OAuth, API head
 1. Check `STATUS.md` — may already exist or be intentionally stubbed
 2. Consult CC source if the feature has CC precedent; understand the intent
 3. Implement in idiomatic Go — you don't need to match CC's exact approach
-4. If you diverge intentionally, note it in `PARITY.md`
+4. If you diverge intentionally on wire/auth behavior, note it in `COMPATIBILITY.md`
 5. Write tests, update `STATUS.md`
 
-## PARITY.md Update Format
+## COMPATIBILITY.md Update Format
+
+Add a row to the "Intentional divergences" table:
 
 ```markdown
-| `src/tools/BashTool/BashTool.ts` | `internal/tools/bashtool/` | ✅ | Note any divergence |
+| Area | CC behavior | Conduit behavior | Why |
+```
+
+For wire sync notes (new CC version), add a section:
+
+```markdown
+### X.Y.Z → X.Y.Z+1 (date)
+| Item | Action |
 ```
 
 ## STATUS.md Update Format
 
+Find the right product-area section and update the row:
+
 ```markdown
-| BashTool | `internal/tools/bashtool/` | ✅ Complete |
+| Feature name | ✅ | package path and one-line note |
 ```
 
 ## Common Go Translation Notes

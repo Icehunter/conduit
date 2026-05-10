@@ -1,328 +1,269 @@
-# conduit Implementation Status
+# Conduit — Capability Matrix
 
-Last updated: 2026-05-09
+Last updated: 2026-05-11
 
-## How to read this
+This document answers product questions about Conduit: what works, what's
+coming, and what's intentionally out of scope. For Claude wire/auth
+compatibility details see `COMPATIBILITY.md`. For historical CC source mapping
+see `PARITY.md` (frozen reference).
 
-- ✅ DONE — fully implemented, tested, works
-- 🔶 PARTIAL — implemented but incomplete (see notes)
-- ❌ STUB — registered/present but returns placeholder text
-- 🚫 REMOVED — descoped (Claude product integrations)
-- 🔲 TODO — not started, planned for milestone Mx
+**Legend:** ✅ Done · 🔶 Partial · 🔲 Planned · 🚫 Descoped
 
 ---
 
-## M1 — Auth + bare API call ✅
+## Providers & Accounts
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| OAuth PKCE flow (claude.ai) | ✅ | internal/auth/flow.go |
-| OAuth PKCE flow (Console) | ✅ | internal/auth/flow.go |
-| Token refresh | ✅ | internal/auth/persist.go |
-| Keychain storage (macOS) | ✅ | internal/secure/ |
-| /v1/messages POST | ✅ | internal/api/client.go |
-| Wire headers (UA, beta, session-id) | ✅ | internal/api/client.go |
+| Claude Max/Pro subscription (OAuth) | ✅ | PKCE flow, token refresh, keychain storage |
+| Anthropic API key | ✅ | Direct API key auth |
+| Multi-account switching | ✅ | `/account` panel, `/login --switch <email>` |
+| OpenAI-compatible providers (Gemini, etc.) | ✅ | API key stored in secure storage; role-assignable |
+| Local models via MCP | ✅ | Route any role to an MCP-backed local provider |
+| Role-based model routing | ✅ | Default, Main, Background, Planning, Implement roles via `/model` Ctrl+M |
+| GitHub Copilot auth | 🔲 | C-O3: planned after `/accounts` expansion |
+| OpenAI ChatGPT Plus/Pro OAuth | 🔲 | C-O3: investigate once stable flow confirmed |
+| OpenRouter API key | 🔲 | C-O3: API-key flow, catalog-assisted |
+| Provider auth plugin interface | 🔲 | C-O3: `Methods`/`Authorize`/`Callback` |
 
 ---
 
-## M2 — Streaming + core tools ✅
+## Model & Provider Discovery
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| SSE parser | ✅ | internal/sse/ |
-| Agent loop | ✅ | internal/agent/loop.go |
-| System prompt assembly | 🔶 | internal/agent/systemprompt.go; content complete but not byte-identical to TS (conduit-authored to avoid IP) |
-| BashTool | ✅ | internal/tools/bashtool/ — Unix/macOS only; Windows replaced by Shell (PowerShell) |
-| FileReadTool | ✅ | internal/tools/filereadtool/ |
-| FileWriteTool | ✅ | internal/tools/filewritetool/ |
-| FileEditTool | ✅ | internal/tools/fileedittool/ |
-| GrepTool | ✅ | internal/tools/greptool/ |
-| GlobTool | ✅ | internal/tools/globtool/ |
-| Cost tracker | ✅ | tallied in internal/tui/model.go (tallyTokens/syncLive) |
+| Manual provider entry (URL + key) | ✅ | Settings Providers tab |
+| Provider validation on save | ✅ | Test-call before persisting |
+| Model picker (`/model`) | ✅ | Grouped by provider; Ctrl+M assigns roles |
+| Model capability display | 🔲 | C-O2: context window, cost, tool-use, vision flags |
+| Models.dev / Catwalk catalog | 🔲 | C-O2: cached catalog; pre-fills provider setup |
+| Catalog refresh command | 🔲 | C-O2: `update-providers` or `/models --refresh` |
 
 ---
 
-## M3 — TUI ✅
+## Agent Runtime
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| Bubble Tea main loop | ✅ | internal/tui/ |
-| Message viewport | ✅ | |
-| Input box | ✅ | |
-| Slash command picker (fuzzy) | ✅ | |
-| Tab completion | ✅ | |
-| Input history (↑/↓) | ✅ | |
-| Vim mode | 🚫 REMOVED | descoped — large effort (1513 LOC); use keybindings system instead |
-| Status bar | ✅ | model, context%, cost; context meter uses current prompt/window tokens, provider `contextWindow` overrides, not summed billing tokens |
-| Todo strip / chat alignment | ✅ | unfinished TodoWrite state now auto-nudges the next turn instead of silently ending with in-progress todos |
-| TUI compositor | ✅ | ultraviolet screen-buffer layers; panels/pickers/modals draw over chat without shrinking viewport; floating window layer clamps overlay width/height |
-| Animated working indicator | ✅ | Crush-inspired gradient scramble row replaces plain Thinking spinner |
-| Terminal window title (OSC 2) | ✅ | internal/tui/title.go — sets "conduit · working" on task start, resets to "conduit" on completion/interrupt |
-| Plan-approval picker | ✅ | internal/tui/planapproval.go — inset take-over modal with scrollable plan viewport, 5 options (auto/accept-edits/live-review/default/chat), mouse-selectable text, Tab focus toggle |
-| Assistant info row | ✅ | model, duration, per-turn cost after completed responses |
-| Tool message rendering | ✅ | one-line live/archive rows with tool-specific verbs + input/result summary; resumed tool_results pair back to tool_use; errors show details |
-| Welcome card (two-panel) | ✅ | profile fetched from oauth/profile |
-| Permission prompt modal | ✅ | |
-| Login picker modal | ✅ | |
-| Ctrl+Y copy code block | ✅ | |
-| Interrupt (Ctrl+C) | ✅ | |
-| Markdown rendering | ✅ | full GFM: tables, headings, italic, strikethrough, task lists, blockquotes |
-| Code block highlighting | ✅ | hand-rolled syntax highlighting (no Chroma dependency) |
+| Streaming SSE agent loop | ✅ | `internal/agent/loop.go` |
+| Multi-turn tool dispatch | ✅ | Parallel pool (max 4 concurrent) |
+| Auto-compact | ✅ | Fires near context limit; input + cache tokens counted |
+| Micro-compaction | ✅ | Clears old tool results after 60 min idle |
+| Extended thinking (`/effort`) | ✅ | low/medium/high/max budgets |
+| Fast mode (`/fast`) | ✅ | Toggles Haiku; ⚡ badge |
+| Exponential backoff (429) | ✅ | Base 1s, 2×, max 32s, jitter, 5 retries |
+| Conversation recovery | ✅ | Partial blocks persisted; orphan tool_use filtered on resume |
+| Mid-turn steering | ✅ | Message injected between tool batches; agent pivots without losing context |
+| Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/` |
+| Coordinator mode | ✅ | Claude as orchestrator; task-notification XML |
+| Council mode | ✅ | Parallel multi-model debate, synthesis, convergence detection, roles, voting |
+| Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options |
+| Diff-first review gate | ✅ | Hunk-level Myers diff; per-hunk approve/reject/note; `acceptEditsLive` mid-turn pause |
+| Decision journal | ✅ | Append-only JSONL; `RecordDecision` tool; council auto-records verdicts |
 
 ---
 
-## M4 — All tools 🔶
+## Tools (35 built-in)
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| BashTool | ✅ | Unix/macOS only; on Windows the Shell (PowerShell) tool is registered instead |
-| Shell (PowerShell) | ✅ | internal/tools/winshelltool/ — Windows-only; registered instead of BashTool |
-| EnterAutoMode | ✅ | internal/tools/automodetool/ — conduit extension; no CC counterpart |
-| ExitAutoMode | ✅ | internal/tools/automodetool/ — conduit extension; no CC counterpart |
-| FileReadTool | ✅ | |
+| BashTool | ✅ | RTK filtering; Unix/macOS. Windows: Shell (PowerShell) instead |
+| FileReadTool | ✅ | Line-range support |
 | FileWriteTool | ✅ | |
-| FileEditTool | ✅ | |
-| GrepTool | ✅ | |
+| FileEditTool | ✅ | Exact-string replacement |
+| GrepTool | ✅ | ripgrep backend |
 | GlobTool | ✅ | |
-| WebFetchTool | ✅ | internal/tools/webfetchtool/ |
-| WebSearchTool | ✅ | internal/tools/websearchtool/ |
-| NotebookEditTool | ✅ | internal/tools/notebookedittool/ |
-| SleepTool | ✅ | internal/tools/sleeptool/ |
-| TodoWriteTool | ✅ | internal/tools/todowritetool/ |
-| AgentTool | ✅ | internal/tools/agenttool/ |
-| LocalImplement | ✅ | conduit-only wrapper: lets the main agent offload bounded diff drafts to configured MCP `local_implement` |
-| LSPTool | 🔶 | internal/tools/lsp/; hover, definition, references, diagnostics; no tool-level tests |
-| MCPTool | ✅ | internal/tools/mcptool/ |
-| REPLTool | 🔶 | node/python3/bash via temp file (no shell injection); no tool-level tests (PARITY was wrong to mark ✅) |
-| SkillTool | ✅ | internal/tools/skilltool/ |
-| TaskCreateTool | ✅ | in-process store |
-| TaskGetTool | ✅ | |
-| TaskListTool | ✅ | |
-| TaskOutputTool | ✅ | |
-| TaskStopTool | ✅ | |
-| TaskUpdateTool | ✅ | |
-| RemoteTriggerTool | 🚫 REMOVED | Remote-only / M10; descoped (matches PARITY ⬛) |
-| SendMessageTool | 🚫 REMOVED | Team messaging; descoped (matches PARITY ⬛) |
-| ToolSearchTool | ✅ | searches live registry |
+| AgentTool (Task) | ✅ | Sub-agent spawning |
+| WebFetchTool | ✅ | HTML→markdown |
+| WebSearchTool | ✅ | |
+| NotebookEditTool | ✅ | Jupyter cell edit |
+| REPLTool | 🔶 | Functional; no tool-level tests yet |
+| SleepTool | ✅ | |
+| TodoWriteTool | ✅ | |
+| TaskCreate/Get/List/Update/Stop | ✅ | In-process task store |
+| EnterPlanMode / ExitPlanMode | ✅ | |
+| EnterWorktree / ExitWorktree | ✅ | git worktree add/remove |
+| EnterAutoMode / ExitAutoMode | ✅ | Conduit-original; bypassPermissions with user consent |
+| AskUserQuestion | ✅ | |
+| ConfigTool | ✅ | get/set/allow/deny/env |
+| MCPTool | ✅ | MCP tool proxy |
+| ListMcpResources / ReadMcpResource | ✅ | |
+| SkillTool | ✅ | |
+| LSPTool | 🔶 | hover, definition, references, diagnostics; Go/TS/JS/Py/Rust; no `internal/lsp/` package tests |
+| ToolSearchTool | ✅ | Live registry search |
+| SyntheticOutputTool | ✅ | Coordinator signalling |
+| LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation offload |
+| RecordDecision | ✅ | Conduit-original; decision journal |
 
 ---
 
-## M5 — Permissions + Hooks + Commands ✅
+## LSP
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| Permission gate | ✅ | internal/permissions/ |
-| Rule matching (exact/glob/prefix) | ✅ | |
-| Session allow list | ✅ | |
-| Interactive permission prompt | ✅ | |
-| PreToolUse hooks | ✅ | internal/hooks/ |
-| PostToolUse hooks | ✅ | |
-| SessionStart hooks | ✅ | |
-
-### Commands
-
-| Command | Status | Notes |
-|---------|--------|-------|
-| /help | ✅ | |
-| /commands | ✅ | opens slash command picker |
-| /clear | ✅ | |
-| /exit, /quit | ✅ | |
-| /model | ✅ | grouped provider picker; switches Claude/MCP/OpenAI-compatible via `activeProvider`, mirrors to `providers` + `roles.default`; Ctrl+M assigns Default/Main/Background/Planning/Implement roles; Gemini/OpenAI-compatible providers are validated, assignable, text-streamable, and tool-call translated |
-| /providers | ✅ | Settings Providers tab can add/edit/delete Gemini/OpenAI-compatible providers, set optional context windows, rotate API keys via secure storage, canonicalize provider keys, and surface provider/role config validation; broader provider setup UI is future feature work |
-| /models | ✅ | alias for /model picker |
-| /compact | ✅ | calls Haiku to summarize |
-| /permissions | ✅ | shows gate state |
-| /hooks | ✅ | shows configured hooks |
-| /login | ✅ | inline OAuth picker |
-| /account, /accounts | ✅ | settings accounts panel alias; account metadata stored in `~/.conduit/conduit.json` |
-| /logout | ✅ | clears keychain |
-| /cost | ✅ | tokens + estimated cost |
-| /diff | ✅ | git diff --stat |
-| /doctor | ✅ | binary/platform/git check |
-| /files | ✅ | scans history for paths |
-| /context | ✅ | token usage bar |
-| /stats | ✅ | alias for /cost |
-| /keybindings | ✅ | |
-| /effort | ✅ | sets effort header |
-| /fast | ✅ | toggles Haiku |
-| /privacy-settings | ✅ | |
-| /memory | ✅ | opens MEMORY.md path |
-| /feedback | ✅ | opens GitHub issues |
-| /release-notes | ✅ | opens releases page |
-| /add-dir | ✅ | |
-| /init | ✅ | prompt-inject to create CLAUDE.md |
-| /review | ✅ | prompt-inject PR review |
-| /commit | ✅ | prompt-inject git commit |
-| /pr-comments | ✅ | prompt-inject PR comment fix |
-| /fix | ✅ | prompt-inject issue fix |
-| /export | ✅ | writes markdown file to disk |
-| /usage | ✅ | token/cost breakdown by turn |
-| /toggle-usage | ✅ | conduit-only: toggles Claude plan usage footer + fetcher; API 429 rate-limit resets immediately mark current-session usage as saturated |
-| /vim | 🚫 REMOVED | descoped with vim mode — command removed from registry |
-| /resume | ✅ | lists Conduit sessions with Claude history fallback/import; use --continue to restore |
-| /rewind | ✅ | conversation snapshots via JSONL |
-| /rename | ✅ | renames current session |
-| /theme | ✅ | hot-swap palettes; persisted to conduit.json |
-| /plan | ✅ | sets plan mode; EnterPlanMode tool wired |
-| /council | ✅ | one-shot debate regardless of permission mode; /council-history lists transcripts |
-| /branch | 🚫 REMOVED | conversation branching deferred; command removed from registry |
-| /mcp | ✅ | internal/commands/mcp.go |
-| /agents | ✅ | lists active sub-agents |
-| /skills | ✅ | internal/commands/skills.go |
-| /local | ✅ | hidden debug command: calls active MCP provider direct tool without changing default provider |
-| /local-implement | ✅ | hidden debug command: calls active MCP provider implement tool with `output_format=diff` |
-| /local-mode | ✅ | hidden compatibility command: toggles `activeProvider` between Claude and MCP |
+| JSON-RPC/stdio client | ✅ | `internal/lsp/client.go` |
+| Server auto-detect (Go, TS/JS, Python, Rust) | ✅ | `internal/lsp/manager.go` |
+| pylsp → pyright fallback | ✅ | |
+| hover / definition / references / diagnostics | ✅ | |
+| Tool-level tests (6) | ✅ | `internal/tools/lsp/lsp_test.go` |
+| `internal/lsp/` package unit tests | 🔲 | C-O1 |
+| LSP status indicator | 🔲 | C-O1: show enabled/connecting/connected/broken per server |
+| Expanded server registry (15+ langs) | 🔲 | C-O1: Vue, Svelte, Astro, YAML, Lua, C#, Java, Bash, Dockerfile, Terraform, Nix, ESLint… |
+| Config overrides (cmd, args, env, disabled) | 🔲 | C-O1 |
+| documentSymbol / workspaceSymbol | 🔲 | C-O1 (after package tests exist) |
+| implementation / call hierarchy | 🔲 | C-O1 |
 
 ---
 
-## M6 — RTK in-process 🔶
+## MCP
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| ANSI stripping | ✅ | internal/rtk/ansi.go |
-| Command classifier | ✅ | 75 rules matching upstream registry.rs |
-| BashTool integration | ✅ | filter applied to all bash output |
-| **git** filter | ✅ | log/diff/status — faithful port |
-| **gh / glab** filter | ✅ | run + general truncation |
-| **go test/build/vet** filter | ✅ | failure extraction |
-| **golangci-lint** filter | ✅ | |
-| **cargo** filter | ✅ | test/build/clippy |
-| **pytest** filter | ✅ | failure + summary extraction |
-| **ruff/mypy** filter | ✅ | |
-| **npm/pnpm/yarn/bun** filter | ✅ | |
-| **vitest/jest** filter | ✅ | |
-| **eslint/tsc** filter | ✅ | |
-| **playwright** filter | ✅ | |
-| **ruby/rspec/rubocop** filter | ✅ | |
-| **dotnet build/test** filter | ✅ | |
-| **docker/kubectl** filter | ✅ | |
-| **terraform/tofu** filter | ✅ | |
-| **aws** filter | ✅ | secret redaction included |
-| **make/maven/swift** filter | ✅ | |
-| **curl/wget/ping** filter | ✅ | |
-| **ls/find/tree/grep** filter | ✅ | |
-| **shellcheck/yamllint/etc** filter | ✅ | |
-| RTK gain/discover commands | ✅ | internal/commands/rtk.go |
-| SQLite tracking | ✅ | internal/rtk/track/track.go |
+| stdio / HTTP / SSE / WebSocket transports | ✅ | |
+| OAuth for MCP servers | ✅ | RFC 8414 + RFC 7591 DCR + PKCE |
+| Server discovery (Claude/project/plugin/conduit overlays) | ✅ | |
+| `conduit mcp add/list/get/remove/add-json` CLI | ✅ | Claude-parity surface |
+| `/mcp` panel + slash commands | ✅ | |
+| Project-scope approval gate | ✅ | Startup picker; persisted |
+| Resource listing and reading | ✅ | |
 
 ---
 
-## M7 — MCP host ✅
+## Session & Memory
 
-| Component | Status |
-|-----------|--------|
-| stdio transport | ✅ |
-| SSE transport | ✅ |
-| HTTP transport | ✅ |
-| Connection manager | ✅ |
-| OAuth for MCP servers | ✅ |
-| Server discovery | ✅ Claude/project/plugin + Conduit `~/.conduit/mcp.json` (user) + `~/.conduit/conduit.json` (local) overlays |
-| /mcp command | ✅ |
-| `conduit mcp add/list/get/remove/add-json` CLI | ✅ Claude-parity surface; supports project (default), user, local scopes |
-| /mcp add/remove/list/get/add-json (slash) | ✅ Same surface inside the TUI; live reconnect/disconnect after change |
-
----
-
-## M8 — Plugins + Skills + Session persistence 🔶
-
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| Session transcript saving (JSONL) | ✅ | internal/session/, writes to ~/.conduit/projects with Claude fallback import |
-| Session path encoding (djb2+sanitize) | ✅ | exact port of sessionStoragePortable.ts |
-| --continue flag (resume latest session) | ✅ | cmd/claude/main.go |
-| /resume command (list sessions) | ✅ | shows previous sessions with age |
-| /export (markdown export) | ✅ | writes to disk |
-| Conversation snapshots (/rewind) | ✅ | JSONL-based; /rewind wired |
-| Session title persistence (/rename) | ✅ | shown in status bar; /rename persists |
-| MEMORY.md auto-memory | ✅ | ScanMemories, /memory list/show/scan |
-| Skill discovery + execution | ✅ | internal/tools/skilltool/ + internal/plugins/loader.go |
-| Plugin loader | ✅ | internal/plugins/loader.go — manifest loading, install, uninstall, enable/disable, MCP sync; Conduit-owned storage under ~/.conduit/plugins with Claude import/fallback |
-| Plugin skills (SKILL.md) | ✅ | internal/plugins/loader.go loadSkills + internal/plugins/skills.go — all skills/*/SKILL.md files from installed plugins loaded into SkillLoader; surfaced in system prompt; tools: frontmatter enforced |
-| Plugin hooks (hooks.json) | ✅ | internal/plugins/loader.go loadHooks + internal/plugins/hooks.go MergeHooksFrom — hooks/hooks.json merged into session hook list; CLAUDE_PLUGIN_ROOT injected into subprocess env |
-| Plugin agents (agents/*.md) | ✅ | internal/plugins/loader.go loadAgents + internal/plugins/agents.go + agenttool — Task subagent_type dispatches to named agents with system prompt, model override, and tool allowlist |
+| JSONL session transcripts | ✅ | `~/.conduit/projects/` |
+| Session resume (`--continue`, `/resume`) | ✅ | Claude history fallback/import |
+| Session rewind | ✅ | JSONL snapshots |
+| Session search | ✅ | Fuzzy over JSONL transcripts |
+| Session export (markdown) | ✅ | |
+| Session rename / tag | ✅ | |
+| Cost persistence | ✅ | AppendCost per turn; LoadCost on resume |
+| File access history | ✅ | |
+| MEMORY.md auto-memory | ✅ | user/feedback/project/reference types |
+| Memory extraction (auto) | ✅ | Sub-agent fires on each end_turn |
+| Session memory summaries | ✅ | `summary.md` per session; loaded on resume |
+| Auto-dream consolidation | ✅ | 24h + 5 session gate |
+| Session worktrees | ✅ | EnterWorktree / ExitWorktree |
 
 ---
 
-## M9 — Multi-agent + Coordinator 🔶
+## Plugins & Skills
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| AgentTool (subagents) | ✅ | internal/tools/agenttool/; RunSubAgent implemented |
-| Swarm/coordinator | ✅ | internal/coordinator/coordinator.go; system prompt injection, task-notification XML, MCP context |
-| SendMessageTool | 🔲 | Team messaging feature; descoped |
-| RemoteTriggerTool | 🔲 | Remote-only (M10); descoped |
-| **Council mode** | ✅ | internal/tui/council.go — conduit-original; parallel debate + synthesis across N models; chat path and ExitPlanMode path both open plan-approval picker |
-| · Parallel critique rounds | ✅ | goroutine pool; no sequential bottleneck |
-| · Cancellable context / Esc | ✅ | ctx derived from context.Background(); Ctrl+C cancels all in-flight members |
-| · Per-member timeout | ✅ | 30s default; `councilMemberTimeoutSec` in conduit.json |
-| · Convergence detection | ✅ | Jaccard similarity + `<council-agree/>` tag; threshold via `councilConvergenceThreshold` |
-| · Real Usage / cost tracking | ✅ | EventUsage accumulation in RunSubAgentTyped; displayed in footer |
-| · Round/active progress badge | ✅ | ⚖ council · round N/M · K active |
-| · Debate transcript persistence | ✅ | ~/.conduit/projects/<hash>/council/<timestamp>.md |
-| · Dedicated synthesizer model | ✅ | `councilSynthesizer` setting selects a specific provider |
-| · Member roles | ✅ | architect/skeptic/perf-reviewer via `councilRoles` map |
-| · Voting / weighted synthesis | ✅ | scoring pass orders plans by peer votes before synthesis |
-| · /council slash command | ✅ | mode-independent one-shot debate; /council-history lists transcripts |
-| · council_test.go | ✅ | 15 table-driven tests; regex, roster, convergence, roles, voting, cost |
-| · Council read-only gate | ✅ | ModeCouncil denies (not asks) non-read-only tools; EnterPlanMode returns error; directive updated to skip EnterPlanMode step |
-| **Decision Journal** | ✅ | `internal/decisionlog/` + `RecordDecision` tool — conduit-original; council auto-records verdicts; block 9 in system prompt feeds entries back across sessions |
-| **Plan-approval council bug** | ✅ | Empty/error synthesis no longer opens a blank approval modal; `councilSynthesizerMaxTokens` (default 8192) prevents silent truncation |
-| **Diff-First Review Gate** | ✅ | `internal/pendingedits/` — hunk-level Myers diff (`hunks.go`), partial-apply (`apply.go`); `GatedStager` stages in `acceptEdits` + `acceptEditsLive` modes; TUI overlay (`diffreview.go`) — per-hunk cursor, `a`/`r`/`x` actions, `n` note minibuffer; rejected hunks with notes produce structured `<diff_feedback>` follow-up injected as next user turn; `acceptEditsLive` mode adds mid-turn pause via `OnToolBatchComplete` when staged-edit count ≥ threshold (default 3, override via `CONDUIT_DIFF_REVIEW_THRESHOLD`); plan-approval picker has dedicated "live review" option |
-| **Plan-approval modal** | ✅ | Inset take-over overlay (1 row / 3 col padding from viewport); shows full plan in scrollable viewport; 4 options incl. "chat about this"; mouse drag-to-copy works inside modal |
+| Plugin install/uninstall (git clone) | ✅ | `~/.conduit/plugins/` |
+| Plugin enable/disable | ✅ | |
+| Plugin marketplace discovery | ✅ | `known_marketplaces.json` |
+| Plugin skills (SKILL.md) | ✅ | Frontmatter + tool allowlist enforced |
+| Plugin hooks (hooks.json) | ✅ | Merged into session hook list |
+| Plugin agents (agents/*.md) | ✅ | Task `subagent_type` dispatch |
+| Plugin MCP server sync | ✅ | |
+| Plugin output styles | ✅ | |
+| Bundled skills (`/simplify`, `/remember`) | ✅ | |
 
 ---
 
-## M10 — Bridge (IDE) 🔲
+## Hooks
 
-Descoped for now — not part of the "orchestration and brains" core.
-
----
-
-## M11 — Cosmetic parity 🔶
-
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| Image paste / drag-drop | ✅ | internal/attach/clipboard.go, dragdrop.go, resize.go |
-| PDF paste / @file handling | ✅ | internal/attach/pdf.go, atmention.go |
-| [N lines pasted] shortening | ✅ | internal/tui/updatehandlers.go stores large pastes as `[Pasted text #N +X lines]` placeholders and expands them before submit |
-| Syntax highlighting | ✅ | internal/tui/syntaxhighlight.go |
-| Buddy | ✅ | permanent /buddy command + companion rendering; one-time KAIROS promo descoped |
-| Voice STT | 🚫 REMOVED | local STT deferred; Anthropic private endpoint unavailable |
+| PreToolUse / PostToolUse / SessionStart / Stop | ✅ | |
+| Shell, HTTP, prompt, agent hook types | ✅ | |
+| Async hooks | ✅ | Non-blocking goroutine |
+| Hook approve / block directives | ✅ | |
+| Desktop notifications | ✅ | macOS osascript / Linux notify-send |
 
 ---
 
-## M12 — Security Hardening + Conformance Tests 🔶
+## TUI & Clients
 
-| Component | Status | Notes |
+| Capability | Status | Notes |
 |-----------|--------|-------|
-| Conduit global/project state | ✅ | `internal/globalconfig/` + `~/.conduit/conduit.json` — trust state, numStartups |
-| Workspace trust dialog | ✅ | `internal/tui/trustpanel.go` — mirrors decoded/5053.js |
-| Trust ancestor walk | ✅ | Parent trust implies child; CLAUDE_CODE_SANDBOXED bypass |
-| `SuggestRule` path traversal hardening | ✅ | `filepath.Clean` before glob computation |
-| `permissionMode` display synced from gate | ✅ | Fixed in `tui.New()`; Conduit writes active mode to `~/.conduit/conduit.json` and mode changes re-resolve role provider/model |
-| Message assembly conformance test | ✅ | `TestLoop_MessageAssembly_ToolUseResultPairing` |
-| Ask-mode permission flow test | ✅ | `TestLoop_AskMode_AlwaysAllowAddsSessionRule` |
-| PostToolUse hook conformance tests | ✅ | Output field, non-matching skip |
-| HTTP hook conformance tests | ✅ | `internal/hooks/hooks_http_test.go` — block/approve/server-error |
-| Async hook non-blocking test | ✅ | `TestRunHook_AsyncReturnsImmediately` |
-| Fuzz targets (permission rules, JSON-RPC) | 🔲 | SSE parser fuzz exists; others deferred |
-| Trust-gating for hooks/plugins at load time | ✅ | `settings.FilterUntrustedHooks` strips project-local hooks when cwd is untrusted; applied in main.go before loop + TUI start |
+| Bubble Tea v2 terminal TUI | ✅ | Primary client |
+| Ultraviolet compositor (floating panels) | ✅ | No viewport shrink |
+| Full GFM markdown rendering | ✅ | Tables, headings, task lists, strikethrough, blockquotes, italic |
+| Syntax highlighting | ✅ | Hand-rolled; no Chroma dependency |
+| Animated work indicator | ✅ | Gradient scramble row |
+| Image/PDF paste & drag-drop | ✅ | |
+| @file mention parsing | ✅ | Line ranges, dirs, base64 blocks |
+| Custom keybindings | ✅ | `~/.conduit/keybindings.json` |
+| Multi-account UI (`/account`) | ✅ | |
+| Themes (`/theme`) | ✅ | 4 built-ins + user themes; hot-swap |
+| Plugin panel (`/plugin`) | ✅ | |
+| MCP panel (`/mcp`) | ✅ | |
+| Settings panel | ✅ | Providers, Stats, Accounts tabs |
+| Rate limit display | ✅ | `anthropic-ratelimit-*` headers; <20% warning |
+| Claude plan usage footer | ✅ | 5h/7d windows; `/toggle-usage` |
+| `conduit serve` (local server) | 🔲 | C-O4: session/message/event endpoints |
+| `conduit attach` (attach client) | 🔲 | C-O4 |
+| Multi-session switcher panel | 🔲 | C-O5: depends on server spine |
+| Desktop app | 🚫 | Deferred until server API is stable |
+| IDE extension | 🚫 | Deferred; Zed first via ACP |
 
 ---
 
-## Tooling
+## Config & Settings
 
-| Tool | Status | Notes |
-|------|--------|-------|
-| Wire-fingerprint drift detector | ✅ | `scripts/wire-check/` — `make verify-wire` decodes the installed claude binary (via bun-demincer), extracts headers/betas/cch/OAuth/tools by string-anchor pattern matching, diffs against conduit's pinned constants. Tracks history in `scripts/wire-check/history/`. Last tracked upstream: **v2.1.133** (cch=`00000`). |
-| GoReleaser config | ✅ | `.goreleaser.yml` — darwin/linux/windows × amd64/arm64, macOS universal binary, ad-hoc codesign on darwin, SBOMs (syft), source archive. Publishers: Homebrew tap, Scoop bucket, winget PR. |
-| Update notifier | ✅ | `internal/updater/` — GitHub Releases polling, 24h cache, install-method detection (brew/scoop/winget/go-install/direct). Async startup check + `conduit update` subcommand. Skipped on `AppVersion=="dev"`. |
-| Distribution channels | 🔶 | GitHub Releases ✅. Homebrew tap (`Icehunter/homebrew-tap`) and Scoop bucket (`Icehunter/scoop-bucket`) require GitHub repo creation + `HOMEBREW_TAP_TOKEN`/`SCOOP_TOKEN`/`WINGET_TOKEN` secrets before next release. See `docs/release.md`. |
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| `~/.conduit/conduit.json` (Conduit config) | ✅ | Provider roles, active provider, council settings |
+| Claude-compatible `settings.json` | ✅ | Loaded alongside conduit.json |
+| `.mcp.json` project config | ✅ | |
+| Env var injection | ✅ | `ApplyEnv`; dangerous keys filtered |
+| XDG / Windows paths | ✅ | |
+| Config migrations | ✅ | `internal/migrations/` |
+| JSON schema for config files | 🔲 | C-O4.5: schema generation for provider/MCP/LSP/hook/account settings |
 
 ---
 
-## Known lies / misleading behavior
+## RTK (In-Process Token Compression)
 
-| Issue | Location | Fix milestone |
-|-------|----------|---------------|
-| Conversation branching is not implemented | internal/commands/ | deferred; `/branch` is not registered |
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| 75 command classifiers | ✅ | `internal/rtk/registry.go` |
+| ANSI stripping | ✅ | |
+| Filters: git, go, cargo, npm, pytest, eslint, docker, terraform, aws, make, … | ✅ | |
+| SQLite analytics (`/rtk gain`) | ✅ | |
+| `rtk discover` (unclassified command scan) | ✅ | |
+
+---
+
+## Distribution
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| Homebrew (`icehunter/tap/conduit`) | ✅ | `brew install icehunter/tap/conduit` |
+| Scoop (Windows) | ✅ | |
+| GitHub Releases (GoReleaser) | ✅ | macOS/Linux/Windows amd64+arm64 |
+| Passive update notifier | ✅ | 24h cache; install-method-aware hint |
+| winget (Microsoft) | 🔲 | Manual review pending; deferred until demand |
+
+---
+
+## OpenCode-Inspired Roadmap
+
+| Milestone | Focus | Status |
+|-----------|-------|--------|
+| C-O0: Documentation governance | STATUS.md + PARITY.md → capability matrix + compatibility contract | ✅ This update |
+| C-O1: LSP confidence | `internal/lsp/` tests; status indicator; 15+ server registry; config overrides; documentSymbol/workspaceSymbol | 🔲 |
+| C-O2: Model catalog | Models.dev / Catwalk catalog package; `/models --refresh`; capability display in picker | 🔲 |
+| C-O3: Provider auth | Provider-auth interface; `/accounts` expansion; API-key flows; Copilot/OpenAI OAuth investigation | 🔲 |
+| C-O4: Local server spine | `conduit serve`; `conduit attach`; session/message/permission/event endpoints; file-read tracker | 🔲 |
+| C-O4.5: Runtime polish | Config JSON schema; background job tracking; broader project instruction file support | 🔲 |
+| C-O5: Multi-session UI | Session switcher; new session creation; background session status; fork/parent navigation | 🔲 (needs C-O4) |
+| C-O6: Share & import | Local share bundle export/import; optional remote endpoint; redaction checklist | 🔲 |
+
+---
+
+## Intentionally Out of Scope
+
+- Bridge / IDE JSON-RPC integration (users use the real CC extension)
+- Remote session management and ULTRAPLAN
+- Team swarm messaging (SendMessageTool, teammate mailbox)
+- Voice / STT (local whisper.cpp deferred; Anthropic private endpoint unavailable)
+- KAIROS / GrowthBook-gated features
+- Anthropic-internal analytics, telemetry, and billing dialogs
+- Dynamic provider execution that bypasses typed streaming adapters
+- Remote sharing enabled by default

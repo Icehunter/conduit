@@ -401,3 +401,214 @@ func (s *stubManager) ServerFor(_ context.Context, _ string) (*lspclient.Client,
 // We verify stubManager satisfies it.
 var _ managerIface = (*stubManager)(nil)
 var _ managerIface = (*lspclient.Manager)(nil)
+
+func TestLSPTool_DocumentSymbol(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "textDocument/documentSymbol" {
+			return nil, nil
+		}
+		return []lspclient.DocumentSymbol{
+			{
+				Name:           "MyFunc",
+				Kind:           lspclient.SymbolFunction,
+				Range:          lspclient.Range{Start: lspclient.Position{Line: 2, Character: 0}},
+				SelectionRange: lspclient.Range{Start: lspclient.Position{Line: 2, Character: 5}},
+			},
+		}, nil
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "documentSymbol",
+		"file":      goFile,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	if !strings.Contains(res.Content[0].Text, "MyFunc") {
+		t.Errorf("expected 'MyFunc' in result; got: %s", res.Content[0].Text)
+	}
+}
+
+func TestLSPTool_WorkspaceSymbol(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "workspace/symbol" {
+			return nil, nil
+		}
+		return []lspclient.SymbolInformation{
+			{
+				Name: "Manager",
+				Kind: lspclient.SymbolClass,
+				Location: lspclient.Location{
+					URI:   "file://" + filepath.ToSlash(goFile),
+					Range: lspclient.Range{Start: lspclient.Position{Line: 10, Character: 0}},
+				},
+			},
+		}, nil
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "workspaceSymbol",
+		"file":      goFile,
+		"query":     "Manager",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	if !strings.Contains(res.Content[0].Text, "Manager") {
+		t.Errorf("expected 'Manager' in result; got: %s", res.Content[0].Text)
+	}
+}
+
+func TestLSPTool_Implementation(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "textDocument/implementation" {
+			return nil, nil
+		}
+		return []lspclient.Location{
+			{URI: "file://" + filepath.ToSlash(goFile), Range: lspclient.Range{Start: lspclient.Position{Line: 7, Character: 0}}},
+		}, nil
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "implementation",
+		"file":      goFile,
+		"line":      0,
+		"character": 5,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	if !strings.Contains(res.Content[0].Text, "Implementation") {
+		t.Errorf("expected 'Implementation' in result; got: %s", res.Content[0].Text)
+	}
+}
+
+func TestLSPTool_CallHierarchyIncoming(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fileURI := "file://" + filepath.ToSlash(goFile)
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "textDocument/prepareCallHierarchy":
+			return []lspclient.CallHierarchyItem{
+				{Name: "Foo", Kind: lspclient.SymbolFunction, URI: fileURI,
+					Range:          lspclient.Range{Start: lspclient.Position{Line: 2}},
+					SelectionRange: lspclient.Range{Start: lspclient.Position{Line: 2}}},
+			}, nil
+		case "callHierarchy/incomingCalls":
+			return []lspclient.CallHierarchyIncomingCall{
+				{From: lspclient.CallHierarchyItem{Name: "main", URI: fileURI,
+					Range:          lspclient.Range{Start: lspclient.Position{Line: 5}},
+					SelectionRange: lspclient.Range{Start: lspclient.Position{Line: 5}}}},
+			}, nil
+		default:
+			return nil, nil
+		}
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "callHierarchyIncoming",
+		"file":      goFile,
+		"line":      2,
+		"character": 0,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	if !strings.Contains(res.Content[0].Text, "main") {
+		t.Errorf("expected caller 'main'; got: %s", res.Content[0].Text)
+	}
+}
+
+func TestLSPTool_CallHierarchyOutgoing(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fileURI := "file://" + filepath.ToSlash(goFile)
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "textDocument/prepareCallHierarchy":
+			return []lspclient.CallHierarchyItem{
+				{Name: "main", Kind: lspclient.SymbolFunction, URI: fileURI,
+					Range:          lspclient.Range{Start: lspclient.Position{Line: 4}},
+					SelectionRange: lspclient.Range{Start: lspclient.Position{Line: 4}}},
+			}, nil
+		case "callHierarchy/outgoingCalls":
+			return []lspclient.CallHierarchyOutgoingCall{
+				{To: lspclient.CallHierarchyItem{Name: "Bar", URI: fileURI,
+					Range:          lspclient.Range{Start: lspclient.Position{Line: 10}},
+					SelectionRange: lspclient.Range{Start: lspclient.Position{Line: 10}}}},
+			}, nil
+		default:
+			return nil, nil
+		}
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "callHierarchyOutgoing",
+		"file":      goFile,
+		"line":      4,
+		"character": 0,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	if !strings.Contains(res.Content[0].Text, "Bar") {
+		t.Errorf("expected callee 'Bar'; got: %s", res.Content[0].Text)
+	}
+}

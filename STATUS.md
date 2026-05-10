@@ -106,12 +106,12 @@ see `PARITY.md` (frozen reference).
 | pylsp → pyright fallback | ✅ | |
 | hover / definition / references / diagnostics | ✅ | |
 | Tool-level tests (6) | ✅ | `internal/tools/lsp/lsp_test.go` |
-| `internal/lsp/` package unit tests | 🔲 | C-O1 |
-| LSP status indicator | 🔲 | C-O1: show enabled/connecting/connected/broken per server |
-| Expanded server registry (15+ langs) | 🔲 | C-O1: Vue, Svelte, Astro, YAML, Lua, C#, Java, Bash, Dockerfile, Terraform, Nix, ESLint… |
-| Config overrides (cmd, args, env, disabled) | 🔲 | C-O1 |
-| documentSymbol / workspaceSymbol | 🔲 | C-O1 (after package tests exist) |
-| implementation / call hierarchy | 🔲 | C-O1 |
+| `internal/lsp/` package unit tests | ✅ | `internal/lsp/client_test.go`, `manager_test.go` |
+| LSP status indicator | ✅ | `Manager.Status(langKey)` → unknown/connecting/connected/broken/disabled |
+| Expanded server registry (15+ langs) | ✅ | Vue, Svelte, Astro, YAML, Lua, C#, Java, Bash, Dockerfile, Terraform, Nix + existing Go/TS/JS/Py/Rust |
+| Config overrides (cmd, args, env, disabled) | ✅ | `conduit.json` `lspServers` map; `NewManagerWithOverrides` |
+| documentSymbol / workspaceSymbol | ✅ | Tree + flat form; workspace/symbol query |
+| implementation / call hierarchy | ✅ | `implementation`, `callHierarchyIncoming`, `callHierarchyOutgoing` |
 
 ---
 
@@ -247,7 +247,7 @@ see `PARITY.md` (frozen reference).
 | Milestone | Focus | Status |
 |-----------|-------|--------|
 | C-O0: Documentation governance | STATUS.md + PARITY.md → capability matrix + compatibility contract | ✅ This update |
-| C-O1: LSP confidence | `internal/lsp/` tests; status indicator; 15+ server registry; config overrides; documentSymbol/workspaceSymbol | 🔲 |
+| C-O1: LSP confidence | `internal/lsp/` tests; status indicator; 15+ server registry; config overrides; documentSymbol/workspaceSymbol | ✅ |
 | C-O2: Model catalog | Models.dev / Catwalk catalog package; `/models --refresh`; capability display in picker | 🔲 |
 | C-O3: Provider auth | Provider-auth interface; `/accounts` expansion; API-key flows; Copilot/OpenAI OAuth investigation | 🔲 |
 | C-O4: Local server spine | `conduit serve`; `conduit attach`; session/message/permission/event endpoints; file-read tracker | 🔲 |

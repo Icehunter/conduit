@@ -61,6 +61,42 @@ func NewClient(ctx context.Context, cmd string, args ...string) (*Client, error)
 	return cl, nil
 }
 
+// newClientWithEnv is like NewClient but also sets additional environment
+// variables on the subprocess (each entry is "KEY=VALUE").
+func newClientWithEnv(ctx context.Context, cmd string, args []string, env []string) (*Client, error) {
+	c := exec.CommandContext(ctx, cmd, args...)
+	if len(env) > 0 {
+		c.Env = append(os.Environ(), env...)
+	}
+
+	stdin, err := c.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("lsp: stdin pipe: %w", err)
+	}
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("lsp: stdout pipe: %w", err)
+	}
+	c.Stderr = os.Stderr
+
+	if err := c.Start(); err != nil {
+		return nil, fmt.Errorf("lsp: start %q: %w", cmd, err)
+	}
+
+	cl := &Client{
+		cmd:   c,
+		stdin: stdin,
+		done:  make(chan struct{}),
+	}
+	go cl.readLoop(stdout)
+
+	if err := cl.initialize(ctx); err != nil {
+		_ = c.Process.Kill()
+		return nil, err
+	}
+	return cl, nil
+}
+
 // NewClientFromPipes creates a Client using caller-supplied stdin/stdout pipes.
 // This is useful for testing with an in-process mock server.
 // It performs the same initialize/initialized handshake as NewClient.

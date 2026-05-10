@@ -319,7 +319,20 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 
 	// Create the LSP manager; servers are started on demand per file extension.
-	lspManager := lsp.NewManager()
+	// Apply any per-server overrides from conduit.json (cmd, args, env, disabled).
+	var lspOverrides map[string]lsp.ServerOverride
+	if conduitCfg, err := settings.LoadConduitConfig(); err == nil && len(conduitCfg.LSPServers) > 0 {
+		lspOverrides = make(map[string]lsp.ServerOverride, len(conduitCfg.LSPServers))
+		for k, v := range conduitCfg.LSPServers {
+			lspOverrides[k] = lsp.ServerOverride{
+				Cmd:      v.Cmd,
+				Args:     v.Args,
+				Env:      v.Env,
+				Disabled: v.Disabled,
+			}
+		}
+	}
+	lspManager := lsp.NewManagerWithOverrides(lspOverrides)
 
 	// Load plugins (non-fatal — missing plugins don't block startup).
 	loadedPlugins, _ := plugins.LoadAll(cwd)

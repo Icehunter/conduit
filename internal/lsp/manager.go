@@ -9,6 +9,41 @@ import (
 	"sync"
 )
 
+// ServerOverride allows per-language-server customisation in conduit.json.
+// The key is the langKey (e.g. "go", "typescript", "python").
+type ServerOverride struct {
+	Cmd      string   `json:"cmd,omitempty"`
+	Args     []string `json:"args,omitempty"`
+	Env      []string `json:"env,omitempty"` // each entry is "KEY=VALUE"
+	Disabled bool     `json:"disabled,omitempty"`
+}
+
+// ServerStatus describes the life-cycle state of a language server.
+type ServerStatus int
+
+const (
+	StatusUnknown    ServerStatus = iota // not yet requested
+	StatusConnecting                     // launching / handshaking
+	StatusConnected                      // ready
+	StatusBroken                         // exited or failed to start
+	StatusDisabled                       // disabled via config override
+)
+
+func (s ServerStatus) String() string {
+	switch s {
+	case StatusConnecting:
+		return "connecting"
+	case StatusConnected:
+		return "connected"
+	case StatusBroken:
+		return "broken"
+	case StatusDisabled:
+		return "disabled"
+	default:
+		return "unknown"
+	}
+}
+
 // serverSpec describes how to launch a language server.
 type serverSpec struct {
 	cmd  string
@@ -16,15 +51,47 @@ type serverSpec struct {
 }
 
 // extToSpec maps file extensions to language server launch specs.
-// Multiple extensions may share the same spec (e.g. .ts and .tsx).
 var extToSpec = map[string]serverSpec{
-	".go":  {cmd: "gopls"},
+	// Go
+	".go": {cmd: "gopls"},
+	// TypeScript / JavaScript
 	".ts":  {cmd: "typescript-language-server", args: []string{"--stdio"}},
 	".tsx": {cmd: "typescript-language-server", args: []string{"--stdio"}},
 	".js":  {cmd: "typescript-language-server", args: []string{"--stdio"}},
 	".jsx": {cmd: "typescript-language-server", args: []string{"--stdio"}},
-	".py":  {cmd: "pylsp"},
-	".rs":  {cmd: "rust-analyzer"},
+	// Python
+	".py": {cmd: "pylsp"},
+	// Rust
+	".rs": {cmd: "rust-analyzer"},
+	// Vue
+	".vue": {cmd: "vue-language-server", args: []string{"--stdio"}},
+	// Svelte
+	".svelte": {cmd: "svelte-language-server", args: []string{"--stdio"}},
+	// Astro
+	".astro": {cmd: "astro-ls", args: []string{"--stdio"}},
+	// YAML
+	".yaml": {cmd: "yaml-language-server", args: []string{"--stdio"}},
+	".yml":  {cmd: "yaml-language-server", args: []string{"--stdio"}},
+	// Lua
+	".lua": {cmd: "lua-language-server"},
+	// C#
+	".cs": {cmd: "OmniSharp", args: []string{"-lsp"}},
+	// Java
+	".java": {cmd: "jdtls"},
+	// Bash / shell
+	".sh":   {cmd: "bash-language-server", args: []string{"start"}},
+	".bash": {cmd: "bash-language-server", args: []string{"start"}},
+	// Dockerfile
+	".dockerfile": {cmd: "docker-langserver", args: []string{"--stdio"}},
+	// Terraform
+	".tf": {cmd: "terraform-ls", args: []string{"serve"}},
+	// Nix
+	".nix": {cmd: "nil"},
+}
+
+// dockerfileBasenames handles files named literally "Dockerfile".
+var dockerfileBasenames = map[string]serverSpec{
+	"dockerfile": {cmd: "docker-langserver", args: []string{"--stdio"}},
 }
 
 // alternateServers lists fallback commands when the primary is absent.
@@ -34,28 +101,62 @@ var alternateServers = map[string]serverSpec{
 
 // Manager owns one *Client per language and starts servers on demand.
 type Manager struct {
-	mu      sync.Mutex
-	clients map[string]*Client // language key → client
+	mu        sync.Mutex
+	clients   map[string]*Client        // langKey → client
+	status    sync.Map                  // langKey → ServerStatus
+	overrides map[string]ServerOverride // langKey → override
 }
 
-// NewManager creates an empty Manager.
+// NewManager creates an empty Manager with no server overrides.
 func NewManager() *Manager {
-	return &Manager{clients: make(map[string]*Client)}
+	return &Manager{
+		clients:   make(map[string]*Client),
+		overrides: nil,
+	}
+}
+
+// NewManagerWithOverrides creates a Manager that applies per-server overrides
+// before falling back to the built-in registry.
+func NewManagerWithOverrides(overrides map[string]ServerOverride) *Manager {
+	return &Manager{
+		clients:   make(map[string]*Client),
+		overrides: overrides,
+	}
 }
 
 // ServerFor returns the running LSP client for the given file path, launching
 // the appropriate language server if it has not been started yet.
-// Returns an error if no known server exists for the file's extension, or if
-// the server binary is not on PATH.
 func (m *Manager) ServerFor(ctx context.Context, filePath string) (*Client, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	spec, ok := extToSpec[ext]
-	if !ok {
+	base := strings.ToLower(filepath.Base(filePath))
+
+	// Determine langKey and base spec.
+	var spec serverSpec
+	var langKey string
+
+	if s, ok := extToSpec[ext]; ok {
+		langKey = languageKey(ext)
+		spec = s
+	} else if s, ok := dockerfileBasenames[base]; ok {
+		langKey = "dockerfile"
+		spec = s
+	} else {
 		return nil, fmt.Errorf("lsp: no known server for extension %q", ext)
 	}
 
-	// Use extension as the language key so .ts/.tsx/.js/.jsx share one client.
-	langKey := languageKey(ext)
+	// Apply config overrides.
+	if ov, ok := m.overrides[langKey]; ok {
+		if ov.Disabled {
+			m.status.Store(langKey, StatusDisabled)
+			return nil, fmt.Errorf("lsp: server %q is disabled by config", langKey)
+		}
+		if ov.Cmd != "" {
+			spec.cmd = ov.Cmd
+		}
+		if len(ov.Args) > 0 {
+			spec.args = ov.Args
+		}
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -64,19 +165,48 @@ func (m *Manager) ServerFor(ctx context.Context, filePath string) (*Client, erro
 		return cl, nil
 	}
 
-	// Try to find the binary; fall back to alternate if needed.
+	m.status.Store(langKey, StatusConnecting)
+
 	chosenSpec, err := resolveSpec(spec)
 	if err != nil {
+		m.status.Store(langKey, StatusBroken)
 		return nil, fmt.Errorf("lsp: %w", err)
 	}
 
-	cl, err := NewClient(ctx, chosenSpec.cmd, chosenSpec.args...)
+	// Apply env overrides.
+	var envVars []string
+	if ov, ok := m.overrides[langKey]; ok {
+		envVars = ov.Env
+	}
+
+	cl, err := newClientWithEnv(ctx, chosenSpec.cmd, chosenSpec.args, envVars)
 	if err != nil {
-		return nil, fmt.Errorf("lsp: start server for %q: %w", ext, err)
+		m.status.Store(langKey, StatusBroken)
+		return nil, fmt.Errorf("lsp: start server for %q: %w", langKey, err)
 	}
 
 	m.clients[langKey] = cl
+	m.status.Store(langKey, StatusConnected)
+
+	// Watch for unexpected server exit.
+	go func() {
+		<-cl.done
+		m.mu.Lock()
+		delete(m.clients, langKey)
+		m.mu.Unlock()
+		m.status.Store(langKey, StatusBroken)
+	}()
+
 	return cl, nil
+}
+
+// Status returns the current status of the language server for the given langKey.
+func (m *Manager) Status(langKey string) ServerStatus {
+	v, ok := m.status.Load(langKey)
+	if !ok {
+		return StatusUnknown
+	}
+	return v.(ServerStatus)
 }
 
 // Close shuts down all running language servers.
@@ -89,12 +219,23 @@ func (m *Manager) Close() {
 	}
 }
 
-// languageKey maps an extension to a stable language key so that .ts and .tsx
-// share the same server instance.
+// languageKey maps an extension to a stable language key.
 func languageKey(ext string) string {
 	switch ext {
 	case ".ts", ".tsx", ".js", ".jsx":
 		return "typescript"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".sh", ".bash":
+		return "bash"
+	case ".cs":
+		return "csharp"
+	case ".py":
+		return "python"
+	case ".rs":
+		return "rust"
+	case ".tf":
+		return "terraform"
 	default:
 		return strings.TrimPrefix(ext, ".")
 	}
@@ -105,7 +246,6 @@ func resolveSpec(spec serverSpec) (serverSpec, error) {
 	if _, err := exec.LookPath(spec.cmd); err == nil {
 		return spec, nil
 	}
-	// Try alternate.
 	if alt, ok := alternateServers[spec.cmd]; ok {
 		if _, err := exec.LookPath(alt.cmd); err == nil {
 			return alt, nil
@@ -131,6 +271,28 @@ func LanguageID(ext string) string {
 		return "python"
 	case ".rs":
 		return "rust"
+	case ".vue":
+		return "vue"
+	case ".svelte":
+		return "svelte"
+	case ".astro":
+		return "astro"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".lua":
+		return "lua"
+	case ".cs":
+		return "csharp"
+	case ".java":
+		return "java"
+	case ".sh", ".bash":
+		return "shellscript"
+	case ".dockerfile":
+		return "dockerfile"
+	case ".tf":
+		return "terraform"
+	case ".nix":
+		return "nix"
 	default:
 		return "plaintext"
 	}

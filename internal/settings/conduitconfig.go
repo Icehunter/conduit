@@ -53,6 +53,17 @@ type ConduitConfig struct {
 	Themes             map[string]map[string]string `json:"themes,omitempty"`
 
 	Accounts *accountStoreSettings `json:"accounts,omitempty"`
+
+	// LSPServers maps langKey (e.g. "go", "typescript") to per-server overrides.
+	LSPServers map[string]LSPServerOverride `json:"lspServers,omitempty"`
+}
+
+// LSPServerOverride holds per-language-server configuration overrides.
+type LSPServerOverride struct {
+	Cmd      string   `json:"cmd,omitempty"`
+	Args     []string `json:"args,omitempty"`
+	Env      []string `json:"env,omitempty"`
+	Disabled bool     `json:"disabled,omitempty"`
 }
 
 func conduitConfigFromSettings(s Settings) ConduitConfig {

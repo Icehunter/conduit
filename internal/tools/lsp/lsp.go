@@ -50,7 +50,7 @@ func (*Tool) InputSchema() json.RawMessage {
 		"properties": {
 			"operation": {
 				"type": "string",
-				"enum": ["hover", "definition", "references", "diagnostics"],
+				"enum": ["hover", "definition", "references", "diagnostics", "documentSymbol", "workspaceSymbol", "implementation", "callHierarchyIncoming", "callHierarchyOutgoing"],
 				"description": "LSP operation to perform"
 			},
 			"file": {
@@ -59,11 +59,15 @@ func (*Tool) InputSchema() json.RawMessage {
 			},
 			"line": {
 				"type": "integer",
-				"description": "Zero-based line number (required for hover, definition, references)"
+				"description": "Zero-based line number (required for hover, definition, references, implementation, callHierarchy*)"
 			},
 			"character": {
 				"type": "integer",
-				"description": "Zero-based character offset (required for hover, definition, references)"
+				"description": "Zero-based character offset (required for hover, definition, references, implementation, callHierarchy*)"
+			},
+			"query": {
+				"type": "string",
+				"description": "Search query for workspaceSymbol (empty string returns all symbols)"
 			}
 		},
 		"required": ["operation", "file"]
@@ -83,6 +87,7 @@ type input struct {
 	File      string `json:"file"`
 	Line      uint32 `json:"line"`
 	Character uint32 `json:"character"`
+	Query     string `json:"query"`
 }
 
 // Execute implements tool.Tool.
@@ -123,8 +128,18 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return t.references(ctx, cl, fileURI, in.Line, in.Character)
 	case "diagnostics":
 		return t.diagnostics(cl, fileURI)
+	case "documentSymbol":
+		return t.documentSymbols(ctx, cl, fileURI)
+	case "workspaceSymbol":
+		return t.workspaceSymbols(ctx, cl, in.Query)
+	case "implementation":
+		return t.implementation(ctx, cl, fileURI, in.Line, in.Character)
+	case "callHierarchyIncoming":
+		return t.callHierarchyIncoming(ctx, cl, fileURI, in.Line, in.Character)
+	case "callHierarchyOutgoing":
+		return t.callHierarchyOutgoing(ctx, cl, fileURI, in.Line, in.Character)
 	default:
-		return tool.ErrorResult(fmt.Sprintf("unknown operation %q; must be hover|definition|references|diagnostics", in.Operation)), nil
+		return tool.ErrorResult(fmt.Sprintf("unknown operation %q; must be hover|definition|references|diagnostics|documentSymbol|workspaceSymbol|implementation|callHierarchyIncoming|callHierarchyOutgoing", in.Operation)), nil
 	}
 }
 
@@ -248,7 +263,241 @@ func (t *Tool) diagnostics(cl *lspclient.Client, uri string) (tool.Result, error
 	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
 }
 
-// --- helpers ---
+// documentSymbols performs textDocument/documentSymbol.
+func (t *Tool) documentSymbols(ctx context.Context, cl *lspclient.Client, uri string) (tool.Result, error) { //nolint:unparam
+	params := lspclient.DocumentSymbolParams{
+		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
+	}
+	raw, err := marshalRequest(params)
+	if err != nil {
+		return tool.ErrorResult(err.Error()), nil
+	}
+	result, err := cl.Request(ctx, "textDocument/documentSymbol", raw)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("textDocument/documentSymbol: %v", err)), nil
+	}
+	if isNull(result) {
+		return tool.TextResult("No symbols found in document."), nil
+	}
+
+	// Try tree form (DocumentSymbol) first.
+	var tree []lspclient.DocumentSymbol
+	if err := json.Unmarshal(result, &tree); err == nil && len(tree) > 0 {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Document symbols:\n")
+		formatDocumentSymbols(&sb, tree, 0)
+		return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+	}
+
+	// Fall back to flat SymbolInformation list.
+	var flat []lspclient.SymbolInformation
+	if err := json.Unmarshal(result, &flat); err != nil {
+		return tool.ErrorResult(fmt.Sprintf("documentSymbol decode: %v", err)), nil
+	}
+	if len(flat) == 0 {
+		return tool.TextResult("No symbols found in document."), nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Document symbols (%d):\n", len(flat))
+	for _, s := range flat {
+		container := ""
+		if s.ContainerName != "" {
+			container = fmt.Sprintf(" [%s]", s.ContainerName)
+		}
+		fmt.Fprintf(&sb, "  %s %s%s %s:%d\n",
+			s.Kind.String(), s.Name, container,
+			uriToPath(s.Location.URI), s.Location.Range.Start.Line+1)
+	}
+	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+}
+
+// workspaceSymbols performs workspace/symbol.
+func (t *Tool) workspaceSymbols(ctx context.Context, cl *lspclient.Client, query string) (tool.Result, error) { //nolint:unparam
+	params := lspclient.WorkspaceSymbolParams{Query: query}
+	raw, err := marshalRequest(params)
+	if err != nil {
+		return tool.ErrorResult(err.Error()), nil
+	}
+	result, err := cl.Request(ctx, "workspace/symbol", raw)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("workspace/symbol: %v", err)), nil
+	}
+	if isNull(result) {
+		return tool.TextResult("No workspace symbols found."), nil
+	}
+
+	var syms []lspclient.SymbolInformation
+	if err := json.Unmarshal(result, &syms); err != nil {
+		return tool.ErrorResult(fmt.Sprintf("workspaceSymbol decode: %v", err)), nil
+	}
+	if len(syms) == 0 {
+		return tool.TextResult("No workspace symbols found."), nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Workspace symbols (%d):\n", len(syms))
+	for _, s := range syms {
+		container := ""
+		if s.ContainerName != "" {
+			container = fmt.Sprintf(" [%s]", s.ContainerName)
+		}
+		fmt.Fprintf(&sb, "  %s %s%s %s:%d\n",
+			s.Kind.String(), s.Name, container,
+			uriToPath(s.Location.URI), s.Location.Range.Start.Line+1)
+	}
+	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+}
+
+// implementation performs textDocument/implementation.
+func (t *Tool) implementation(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) { //nolint:unparam
+	params := lspclient.TextDocumentPositionParams{
+		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
+		Position:     lspclient.Position{Line: line, Character: char},
+	}
+	raw, err := marshalRequest(params)
+	if err != nil {
+		return tool.ErrorResult(err.Error()), nil
+	}
+	result, err := cl.Request(ctx, "textDocument/implementation", raw)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("textDocument/implementation: %v", err)), nil
+	}
+	if isNull(result) {
+		return tool.TextResult("No implementation found."), nil
+	}
+	locs, err := parseLocations(result)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("implementation decode: %v", err)), nil
+	}
+	if len(locs) == 0 {
+		return tool.TextResult("No implementation found."), nil
+	}
+	return tool.TextResult(formatLocations("Implementation", locs)), nil
+}
+
+// callHierarchyIncoming performs callHierarchy/prepare then callHierarchy/incomingCalls.
+func (t *Tool) callHierarchyIncoming(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) { //nolint:unparam
+	items, err := callHierarchyPrepare(ctx, cl, uri, line, char)
+	if err != nil {
+		return tool.ErrorResult(err.Error()), nil
+	}
+	if len(items) == 0 {
+		return tool.TextResult("No call hierarchy item at this position."), nil
+	}
+
+	var sb strings.Builder
+	for _, item := range items {
+		params := lspclient.CallHierarchyIncomingCallsParams{Item: item}
+		raw, err := marshalRequest(params)
+		if err != nil {
+			return tool.ErrorResult(err.Error()), nil
+		}
+		result, err := cl.Request(ctx, "callHierarchy/incomingCalls", raw)
+		if err != nil {
+			return tool.ErrorResult(fmt.Sprintf("callHierarchy/incomingCalls: %v", err)), nil
+		}
+		if isNull(result) {
+			continue
+		}
+		var calls []lspclient.CallHierarchyIncomingCall
+		if err := json.Unmarshal(result, &calls); err != nil {
+			return tool.ErrorResult(fmt.Sprintf("incomingCalls decode: %v", err)), nil
+		}
+		fmt.Fprintf(&sb, "Incoming calls to %s (%d):\n", item.Name, len(calls))
+		for _, c := range calls {
+			fmt.Fprintf(&sb, "  %s %s:%d\n",
+				c.From.Name,
+				uriToPath(c.From.URI),
+				c.From.Range.Start.Line+1)
+		}
+	}
+	if sb.Len() == 0 {
+		return tool.TextResult("No incoming calls found."), nil
+	}
+	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+}
+
+// callHierarchyOutgoing performs callHierarchy/prepare then callHierarchy/outgoingCalls.
+func (t *Tool) callHierarchyOutgoing(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) (tool.Result, error) { //nolint:unparam
+	items, err := callHierarchyPrepare(ctx, cl, uri, line, char)
+	if err != nil {
+		return tool.ErrorResult(err.Error()), nil
+	}
+	if len(items) == 0 {
+		return tool.TextResult("No call hierarchy item at this position."), nil
+	}
+
+	var sb strings.Builder
+	for _, item := range items {
+		params := lspclient.CallHierarchyOutgoingCallsParams{Item: item}
+		raw, err := marshalRequest(params)
+		if err != nil {
+			return tool.ErrorResult(err.Error()), nil
+		}
+		result, err := cl.Request(ctx, "callHierarchy/outgoingCalls", raw)
+		if err != nil {
+			return tool.ErrorResult(fmt.Sprintf("callHierarchy/outgoingCalls: %v", err)), nil
+		}
+		if isNull(result) {
+			continue
+		}
+		var calls []lspclient.CallHierarchyOutgoingCall
+		if err := json.Unmarshal(result, &calls); err != nil {
+			return tool.ErrorResult(fmt.Sprintf("outgoingCalls decode: %v", err)), nil
+		}
+		fmt.Fprintf(&sb, "Outgoing calls from %s (%d):\n", item.Name, len(calls))
+		for _, c := range calls {
+			fmt.Fprintf(&sb, "  %s %s:%d\n",
+				c.To.Name,
+				uriToPath(c.To.URI),
+				c.To.Range.Start.Line+1)
+		}
+	}
+	if sb.Len() == 0 {
+		return tool.TextResult("No outgoing calls found."), nil
+	}
+	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+}
+
+// callHierarchyPrepare sends callHierarchy/prepare and returns the items.
+func callHierarchyPrepare(ctx context.Context, cl *lspclient.Client, uri string, line, char uint32) ([]lspclient.CallHierarchyItem, error) {
+	params := lspclient.CallHierarchyPrepareParams{
+		TextDocument: lspclient.TextDocumentIdentifier{URI: uri},
+		Position:     lspclient.Position{Line: line, Character: char},
+	}
+	raw, err := marshalRequest(params)
+	if err != nil {
+		return nil, err
+	}
+	result, err := cl.Request(ctx, "textDocument/prepareCallHierarchy", raw)
+	if err != nil {
+		return nil, fmt.Errorf("textDocument/prepareCallHierarchy: %w", err)
+	}
+	if isNull(result) {
+		return nil, nil
+	}
+	var items []lspclient.CallHierarchyItem
+	if err := json.Unmarshal(result, &items); err != nil {
+		return nil, fmt.Errorf("prepareCallHierarchy decode: %w", err)
+	}
+	return items, nil
+}
+
+// formatDocumentSymbols renders a DocumentSymbol tree with indentation.
+func formatDocumentSymbols(sb *strings.Builder, syms []lspclient.DocumentSymbol, depth int) {
+	indent := strings.Repeat("  ", depth)
+	for _, s := range syms {
+		detail := ""
+		if s.Detail != "" {
+			detail = fmt.Sprintf(" (%s)", s.Detail)
+		}
+		fmt.Fprintf(sb, "%s%s %s%s :%d\n",
+			indent, s.Kind.String(), s.Name, detail, s.Range.Start.Line+1)
+		if len(s.Children) > 0 {
+			formatDocumentSymbols(sb, s.Children, depth+1)
+		}
+	}
+}
 
 func didOpen(_ context.Context, cl *lspclient.Client, uri, langID, absPath string) error {
 	content, err := os.ReadFile(absPath)

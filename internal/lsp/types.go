@@ -151,3 +151,115 @@ type rpcError struct {
 }
 
 func (e *rpcError) Error() string { return e.Message }
+
+// SymbolKind mirrors LSP SymbolKind.
+type SymbolKind int
+
+const (
+	SymbolFile          SymbolKind = 1
+	SymbolModule        SymbolKind = 2
+	SymbolNamespace     SymbolKind = 3
+	SymbolPackage       SymbolKind = 4
+	SymbolClass         SymbolKind = 5
+	SymbolMethod        SymbolKind = 6
+	SymbolProperty      SymbolKind = 7
+	SymbolField         SymbolKind = 8
+	SymbolConstructor   SymbolKind = 9
+	SymbolEnum          SymbolKind = 10
+	SymbolInterface     SymbolKind = 11
+	SymbolFunction      SymbolKind = 12
+	SymbolVariable      SymbolKind = 13
+	SymbolConstant      SymbolKind = 14
+	SymbolString        SymbolKind = 15
+	SymbolNumber        SymbolKind = 16
+	SymbolBoolean       SymbolKind = 17
+	SymbolArray         SymbolKind = 18
+	SymbolObject        SymbolKind = 19
+	SymbolKey           SymbolKind = 20
+	SymbolNull          SymbolKind = 21
+	SymbolEnumMember    SymbolKind = 22
+	SymbolStruct        SymbolKind = 23
+	SymbolEvent         SymbolKind = 24
+	SymbolOperator      SymbolKind = 25
+	SymbolTypeParameter SymbolKind = 26
+)
+
+func (k SymbolKind) String() string {
+	names := [...]string{
+		"", "File", "Module", "Namespace", "Package", "Class", "Method",
+		"Property", "Field", "Constructor", "Enum", "Interface", "Function",
+		"Variable", "Constant", "String", "Number", "Boolean", "Array",
+		"Object", "Key", "Null", "EnumMember", "Struct", "Event",
+		"Operator", "TypeParameter",
+	}
+	if int(k) < len(names) {
+		return names[k]
+	}
+	return "Unknown"
+}
+
+// DocumentSymbol is an element in a textDocument/documentSymbol response.
+// Servers may return either DocumentSymbol (tree) or SymbolInformation (flat).
+type DocumentSymbol struct {
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail,omitempty"`
+	Kind           SymbolKind       `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []DocumentSymbol `json:"children,omitempty"`
+}
+
+// SymbolInformation is the flat form of a document/workspace symbol result.
+type SymbolInformation struct {
+	Name          string     `json:"name"`
+	Kind          SymbolKind `json:"kind"`
+	Location      Location   `json:"location"`
+	ContainerName string     `json:"containerName,omitempty"`
+}
+
+// WorkspaceSymbolParams is the params for workspace/symbol.
+type WorkspaceSymbolParams struct {
+	Query string `json:"query"`
+}
+
+// DocumentSymbolParams is the params for textDocument/documentSymbol.
+type DocumentSymbolParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// CallHierarchyItem represents a callable item in call hierarchy.
+type CallHierarchyItem struct {
+	Name           string     `json:"name"`
+	Kind           SymbolKind `json:"kind"`
+	URI            string     `json:"uri"`
+	Range          Range      `json:"range"`
+	SelectionRange Range      `json:"selectionRange"`
+}
+
+// CallHierarchyPrepareParams is the params for callHierarchy/prepare.
+type CallHierarchyPrepareParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+}
+
+// CallHierarchyIncomingCallsParams is the params for callHierarchy/incomingCalls.
+type CallHierarchyIncomingCallsParams struct {
+	Item CallHierarchyItem `json:"item"`
+}
+
+// CallHierarchyOutgoingCallsParams is the params for callHierarchy/outgoingCalls.
+type CallHierarchyOutgoingCallsParams struct {
+	Item CallHierarchyItem `json:"item"`
+}
+
+// CallHierarchyIncomingCall is one entry in an incoming-calls response.
+type CallHierarchyIncomingCall struct {
+	From       CallHierarchyItem `json:"from"`
+	FromRanges []Range           `json:"fromRanges"`
+}
+
+// CallHierarchyOutgoingCall is one entry in an outgoing-calls response.
+type CallHierarchyOutgoingCall struct {
+	To         CallHierarchyItem `json:"to"`
+	FromRanges []Range           `json:"fromRanges"`
+}

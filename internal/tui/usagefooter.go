@@ -2,12 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/planusage"
+	"github.com/lucasb-eyer/go-colorful"
 )
 
 func (m Model) renderUsageFooter(width int) string {
@@ -155,24 +157,58 @@ func renderUsageWindow(label string, w planusage.Window) string {
 	return surfaceSpaces(1) + labelText + surfaceSpaces(2) + bar + surfaceSpaces(2) + pctText + surfaceSpaces(2) + styleStatus.Render(reset)
 }
 
-func usageBar(pct, width int) string {
-	width = max(width, 1)
+func parseColorOrFallback(hex string, fallback colorful.Color) colorful.Color {
+	c, err := colorful.Hex(hex)
+	if err != nil {
+		return fallback
+	}
+	return c
+}
 
+func usageBar(pct, width int) string {
+	fallbackColor := colorful.Color{R: 0.247, G: 0.725, B: 0.314} // roughly #3fb950
+
+	width = max(width, 1)
 	pct = clampInt(pct, 0, 100)
+
 	filled := width * pct / 100
 	empty := width - filled
 
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Background(colorWindowBg)
+	var b strings.Builder
 
-	switch {
-	case pct >= 85:
-		style = styleErrorText
-	case pct >= 65:
-		style = styleModeYellow
+	// Animate the wave over time.
+	phase := float64(time.Now().UnixMilli()) / 350.0
+
+	for i := 0; i < filled; i++ {
+		t := float64(i) / float64(max(width-1, 1))
+
+		// Wave value from 0..1
+		wave := (math.Sin(t*math.Pi*2+phase) + 1) / 2
+
+		// Pick colors based on pct, then wave between two nearby shades.
+		start := parseColorOrFallback("#3fb950", fallbackColor)
+		end := parseColorOrFallback("#58d68d", start)
+
+		if pct >= 85 {
+			start = parseColorOrFallback("#f85149", fallbackColor)
+			end = parseColorOrFallback("#ff7b72", start)
+		} else if pct >= 65 {
+			start = parseColorOrFallback("#d29922", fallbackColor)
+			end = parseColorOrFallback("#f2cc60", start)
+		}
+
+		c := start.BlendLab(end, wave)
+
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(c.Hex())).
+			Background(colorWindowBg)
+
+		b.WriteString(style.Render("▰"))
 	}
 
-	return style.Render(strings.Repeat("▰", filled)) +
-		styleStatus.Render(strings.Repeat("▱", empty))
+	b.WriteString(styleStatus.Render(strings.Repeat("▱", empty)))
+
+	return b.String()
 }
 
 func formatUsageReset(t time.Time) string {

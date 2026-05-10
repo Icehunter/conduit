@@ -19,9 +19,7 @@ func (m Model) renderPluginPanel() string {
 	w = max(w, 10)
 	panelH := pluginPanelHeight(m.panelHeight())
 	// lipgloss v2's Width() is total block width (including border + padding).
-	// Outer style: Width(w), border 1 each side (2), padding 2 each side (4)
-	// → content area = w - 6.
-	innerW := w - 4
+	innerW := panelContentWidth(w)
 
 	var sb strings.Builder
 
@@ -72,7 +70,7 @@ func (m Model) renderPluginList(sb *strings.Builder, p *pluginPanelState, innerW
 	case pluginTabMarketplaces:
 		m.renderMarketplacesTab(sb, p, contentH)
 	case pluginTabErrors:
-		m.renderErrorsTab(sb, p, contentH)
+		m.renderErrorsTab(sb, p, innerW, contentH)
 	}
 }
 
@@ -165,8 +163,10 @@ func (m Model) renderDiscoverTab(sb *strings.Builder, p *pluginPanelState, inner
 		if maxDesc > 0 && len([]rune(desc)) > maxDesc {
 			desc = string([]rune(desc)[:maxDesc-1]) + "…"
 		}
+		nameW := max(innerW-lipgloss.Width(cursor)-lipgloss.Width(toggle)-lipgloss.Width(installed)-lipgloss.Width(installs)-4, 8)
+		name := truncatePlainToWidth(item.name, nameW)
 		fmt.Fprintf(sb, "%s%s %s%s%s\n    %s\n",
-			cursor, toggle, nameStyle.Render(item.name), installed, installs,
+			cursor, toggle, nameStyle.Render(name), installed, installs,
 			stylePickerDesc.Render(desc))
 	}
 
@@ -216,7 +216,7 @@ func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState, cont
 			// Indented sub-entry — cursor replaces the leading spaces.
 			status := renderMCPStatus(item.mcpStatus)
 			// item.name is the display name (e.g. "context7"), mcpServerName is the full key.
-			displayLabel := item.name + " MCP"
+			displayLabel := truncatePlainToWidth(item.name+" MCP", 40)
 			if i == p.selected {
 				fmt.Fprintf(sb, "  %s └ %s · %s\n",
 					stylePickerItemSelected.Render("❯"),
@@ -230,8 +230,9 @@ func (m Model) renderInstalledTab(sb *strings.Builder, p *pluginPanelState, cont
 			if !item.enabled {
 				enabled = " " + stylePickerDesc.Render("[disabled]")
 			}
+			name := truncatePlainToWidth(item.name, 42)
 			fmt.Fprintf(sb, "%s%s v%s%s\n",
-				cursor, nameStyle.Render(item.name), item.version, enabled)
+				cursor, nameStyle.Render(name), truncatePlainToWidth(item.version, 18), enabled)
 		}
 	}
 	footer := "Enter detail/MCP opts · ←→ tabs · Esc close"
@@ -273,9 +274,12 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState, c
 			nameStyle = stylePickerItemSelected
 		}
 		pluginStr := fmt.Sprintf("%d plugin%s", item.pluginCount, pluralS(item.pluginCount))
+		nameW := max(10, 52-lipgloss.Width(pluginStr))
+		name := truncatePlainToWidth(item.name, nameW)
+		source := truncatePlainToWidth(item.source, 72)
 		fmt.Fprintf(sb, "%s%s · %s\n    %s · %s\n",
-			cursor, nameStyle.Render(item.name), pluginStr,
-			stylePickerDesc.Render(item.source),
+			cursor, nameStyle.Render(name), pluginStr,
+			stylePickerDesc.Render(source),
 			stylePickerDesc.Render("updated "+item.lastUpdated))
 	}
 
@@ -289,7 +293,7 @@ func (m Model) renderMarketplacesTab(sb *strings.Builder, p *pluginPanelState, c
 	sb.WriteString("\n" + stylePickerDesc.Render(footer))
 }
 
-func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState, contentH int) {
+func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState, innerW, contentH int) {
 	if len(p.errors) == 0 {
 		sb.WriteString(stylePickerDesc.Render("No errors."))
 		return
@@ -302,33 +306,33 @@ func (m Model) renderErrorsTab(sb *strings.Builder, p *pluginPanelState, content
 		end = maxItems
 	}
 	for _, e := range p.errors[:end] {
-		sb.WriteString(fgOnBg(lipgloss.Color("1")).Render("✗ "+e) + "\n")
+		sb.WriteString(fgOnBg(lipgloss.Color("1")).Render(wordWrap("✗ "+e, max(innerW, 20))) + "\n")
 	}
 	if total > end {
 		fmt.Fprintf(sb, "\n%s", stylePickerDesc.Render(fmt.Sprintf("%d more errors", total-end)))
 	}
 }
 
-func (m Model) renderPluginDetail(sb *strings.Builder, p *pluginPanelState, _ int) {
+func (m Model) renderPluginDetail(sb *strings.Builder, p *pluginPanelState, innerW int) {
 	switch p.tab {
 	case pluginTabDiscover:
 		if p.itemIdx < len(p.discoverItems) {
 			item := p.discoverItems[p.itemIdx]
-			sb.WriteString(styleStatusAccent.Render(item.pluginID) + "\n\n")
-			sb.WriteString(item.description + "\n")
+			sb.WriteString(styleStatusAccent.Render(truncatePlainToWidth(item.pluginID, max(innerW, 10))) + "\n\n")
+			sb.WriteString(wordWrap(item.description, max(innerW, 20)) + "\n")
 			if item.installs > 0 {
 				fmt.Fprintf(sb, "\nInstalls: %s\n", formatInstalls(item.installs))
 			}
 			if item.category != "" {
-				fmt.Fprintf(sb, "Category: %s\n", item.category)
+				fmt.Fprintf(sb, "Category: %s\n", wordWrap(item.category, max(innerW-10, 10)))
 			}
 		}
 	case pluginTabInstalled:
 		if p.itemIdx < len(p.installedItems) {
 			item := p.installedItems[p.itemIdx]
-			sb.WriteString(styleStatusAccent.Render(item.pluginID) + "\n\n")
-			fmt.Fprintf(sb, "Version:     %s\n", item.version)
-			fmt.Fprintf(sb, "Scope:       %s\n", item.scope)
+			sb.WriteString(styleStatusAccent.Render(truncatePlainToWidth(item.pluginID, max(innerW, 10))) + "\n\n")
+			fmt.Fprintf(sb, "Version:     %s\n", wordWrap(item.version, max(innerW-13, 10)))
+			fmt.Fprintf(sb, "Scope:       %s\n", wordWrap(item.scope, max(innerW-13, 10)))
 			enabledStr := "enabled"
 			if !item.enabled {
 				enabledStr = stylePickerDesc.Render("disabled")
@@ -338,10 +342,10 @@ func (m Model) renderPluginDetail(sb *strings.Builder, p *pluginPanelState, _ in
 	case pluginTabMarketplaces:
 		if p.itemIdx < len(p.marketplaceItems) {
 			item := p.marketplaceItems[p.itemIdx]
-			sb.WriteString(styleStatusAccent.Render(item.name) + "\n\n")
-			fmt.Fprintf(sb, "Source:      %s\n", item.source)
+			sb.WriteString(styleStatusAccent.Render(truncatePlainToWidth(item.name, max(innerW, 10))) + "\n\n")
+			fmt.Fprintf(sb, "Source:      %s\n", wordWrap(item.source, max(innerW-13, 10)))
 			fmt.Fprintf(sb, "Plugins:     %d\n", item.pluginCount)
-			fmt.Fprintf(sb, "Updated:     %s\n", item.lastUpdated)
+			fmt.Fprintf(sb, "Updated:     %s\n", wordWrap(item.lastUpdated, max(innerW-13, 10)))
 		}
 	}
 
@@ -359,7 +363,7 @@ func (m Model) renderPluginDetail(sb *strings.Builder, p *pluginPanelState, _ in
 }
 
 func (m Model) renderPluginMCPOpts(sb *strings.Builder, p *pluginPanelState) {
-	sb.WriteString(styleStatusAccent.Render(p.mcpActionTarget) + " MCP Server\n\n")
+	sb.WriteString(styleStatusAccent.Render(truncatePlainToWidth(p.mcpActionTarget, 60)) + " MCP Server\n\n")
 
 	// Find the server status.
 	if m.cfg.MCPManager != nil {
@@ -383,10 +387,11 @@ func (m Model) renderPluginMCPOpts(sb *strings.Builder, p *pluginPanelState) {
 	}
 }
 
-func (m Model) renderPluginAddMkt(sb *strings.Builder, p *pluginPanelState, _ int) {
+func (m Model) renderPluginAddMkt(sb *strings.Builder, p *pluginPanelState, innerW int) {
 	sb.WriteString(styleStatusAccent.Render("Add Marketplace") + "\n\n")
 	sb.WriteString("Enter source (owner/repo, https://... or local path):\n\n")
-	sb.WriteString("> " + p.addMktInput + styleStatusAccent.Render("▌") + "\n\n")
+	input := truncatePlainToWidth(p.addMktInput, max(innerW-4, 8))
+	sb.WriteString("> " + input + styleStatusAccent.Render("▌") + "\n\n")
 	sb.WriteString(stylePickerDesc.Render("Enter confirm · Escape cancel"))
 }
 

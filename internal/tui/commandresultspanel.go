@@ -21,8 +21,7 @@ func (m Model) renderPanel() string {
 	// shared footer stack.
 	panelH := m.panelHeight()
 	// lipgloss v2's Width() is total block width (including border + padding).
-	// Width(w-2) - 2 border - 4 padding = w - 8 content area.
-	innerW := w - 2
+	innerW := panelContentWidth(w)
 
 	var sb strings.Builder
 
@@ -48,7 +47,7 @@ func (m Model) renderPanel() string {
 	return panelFrameStyle(w, panelH).Render(sb.String())
 }
 
-func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {
+func (m Model) renderPanelList(sb *strings.Builder, p *panelState, innerW int) {
 	switch p.tab {
 	case panelTabMCP:
 		if len(p.mcpItems) == 0 {
@@ -64,7 +63,7 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {
 		for i, item := range p.mcpItems {
 			if item.scope != lastScope {
 				lastScope = item.scope
-				src := item.source
+				src := truncatePlainToWidth(item.source, max(innerW-lipgloss.Width(item.scope)-14, 12))
 				fmt.Fprintf(sb, "\n  %s (%s)\n",
 					fgOnBg(colorFg).Bold(true).Render(item.scope+" MCPs"), src)
 			}
@@ -74,7 +73,10 @@ func (m Model) renderPanelList(sb *strings.Builder, p *panelState, _ int) {
 				cursor = stylePickerItemSelected.Render("❯") + " "
 				nameStyle = stylePickerItemSelected
 			}
-			fmt.Fprintf(sb, "%s%s · %s\n", cursor, nameStyle.Render(item.name), renderMCPStatus(item.status))
+			status := renderMCPStatus(item.status)
+			nameW := innerW - lipgloss.Width(cursor) - lipgloss.Width(" · ") - lipgloss.Width(status)
+			name := truncatePlainToWidth(item.name, max(nameW, 8))
+			fmt.Fprintf(sb, "%s%s · %s\n", cursor, nameStyle.Render(name), status)
 		}
 		sb.WriteString("\n" + stylePickerDesc.Render("https://code.claude.com/docs/en/mcp for help"))
 
@@ -87,10 +89,21 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 		return
 	}
 	// Title
-	sb.WriteString(styleStatusAccent.Render(item.name) + " MCP Server\n\n")
+	title := truncatePlainToWidth(item.name, max(innerW-lipgloss.Width(" MCP Server"), 10))
+	sb.WriteString(styleStatusAccent.Render(title) + " MCP Server\n\n")
 	// Info grid
 	writeField := func(label, value string) {
-		fmt.Fprintf(sb, "%-18s%s\n", label+":", value)
+		labelText := label + ":"
+		valueW := max(innerW-20, 12)
+		wrapped := wordWrap(value, valueW)
+		lines := strings.Split(wrapped, "\n")
+		for i, line := range lines {
+			if i == 0 {
+				fmt.Fprintf(sb, "%-18s%s\n", labelText, line)
+			} else {
+				fmt.Fprintf(sb, "%-18s%s\n", "", line)
+			}
+		}
 	}
 	writeField("Status", renderMCPStatus(item.status))
 	if item.command != "" {
@@ -109,8 +122,8 @@ func (m Model) renderPanelDetail(sb *strings.Builder, p *panelState, innerW int)
 		// a URL chain) get clipped at the right edge.
 		wrapW := innerW - 2
 		wrapW = max(wrapW, 20)
-		errStyle := fgOnBg(colorError).Width(wrapW)
-		sb.WriteString("\n" + errStyle.Render("Error: "+item.err) + "\n")
+		errStyle := fgOnBg(colorError)
+		sb.WriteString("\n" + errStyle.Render(wordWrap("Error: "+item.err, wrapW)) + "\n")
 	}
 	sb.WriteByte('\n')
 	// Context-sensitive actions matching Claude Code's MCPStdioServerMenu:
@@ -150,12 +163,12 @@ func mcpActions(item *panelMCPItem) []string {
 	return actions
 }
 
-func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
+func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, innerW int) {
 	item := p.selectedMCPItem()
 	if item == nil {
 		return
 	}
-	fmt.Fprintf(sb, "Tools for %s\n", styleStatusAccent.Render(item.name))
+	fmt.Fprintf(sb, "Tools for %s\n", styleStatusAccent.Render(truncatePlainToWidth(item.name, max(innerW-lipgloss.Width("Tools for "), 10))))
 	fmt.Fprintf(sb, "%d tool%s\n\n", len(item.tools), pluralS(len(item.tools)))
 
 	if len(item.tools) == 0 {
@@ -181,22 +194,34 @@ func (m Model) renderPanelTools(sb *strings.Builder, p *panelState, _ int) {
 
 	for i := start; i < end; i++ {
 		t := item.tools[i]
+
 		cursor := "  "
 		nameStyle := stylePickerItem
 		if i == p.selected {
 			cursor = stylePickerItemSelected.Render("❯") + " "
 			nameStyle = stylePickerItemSelected
 		}
-		// Pad the raw name first — %-30s on a styled string counts ANSI
-		// escape bytes toward the width, so the visible padding becomes 0
-		// and the description glues onto the tool name.
-		const nameWidth = 30
-		paddedName := t.name
-		if pad := nameWidth - len([]rune(t.name)); pad > 0 {
-			paddedName += strings.Repeat(" ", pad)
-		}
+
+		nameWidth := min(28, max(innerW-22, 10))
+
+		name := truncatePlainToWidth(t.name, nameWidth)
+
+		paddedName := lipgloss.PlaceHorizontal(
+			nameWidth,
+			lipgloss.Left,
+			name,
+		)
+
 		attrs := stylePickerDesc.Render("read-only, open-world")
-		fmt.Fprintf(sb, "%s%d. %s%s\n", cursor, i+1, nameStyle.Render(paddedName), attrs)
+
+		fmt.Fprintf(
+			sb,
+			"%s%2d. %s %s\n",
+			cursor,
+			i+1,
+			nameStyle.Render(paddedName),
+			attrs,
+		)
 	}
 
 	footer := "↑/↓ navigate · Enter view · Esc back"
@@ -217,31 +242,16 @@ func (m Model) renderPanelToolDetail(sb *strings.Builder, p *panelState, innerW 
 	tool := item.tools[p.selected]
 
 	// Title bar
-	sb.WriteString(styleStatusAccent.Render(tool.name) + " [read-only] [open-world]\n")
-	sb.WriteString(stylePickerDesc.Render(item.name) + "\n\n")
-	fmt.Fprintf(sb, "Tool name: %s\n", tool.name)
+	title := truncatePlainToWidth(tool.name, max(innerW-25, 10))
+	sb.WriteString(styleStatusAccent.Render(title) + " [read-only] [open-world]\n")
+	sb.WriteString(stylePickerDesc.Render(truncatePlainToWidth(item.name, max(innerW, 10))) + "\n\n")
+	fmt.Fprintf(sb, "Tool name: %s\n", wordWrap(tool.name, max(innerW-11, 10)))
 	if tool.fullName != "" {
-		fmt.Fprintf(sb, "Full name: %s\n", tool.fullName)
+		fmt.Fprintf(sb, "Full name: %s\n", wordWrap(tool.fullName, max(innerW-11, 10)))
 	}
 	if tool.description != "" {
 		sb.WriteString("\nDescription:\n")
-		// Word-wrap description to innerW.
-		words := strings.Fields(tool.description)
-		line := ""
-		for _, w := range words {
-			if len(line)+len(w)+1 > innerW-2 {
-				sb.WriteString("  " + line + "\n")
-				line = w
-			} else {
-				if line != "" {
-					line += " "
-				}
-				line += w
-			}
-		}
-		if line != "" {
-			sb.WriteString("  " + line + "\n")
-		}
+		sb.WriteString(indentLines(wordWrap(tool.description, max(innerW-2, 10)), "  ") + "\n")
 	}
 }
 

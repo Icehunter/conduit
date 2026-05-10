@@ -234,7 +234,7 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 	if !msg.ToolError && summary != "" {
 		available := width - lipgloss.Width(surfaceSpaces(2)+header) - lipgloss.Width(" · ")
 		if available >= 8 {
-			header += styleStatus.Render(" · " + truncate(summary, available))
+			header += styleStatus.Render(" · " + truncatePlainToWidth(summary, available))
 		}
 	}
 	result := strings.TrimSpace(msg.Content)

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // questionAskState drives the interactive AskUserQuestion selection dialog.
@@ -181,11 +182,13 @@ func (m Model) renderQuestionDialog() string {
 	}
 
 	var sb strings.Builder
+	bodyW := floatingInnerWidth(m.width, floatingModalSpec) - floatingBodyPadX*6
+	bodyW = max(bodyW, 20)
 
 	// Question text.
 	sb.WriteString(styleStatusAccent.Render("◆ Question") + "\n\n")
 	// Wrap long question text at panel width.
-	qText := wordWrap(q.question, floatingInnerWidth(m.width, floatingModalSpec)-floatingBodyPadX*6)
+	qText := wordWrap(q.question, bodyW)
 	sb.WriteString(stylePickerItem.Render(qText) + "\n\n")
 
 	if q.textMode {
@@ -214,7 +217,7 @@ func (m Model) renderQuestionDialog() string {
 		for i := startIdx; i < endIdx; i++ {
 			o := q.options[i]
 			focused := i == q.focusedIdx
-			label := fmt.Sprintf("%d. %s", i+1, o.Label)
+			label := fmt.Sprintf("%d. %s", i+1, truncatePlainToWidth(o.Label, max(bodyW-8, 8)))
 			if q.multi {
 				check := "[ ]"
 				if q.selected[i] {
@@ -230,7 +233,8 @@ func (m Model) renderQuestionDialog() string {
 			}
 			sb.WriteString(line + "\n")
 			if o.Description != "" && focused {
-				sb.WriteString(stylePickerDesc.Render("       "+o.Description) + "\n")
+				desc := indentLines(wordWrap(o.Description, max(bodyW-7, 10)), "       ")
+				sb.WriteString(stylePickerDesc.Render(desc) + "\n")
 			}
 		}
 		if endIdx < numOpts {
@@ -262,26 +266,52 @@ func (m Model) renderQuestionDialog() string {
 	return sb.String()
 }
 
-// wordWrap wraps s to at most maxWidth characters per line.
+// wordWrap wraps s to at most maxWidth visible terminal cells per line.
 func wordWrap(s string, maxWidth int) string {
-	if maxWidth <= 0 || len(s) <= maxWidth {
+	if maxWidth <= 0 || lipgloss.Width(s) <= maxWidth {
 		return s
 	}
 	var out strings.Builder
 	words := strings.Fields(s)
 	lineLen := 0
-	for i, w := range words {
-		if i > 0 {
-			if lineLen+1+len(w) > maxWidth {
+	for _, w := range words {
+		wordWidth := lipgloss.Width(w)
+		if wordWidth > maxWidth {
+			if lineLen > 0 {
 				out.WriteByte('\n')
 				lineLen = 0
-			} else {
-				out.WriteByte(' ')
-				lineLen++
 			}
+			remaining := w
+			for lipgloss.Width(remaining) > maxWidth {
+				part := truncatePlainToWidth(remaining, maxWidth)
+				part = strings.TrimSuffix(part, "…")
+				if part == "" {
+					break
+				}
+				out.WriteString(part)
+				out.WriteByte('\n')
+				remaining = strings.TrimPrefix(remaining, part)
+			}
+			if remaining != "" {
+				out.WriteString(remaining)
+				lineLen = lipgloss.Width(remaining)
+			}
+			continue
 		}
-		out.WriteString(w)
-		lineLen += len(w)
+		if lineLen == 0 {
+			out.WriteString(w)
+			lineLen = wordWidth
+			continue
+		}
+		if lineLen+1+wordWidth > maxWidth {
+			out.WriteByte('\n')
+			out.WriteString(w)
+			lineLen = wordWidth
+		} else {
+			out.WriteByte(' ')
+			out.WriteString(w)
+			lineLen += 1 + wordWidth
+		}
 	}
 	return out.String()
 }

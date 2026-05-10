@@ -171,11 +171,8 @@ func (m Model) renderSubagentList() string {
 			continue
 		}
 		label := e.Label
-		runes := []rune(label)
 		maxLabel := contentW - 12 // leave room for badge + cursor
-		if len(runes) > maxLabel && maxLabel > 8 {
-			label = string(runes[:maxLabel]) + "…"
-		}
+		label = truncatePlainToWidth(label, max(maxLabel, 8))
 
 		// Status icon + label + mode badge.
 		var icon, labelStyle string
@@ -198,6 +195,7 @@ func (m Model) renderSubagentList() string {
 		// Activity line: last tool event summary.
 		evs := subagent.Default.GetEvents(id)
 		activity := subagentActivitySummary(e, evs)
+		activity = truncatePlainToWidth(activity, max(contentW-4, 8))
 		fmt.Fprintf(&sb, "    %s\n", stylePickerDesc.Render(activity))
 	}
 
@@ -236,16 +234,13 @@ func (m Model) renderSubagentDetail() string {
 	if isKnown {
 		title = e.Label
 	}
-	runes := []rune(title)
-	if len(runes) > 40 {
-		title = string(runes[:40]) + "…"
-	}
 	statusTag := stylePickerDesc.Render("done")
 	if isKnown && e.IsRunning() {
 		statusTag = styleModeYellow.Render("● running")
 	}
 	titleW := innerW - lipgloss.Width(statusTag) - lipgloss.Width(modeBadge(e.Mode)) - 4
 	titleW = max(titleW, 8)
+	title = truncatePlainToWidth(title, titleW)
 	sb.WriteString(panelHeader(title, titleW))
 	fmt.Fprintf(&sb, "  %s  %s\n\n", modeBadge(e.Mode), statusTag)
 
@@ -321,7 +316,8 @@ func renderSubagentToolEvent(ev subagent.ToolEvent, width int) string {
 		icon = styleModeYellow.Render("●")
 	}
 
-	name := styleToolBadge.Render(toolDisplayName(ev.ToolName))
+	nameMax := max(width/3, 8)
+	name := styleToolBadge.Render(truncatePlainToWidth(toolDisplayName(ev.ToolName), nameMax))
 	statusText := styleStatus.Render(ev.Status)
 	header := icon + " " + name + " " + statusText
 	if ev.Duration > 0 {
@@ -331,7 +327,7 @@ func renderSubagentToolEvent(ev subagent.ToolEvent, width int) string {
 	if summary != "" {
 		available := width - lipgloss.Width("  "+header) - lipgloss.Width(" · ")
 		if available >= 8 {
-			header += styleStatus.Render(" · " + truncate(summary, available))
+			header += styleStatus.Render(" · " + truncatePlainToWidth(summary, available))
 		}
 	}
 	if ev.Status == "running" && !ev.StartedAt.IsZero() {

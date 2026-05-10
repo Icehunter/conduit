@@ -642,6 +642,88 @@ func TestRenderPanelToolsClipsLongToolList(t *testing.T) {
 	}
 }
 
+func TestRenderPanelToolDetailWrapsLongStrings(t *testing.T) {
+	longToken := strings.Repeat("supercalifragilistic", 5)
+	m := Model{width: 72, panelH: 24}
+	m.panel = &panelState{
+		view:     panelViewToolDetail,
+		selected: 0,
+		mcpItems: []panelMCPItem{{
+			name: strings.Repeat("atlassian-", 8),
+			tools: []panelToolItem{{
+				name:        "mcp__atlassian__" + longToken,
+				fullName:    "mcp__atlassian__" + longToken + "__with_extra_suffix",
+				description: "Fetches details from " + longToken + " and returns a normalized response without overflowing the panel.",
+			}},
+		}},
+	}
+
+	out := plainText(m.renderPanel())
+	for _, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("line width = %d, want <= %d: %q\nfull output:\n%s", got, m.width, line, out)
+		}
+	}
+}
+
+func TestRenderPanelToolDetailKeepsDescriptionInsideFrame(t *testing.T) {
+	desc := "Get cloudId to make tool calls. When a link is provided (e.g. https://site.atlassian.net/*), try passing the site hostname (e.g. site.atlassian.net) as cloudId to other tools first; if that fails, use this tool to list accessible resources."
+	m := Model{width: 96, panelH: 24}
+	m.panel = &panelState{
+		view:     panelViewToolDetail,
+		selected: 0,
+		mcpItems: []panelMCPItem{{
+			name: "atlassian",
+			tools: []panelToolItem{{
+				name:        "getAccessibleAtlassianResources",
+				fullName:    "mcp__atlassian__getAccessibleAtlassianResources",
+				description: desc,
+			}},
+		}},
+	}
+
+	out := plainText(m.renderPanel())
+	for _, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("line width = %d, want <= %d: %q\nfull output:\n%s", got, m.width, line, out)
+		}
+	}
+	if strings.Contains(out, "\nthe\n") || strings.Contains(out, "\nlist\n") {
+		t.Fatalf("description appears to have terminal-wrapped fragments:\n%s", out)
+	}
+}
+
+func TestRenderPluginDetailWrapsLongDescriptionAndSource(t *testing.T) {
+	longToken := strings.Repeat("marketplace-source-", 6)
+	m := Model{width: 76, panelH: 24}
+	m.pluginPanel = &pluginPanelState{
+		tab:     pluginTabDiscover,
+		view:    pluginViewDetail,
+		itemIdx: 0,
+		discoverItems: []discoverItem{{
+			pluginID:    "owner/" + longToken,
+			description: "Installs helpers from " + longToken + " and provides a very long description that should wrap inside the panel.",
+			category:    "category-" + longToken,
+		}},
+	}
+
+	out := plainText(m.renderPluginPanel())
+	for _, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("line width = %d, want <= %d: %q\nfull output:\n%s", got, m.width, line, out)
+		}
+	}
+}
+
+func TestWordWrapBreaksLongTokens(t *testing.T) {
+	out := wordWrap(strings.Repeat("x", 35), 10)
+	for _, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got > 10 {
+			t.Fatalf("line width = %d, want <= 10: %q", got, line)
+		}
+	}
+}
+
 func TestLocalPromptFromContentIncludesAtMentionContent(t *testing.T) {
 	dir := t.TempDir()
 	oldwd, err := os.Getwd()

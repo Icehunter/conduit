@@ -193,8 +193,10 @@ func (m Model) renderPicker() string {
 	if p.kind == "mode" {
 		return m.renderModePicker()
 	}
+	contentW := floatingInnerWidth(m.width, floatingPickerSpec)
+	contentW = max(contentW, 20)
 	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render(p.title))
+	sb.WriteString(styleStatusAccent.Render(truncatePlainToWidth(p.title, contentW)))
 	sb.WriteString("\n\n")
 
 	for i, it := range p.items {
@@ -202,14 +204,14 @@ func (m Model) renderPicker() string {
 			if i > 0 {
 				sb.WriteByte('\n')
 			}
-			sb.WriteString(styleStatusAccent.Render(it.Label) + "\n")
+			sb.WriteString(styleStatusAccent.Render(truncatePlainToWidth(it.Label, contentW)) + "\n")
 			continue
 		}
 		marker := "  "
 		if it.Value == p.current {
 			marker = "● "
 		}
-		label := marker + it.Label
+		label := marker + truncatePlainToWidth(it.Label, max(contentW-4, 8))
 		if i == p.selected {
 			sb.WriteString(stylePickerItemSelected.Render("❯ "+label) + "\n")
 		} else {

@@ -20,6 +20,10 @@ func panelFrameStyle(width, height int) lipgloss.Style {
 		PaddingBottom(1)
 }
 
+func panelContentWidth(width int) int {
+	return max(width-6, 1)
+}
+
 func panelTitle(s string) string {
 	return lipgloss.NewStyle().
 		Foreground(colorWindowTitle).

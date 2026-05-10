@@ -43,6 +43,15 @@
 
 ## Wire sync notes
 
+### 2.1.137 → 2.1.138 (2026-05-10)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.138` in `cmd/conduit/main.go` |
+| No other changes | All other wire constants unchanged (`sdk_package_version`, `anthropic-version`, `oauth_client_id`, `token_url`, `oauth_beta_header`, `beta_registry` remain identical) |
+
+---
+
 ### 2.1.133 → 2.1.137 (2026-05-09)
 
 | Item | Action |

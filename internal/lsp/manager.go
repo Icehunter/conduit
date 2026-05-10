@@ -254,6 +254,14 @@ func resolveSpec(spec serverSpec) (serverSpec, error) {
 	return serverSpec{}, fmt.Errorf("server %q not found on PATH", spec.cmd)
 }
 
+// LanguageIDForPath returns the LSP languageId string for a file path.
+func LanguageIDForPath(filePath string) string {
+	if strings.EqualFold(filepath.Base(filePath), "Dockerfile") {
+		return "dockerfile"
+	}
+	return LanguageID(filepath.Ext(filePath))
+}
+
 // LanguageID returns the LSP languageId string for a file extension.
 func LanguageID(ext string) string {
 	switch strings.ToLower(ext) {

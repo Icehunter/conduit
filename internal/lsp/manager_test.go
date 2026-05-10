@@ -72,6 +72,12 @@ func TestLanguageID(t *testing.T) {
 	}
 }
 
+func TestLanguageIDForPath_Dockerfile(t *testing.T) {
+	if got := LanguageIDForPath("/tmp/project/Dockerfile"); got != "dockerfile" {
+		t.Fatalf("LanguageIDForPath(Dockerfile) = %q; want dockerfile", got)
+	}
+}
+
 // ---- resolveSpec -----------------------------------------------------------
 
 func TestResolveSpec_notFound(t *testing.T) {

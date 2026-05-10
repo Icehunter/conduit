@@ -110,8 +110,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	fileURI := fileToURI(absFile)
-	ext := strings.ToLower(filepath.Ext(absFile))
-	langID := lspclient.LanguageID(ext)
+	langID := lspclient.LanguageIDForPath(absFile)
 
 	// Open the document so the server knows about it.
 	if err := didOpen(ctx, cl, fileURI, langID, absFile); err != nil {

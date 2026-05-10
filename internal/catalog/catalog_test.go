@@ -221,6 +221,34 @@ func TestLoad_fallbackToBuiltin(t *testing.T) {
 	}
 }
 
+func TestLoad_ignoresStaleCache(t *testing.T) {
+	dir := t.TempDir()
+	stale := &Catalog{
+		Models: []ModelInfo{{
+			ID:            "stale-model",
+			Name:          "Stale Model",
+			Provider:      "test",
+			ContextWindow: 1,
+		}},
+		FetchedAt: time.Now().Add(-DefaultTTL - time.Hour),
+		Source:    "openrouter",
+	}
+	if err := SaveCache(dir, stale); err != nil {
+		t.Fatal("SaveCache:", err)
+	}
+
+	loaded := Load(dir)
+	if loaded == nil {
+		t.Fatal("Load returned nil")
+	}
+	if loaded.Source != "builtin" {
+		t.Fatalf("Load stale cache Source = %q; want builtin", loaded.Source)
+	}
+	if _, ok := loaded.Lookup("stale-model"); ok {
+		t.Fatal("Load returned stale cache model; want builtin fallback")
+	}
+}
+
 func TestParsePricingPer1M(t *testing.T) {
 	tests := []struct {
 		s    string

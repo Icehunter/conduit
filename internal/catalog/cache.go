@@ -59,7 +59,7 @@ func SaveCache(conduitDir string, c *Catalog) error {
 // It never returns nil.
 func Load(conduitDir string) *Catalog {
 	c, err := LoadCache(conduitDir)
-	if err == nil && c != nil {
+	if err == nil && c != nil && !c.IsStale(DefaultTTL) {
 		return c
 	}
 	return Builtin()

@@ -46,6 +46,15 @@ internal/hooks/           # PreToolUse / PostToolUse / SessionStart hook runners
 internal/commands/        # Slash command handlers
 ```
 
+## Which Doc To Update
+
+| Change type | Update |
+|-------------|--------|
+| New capability, feature complete, partial, stub discovered | `STATUS.md` capability table + roadmap open-items section |
+| OAuth client ID, API headers, beta flags, wire constants, CC version bump | `COMPATIBILITY.md` |
+| CC TS → Go behavioral mapping note, historical divergence reference | `PARITY.md` (frozen; prefer a Go comment in source instead) |
+| OpenCode-inspired milestone deliverable or gap | `STATUS.md` open-items section for that milestone (C-O0 through C-O7) |
+
 ## Hard Rules
 
 - **Wire compatibility over cleverness** — the Anthropic API wire format (billing header, request shape, OAuth headers) must remain compliant. For behavior and features, conduit is free to diverge; note intentional divergences in `COMPATIBILITY.md`.

@@ -17,6 +17,7 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/keybindings"
+	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -143,6 +144,10 @@ type RunOptions struct {
 	// InitialCatalog is the model capability catalog loaded from disk at startup.
 	// When nil the TUI starts without capability data; /models --refresh populates it.
 	InitialCatalog *catalog.Catalog
+
+	// LSPManager is the live language-server manager. When non-nil, the Status
+	// tab shows per-language server states (connected/connecting/broken/disabled).
+	LSPManager *lsp.Manager
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -205,6 +210,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		configuredAccountProviders,
 		runOpts.MCPManager,
 		runOpts.InitialProviders,
+		runOpts.InitialCatalog,
 	)
 	commands.RegisterCompactCommand(reg)
 	commands.RegisterPermissionsCommand(reg, opts.gate)
@@ -532,6 +538,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	// Apply the pre-loaded catalog (from disk cache). Nil is fine — the
 	// picker will show without capability data until /models --refresh runs.
 	m.catalogData = runOpts.InitialCatalog
+	// Wire the LSP manager so the Status tab can show server health.
+	m.lspManager = runOpts.LSPManager
 	// Apply saved output style at startup.
 	// Plugin styles are lowest priority; user/project styles override them.
 	if runOpts.InitialOutputStyle != "" {

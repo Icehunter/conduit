@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/profile"
@@ -81,8 +82,8 @@ func TestWelcomeCardUsesActiveMCPProviderDisplay(t *testing.T) {
 
 func TestModelPickerProviderLabelOpenAICompatible(t *testing.T) {
 	got := plainText(modelPickerProviderLabel("provider:openai-compatible.gemini-personal.gemini-2.5-pro"))
-	if got != "OpenAI compat" {
-		t.Fatalf("provider label = %q, want OpenAI compat", got)
+	if got != "OpenAI" {
+		t.Fatalf("provider label = %q, want OpenAI", got)
 	}
 }
 
@@ -424,6 +425,102 @@ func TestModelPickerTabCyclesProviderRoles(t *testing.T) {
 	}
 }
 
+func TestModelPickerArrowRoleSwitchDoesNotMutateFilter(t *testing.T) {
+	m := Model{
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			current:  "claude-sonnet-4-6",
+			selected: 1,
+			items: []pickerItem{
+				{Label: "Claude Subscription", Section: true},
+				{Value: "claude-sonnet-4-6", Label: "Sonnet 4.6"},
+			},
+		},
+	}
+	m.picker.allItems = m.picker.items
+
+	updated, _ := m.handlePickerKey(tea.KeyPressMsg{Code: tea.KeyRight})
+	if updated.picker.role != settings.RoleMain {
+		t.Fatalf("role after right = %q, want main", updated.picker.role)
+	}
+	if updated.picker.filter != "" {
+		t.Fatalf("filter after right = %q, want empty", updated.picker.filter)
+	}
+
+	updated, _ = updated.handlePickerKey(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if updated.picker.role != settings.RoleDefault {
+		t.Fatalf("role after left = %q, want default", updated.picker.role)
+	}
+	if updated.picker.filter != "" {
+		t.Fatalf("filter after left = %q, want empty", updated.picker.filter)
+	}
+}
+
+func TestModelPickerUpDownDoesNotMutateFilter(t *testing.T) {
+	m := Model{
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			selected: 1,
+			items: []pickerItem{
+				{Label: "OpenAI-compatible", Section: true},
+				{Value: "provider:openai-compatible.openai.gpt-5.5", Label: "gpt-5.5"},
+				{Value: "provider:openai-compatible.openai.gpt-5.4-mini", Label: "gpt-5.4-mini"},
+			},
+		},
+	}
+	m.picker.allItems = m.picker.items
+
+	updated, _ := m.handlePickerKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if updated.picker.selected != 2 {
+		t.Fatalf("selected after down = %d, want 2", updated.picker.selected)
+	}
+	if updated.picker.filter != "" {
+		t.Fatalf("filter after down = %q, want empty", updated.picker.filter)
+	}
+
+	updated, _ = updated.handlePickerKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if updated.picker.selected != 1 {
+		t.Fatalf("selected after up = %d, want 1", updated.picker.selected)
+	}
+	if updated.picker.filter != "" {
+		t.Fatalf("filter after up = %q, want empty", updated.picker.filter)
+	}
+}
+
+func TestModelPickerLettersFilterInsteadOfNavigate(t *testing.T) {
+	m := Model{
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			selected: 2,
+			items: []pickerItem{
+				{Label: "OpenAI-compatible", Section: true},
+				{Value: "provider:openai-compatible.openai.gpt-5.5", Label: "gpt-5.5"},
+				{Value: "provider:openai-compatible.openai.gemini-3", Label: "gemini-3"},
+			},
+		},
+	}
+	m.picker.allItems = m.picker.items
+
+	updated, _ := m.handlePickerKey(keyPress("g"))
+	if updated.picker.filter != "g" {
+		t.Fatalf("filter after g = %q, want g", updated.picker.filter)
+	}
+	if updated.picker.selected != 1 {
+		t.Fatalf("selected after filtering g = %d, want first matching row", updated.picker.selected)
+	}
+
+	updated, _ = updated.handlePickerKey(keyPress("G"))
+	if updated.picker.filter != "gG" {
+		t.Fatalf("filter after G = %q, want gG", updated.picker.filter)
+	}
+}
+
 func TestModelPickerFiltersDeletedAccountProviders(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
@@ -445,6 +542,193 @@ func TestModelPickerFiltersDeletedAccountProviders(t *testing.T) {
 	}
 	if !items[0].Section || items[0].Label != "MCP local-router" || items[1].Value != "local:local-router" {
 		t.Fatalf("items = %#v, want stale account section filtered", items)
+	}
+}
+
+func TestModelPickerFiltersDisabledMCPProviders(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(wd); chdirErr != nil {
+			t.Fatalf("restore cwd: %v", chdirErr)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mcp.SetDisabled("local-router", cwd, true); err != nil {
+		t.Fatalf("SetDisabled: %v", err)
+	}
+
+	m := Model{}
+	items := m.filterModelPickerItems([]pickerItem{
+		{Label: "MCP local-router", Section: true},
+		{Value: "local:local-router", Label: "qwen3-coder"},
+		{Label: "OpenAI-compatible", Section: true},
+		{Value: "provider:openai-compatible.openai.gpt-5.5", Label: "gpt-5.5"},
+	})
+	if len(items) != 2 {
+		t.Fatalf("items = %#v, want only OpenAI-compatible section and row", items)
+	}
+	if !items[0].Section || items[0].Label != "OpenAI-compatible" || items[1].Value != "provider:openai-compatible.openai.gpt-5.5" {
+		t.Fatalf("items = %#v, want disabled MCP section removed", items)
+	}
+}
+
+func TestModelPickerRowTruncatesLongModelNames(t *testing.T) {
+	row := plainText(renderModelPickerRow(pickerItem{
+		Value: "provider:openai-compatible.openai.gemini-3.1-pro-preview-customtools",
+		Label: "gemini-3.1-pro-preview-customtools — Google: Gemini 3.1 Pro Preview Custom Tools",
+	}, false, false, 72))
+	if strings.Contains(row, "\n") {
+		t.Fatalf("row should be single-line, got %q", row)
+	}
+	if got := lipgloss.Width(row); got > 72 {
+		t.Fatalf("row width = %d, want <= 72; row=%q", got, row)
+	}
+	if !strings.Contains(row, "OpenAI") {
+		t.Fatalf("row = %q, want provider label", row)
+	}
+}
+
+func TestModelPickerRenderKeepsRowsWithinBodyWidth(t *testing.T) {
+	m := Model{
+		width:  129,
+		height: 40,
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			selected: 4,
+			items: []pickerItem{
+				{Label: "Claude Subscription · very.long.account.name.that.should.not.wrap@example.com", Section: true},
+				{Value: "claude-opus-4-7", Label: "Opus 4.7 — most capable"},
+				{Label: "OpenAI-compatible · credential gemini", Section: true},
+				{Value: "provider:openai-compatible.gemini.gemini-3.1-flash-lite", Label: "gemini-3.1-flash-lite — Google: Gemini 3.1 Flash Lite"},
+				{Value: "provider:openai-compatible.gemini.gemini-3.1-pro-preview-customtools", Label: "gemini-3.1-pro-preview-customtools — Google: Gemini 3.1 Pro Preview Custom Tools"},
+				{Value: "provider:openai-compatible.gemini.gemini-3.1-flash-image-preview", Label: "gemini-3.1-flash-image-preview — Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)"},
+			},
+		},
+	}
+	m.picker.allItems = m.picker.items
+	contentW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingBodyPadX*2 - 2
+	contentW = max(contentW, 40)
+
+	out := plainText(m.renderModelPicker())
+	lines := strings.Split(out, "\n")
+	for i, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if got := lipgloss.Width(line); got > contentW {
+			t.Fatalf("line %d width = %d > %d: %q", i+2, got, contentW, line)
+		}
+	}
+	if !strings.Contains(out, "Type filter") {
+		t.Fatalf("rendered picker missing footer: %q", out)
+	}
+}
+
+func TestModelPickerTypeFilterKeepsMatchingSections(t *testing.T) {
+	m := Model{
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			current:  "claude-sonnet-4-6",
+			selected: 1,
+			items: []pickerItem{
+				{Label: "Claude Subscription", Section: true},
+				{Value: "claude-opus-4-7", Label: "Opus 4.7"},
+				{Value: "claude-sonnet-4-6", Label: "Sonnet 4.6"},
+				{Label: "OpenAI-compatible · credential openai", Section: true},
+				{Value: "provider:openai-compatible.openai.gpt-5.5", Label: "gpt-5.5 — GPT-5.5"},
+				{Value: "provider:openai-compatible.openai.gpt-5.4-mini", Label: "gpt-5.4-mini — GPT-5.4 Mini"},
+			},
+		},
+	}
+	m.picker.allItems = m.picker.items
+
+	updated, _ := m.handlePickerKey(keyPress("m"))
+	updated, _ = updated.handlePickerKey(keyPress("i"))
+	updated, _ = updated.handlePickerKey(keyPress("n"))
+
+	if updated.picker.filter != "min" {
+		t.Fatalf("filter = %q, want min", updated.picker.filter)
+	}
+	if len(updated.picker.items) != 2 {
+		t.Fatalf("filtered items = %#v, want one section and one model", updated.picker.items)
+	}
+	if !updated.picker.items[0].Section || updated.picker.items[0].Label != "OpenAI-compatible · credential openai" {
+		t.Fatalf("section = %#v, want OpenAI-compatible section", updated.picker.items[0])
+	}
+	if updated.picker.items[1].Value != "provider:openai-compatible.openai.gpt-5.4-mini" {
+		t.Fatalf("model row = %#v, want mini model", updated.picker.items[1])
+	}
+}
+
+func TestModelPickerEscapeClearsFilterBeforeClosing(t *testing.T) {
+	m := Model{
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			selected: 1,
+			filter:   "mini",
+			items: []pickerItem{
+				{Label: "OpenAI-compatible", Section: true},
+				{Value: "provider:openai-compatible.openai.gpt-5.4-mini", Label: "gpt-5.4-mini"},
+			},
+			allItems: []pickerItem{
+				{Label: "OpenAI-compatible", Section: true},
+				{Value: "provider:openai-compatible.openai.gpt-5.5", Label: "gpt-5.5"},
+				{Value: "provider:openai-compatible.openai.gpt-5.4-mini", Label: "gpt-5.4-mini"},
+			},
+		},
+	}
+
+	updated, _ := m.handlePickerKey(keyPress("esc"))
+	if updated.picker == nil {
+		t.Fatal("first Esc with filter should keep picker open")
+	}
+	if updated.picker.filter != "" || len(updated.picker.items) != 3 {
+		t.Fatalf("picker after Esc = filter %q items %#v, want cleared all items", updated.picker.filter, updated.picker.items)
+	}
+	updated, _ = updated.handlePickerKey(keyPress("esc"))
+	if updated.picker != nil {
+		t.Fatal("second Esc should close picker")
+	}
+}
+
+func TestModelPickerNoMatchFilterDoesNotPanic(t *testing.T) {
+	m := Model{
+		width:  100,
+		height: 30,
+		picker: &pickerState{
+			kind:     "model",
+			title:    "Pick a model",
+			role:     settings.RoleDefault,
+			selected: 0,
+			filter:   "zzzz",
+			items:    []pickerItem{},
+			allItems: []pickerItem{
+				{Label: "OpenAI-compatible", Section: true},
+				{Value: "provider:openai-compatible.openai.gpt-5.5", Label: "gpt-5.5"},
+			},
+		},
+	}
+
+	out := plainText(m.renderModelPicker())
+	if !strings.Contains(out, "No models match the filter") {
+		t.Fatalf("rendered picker = %q, want no-match message", out)
 	}
 }
 

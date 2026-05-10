@@ -607,6 +607,7 @@ func (m Model) applyPickerResult(res commands.Result) (Model, tea.Cmd) {
 		kind:     res.Model,
 		title:    payload.Title,
 		items:    payload.Items,
+		allItems: payload.Items,
 		selected: sel,
 		current:  current,
 		role:     role,

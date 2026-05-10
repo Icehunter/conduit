@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/mcp"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -61,6 +62,7 @@ func RegisterModelCommand(
 	getAccountProviders func() []settings.ActiveProviderSettings,
 	manager *mcp.Manager,
 	providers map[string]settings.ActiveProviderSettings,
+	modelCatalog *catalog.Catalog,
 ) {
 	modelHandler := func(args string) Result {
 		args = strings.TrimSpace(args)
@@ -86,7 +88,7 @@ func RegisterModelCommand(
 			accountProviders := currentAccountProviders(getAccountProviders)
 			provider := firstAccountProvider(accountProviders)
 			localItems := localModelPickerItems(manager, providers)
-			customItems := customModelPickerItems(providers)
+			customItems := customModelPickerItems(providers, modelCatalog)
 			items := make([]PickerOption, 0, len(accountProviders)*4+len(localItems)+len(customItems))
 			for _, provider := range accountProviders {
 				items = append(items, accountModelPickerItems(provider)...)
@@ -133,7 +135,7 @@ func RegisterModelCommand(
 		provider := firstAccountProvider(accountProviders)
 		if strings.HasPrefix(args, "provider:") {
 			key := strings.TrimSpace(strings.TrimPrefix(args, "provider:"))
-			if selected, ok := configuredProviderByKey(providers, key); ok {
+			if selected, ok := configuredProviderByKey(providers, key, modelCatalog); ok {
 				if selected.Kind == settings.ProviderKindOpenAICompatible {
 					selected.Account = ""
 				}
@@ -241,7 +243,7 @@ func accountProviderByKey(providers []settings.ActiveProviderSettings, key strin
 	return settings.ActiveProviderSettings{}, false
 }
 
-func configuredProviderByKey(providers map[string]settings.ActiveProviderSettings, key string) (settings.ActiveProviderSettings, bool) {
+func configuredProviderByKey(providers map[string]settings.ActiveProviderSettings, key string, modelCatalog *catalog.Catalog) (settings.ActiveProviderSettings, bool) {
 	if len(providers) == 0 || key == "" {
 		return settings.ActiveProviderSettings{}, false
 	}
@@ -252,6 +254,9 @@ func configuredProviderByKey(providers map[string]settings.ActiveProviderSetting
 		if settings.ProviderKey(provider) == key {
 			return provider, true
 		}
+	}
+	if provider, ok := catalogProviderByKey(providers, key, modelCatalog); ok {
+		return provider, true
 	}
 	return settings.ActiveProviderSettings{}, false
 }
@@ -277,7 +282,7 @@ func accountModelNames() []string {
 	return []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
 }
 
-func customModelPickerItems(providers map[string]settings.ActiveProviderSettings) []PickerOption {
+func customModelPickerItems(providers map[string]settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
 	if len(providers) == 0 {
 		return nil
 	}
@@ -287,19 +292,119 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 	}
 	sort.Strings(keys)
 	items := make([]PickerOption, 0, len(keys)*2)
+	expandedOpenAICompatible := map[string]bool{}
 	for _, key := range keys {
 		provider := providers[key]
-		if provider.Model == "" {
-			continue
-		}
 		label, ok := customModelPickerSection(provider)
 		if !ok {
 			continue
 		}
+		modelItems := catalogModelPickerItems(provider, modelCatalog)
+		if len(modelItems) > 0 {
+			accountKey := provider.Credential + "\x00" + provider.BaseURL
+			if expandedOpenAICompatible[accountKey] {
+				continue
+			}
+			expandedOpenAICompatible[accountKey] = true
+		}
+		if len(modelItems) == 0 && provider.Model != "" {
+			modelItems = []PickerOption{{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model}}
+		}
+		if len(modelItems) == 0 {
+			continue
+		}
 		items = append(items, PickerOption{Label: label, Section: true})
-		items = append(items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
+		items = append(items, modelItems...)
 	}
 	return items
+}
+
+func catalogModelPickerItems(provider settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
+	models := catalogModelsForProvider(provider, modelCatalog)
+	if len(models) == 0 {
+		return nil
+	}
+	items := make([]PickerOption, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, info := range models {
+		modelID := modelIDForProvider(provider, info.ID)
+		if modelID == "" || seen[modelID] {
+			continue
+		}
+		seen[modelID] = true
+		candidate := provider
+		candidate.Model = modelID
+		if candidate.ContextWindow == 0 && info.ContextWindow > 0 {
+			candidate.ContextWindow = info.ContextWindow
+		}
+		label := modelID
+		if info.Name != "" && info.Name != info.ID {
+			label = fmt.Sprintf("%s — %s", modelID, info.Name)
+		}
+		items = append(items, PickerOption{Value: "provider:" + settings.ProviderKey(candidate), Label: label})
+	}
+	return items
+}
+
+func catalogProviderByKey(providers map[string]settings.ActiveProviderSettings, key string, modelCatalog *catalog.Catalog) (settings.ActiveProviderSettings, bool) {
+	for _, provider := range providers {
+		for _, info := range catalogModelsForProvider(provider, modelCatalog) {
+			candidate := provider
+			candidate.Model = modelIDForProvider(provider, info.ID)
+			if candidate.ContextWindow == 0 && info.ContextWindow > 0 {
+				candidate.ContextWindow = info.ContextWindow
+			}
+			if candidate.Model != "" && settings.ProviderKey(candidate) == key {
+				return candidate, true
+			}
+		}
+	}
+	return settings.ActiveProviderSettings{}, false
+}
+
+func catalogModelsForProvider(provider settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []catalog.ModelInfo {
+	if provider.Kind != settings.ProviderKindOpenAICompatible || modelCatalog == nil {
+		return nil
+	}
+	switch providerCatalogSlug(provider) {
+	case "openai":
+		return modelCatalog.ForProvider("openai")
+	case "google":
+		return modelCatalog.ForProvider("google")
+	case "openrouter":
+		return modelCatalog.Models
+	default:
+		return nil
+	}
+}
+
+func providerCatalogSlug(provider settings.ActiveProviderSettings) string {
+	base := strings.ToLower(strings.TrimSpace(provider.BaseURL))
+	credential := strings.ToLower(strings.TrimSpace(provider.Credential))
+	switch {
+	case strings.Contains(base, "api.openai.com") || credential == "openai":
+		return "openai"
+	case strings.Contains(base, "generativelanguage.googleapis.com") || credential == "gemini" || credential == "google":
+		return "google"
+	case strings.Contains(base, "openrouter.ai") || credential == "openrouter":
+		return "openrouter"
+	default:
+		return ""
+	}
+}
+
+func modelIDForProvider(provider settings.ActiveProviderSettings, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if providerCatalogSlug(provider) == "openrouter" {
+		return id
+	}
+	if idx := strings.Index(id, "/"); idx >= 0 {
+		return id[idx+1:]
+	}
+	return id
 }
 
 func customModelPickerSection(provider settings.ActiveProviderSettings) (string, bool) {

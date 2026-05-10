@@ -28,9 +28,11 @@ type pickerState struct {
 	kind             string       // "theme" | "model" | "output-style"
 	title            string       // header line
 	items            []pickerItem // options (caller-ordered)
+	allItems         []pickerItem // unfiltered options for type-to-filter pickers
 	selected         int          // current cursor row
 	current          string       // value to highlight as "active"
 	role             string       // provider role for model picker
+	filter           string       // live filter text for model picker
 	showCapabilities bool         // ? key toggles capability badges in model picker
 }
 
@@ -39,12 +41,20 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "up":
 		p.selected = previousPickerSelectable(p.items, p.selected)
+		m.picker = p
+		return m, nil
 	case "down":
 		p.selected = nextPickerSelectable(p.items, p.selected)
-	case "home", "g":
+		m.picker = p
+		return m, nil
+	case "home":
 		p.selected = firstPickerSelectable(p.items)
-	case "end", "G":
+		m.picker = p
+		return m, nil
+	case "end":
 		p.selected = lastPickerSelectable(p.items)
+		m.picker = p
+		return m, nil
 	case "tab", "right":
 		if p.kind == "model" {
 			next := nextProviderRole(p.role)
@@ -58,6 +68,8 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				p.selected = selectedPickerIndex(p.items, p.current)
 			}
 		}
+		m.picker = p
+		return m, nil
 	case "shift+tab", "left":
 		if p.kind == "model" {
 			prev := previousProviderRole(p.role)
@@ -71,6 +83,8 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				p.selected = selectedPickerIndex(p.items, p.current)
 			}
 		}
+		m.picker = p
+		return m, nil
 	case "space":
 		// Model picker (council tab): toggle provider in/out of council roster.
 		// Model picker (other tabs): apply to role but keep open.
@@ -169,7 +183,15 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m.applyCommandResult(res)
 		}
 		return m, nil
-	case "esc", "ctrl+c", "q":
+	case "esc", "ctrl+c":
+		if p.kind == "model" && p.filter != "" {
+			p.filter = ""
+			p.items = pickerAllItems(p)
+			p.selected = selectedPickerIndex(p.items, p.current)
+			m.picker = p
+			m.refreshViewport()
+			return m, nil
+		}
 		if p.kind == "model" && p.role == roleCouncil {
 			roster := append([]string(nil), m.councilProviders...)
 			_ = settings.UpdateConduitConfig(func(cfg *settings.ConduitConfig) {
@@ -179,9 +201,41 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.picker = nil
 		m.refreshViewport()
 		return m, nil
+	case "q":
+		if p.kind == "model" {
+			break
+		}
+		m.picker = nil
+		m.refreshViewport()
+		return m, nil
 	case "?":
 		if p.kind == "model" {
 			p.showCapabilities = !p.showCapabilities
+			m.picker = p
+			m.refreshViewport()
+			return m, nil
+		}
+	case "backspace":
+		if p.kind == "model" && p.filter != "" {
+			p.filter = dropLastRune(p.filter)
+			p.items = filterPickerItems(pickerAllItems(p), p.filter)
+			p.selected = firstPickerSelectable(p.items)
+			if p.selected < 0 {
+				p.selected = 0
+			}
+			m.picker = p
+			m.refreshViewport()
+			return m, nil
+		}
+	}
+	if p.kind == "model" {
+		if text := pickerFilterText(msg); text != "" {
+			p.filter += text
+			p.items = filterPickerItems(pickerAllItems(p), p.filter)
+			p.selected = firstPickerSelectable(p.items)
+			if p.selected < 0 {
+				p.selected = 0
+			}
 			m.picker = p
 			m.refreshViewport()
 			return m, nil
@@ -264,7 +318,7 @@ func (m Model) renderModelPicker() string {
 	if p == nil {
 		return ""
 	}
-	contentW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingBodyPadX*2
+	contentW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingBodyPadX*2 - 2
 	contentW = max(contentW, 40)
 	headerW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingHeaderPadX*2
 	if headerW < contentW {
@@ -293,8 +347,11 @@ func (m Model) renderModelPicker() string {
 		stylePickerDesc.Render("› " + providerRolePrompt(p.role)),
 		"",
 	}
+	if p.filter != "" {
+		body[2] = stylePickerDesc.Render(truncatePlainToWidth(fmt.Sprintf("  Filter: %q (%d matches)", p.filter, countPickerSelectable(p.items)), contentW))
+	}
 	if start > 0 {
-		body = append(body, stylePickerDesc.Render(fmt.Sprintf("  ↑ %d more above", start)))
+		body = append(body, stylePickerDesc.Render(truncatePlainToWidth(fmt.Sprintf("  ↑ %d more above", start), contentW)))
 	} else {
 		body = append(body, "")
 	}
@@ -303,11 +360,14 @@ func (m Model) renderModelPicker() string {
 	} else {
 		body = append(body, renderModelPickerRows(p.items, p.current, p.selected, start, end, contentW, m.catalogData, p.showCapabilities)...)
 	}
+	if countPickerSelectable(p.items) == 0 {
+		body = append(body, stylePickerDesc.Render(truncatePlainToWidth("  No models match the filter.", contentW)))
+	}
 	for modelPickerBodyListRows(body) < capListRows {
 		body = append(body, "")
 	}
 	if end < len(p.items) {
-		body = append(body, stylePickerDesc.Render(fmt.Sprintf("  ↓ %d more below", len(p.items)-end)))
+		body = append(body, stylePickerDesc.Render(truncatePlainToWidth(fmt.Sprintf("  ↓ %d more below", len(p.items)-end), contentW)))
 	} else {
 		body = append(body, "")
 	}
@@ -326,16 +386,16 @@ func (m Model) renderModelPicker() string {
 		capHint = " · ? (refresh catalog first)"
 	}
 	if p.role == roleCouncil {
-		body = append(body, stylePickerDesc.Render("↑/↓ choose · Space toggle · Enter save · Esc close"))
+		body = append(body, stylePickerDesc.Render(truncatePlainToWidth("Type filter · ↑/↓ choose · Space toggle · Enter save · Esc close", contentW)))
 	} else {
-		body = append(body, stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close"+capHint))
+		body = append(body, stylePickerDesc.Render(truncatePlainToWidth("Type filter · ↑/↓ choose · Tab role · Enter assign · Esc close"+capHint, contentW)))
 	}
 	if len(body) > bodyRows {
 		body = body[:bodyRows]
 		if p.role == roleCouncil {
-			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Space toggle · Enter save · Esc close")
+			body[len(body)-1] = stylePickerDesc.Render(truncatePlainToWidth("Type filter · ↑/↓ choose · Space toggle · Enter save · Esc close", contentW))
 		} else {
-			body[len(body)-1] = stylePickerDesc.Render("↑/↓ choose · Tab role · Enter assign · Esc close" + capHint)
+			body[len(body)-1] = stylePickerDesc.Render(truncatePlainToWidth("Type filter · ↑/↓ choose · Tab role · Enter assign · Esc close"+capHint, contentW))
 		}
 	}
 	sb.WriteString("\n" + strings.Join(body, "\n"))
@@ -349,6 +409,7 @@ func renderModelPickerCouncilRows(items []pickerItem, councilProviders []string,
 	for _, cp := range councilProviders {
 		inCouncil[cp] = true
 	}
+	start, end = clampPickerRange(items, start, end)
 	rows := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		it := items[i]
@@ -365,6 +426,7 @@ func renderModelPickerCouncilRows(items []pickerItem, councilProviders []string,
 }
 
 func renderModelPickerRows(items []pickerItem, current string, selected, start, end, contentW int, cat *catalog.Catalog, showCaps bool) []string {
+	start, end = clampPickerRange(items, start, end)
 	rows := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		it := items[i]
@@ -408,8 +470,14 @@ func modelPickerBodyRows() int {
 
 func modelPickerWindow(items []pickerItem, selected, visibleLines int) (int, int) {
 	visibleLines = max(visibleLines, 6)
+	if len(items) == 0 {
+		return 0, 0
+	}
 	if selected < 0 {
 		selected = firstPickerSelectable(items)
+	}
+	if selected < 0 || selected >= len(items) {
+		return 0, 0
 	}
 	start := selected
 	used := 0
@@ -439,6 +507,23 @@ func modelPickerWindow(items []pickerItem, selected, visibleLines int) (int, int
 	}
 	for modelPickerRenderedLines(items, start, end) > visibleLines && start < selected {
 		start++
+	}
+	return start, end
+}
+
+func clampPickerRange(items []pickerItem, start, end int) (int, int) {
+	if len(items) == 0 {
+		return 0, 0
+	}
+	start = max(start, 0)
+	if start > len(items) {
+		start = len(items)
+	}
+	if end < start {
+		end = start
+	}
+	if end > len(items) {
+		end = len(items)
 	}
 	return start, end
 }
@@ -552,8 +637,12 @@ func renderModelPickerSection(label string, configured bool, width int) string {
 	if configured {
 		status = surfaceSpaces(2) + styleModeCyan.Render("✓") + surfaceSpaces(1) + stylePickerDesc.Render("configured")
 	}
+	statusW := lipgloss.Width(status)
+	labelMax := width - statusW - 8
+	labelMax = max(labelMax, 8)
+	label = truncatePlainToWidth(label, labelMax)
 	labelPart := stylePickerDesc.Render(label)
-	ruleW := width - lipgloss.Width(labelPart) - lipgloss.Width(status) - 4
+	ruleW := width - lipgloss.Width(labelPart) - statusW - 4
 	ruleW = max(ruleW, 4)
 	return labelPart + surfaceSpaces(2) + panelRule(ruleW) + status
 }
@@ -563,34 +652,49 @@ func renderModelPickerRow(it pickerItem, selected, current bool, width int) stri
 	if current {
 		marker = "● "
 	}
-	label := marker + it.Label
-	provider := modelPickerProviderLabel(it.Value)
-	gap := width - lipgloss.Width("❯ "+label) - lipgloss.Width(provider) - 2
-	gap = max(gap, 2)
-	line := "  " + label + surfaceSpaces(gap) + provider
+	providerText := modelPickerProviderText(it.Value)
+	providerW := min(max(lipgloss.Width(providerText), 10), max(width/4, 10))
+	provider := modelPickerProviderLabelWithWidth(it.Value, providerW)
+	prefix := "  "
 	if selected {
-		return stylePickerItemSelected.Render("❯ " + label + surfaceSpaces(gap) + provider)
+		prefix = "❯ "
+	}
+	gap := 2
+	labelW := width - lipgloss.Width(prefix) - gap - providerW
+	labelW = max(labelW, 8)
+	label := padPlainToWidth(truncatePlainToWidth(marker+it.Label, labelW), labelW)
+	line := prefix + label + surfaceSpaces(gap) + provider
+	if selected {
+		return stylePickerItemSelected.Render(line)
 	}
 	return stylePickerItem.Render(line)
 }
 
 func modelPickerProviderLabel(value string) string {
+	return modelPickerProviderLabelWithWidth(value, lipgloss.Width(modelPickerProviderText(value)))
+}
+
+func modelPickerProviderLabelWithWidth(value string, width int) string {
+	return stylePickerDesc.Render(padPlainToWidth(truncatePlainToWidth(modelPickerProviderText(value), width), width))
+}
+
+func modelPickerProviderText(value string) string {
 	if strings.HasPrefix(value, "local:") {
-		return stylePickerDesc.Render("MCP")
+		return "MCP"
 	}
 	if strings.HasPrefix(value, "provider:anthropic-api.") {
-		return stylePickerDesc.Render("Anthropic API")
+		return "Anthropic API"
 	}
 	if strings.HasPrefix(value, "provider:openai-compatible.") {
-		return stylePickerDesc.Render("OpenAI compat")
+		return "OpenAI"
 	}
 	if strings.HasPrefix(value, "provider:claude-subscription.") {
-		return stylePickerDesc.Render("Claude")
+		return "Claude"
 	}
 	if strings.HasPrefix(value, "anthropic-api:") {
-		return stylePickerDesc.Render("Anthropic API")
+		return "Anthropic API"
 	}
-	return stylePickerDesc.Render("Claude")
+	return "Claude"
 }
 
 func sectionHasCurrent(items []pickerItem, sectionIndex int, current string) bool {
@@ -650,6 +754,93 @@ func selectedPickerIndex(items []pickerItem, value string) int {
 	return firstPickerSelectable(items)
 }
 
+func countPickerSelectable(items []pickerItem) int {
+	count := 0
+	for _, item := range items {
+		if !item.Section {
+			count++
+		}
+	}
+	return count
+}
+
+func pickerAllItems(p *pickerState) []pickerItem {
+	if p == nil || len(p.allItems) == 0 {
+		if p == nil {
+			return nil
+		}
+		return p.items
+	}
+	return p.allItems
+}
+
+func filterPickerItems(items []pickerItem, query string) []pickerItem {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return items
+	}
+	out := make([]pickerItem, 0, len(items))
+	for i := 0; i < len(items); i++ {
+		item := items[i]
+		if !item.Section {
+			if pickerItemMatches(item, query) {
+				out = append(out, item)
+			}
+			continue
+		}
+		start := len(out)
+		out = append(out, item)
+		for i+1 < len(items) && !items[i+1].Section {
+			i++
+			if pickerItemMatches(items[i], query) {
+				out = append(out, items[i])
+			}
+		}
+		if len(out) == start+1 {
+			out = out[:start]
+		}
+	}
+	return out
+}
+
+func pickerItemMatches(item pickerItem, query string) bool {
+	haystack := strings.ToLower(item.Label + " " + item.Value + " " + modelIDFromPickerValue(item.Value))
+	return strings.Contains(haystack, query)
+}
+
+func pickerFilterText(msg tea.KeyPressMsg) string {
+	if msg.Mod != 0 {
+		return ""
+	}
+	if msg.Text != "" {
+		if isPrintableFilterText(msg.Text) {
+			return msg.Text
+		}
+		return ""
+	}
+	if msg.Code >= 32 && msg.Code != 127 {
+		return string(msg.Code)
+	}
+	return ""
+}
+
+func isPrintableFilterText(s string) bool {
+	for _, r := range s {
+		if r < 32 || r == 127 {
+			return false
+		}
+	}
+	return s != ""
+}
+
+func dropLastRune(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return ""
+	}
+	return string(r[:len(r)-1])
+}
+
 // modelIDFromPickerValue extracts a bare model ID from a picker value string
 // of the form "claude-subscription:model-id", "anthropic-api:model-id",
 // or "provider:key" (falls back to the value itself).
@@ -659,12 +850,16 @@ func modelIDFromPickerValue(value string) string {
 		"anthropic-api:",
 		"provider:claude-subscription.",
 		"provider:anthropic-api.",
+		"provider:openai-compatible.openai.",
+		"provider:openai-compatible.gemini.",
+		"provider:openai-compatible.google.",
+		"provider:openai-compatible.openrouter.",
 	} {
 		if strings.HasPrefix(value, prefix) {
 			// For "provider:..." keys the remainder is "kind.account.model" — extract
 			// the last segment after the final dot, or return as-is.
 			rest := strings.TrimPrefix(value, prefix)
-			if prefix == "claude-subscription:" || prefix == "anthropic-api:" {
+			if prefix == "claude-subscription:" || prefix == "anthropic-api:" || strings.HasPrefix(prefix, "provider:openai-compatible.") {
 				return rest
 			}
 			// provider key format: kind.account.model — take the last component.

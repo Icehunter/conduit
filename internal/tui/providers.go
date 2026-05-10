@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -366,7 +367,7 @@ func (m Model) filterModelPickerItems(items []pickerItem) []pickerItem {
 func (m Model) modelPickerItemAvailable(item pickerItem) bool {
 	switch {
 	case strings.HasPrefix(item.Value, "local:"):
-		return true
+		return m.localModelPickerItemAvailable(strings.TrimSpace(strings.TrimPrefix(item.Value, "local:")))
 	case strings.HasPrefix(item.Value, "provider:"):
 		return true
 	case strings.HasPrefix(item.Value, "anthropic-api:"):
@@ -376,6 +377,28 @@ func (m Model) modelPickerItemAvailable(item pickerItem) bool {
 	default:
 		return true
 	}
+}
+
+func (m Model) localModelPickerItemAvailable(server string) bool {
+	if server == "" {
+		server = "local-router"
+	}
+	if m.cfg.MCPManager != nil {
+		for _, srv := range m.cfg.MCPManager.Servers() {
+			if srv == nil || srv.Name != server {
+				continue
+			}
+			if srv.Disabled {
+				return false
+			}
+			break
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		return true
+	}
+	return !mcp.IsDisabled(server, cwd)
 }
 
 func (m Model) anyAccountForProviderKind(kind string) bool {
@@ -683,4 +706,31 @@ func (m Model) localContextWindow(server string) int {
 		}
 	}
 	return 0
+}
+
+func parseProviderContextWindow(value string) (int, bool) {
+	s := strings.ToLower(strings.TrimSpace(value))
+	if s == "" {
+		return 0, false
+	}
+	switch {
+	case strings.HasSuffix(s, "tokens"):
+		s = strings.TrimSpace(strings.TrimSuffix(s, "tokens"))
+	case strings.HasSuffix(s, "token"):
+		s = strings.TrimSpace(strings.TrimSuffix(s, "token"))
+	}
+	multiplier := 1
+	switch {
+	case strings.HasSuffix(s, "k"):
+		multiplier = 1_000
+		s = strings.TrimSpace(strings.TrimSuffix(s, "k"))
+	case strings.HasSuffix(s, "m"):
+		multiplier = 1_000_000
+		s = strings.TrimSpace(strings.TrimSuffix(s, "m"))
+	}
+	n, err := strconv.Atoi(strings.ReplaceAll(s, "_", ""))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n * multiplier, true
 }

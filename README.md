@@ -124,6 +124,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 - **Provider registry** — Claude subscription, Anthropic API, OpenAI-compatible, and MCP providers can be assigned to roles
 - **Provider context windows** — custom providers can set `contextWindow`; OpenAI-compatible streams request usage metadata when the server supports it
 - **Role presets** — default, main, background, planning, and implement roles make it easy to run expensive work on one model and smaller work somewhere else
+- **Provider account OAuth plan** — see [docs/provider-account-oauth-plan.md](docs/provider-account-oauth-plan.md) for the Copilot and ChatGPT/Codex account-provider design
 
 ### In-process RTK (token savings)
 

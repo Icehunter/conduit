@@ -1,7 +1,10 @@
 package catalog
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -310,5 +313,112 @@ func TestCatalogFromJSON_invalid(t *testing.T) {
 	_, err := catalogFromJSON([]byte("{invalid"))
 	if err == nil {
 		t.Error("catalogFromJSON must error on invalid JSON")
+	}
+}
+
+// ── Fetch tests (HTTP error paths) ───────────────────────────────────────────
+
+func TestFetch_httpError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	t.Setenv("CONDUIT_CATALOG_URL", srv.URL)
+	cat, err := Fetch(context.Background())
+	if err == nil {
+		t.Error("Fetch: want error on HTTP 500, got nil")
+	}
+	// Must return builtin fallback, never nil.
+	if cat == nil {
+		t.Fatal("Fetch: returned nil catalog on error")
+	}
+	if cat.Source != "builtin" {
+		t.Errorf("Fetch: fallback source = %q, want %q", cat.Source, "builtin")
+	}
+}
+
+func TestFetch_badJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{not valid json"))
+	}))
+	defer srv.Close()
+
+	t.Setenv("CONDUIT_CATALOG_URL", srv.URL)
+	cat, err := Fetch(context.Background())
+	if err == nil {
+		t.Error("Fetch: want error on bad JSON response, got nil")
+	}
+	if cat == nil {
+		t.Fatal("Fetch: returned nil catalog on decode error")
+	}
+	if cat.Source != "builtin" {
+		t.Errorf("Fetch: fallback source = %q, want %q", cat.Source, "builtin")
+	}
+}
+
+func TestFetch_timeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block until the client's context is cancelled.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	t.Setenv("CONDUIT_CATALOG_URL", srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	cat, err := Fetch(ctx)
+	if err == nil {
+		t.Error("Fetch: want error on context timeout, got nil")
+	}
+	if cat == nil {
+		t.Fatal("Fetch: returned nil catalog on timeout")
+	}
+	if cat.Source != "builtin" {
+		t.Errorf("Fetch: fallback source = %q, want %q", cat.Source, "builtin")
+	}
+}
+
+func TestFetch_localFile(t *testing.T) {
+	payload := `{"data":[{"id":"test/model-1","name":"Test Model","context_length":8192}]}`
+	f, err := os.CreateTemp(t.TempDir(), "catalog*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(payload); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	t.Setenv("CONDUIT_CATALOG_FILE", f.Name())
+	cat, err := Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch with local file: %v", err)
+	}
+	if cat.Source != "file" {
+		t.Errorf("source = %q, want %q", cat.Source, "file")
+	}
+	if len(cat.Models) != 1 || cat.Models[0].ID != "test/model-1" {
+		t.Errorf("unexpected models: %+v", cat.Models)
+	}
+}
+
+func TestFetch_localFile_badJSON(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "catalog*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("{bad json")
+	_ = f.Close()
+
+	t.Setenv("CONDUIT_CATALOG_FILE", f.Name())
+	cat, err := Fetch(context.Background())
+	if err == nil {
+		t.Error("Fetch with bad local file: want error, got nil")
+	}
+	if cat == nil || cat.Source != "builtin" {
+		t.Errorf("Fetch fallback: got source %q, want builtin", cat.Source)
 	}
 }

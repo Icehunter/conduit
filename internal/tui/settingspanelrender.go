@@ -11,6 +11,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -141,6 +142,40 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 			}
 		}
 		row("MCP servers", fmt.Sprintf("%d connected · /mcp", connected))
+	}
+
+	if m.lspManager != nil {
+		statuses := m.lspManager.Statuses()
+		if len(statuses) > 0 {
+			// Sort lang keys for stable display order.
+			keys := make([]string, 0, len(statuses))
+			for k := range statuses {
+				keys = append(keys, k)
+			}
+			// Simple insertion sort — at most ~15 entries.
+			for i := 1; i < len(keys); i++ {
+				for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+					keys[j], keys[j-1] = keys[j-1], keys[j]
+				}
+			}
+			lspParts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				s := statuses[k]
+				switch s {
+				case lsp.StatusConnected:
+					lspParts = append(lspParts, lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render(k+" ✓"))
+				case lsp.StatusConnecting:
+					lspParts = append(lspParts, dim.Render(k+" …"))
+				case lsp.StatusBroken:
+					lspParts = append(lspParts, lipgloss.NewStyle().Foreground(colorError).Render(k+" ✗"))
+				case lsp.StatusDisabled:
+					lspParts = append(lspParts, dim.Render(k+" (disabled)"))
+				}
+			}
+			row("LSP servers", strings.Join(lspParts, "  "))
+		} else {
+			row("LSP servers", dim.Render("none active · tools start on first use"))
+		}
 	}
 
 	sb.WriteByte('\n')

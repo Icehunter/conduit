@@ -762,6 +762,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		DiffReview:     diffReviewHook,
 		SteerMessage:   lp.InjectSteerMessage,
 		InitialCatalog: initialCatalog,
+		LSPManager:     lspManager,
 	})
 
 	// Drain async hooks: cancel their context and wait up to 5s for them to

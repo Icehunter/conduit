@@ -448,6 +448,12 @@ Deliverables:
 - Catalog fetch/cache package with Models.dev and Catwalk evaluated.
 - `/models --refresh`, `update-providers`, or equivalent command.
 - Provider picker catalog data.
+- Provider credentials unlock all matching catalog models in `/models`; users
+  should not have to add one provider entry per model.
+- Provider setup should collect account/endpoint/credential only; model
+  selection belongs in Ctrl+M `/models`.
+- The model picker should support type-to-filter search while preserving
+  provider headers that still contain at least one matching model.
 - Capability and cost display in model/provider UI.
 
 Verification:
@@ -465,6 +471,9 @@ Deliverables:
 - `/accounts` expansion for provider accounts.
 - API-key flows for common catalog providers.
 - Secure storage integration.
+- Provider entries reference stored provider credentials by alias/ID instead of
+  embedding secrets, and role selections can bind any catalog model under that
+  credential.
 - Settings UI for connect/switch/disconnect/rotate/validate.
 
 Verification:

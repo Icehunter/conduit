@@ -28,6 +28,9 @@ func ValidateProviderSettings(p ActiveProviderSettings) error {
 		if looksLikeProviderSecret(p.Credential) {
 			return fmt.Errorf("settings: openai-compatible credential must be an alias, not an API key")
 		}
+		if p.Credential == "" {
+			return fmt.Errorf("settings: openai-compatible provider requires a credential alias")
+		}
 		if p.BaseURL == "" {
 			return fmt.Errorf("settings: openai-compatible provider requires a baseURL")
 		}
@@ -37,9 +40,6 @@ func ValidateProviderSettings(p ActiveProviderSettings) error {
 		}
 		if parsed.Scheme != "https" && parsed.Scheme != "http" {
 			return fmt.Errorf("settings: openai-compatible provider baseURL must use http or https")
-		}
-		if p.Model == "" {
-			return fmt.Errorf("settings: openai-compatible provider requires a model")
 		}
 	case ProviderKindMCP:
 		if p.Server == "" {

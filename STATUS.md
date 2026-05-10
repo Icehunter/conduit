@@ -3,9 +3,13 @@
 Last updated: 2026-05-11
 
 This document answers product questions about Conduit: what works, what's
-coming, and what's intentionally out of scope. For Claude wire/auth
-compatibility details see `COMPATIBILITY.md`. For historical CC source mapping
-see `PARITY.md` (frozen reference).
+coming, and what's intentionally out of scope.
+
+- For Claude wire/auth compatibility details see `COMPATIBILITY.md`.
+- For historical CC source → Go mapping see `PARITY.md` (frozen reference; not
+  the active product tracker).
+- Update rules: capability changes → this file; OAuth/header/wire changes →
+  `COMPATIBILITY.md`; CC behavioral reference notes → `PARITY.md`.
 
 **Legend:** ✅ Done · 🔶 Partial · 🔲 Planned · 🚫 Descoped
 
@@ -21,10 +25,13 @@ see `PARITY.md` (frozen reference).
 | OpenAI-compatible providers (Gemini, etc.) | ✅ | API key stored in secure storage; role-assignable |
 | Local models via MCP | ✅ | Route any role to an MCP-backed local provider |
 | Role-based model routing | ✅ | Default, Main, Background, Planning, Implement roles via `/model` Ctrl+M |
-| GitHub Copilot auth | 🔲 | C-O3: planned after `/accounts` expansion |
-| OpenAI ChatGPT Plus/Pro OAuth | 🔲 | C-O3: investigate once stable flow confirmed |
-| OpenRouter API key | 🔲 | C-O3: API-key flow, catalog-assisted |
-| Provider auth plugin interface | 🔲 | C-O3: `Methods`/`Authorize`/`Callback` |
+| OpenAI API key (C-O3) | ✅ | `internal/providerauth/`; Accounts tab connect/rotate/disconnect |
+| Gemini API key (C-O3) | ✅ | `internal/providerauth/`; Accounts tab connect/rotate/disconnect |
+| OpenRouter API key (C-O3) | ✅ | `internal/providerauth/`; Accounts tab connect/rotate/disconnect |
+| Provider auth interface (C-O3) | ✅ | `internal/providerauth/` — `Method`, `Config`, `Authorizer`, `APIKeyAuthorizer` |
+| Provider entries reference accounts (C-O3) | ✅ | Provider entries store a credential alias that resolves through secure providerauth storage; known providers reuse `openai`, `gemini`, and `openrouter` credentials |
+| GitHub Copilot auth | 🔲 | C-O3 follow-on: product-account provider; see `docs/provider-account-oauth-plan.md` |
+| OpenAI ChatGPT Plus/Pro OAuth | 🔲 | C-O3 follow-on: experimental product-account provider; see `docs/provider-account-oauth-plan.md` |
 
 ---
 
@@ -34,10 +41,14 @@ see `PARITY.md` (frozen reference).
 |-----------|--------|-------|
 | Manual provider entry (URL + key) | ✅ | Settings Providers tab |
 | Provider validation on save | ✅ | Test-call before persisting |
-| Model picker (`/model`) | ✅ | Grouped by provider; Ctrl+M assigns roles |
+| Model picker (`/model`) | ✅ | Grouped by provider; Ctrl+M assigns roles; type to filter model rows while retaining matching provider headers |
 | Model capability display | ✅ | Context window, cost, tool-use, vision, thinking — shown in model picker with `?` key toggle |
-| Models.dev / Catwalk catalog | ✅ | `internal/catalog/` — OpenRouter fetch + 24h disk cache + built-in Anthropic snapshot |
-| Catalog refresh command | ✅ | `/models --refresh` fetches & caches; shows count flash on completion |
+| Catalog fetch/cache package (C-O2) | ✅ | `internal/catalog/` — OpenRouter fetch + 24h disk cache + built-in Anthropic snapshot |
+| Catalog refresh command (C-O2) | ✅ | `/models --refresh` fetches & caches; shows count flash on completion |
+| Catalog-assisted provider setup (C-O2) | ✅ | Provider form opens with picker (OpenAI/Gemini/OpenRouter/Custom); pre-fills base URL and credential alias; reuses saved providerauth key; model choice happens in `/models` |
+| Provider credential unlocks catalog models (C-O2/C-O3) | ✅ | One OpenAI/Gemini/OpenRouter credential exposes all matching catalog models in `/models`; selections synthesize provider+model entries for role assignment |
+| Catalog override URL / local JSON path (C-O2) | ✅ | `CONDUIT_CATALOG_URL` overrides endpoint; `CONDUIT_CATALOG_FILE` loads local JSON instead |
+| Network-failure / bad-JSON fetch tests (C-O2) | ✅ | `TestFetch_httpError`, `TestFetch_badJSON`, `TestFetch_timeout`, `TestFetch_localFile` in `catalog_test.go` |
 
 ---
 
@@ -89,7 +100,7 @@ see `PARITY.md` (frozen reference).
 | MCPTool | ✅ | MCP tool proxy |
 | ListMcpResources / ReadMcpResource | ✅ | |
 | SkillTool | ✅ | |
-| LSPTool | 🔶 | hover, definition, references, diagnostics; Go/TS/JS/Py/Rust; no `internal/lsp/` package tests |
+| LSPTool | ✅ | hover, definition, references, diagnostics, documentSymbol, workspaceSymbol, implementation, callHierarchy; `internal/tools/lsp/lsp_test.go` |
 | ToolSearchTool | ✅ | Live registry search |
 | SyntheticOutputTool | ✅ | Coordinator signalling |
 | LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation offload |
@@ -105,13 +116,16 @@ see `PARITY.md` (frozen reference).
 | Server auto-detect (Go, TS/JS, Python, Rust) | ✅ | `internal/lsp/manager.go` |
 | pylsp → pyright fallback | ✅ | |
 | hover / definition / references / diagnostics | ✅ | |
-| Tool-level tests (6) | ✅ | `internal/tools/lsp/lsp_test.go` |
-| `internal/lsp/` package unit tests | ✅ | `internal/lsp/client_test.go`, `manager_test.go` |
-| LSP status indicator | ✅ | `Manager.Status(langKey)` → unknown/connecting/connected/broken/disabled |
-| Expanded server registry (15+ langs) | ✅ | Vue, Svelte, Astro, YAML, Lua, C#, Java, Bash, Dockerfile, Terraform, Nix + existing Go/TS/JS/Py/Rust |
-| Config overrides (cmd, args, env, disabled) | ✅ | `conduit.json` `lspServers` map; `NewManagerWithOverrides` |
-| documentSymbol / workspaceSymbol | ✅ | Tree + flat form; workspace/symbol query |
-| implementation / call hierarchy | ✅ | `implementation`, `callHierarchyIncoming`, `callHierarchyOutgoing` |
+| Tool-level tests (C-O1) | ✅ | `internal/tools/lsp/lsp_test.go` — 6 tests covering existing operations |
+| Package unit tests (C-O1) | ✅ | `internal/lsp/client_test.go`, `manager_test.go` — client behavior + server-matching |
+| Expanded server registry (C-O1) | ✅ | 15+ langs: Vue, Svelte, Astro, YAML, Lua, C#, Java, Bash, Dockerfile, Terraform, Nix + Go/TS/JS/Py/Rust |
+| Config overrides (C-O1) | ✅ | `conduit.json` `lspServers` map; `NewManagerWithOverrides`; cmd/args/env/disabled |
+| documentSymbol / workspaceSymbol (C-O1) | ✅ | Tree + flat form; workspace/symbol query |
+| implementation / call hierarchy (C-O1) | ✅ | `implementation`, `callHierarchyIncoming`, `callHierarchyOutgoing` |
+| ServerStatus API (C-O1) | ✅ | `Manager.Status(langKey)` → unknown/connecting/connected/broken/disabled |
+| LSP status surfaced in TUI (C-O1) | ✅ | Status tab shows per-language server health via `m.lspManager.Statuses()`; "none active" when idle |
+| Focused restart / diagnostics tool actions (C-O1) | 🔲 | Evaluated; deferred — current broad LSP surface is sufficient for now |
+| Auto-download language servers | 🚫 | Intentionally excluded; prefer installed binaries or explicit config |
 
 ---
 
@@ -193,7 +207,7 @@ see `PARITY.md` (frozen reference).
 | Themes (`/theme`) | ✅ | 4 built-ins + user themes; hot-swap |
 | Plugin panel (`/plugin`) | ✅ | |
 | MCP panel (`/mcp`) | ✅ | |
-| Settings panel | ✅ | Providers, Stats, Accounts tabs |
+| Settings panel | ✅ | Status, Config, Stats, Usage, Providers, Accounts tabs |
 | Rate limit display | ✅ | `anthropic-ratelimit-*` headers; <20% warning |
 | Claude plan usage footer | ✅ | 5h/7d windows; `/toggle-usage` |
 | `conduit serve` (local server) | 🔲 | C-O4: session/message/event endpoints |
@@ -244,16 +258,70 @@ see `PARITY.md` (frozen reference).
 
 ## OpenCode-Inspired Roadmap
 
-| Milestone | Focus | Status |
-|-----------|-------|--------|
-| C-O0: Documentation governance | STATUS.md + PARITY.md → capability matrix + compatibility contract | ✅ This update |
-| C-O1: LSP confidence | `internal/lsp/` tests; status indicator; 15+ server registry; config overrides; documentSymbol/workspaceSymbol | ✅ |
-| C-O2: Model catalog | Models.dev / Catwalk catalog package; `/models --refresh`; capability display in picker | ✅ |
-| C-O3: Provider auth | Provider-auth interface; `/accounts` expansion; API-key flows; Copilot/OpenAI OAuth investigation | 🔲 |
-| C-O4: Local server spine | `conduit serve`; `conduit attach`; session/message/permission/event endpoints; file-read tracker | 🔲 |
-| C-O4.5: Runtime polish | Config JSON schema; background job tracking; broader project instruction file support | 🔲 |
-| C-O5: Multi-session UI | Session switcher; new session creation; background session status; fork/parent navigation | 🔲 (needs C-O4) |
-| C-O6: Share & import | Local share bundle export/import; optional remote endpoint; redaction checklist | 🔲 |
+Each milestone entry links its open deliverables and the corresponding section
+in `docs/conduit-enhancements-plan.md` where requirements and constraints are
+defined in full.
+
+| Milestone | Focus | Status | Open items |
+|-----------|-------|--------|------------|
+| C-O0: Documentation governance | STATUS.md → capability matrix; COMPATIBILITY.md for wire/auth; PARITY.md frozen | ✅ | See [C-O0 closure](#c-o0-closure) |
+| C-O1: LSP confidence | Tool tests; 15+ server registry; config overrides; documentSymbol/workspaceSymbol/implementation/callHierarchy | ✅ | Focused restart/diagnostics actions deferred |
+| C-O2: Model catalog | Catalog fetch/cache; `/models --refresh`; catalog-assisted provider form; provider credentials expose catalog models; capability display in picker | ✅ | Catwalk evaluation recorded below |
+| C-O3: Provider auth | Provider-auth interface; Accounts tab; API-key flows (OpenAI/Gemini/OpenRouter); provider entries reference secure credential aliases | ✅ | Copilot/ChatGPT deferred by plan constraint |
+| C-O4: Local server spine | `conduit serve`; `conduit attach`; session/message/permission/event/file-read endpoints | 🔲 | Plan §4; file-read tracker is a C-O4 deliverable, not C-O4.5 |
+| C-O4.5: Runtime polish | Config JSON schema; background job tracking; broader project instruction files; prompt-submit hook | 🔲 | Plan §4.5 |
+| C-O5: Multi-session UI | Session switcher; new session creation; background status; fork/parent navigation | 🔲 | Needs C-O4 |
+| C-O6: Share & import | Local bundle export/import; optional remote endpoint; redaction checklist | 🔲 | Plan §6; two-phase: local bundle first, remote second |
+| C-O7: Editor & desktop | `conduit acp`; Zed extension; VS Code/Cursor/Windsurf; desktop sidecar | 🔲 | Plan §7; needs C-O4 server API stable |
+
+---
+
+## C-O0 Closure
+
+C-O0 delivered the three-doc split (STATUS / COMPATIBILITY / PARITY). CLAUDE.md
+now tells contributors which doc to update, and STATUS.md names COMPATIBILITY.md
+as the owner for OAuth/header/wire-check details.
+
+---
+
+## C-O1 Open Items
+
+Per `docs/conduit-enhancements-plan.md §1`:
+
+- **LSP status in TUI** — ✅ resolved. `Manager.Statuses()` added to `internal/lsp/manager.go`; `RunOptions.LSPManager` threads the manager into the TUI; the Status settings tab renders per-language server health.
+- **Focused restart/diagnostics actions** — the plan says "consider"; evaluated and deferred. The current broad LSP surface is sufficient. Revisit if model reliability issues arise.
+- **Constraints confirmed:** no auto-download of language servers; LSP failures are non-fatal.
+
+---
+
+## C-O2 Open Items
+
+Per `docs/conduit-enhancements-plan.md §2`:
+
+- **Catalog-assisted provider form** — ✅ resolved. Provider form now opens with a picker step (OpenAI, Gemini, OpenRouter, Custom). Selecting a known provider pre-fills base URL and credential alias. If a providerauth credential is already saved for that provider, the API key step is skipped and the stored key is reused. It does not ask for a model; model choice happens in Ctrl+M `/models`.
+- **Provider credential → models** — ✅ resolved. `/models` expands saved OpenAI-compatible provider credentials against the catalog. OpenAI and Gemini direct providers show their provider-specific models with stripped model IDs; OpenRouter shows the full catalog with provider-prefixed IDs. Typing in the picker filters model rows and keeps provider headers that still have matches. Selecting any generated row creates the provider+model binding for that role without requiring a separate provider form entry first.
+- **Catalog override URL / local JSON path** — ✅ resolved. `CONDUIT_CATALOG_URL` overrides the fetch endpoint; `CONDUIT_CATALOG_FILE` loads a local JSON file instead of making an HTTP request.
+- **Network-failure fetch tests** — ✅ resolved. `TestFetch_httpError`, `TestFetch_badJSON`, `TestFetch_timeout`, `TestFetch_localFile`, `TestFetch_localFile_badJSON` added to `catalog_test.go`.
+- **Catwalk evaluation** — OpenRouter was chosen as catalog source. Catwalk was evaluated conceptually: it serves the same use case but lacks a stable unauthenticated JSON endpoint, making OpenRouter the better default. This is a closed decision; no further action required.
+
+---
+
+## C-O3 Open Items
+
+Per `docs/conduit-enhancements-plan.md §3`:
+
+- **Provider entries referencing accounts** — ✅ resolved for C-O3 API-key providers. Provider entries store credential aliases rather than raw secrets, known provider aliases line up with providerauth IDs (`openai`, `gemini`, `openrouter`), and runtime client construction resolves the secret through secure storage.
+- **Accounts tab UX** — ✅ resolved. Unconfigured providers now show dim "not set up" instead of red "api key ✗".
+- **Copilot / ChatGPT OAuth** — deferred pending auth-path verification (plan constraint).
+
+---
+
+## C-O4 Scope Note
+
+The plan places **file-read tracking** inside C-O4 ("Add file-read tracking
+alongside file status so attached clients can show what context the agent has
+actually consumed"), not C-O4.5. STATUS.md previously listed it under C-O4.5.
+Corrected above.
 
 ---
 
@@ -267,3 +335,4 @@ see `PARITY.md` (frozen reference).
 - Anthropic-internal analytics, telemetry, and billing dialogs
 - Dynamic provider execution that bypasses typed streaming adapters
 - Remote sharing enabled by default
+- Auto-download of LSP language servers

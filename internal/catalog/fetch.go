@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -18,14 +19,42 @@ const (
 	openRouterURL = "https://openrouter.ai/api/v1/models"
 )
 
-// Fetch downloads a fresh catalog from OpenRouter and returns it.
-// On failure it returns the built-in snapshot and the underlying error so callers
-// can choose to surface a warning without blocking the workflow.
+// fetchURL returns the effective catalog URL.
+// CONDUIT_CATALOG_URL overrides the default OpenRouter endpoint.
+func fetchURL() string {
+	if u := strings.TrimSpace(os.Getenv("CONDUIT_CATALOG_URL")); u != "" {
+		return u
+	}
+	return openRouterURL
+}
+
+// Fetch downloads a fresh catalog and returns it.
+// If CONDUIT_CATALOG_FILE is set, that local JSON file is read instead of
+// making an HTTP request (useful for offline testing and private catalogs).
+// If CONDUIT_CATALOG_URL is set, that URL is used instead of the default
+// OpenRouter endpoint.
+// On any failure, Fetch returns the built-in snapshot and the error so callers
+// can surface a warning without blocking the workflow.
 func Fetch(ctx context.Context) (*Catalog, error) {
+	// Local file override — no network call.
+	if path := strings.TrimSpace(os.Getenv("CONDUIT_CATALOG_FILE")); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return Builtin(), fmt.Errorf("catalog: read local file %s: %w", path, err)
+		}
+		var payload openRouterResponse
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return Builtin(), fmt.Errorf("catalog: decode local file %s: %w", path, err)
+		}
+		models := normalizeOpenRouter(payload)
+		return &Catalog{Models: models, FetchedAt: time.Now(), Source: "file"}, nil
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openRouterURL, nil)
+	url := fetchURL()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return Builtin(), fmt.Errorf("catalog: build request: %w", err)
 	}
@@ -47,10 +76,9 @@ func Fetch(ctx context.Context) (*Catalog, error) {
 	}
 
 	models := normalizeOpenRouter(payload)
-	now := time.Now()
 	cat := &Catalog{
 		Models:    models,
-		FetchedAt: now,
+		FetchedAt: time.Now(),
 		Source:    "openrouter",
 	}
 	return cat, nil

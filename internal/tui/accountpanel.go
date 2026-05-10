@@ -14,6 +14,8 @@ package tui
 //   ←/→      switch to adjacent tab (handled by settings panel)
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -31,8 +34,10 @@ import (
 type accountPanelView int
 
 const (
-	accountViewList   accountPanelView = 0
-	accountViewDetail accountPanelView = 1
+	accountViewList       accountPanelView = 0
+	accountViewDetail     accountPanelView = 1
+	accountViewCredDetail accountPanelView = 2 // per-provider credential detail/actions
+	accountViewCredForm   accountPanelView = 3 // single-line API-key entry form
 )
 
 type accountItem struct {
@@ -52,13 +57,18 @@ type accountAction struct {
 
 type accountPanelState struct {
 	view     accountPanelView
-	selected int // cursor: 0..len(accounts) inclusive (last = "+ Add")
+	selected int // cursor: 0..len(accounts)+1+len(builtins)-1
 
 	accounts  []accountItem
 	loadErr   string
 	detailID  string
 	actions   []accountAction
 	actionIdx int
+
+	// provider credential section
+	credProvID string // ID of the provider being acted on (accountViewCredDetail/Form)
+	credInput  string // in-progress API key text (accountViewCredForm)
+	credErr    string // validation error shown in form
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
@@ -195,21 +205,45 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 		return m, nil
 	}
 	a := p.accts
+	builtins := providerauth.BuiltinConfigs()
+	store := secure.NewDefault()
 
 	switch a.view {
 	case accountViewList:
-		total := len(a.accounts) + 1
+		total := len(a.accounts) + 1 + len(builtins) // accounts + "+ Add" + cred rows
 		switch key {
 		case "up":
 			a.selected = (a.selected - 1 + total) % total
 		case "down":
 			a.selected = (a.selected + 1) % total
 		case "enter":
-			if a.selected == len(a.accounts) {
+			switch {
+			case a.selected < len(a.accounts):
+				a.openDetail(a.accounts[a.selected].id)
+			case a.selected == len(a.accounts):
 				m.settingsPanel = nil
 				return m, func() tea.Msg { return commandsLoginMsg{} }
+			default:
+				credIdx := a.selected - len(a.accounts) - 1
+				if credIdx >= 0 && credIdx < len(builtins) {
+					a.credProvID = builtins[credIdx].ID
+					a.credErr = ""
+					a.actionIdx = 0
+					if providerauth.IsConnected(store, a.credProvID) {
+						a.actions = []accountAction{
+							{"Rotate key (replace)", "rotate", false},
+							{"Disconnect", "disconnect", true},
+							{"Back", "back", false},
+						}
+					} else {
+						a.actions = []accountAction{
+							{"Connect (enter API key)", "connect", false},
+							{"Back", "back", false},
+						}
+					}
+					a.view = accountViewCredDetail
+				}
 			}
-			a.openDetail(a.accounts[a.selected].id)
 		}
 
 	case accountViewDetail:
@@ -245,6 +279,60 @@ func (m Model) handleAccountsTabKey(key string) (Model, tea.Cmd) {
 				a.view = accountViewList
 			}
 		}
+
+	case accountViewCredDetail:
+		switch key {
+		case "up":
+			a.actionIdx = (a.actionIdx - 1 + len(a.actions)) % len(a.actions)
+		case "down":
+			a.actionIdx = (a.actionIdx + 1) % len(a.actions)
+		case "enter":
+			switch a.actions[a.actionIdx].id {
+			case "connect", "rotate":
+				a.credInput = ""
+				a.credErr = ""
+				a.view = accountViewCredForm
+			case "disconnect":
+				_ = providerauth.DeleteCredential(store, a.credProvID)
+				a.view = accountViewList
+			case "back":
+				a.view = accountViewList
+			}
+		}
+
+	case accountViewCredForm:
+		switch key {
+		case "esc":
+			a.view = accountViewCredDetail
+			a.credErr = ""
+		case "enter":
+			auth2, authErr := providerauth.NewBuiltinAuthorizer(a.credProvID, store)
+			if authErr != nil {
+				a.credErr = authErr.Error()
+				break
+			}
+			if err := auth2.Validate(context.Background(), a.credInput); err != nil {
+				a.credErr = err.Error()
+				break
+			}
+			if _, err := auth2.Authorize(context.Background(), providerauth.MethodAPIKey, map[string]string{"key": a.credInput}); err != nil {
+				a.credErr = err.Error()
+				break
+			}
+			a.credInput = ""
+			a.credErr = ""
+			a.view = accountViewList
+		case "backspace":
+			if len(a.credInput) > 0 {
+				a.credInput = a.credInput[:len(a.credInput)-1]
+				a.credErr = ""
+			}
+		default:
+			if len(key) == 1 && key[0] >= ' ' {
+				a.credInput += key
+				a.credErr = ""
+			}
+		}
 	}
 
 	return m, nil
@@ -265,6 +353,7 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 	fg := lipgloss.NewStyle().Foreground(colorFg)
 	errStyle := lipgloss.NewStyle().Foreground(colorError)
 	danger := lipgloss.NewStyle().Foreground(colorError)
+	section := lipgloss.NewStyle().Foreground(colorAccent)
 
 	if a.loadErr != "" {
 		sb.WriteString(errStyle.Render("  Error: " + a.loadErr))
@@ -272,6 +361,9 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 		sb.WriteString(dim.Render("  [Esc] close"))
 		return
 	}
+
+	builtins := providerauth.BuiltinConfigs()
+	store := secure.NewDefault()
 
 	switch a.view {
 	case accountViewList:
@@ -310,12 +402,36 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 			addLabel = accent
 		}
 		sb.WriteString(addCursor + addLabel.Render("+ Add account") + "\n")
+
+		// Provider credentials section.
+		sb.WriteString("\n")
+		sb.WriteString("  " + section.Render("── Provider credentials") + "\n")
+		for i, cfg := range builtins {
+			listIdx := len(a.accounts) + 1 + i
+			isSel := a.selected == listIdx
+			cursor := "  "
+			if isSel {
+				cursor = accent.Render("❯ ")
+			}
+			nameStyle := fg
+			if isSel {
+				nameStyle = accent
+			}
+			connected := providerauth.IsConnected(store, cfg.ID)
+			var badge string
+			if connected {
+				badge = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("api key ✓")
+			} else {
+				badge = "  " + dim.Render("not set up")
+			}
+			sb.WriteString(cursor + nameStyle.Render(cfg.DisplayName) + badge + "\n")
+		}
 		sb.WriteString("\n")
 		sb.WriteString(dim.Render("  ↑/↓ navigate · Enter select · Esc close · ←/→ tabs"))
 
 	case accountViewDetail:
-		store, _ := auth.LoadAccountStore()
-		entry := store.Accounts[a.detailID]
+		store2, _ := auth.LoadAccountStore()
+		entry := store2.Accounts[a.detailID]
 		sb.WriteString(accent.Render("  "+accountDisplayLabel(a.detailID, entry.Email, entry.Kind)) + "\n\n")
 		for i, act := range a.actions {
 			isSel := i == a.actionIdx
@@ -340,5 +456,67 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 		}
 		sb.WriteString("\n")
 		sb.WriteString(dim.Render("  ↑/↓ navigate · Enter confirm · Esc back"))
+
+	case accountViewCredDetail:
+		cfg, _ := providerauth.BuiltinByID(a.credProvID)
+		connected := providerauth.IsConnected(store, a.credProvID)
+		var statusBadge string
+		if connected {
+			statusBadge = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("connected")
+		} else {
+			statusBadge = "  " + errStyle.Render("not connected")
+		}
+		sb.WriteString(accent.Render("  "+cfg.DisplayName) + statusBadge + "\n\n")
+		for i, act := range a.actions {
+			isSel := i == a.actionIdx
+			cursor := "  "
+			if isSel {
+				cursor = accent.Render("❯ ")
+			}
+			var label string
+			switch {
+			case act.danger && isSel:
+				label = danger.Bold(true).Render(act.label)
+			case act.danger:
+				label = danger.Render(act.label)
+			case act.id == "back":
+				label = dim.Render(act.label)
+			case isSel:
+				label = accent.Render(act.label)
+			default:
+				label = fg.Render(act.label)
+			}
+			sb.WriteString(cursor + label + "\n")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(dim.Render("  ↑/↓ navigate · Enter confirm · Esc back"))
+
+	case accountViewCredForm:
+		cfg, _ := providerauth.BuiltinByID(a.credProvID)
+		hint := ""
+		if len(cfg.Methods) > 0 {
+			hint = cfg.Methods[0].Hint
+		}
+		envVar := ""
+		if len(cfg.Methods) > 0 && cfg.Methods[0].EnvVar != "" {
+			envVar = cfg.Methods[0].EnvVar
+		}
+		sb.WriteString(accent.Render("  "+cfg.DisplayName+" — enter API key") + "\n\n")
+		displayKey := a.credInput
+		if displayKey == "" {
+			displayKey = dim.Render(hint)
+		}
+		sb.WriteString(fmt.Sprintf("  %s\n", displayKey))
+		if a.credErr != "" {
+			sb.WriteString("\n  " + errStyle.Render(a.credErr) + "\n")
+		}
+		if envVar != "" {
+			sb.WriteString("\n  " + dim.Render("or set $"+envVar) + "\n")
+		}
+		if cfg.DocsURL != "" {
+			sb.WriteString("  " + dim.Render(cfg.DocsURL) + "\n")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(dim.Render("  Enter confirm · Esc back"))
 	}
 }

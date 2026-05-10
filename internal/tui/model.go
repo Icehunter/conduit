@@ -21,6 +21,7 @@ import (
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/keybindings"
+	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
@@ -609,6 +610,10 @@ type Model struct {
 	// catalogData is the last-loaded model capability catalog.
 	// Nil until loaded from disk or refreshed. Used by the model picker.
 	catalogData *catalog.Catalog
+
+	// lspManager is the live language-server manager; nil when LSP is unavailable.
+	// Used by the Status tab to report per-language server health.
+	lspManager *lsp.Manager
 }
 
 // New builds the initial Model.

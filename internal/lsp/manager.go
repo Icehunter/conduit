@@ -209,6 +209,19 @@ func (m *Manager) Status(langKey string) ServerStatus {
 	return v.(ServerStatus)
 }
 
+// Statuses returns a snapshot of all lang keys whose status is not unknown.
+// The map is a copy; callers may read it freely without holding any lock.
+func (m *Manager) Statuses() map[string]ServerStatus {
+	out := make(map[string]ServerStatus)
+	m.status.Range(func(k, v any) bool {
+		if s, ok := v.(ServerStatus); ok && s != StatusUnknown {
+			out[k.(string)] = s
+		}
+		return true
+	})
+	return out
+}
+
 // Close shuts down all running language servers.
 func (m *Manager) Close() {
 	m.mu.Lock()

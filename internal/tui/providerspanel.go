@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/commands"
 	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -18,20 +18,35 @@ import (
 type providerFormStep int
 
 const (
-	providerFormStepCredential providerFormStep = iota
-	providerFormStepBaseURL
-	providerFormStepModel
-	providerFormStepContextWindow
-	providerFormStepAPIKey
+	providerFormStepPicker     providerFormStep = iota // choose known provider or custom
+	providerFormStepCredential                         // alias name
+	providerFormStepBaseURL                            // base URL
+	providerFormStepAPIKey                             // API key (optional if providerauth has one)
 )
 
+// knownProviderEntry describes a catalog-assisted provider preset.
+type knownProviderEntry struct {
+	id          string // providerauth ID (also used as catalog provider slug)
+	displayName string
+	baseURL     string
+	catalogSlug string // provider slug in catalog data
+}
+
+// knownProviders is the ordered list of presets offered in the picker.
+// Base URLs are stable; the catalog supplies model IDs and context windows.
+var knownProviders = []knownProviderEntry{
+	{id: "openai", displayName: "OpenAI", baseURL: "https://api.openai.com/v1/", catalogSlug: "openai"},
+	{id: "gemini", displayName: "Gemini (Google AI Studio)", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", catalogSlug: "google"},
+	{id: "openrouter", displayName: "OpenRouter", baseURL: "https://openrouter.ai/api/v1/", catalogSlug: "openrouter"},
+}
+
 type providerFormState struct {
-	step       providerFormStep
-	input      string
+	step      providerFormStep
+	pickerIdx int // index into knownProviders; len(knownProviders) = "Custom"
+	input     string
+
 	credential string
 	baseURL    string
-	model      string
-	contextWin int
 	apiKey     string
 	editKey    string
 	tokenOnly  bool
@@ -59,23 +74,37 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 		case "esc":
 			p.providerForm = nil
 			f.err = ""
-		case "enter":
-			if err := m.advanceProviderForm(f, false, false); err != nil {
-				f.err = err.Error()
-				return done()
-			}
-			m, _ = m.commitProviderFormIfComplete(f)
 		case "up", "left", "shift+tab":
-			_ = m.advanceProviderForm(f, true, true)
+			if f.step == providerFormStepPicker {
+				total := len(knownProviders) + 1
+				f.pickerIdx = (f.pickerIdx - 1 + total) % total
+			} else {
+				_ = m.advanceProviderForm(f, true, true)
+			}
 		case "down", "right", "tab":
-			_ = m.advanceProviderForm(f, false, true)
+			if f.step == providerFormStepPicker {
+				total := len(knownProviders) + 1
+				f.pickerIdx = (f.pickerIdx + 1) % total
+			} else {
+				_ = m.advanceProviderForm(f, false, true)
+			}
+		case "enter":
+			if f.step == providerFormStepPicker {
+				m.applyProviderPicker(f)
+			} else {
+				if err := m.advanceProviderForm(f, false, false); err != nil {
+					f.err = err.Error()
+					return done()
+				}
+				m, _ = m.commitProviderFormIfComplete(f)
+			}
 		case "backspace":
-			if len(f.input) > 0 {
+			if f.step != providerFormStepPicker && len(f.input) > 0 {
 				f.input = f.input[:len(f.input)-1]
 				f.err = ""
 			}
 		default:
-			if len(key) == 1 && key >= " " {
+			if f.step != providerFormStepPicker && len(key) == 1 && key >= " " {
 				f.input += key
 				f.err = ""
 			}
@@ -138,13 +167,10 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 }
 
 func newProviderForm() *providerFormState {
-	f := &providerFormState{
-		step:    providerFormStepCredential,
-		baseURL: "",
-		model:   "",
+	return &providerFormState{
+		step:      providerFormStepPicker,
+		pickerIdx: 0,
 	}
-	f.input = f.credential
-	return f
 }
 
 func formForProvider(provider settings.ActiveProviderSettings, key string, tokenOnly bool) *providerFormState {
@@ -152,16 +178,41 @@ func formForProvider(provider settings.ActiveProviderSettings, key string, token
 		step:       providerFormStepCredential,
 		credential: provider.Credential,
 		baseURL:    provider.BaseURL,
-		model:      provider.Model,
-		contextWin: provider.ContextWindow,
 		editKey:    key,
 		tokenOnly:  tokenOnly,
+		pickerIdx:  len(knownProviders), // skip picker — editing existing
 	}
 	if tokenOnly {
 		f.step = providerFormStepAPIKey
 	}
 	f.input = providerFormValue(f, f.step)
 	return f
+}
+
+// applyProviderPicker is called when the user confirms their picker selection.
+// For known providers it pre-fills base URL and credential alias from the
+// preset plus any saved providerauth credential, then advances to the
+// credential step. For "Custom" it just advances to the credential step.
+func (m Model) applyProviderPicker(f *providerFormState) {
+	total := len(knownProviders)
+	if f.pickerIdx >= total {
+		// "Custom / other" — proceed to manual form with blank fields.
+		f.step = providerFormStepCredential
+		f.input = f.credential
+		return
+	}
+	preset := knownProviders[f.pickerIdx]
+	f.baseURL = preset.baseURL
+	f.credential = preset.id
+
+	// If providerauth already has a credential, skip the API key step.
+	store := secure.NewDefault()
+	if existing, err := providerauth.LoadCredential(store, preset.id); err == nil && existing != "" {
+		f.apiKey = existing
+	}
+
+	f.step = providerFormStepCredential
+	f.input = f.credential
 }
 
 func (m Model) refreshModelCommandProviders() {
@@ -191,6 +242,7 @@ func (m Model) refreshModelCommandProviders() {
 		configuredAccountProviders,
 		m.cfg.MCPManager,
 		m.providers,
+		m.catalogData,
 	)
 }
 
@@ -215,26 +267,9 @@ func (m Model) advanceProviderForm(f *providerFormState, backwards bool, navigat
 		if value != "" {
 			f.baseURL = strings.TrimRight(value, "/") + "/"
 		}
-		f.input = f.model
-	case providerFormStepModel:
-		if !navigate && value == "" {
-			return fmt.Errorf("model is required")
-		}
-		if value != "" {
-			f.model = value
-		}
-		f.input = providerFormValue(f, providerFormStepContextWindow)
-	case providerFormStepContextWindow:
-		if value == "" {
-			f.contextWin = 0
-		} else if n, ok := parseProviderContextWindow(value); ok {
-			f.contextWin = n
-		} else {
-			return fmt.Errorf("context window must be a positive token count, e.g. 128k or 1000000")
-		}
 		f.input = ""
 	case providerFormStepAPIKey:
-		if !navigate && value == "" && f.editKey == "" {
+		if !navigate && value == "" && f.editKey == "" && f.apiKey == "" {
 			return fmt.Errorf("API key is required")
 		}
 		if value != "" {
@@ -247,11 +282,17 @@ func (m Model) advanceProviderForm(f *providerFormState, backwards bool, navigat
 		if f.tokenOnly {
 			return nil
 		}
-		if f.step > providerFormStepCredential {
+		// Don't step back into the picker when editing an existing provider.
+		minStep := providerFormStepCredential
+		if f.step > minStep {
 			f.step--
 		}
 	} else {
 		f.step++
+		// Skip the API key step when providerauth already supplied a key.
+		if f.step == providerFormStepAPIKey && f.apiKey != "" && f.editKey == "" {
+			f.step++
+		}
 	}
 	if f.step <= providerFormStepAPIKey {
 		f.input = providerFormValue(f, f.step)
@@ -264,11 +305,9 @@ func (m Model) commitProviderFormIfComplete(f *providerFormState) (Model, bool) 
 		return m, false
 	}
 	provider := settings.ActiveProviderSettings{
-		Kind:          settings.ProviderKindOpenAICompatible,
-		Credential:    f.credential,
-		BaseURL:       f.baseURL,
-		Model:         f.model,
-		ContextWindow: f.contextWin,
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: f.credential,
+		BaseURL:    f.baseURL,
 	}
 	if f.editKey != "" && f.editKey != settings.ProviderKey(provider) {
 		_ = settings.DeleteProviderEntry(f.editKey)
@@ -284,8 +323,12 @@ func (m Model) commitProviderFormIfComplete(f *providerFormState) (Model, bool) 
 		f.err = err.Error()
 		return m, false
 	}
-	if f.apiKey != "" {
-		if err := settings.SaveProviderCredential(secure.NewDefault(), f.credential, f.apiKey); err != nil {
+	// Persist API key: prefer the form's typed key; fall back to the
+	// providerauth credential that applyProviderPicker pre-loaded.
+	keyToSave := f.apiKey
+	if keyToSave != "" {
+		store := secure.NewDefault()
+		if err := settings.SaveProviderCredential(store, f.credential, keyToSave); err != nil {
 			f.step = providerFormStepAPIKey
 			f.err = err.Error()
 			return m, false
@@ -411,7 +454,50 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 	fg := lipgloss.NewStyle().Foreground(colorFg)
 	errStyle := lipgloss.NewStyle().Foreground(colorError)
 
-	labels := []string{"Credential alias (not API key)", "Base URL", "Model", "Context window (optional)", "API key"}
+	// ── Picker step ──────────────────────────────────────────────────────────
+	if f.step == providerFormStepPicker {
+		sb.WriteString(accent.Render("  Add Provider") + "\n\n")
+		store := secure.NewDefault()
+		for i, p := range knownProviders {
+			isSel := i == f.pickerIdx
+			cursor := "  "
+			if isSel {
+				cursor = accent.Render("❯ ")
+			}
+			nameStyle := fg
+			if isSel {
+				nameStyle = accent
+			}
+			suffix := ""
+			if providerauth.IsConnected(store, p.id) {
+				suffix = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("api key ✓")
+			}
+			sb.WriteString(cursor + nameStyle.Render(p.displayName) + suffix + "\n")
+		}
+		// "Custom / other" row
+		isSel := f.pickerIdx == len(knownProviders)
+		cursor := "  "
+		if isSel {
+			cursor = accent.Render("❯ ")
+		}
+		customStyle := fg
+		if isSel {
+			customStyle = accent
+		}
+		sb.WriteString(cursor + customStyle.Render("Custom / other") + "\n")
+		sb.WriteString("\n" + dim.Render("  ↑/↓ navigate · Enter select · Esc cancel"))
+		return
+	}
+
+	// ── Manual form steps ────────────────────────────────────────────────────
+	labels := []string{
+		"Credential alias (not API key)",
+		"Base URL",
+		"API key",
+	}
+	// Map providerFormStep values to labels indices (skip providerFormStepPicker=0).
+	stepOffset := int(providerFormStepCredential)
+
 	title := "Add OpenAI-compatible Provider"
 	if f.editKey != "" {
 		title = "Edit OpenAI-compatible Provider"
@@ -421,26 +507,27 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 	}
 	sb.WriteString(accent.Render("  "+title) + "\n\n")
 	for i, label := range labels {
-		value := providerFormValue(f, providerFormStep(i))
-		if providerFormStep(i) == providerFormStepAPIKey && value == "" && f.editKey != "" {
-			value = "(stored securely)"
-		}
-		if providerFormStep(i) == providerFormStepAPIKey && value != "" {
-			if value != "(stored securely)" {
+		step := providerFormStep(i + stepOffset)
+		value := providerFormValue(f, step)
+		// API key display: mask or show stored placeholder.
+		if step == providerFormStepAPIKey {
+			if value == "" && (f.editKey != "" || f.apiKey != "") {
+				value = "(stored securely)"
+			} else if value != "" && value != "(stored securely)" {
 				value = strings.Repeat("•", min(len(value), 12))
 			}
 		}
 		prefix := "  "
-		if providerFormStep(i) == f.step {
+		if step == f.step {
 			prefix = accent.Render("❯ ")
 			value = f.input
-			if f.step == providerFormStepAPIKey && value != "" {
+			if step == providerFormStepAPIKey && value != "" {
 				value = strings.Repeat("•", min(len(value), 12))
 			}
 		}
 		labelStyle := fg
 		valueStyle := fg
-		if providerFormStep(i) == f.step {
+		if step == f.step {
 			labelStyle = accent
 			valueStyle = accent
 		} else if value == "" || value == "(stored securely)" {
@@ -460,13 +547,6 @@ func providerFormValue(f *providerFormState, step providerFormStep) string {
 		return f.credential
 	case providerFormStepBaseURL:
 		return f.baseURL
-	case providerFormStepModel:
-		return f.model
-	case providerFormStepContextWindow:
-		if f.contextWin <= 0 {
-			return ""
-		}
-		return strconv.Itoa(f.contextWin)
 	case providerFormStepAPIKey:
 		return f.apiKey
 	default:
@@ -484,8 +564,17 @@ func (m Model) providerRows() []providerPanelRow {
 	}
 	sort.Strings(keys)
 	rows := make([]providerPanelRow, 0, len(keys))
+	seenAccounts := map[string]bool{}
 	for _, key := range keys {
-		rows = append(rows, providerPanelRow{key: key, provider: m.providers[key]})
+		provider := m.providers[key]
+		if provider.Kind == settings.ProviderKindOpenAICompatible {
+			accountKey := provider.Credential + "\x00" + provider.BaseURL
+			if seenAccounts[accountKey] {
+				continue
+			}
+			seenAccounts[accountKey] = true
+		}
+		rows = append(rows, providerPanelRow{key: key, provider: provider})
 	}
 	return rows
 }
@@ -556,31 +645,4 @@ func providerCredentialAliasLooksSecret(value string) bool {
 		}
 	}
 	return false
-}
-
-func parseProviderContextWindow(value string) (int, bool) {
-	s := strings.ToLower(strings.TrimSpace(value))
-	if s == "" {
-		return 0, false
-	}
-	switch {
-	case strings.HasSuffix(s, "tokens"):
-		s = strings.TrimSpace(strings.TrimSuffix(s, "tokens"))
-	case strings.HasSuffix(s, "token"):
-		s = strings.TrimSpace(strings.TrimSuffix(s, "token"))
-	}
-	multiplier := 1
-	switch {
-	case strings.HasSuffix(s, "k"):
-		multiplier = 1_000
-		s = strings.TrimSpace(strings.TrimSuffix(s, "k"))
-	case strings.HasSuffix(s, "m"):
-		multiplier = 1_000_000
-		s = strings.TrimSpace(strings.TrimSuffix(s, "m"))
-	}
-	n, err := strconv.Atoi(strings.ReplaceAll(s, "_", ""))
-	if err != nil || n <= 0 {
-		return 0, false
-	}
-	return n * multiplier, true
 }

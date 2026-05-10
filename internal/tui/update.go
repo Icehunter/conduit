@@ -267,6 +267,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashMsg = "Catalog refresh failed: " + msg.err.Error()
 		} else if msg.cat != nil {
 			m.catalogData = msg.cat
+			m.refreshModelCommandProviders()
 			m.flashMsg = fmt.Sprintf("Model catalog updated — %d models", len(msg.cat.Models))
 		}
 		m.refreshViewport()

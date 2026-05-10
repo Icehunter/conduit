@@ -245,7 +245,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.input.Focus()
 			return m, nil, true
 		}
-		return m, tea.Quit, true
+		m.quitConfirm = &quitConfirmState{selected: 1}
+		m.refreshViewport()
+		return m, nil, true
 
 	case "ctrl+v":
 		// Try image first, then PDF, then fall through to textarea text paste.

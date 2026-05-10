@@ -14,6 +14,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m2, cmd := m.handleTrustKey(msg)
 		return m2, cmd, true
 	}
+	// Quit-confirm overlay captures all keys when a quit has been requested.
+	if m.quitConfirm != nil {
+		m2, cmd := m.handleQuitConfirmKey(msg)
+		return m2, cmd, true
+	}
 	if m.loginPrompt != nil {
 		m2, cmd := m.handleLoginKey(msg)
 		return m2, cmd, true

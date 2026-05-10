@@ -70,7 +70,9 @@ func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Mod
 		m2, cmd, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 		return m2, cmd, true
 	case "app:exit":
-		return m, tea.Quit, true
+		m.quitConfirm = &quitConfirmState{selected: 1}
+		m.refreshViewport()
+		return m, nil, true
 	case "app:redraw":
 		return m, tea.ClearScreen, true
 

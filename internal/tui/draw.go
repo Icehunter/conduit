@@ -258,6 +258,8 @@ func (m Model) renderActiveModal() string {
 	switch {
 	case m.trustDialog != nil:
 		return m.renderTrustDialog()
+	case m.quitConfirm != nil:
+		return m.renderQuitConfirm()
 	case m.permPrompt != nil:
 		return m.renderPermissionPrompt()
 	case m.questionAsk != nil:

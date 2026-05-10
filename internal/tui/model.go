@@ -504,6 +504,10 @@ type Model struct {
 	// trustDialog is non-nil when the workspace trust dialog is pending.
 	trustDialog *trustDialogState
 
+	// quitConfirm is non-nil when the user has requested a quit and we are
+	// waiting for confirmation. Default selection is Nope.
+	quitConfirm *quitConfirmState
+
 	// Login picker state — non-nil when /login is active.
 	loginPrompt *loginPromptState
 

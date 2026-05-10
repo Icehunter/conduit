@@ -71,7 +71,9 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 		m.input.Focus()
 		return m, clearWindowTitleCmd()
 	}
-	return m, tea.Quit
+	m.quitConfirm = &quitConfirmState{selected: 1}
+	m.refreshViewport()
+	return m, nil
 }
 
 // handlePaste processes bracketed paste events, handling file drag-drop
@@ -101,7 +103,8 @@ func (m Model) handlePaste(msg tea.PasteMsg) (Model, tea.Cmd) {
 	hasOverlay := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-		m.planApproval != nil || m.trustDialog != nil || m.doctorPanel != nil || m.searchPanel != nil || m.helpOverlay != nil
+		m.planApproval != nil || m.trustDialog != nil || m.doctorPanel != nil || m.searchPanel != nil || m.helpOverlay != nil ||
+		m.quitConfirm != nil
 	if !hasOverlay {
 		content := strings.ReplaceAll(msg.Content, "\r\n", "\n")
 		content = strings.ReplaceAll(content, "\r", "\n")

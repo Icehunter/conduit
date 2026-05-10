@@ -349,7 +349,9 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 	case "exit":
-		return m, tea.Quit
+		m.quitConfirm = &quitConfirmState{selected: 1}
+		m.refreshViewport()
+		return m, nil
 	case "model":
 		return m.applyModelSwitch(res)
 	case "provider-switch":

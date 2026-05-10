@@ -64,7 +64,8 @@ func (m Model) selectionOverlayActive() bool {
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
 		m.questionAsk != nil || m.trustDialog != nil || m.helpOverlay != nil ||
 		m.doctorPanel != nil || m.searchPanel != nil ||
-		m.diffReview != nil || m.subagentPanel != nil
+		m.diffReview != nil || m.subagentPanel != nil ||
+		m.quitConfirm != nil
 }
 
 func (m *Model) handleMouseClick(msg tea.MouseClickMsg, area image.Rectangle) bool {

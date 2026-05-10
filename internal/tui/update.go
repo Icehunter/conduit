@@ -457,7 +457,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	overlayActive := m.loginPrompt != nil || m.resumePrompt != nil ||
 		m.panel != nil || m.pluginPanel != nil || m.settingsPanel != nil ||
 		m.permPrompt != nil || m.picker != nil || m.onboarding != nil ||
-		m.questionAsk != nil || m.planApproval != nil || m.trustDialog != nil
+		m.questionAsk != nil || m.planApproval != nil || m.trustDialog != nil ||
+		m.quitConfirm != nil
 	var taCmd, vpCmd tea.Cmd
 	if !overlayActive {
 		prevLines := m.input.LineCount()

@@ -157,6 +157,61 @@ func TestHandleKey_RunningUp_NotConsumed(t *testing.T) {
 	}
 }
 
+func TestHandleKey_EnterShrinksMultilineInputAfterNoAuthSend(t *testing.T) {
+	m := idleModel()
+	var cmd tea.Cmd
+	m, cmd = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+	if cmd == nil {
+		t.Fatal("window resize should return repaint command")
+	}
+	m.noAuth = true
+	m.input.SetValue("first line\nsecond line\nthird line")
+	m = m.applyLayout()
+	if got := m.input.Height(); got <= inputMinRows {
+		t.Fatalf("test setup input height = %d, want > %d", got, inputMinRows)
+	}
+
+	m2, _, consumed := m.handleKeyBuiltins(keyPress("enter"))
+	if !consumed {
+		t.Fatal("enter should be consumed")
+	}
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("input value after send = %q, want empty", got)
+	}
+	if got := m2.input.Height(); got != inputMinRows {
+		t.Fatalf("input height after send = %d, want %d", got, inputMinRows)
+	}
+}
+
+func TestHandleKey_EnterShrinksMultilineInputAfterSteeringSend(t *testing.T) {
+	m := idleModel()
+	m, _ = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.running = true
+	var steered string
+	m.cfg.SteerMessage = func(text string) {
+		steered = text
+	}
+	m.input.SetValue("steer line one\nsteer line two")
+	m = m.applyLayout()
+	if got := m.input.Height(); got <= inputMinRows {
+		t.Fatalf("test setup input height = %d, want > %d", got, inputMinRows)
+	}
+
+	m2, _, consumed := m.handleKeyBuiltins(keyPress("enter"))
+	if !consumed {
+		t.Fatal("enter should be consumed")
+	}
+	if steered != "steer line one\nsteer line two" {
+		t.Fatalf("steered text = %q", steered)
+	}
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("input value after steering send = %q, want empty", got)
+	}
+	if got := m2.input.Height(); got != inputMinRows {
+		t.Fatalf("input height after steering send = %d, want %d", got, inputMinRows)
+	}
+}
+
 func TestPluginDiscoverIRequiresSpaceToggle(t *testing.T) {
 	m := idleModel()
 	newState := func(search string) *pluginPanelState {

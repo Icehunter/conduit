@@ -185,7 +185,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 					m.input.CursorEnd()
 				}
 			} else {
-				m.input.Reset()
+				m = m.resetInput()
 			}
 			m.cmdMatches = nil
 			m.cmdSelected = 0
@@ -380,7 +380,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if m.running {
 			text := strings.TrimSpace(m.input.Value())
 			if text != "" && !strings.HasPrefix(text, "/") {
-				m.input.Reset()
+				m = m.resetInput()
 				if m.cfg.SteerMessage != nil {
 					// Inject mid-turn: the loop will append this as a user message
 					// between the current tool batch and the next API call, so the
@@ -422,7 +422,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			selected := m.cmdMatches[m.cmdSelected]
 			m.cmdMatches = nil
 			m.cmdSelected = 0
-			m.input.Reset()
+			m = m.resetInput()
 			m.dismissWelcome()
 			if m.cfg.Commands != nil {
 				if res, ok := m.cfg.Commands.Dispatch("/" + selected.Name); ok {
@@ -451,7 +451,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// Dispatch slash commands before sending to the agent.
 		if strings.HasPrefix(text, "/") {
 			m.dismissWelcome()
-			m.input.Reset()
+			m = m.resetInput()
 			if m.cfg.Commands != nil {
 				if res, ok := m.cfg.Commands.Dispatch(text); ok {
 					m2, cmd := m.applyCommandResult(res)
@@ -470,15 +470,15 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				Role:    RoleError,
 				Content: "Not logged in. Use /login to sign in first.",
 			})
-			m.input.Reset()
+			m = m.resetInput()
 			m.refreshViewport()
 			m.vp.GotoBottom()
 			return m, nil, true
 		}
 
 		m.dismissWelcome()
-		m.input.Reset()
 		m.todoStripHidden = true // collapse the task strip on send so the conversation is visible
+		m = m.resetInput()
 		if isAutoPrompt {
 			// Don't pollute input history or show raw instruction text.
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "↻ Continuing unfinished tasks…"})

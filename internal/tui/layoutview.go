@@ -63,6 +63,12 @@ func (m Model) applyLayout() Model {
 	return m
 }
 
+func (m Model) resetInput() Model {
+	m.input.Reset()
+	m.input.SetHeight(inputMinRows)
+	return m.applyLayout()
+}
+
 func (m Model) usageFooterRows() int {
 	if !m.usageStatusEnabled {
 		return 0

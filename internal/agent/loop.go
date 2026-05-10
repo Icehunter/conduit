@@ -26,6 +26,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -206,6 +207,11 @@ type Loop struct {
 	// row. Mirrors the MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES circuit breaker in
 	// autoCompact.ts. Stored on the struct so it persists across Run() calls.
 	consecutiveCompactFails int
+	// steerMsg holds an optional user steering message to inject between
+	// tool-call rounds. Written by InjectSteerMessage (TUI goroutine), read
+	// and cleared by Run (loop goroutine) via atomic.Value so no extra lock
+	// is needed.
+	steerMsg atomic.Value // stores string
 }
 
 // NewLoop constructs a Loop.
@@ -218,6 +224,15 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 		hooks.DefaultAsyncGroup.SubAgentRunner = l.RunBackgroundAgent
 	}
 	return l
+}
+
+// InjectSteerMessage queues a user steering message to be injected into the
+// conversation between the current tool-call batch and the next API request.
+// Safe to call from any goroutine. Only the most recent call takes effect per
+// batch — if the user types multiple messages quickly, the last one wins
+// (earlier ones were superseded). The loop clears the slot after consuming it.
+func (l *Loop) InjectSteerMessage(text string) {
+	l.steerMsg.Store(text)
 }
 
 // SetModel updates the model used for new requests (from /model slash command).
@@ -539,6 +554,19 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					l.cfg.OnEndTurn(msgs)
 				}
 				return msgs, nil
+			}
+		}
+
+		// Steering injection: if the user sent a message while tools were
+		// running, append it as a user turn now so the model sees it before
+		// the next API call — without interrupting the current turn.
+		if v := l.steerMsg.Swap(""); v != nil {
+			if text, _ := v.(string); text != "" {
+				msgs = append(msgs, api.Message{
+					Role:    "user",
+					Content: []api.ContentBlock{{Type: "text", Text: text}},
+				})
+				handler(LoopEvent{Type: EventText, Text: ""}) // wake TUI to reflect history update
 			}
 		}
 

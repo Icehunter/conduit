@@ -334,12 +334,13 @@ func (m Model) hiddenTasksHint() string {
 		return ""
 	}
 	counts := todoStatusCounts(todos)
+	remaining := counts.inProgress + counts.pending
 	var label string
 	switch {
 	case counts.inProgress > 0:
-		label = fmt.Sprintf("  ▶ %d task(s) · ctrl+t to view", len(todos))
+		label = fmt.Sprintf("  ▶ %d left · ctrl+t to view", remaining)
 	default:
-		label = fmt.Sprintf("  ○ %d task(s) · ctrl+t to view", len(todos))
+		label = fmt.Sprintf("  ○ %d left · ctrl+t to view", remaining)
 	}
 	return stylePickerDesc.Render(label)
 }

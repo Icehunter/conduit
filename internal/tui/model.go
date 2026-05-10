@@ -364,6 +364,10 @@ type Config struct {
 	// Skills is the skill listing injected into the initial system blocks.
 	// Stored alongside ClaudeMd for the same reason.
 	Skills []agent.SkillEntry
+
+	// SteerMessage, when non-nil, injects a user message into the running agent
+	// loop between tool-call batches instead of cancelling the current turn.
+	SteerMessage func(string)
 }
 
 // Model is the Bubble Tea model.
@@ -431,6 +435,11 @@ type Model struct {
 	// Empty when no companion is configured. Used to strip [Name: ...] markers
 	// from streaming content before they reach the viewport.
 	companionName string
+
+	// companionUserID is the resolved user ID for companion bone generation.
+	// Falls back to Profile.Email when buddy.json has an empty userId — mirrors
+	// the same fallback the /buddy command uses so the sprite matches.
+	companionUserID string
 
 	// companionBubble is the text shown in the companion speech bubble overlay.
 	// Set when the agent produces a [Name: ...] marker in a response.
@@ -679,6 +688,10 @@ func New(cfg Config) Model {
 	}
 	if sc, err := buddy.Load(); err == nil && sc != nil {
 		m.companionName = sc.Name
+		m.companionUserID = sc.UserID
+		if m.companionUserID == "" {
+			m.companionUserID = cfg.Profile.Email
+		}
 	}
 
 	// First-run welcome — only when not resuming and the persistence flag

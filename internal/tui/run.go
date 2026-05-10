@@ -132,6 +132,12 @@ type RunOptions struct {
 	// mainrepl creates one, passes it here, and calls DiffReview.AskReview
 	// from OnEndTurn when PendingEdits.Len() > 0.
 	DiffReview *DiffReviewHook
+
+	// SteerMessage, when non-nil, is called with the user's text to inject it
+	// as a steering turn between tool-call batches in the running agent loop.
+	// This lets the user steer the conversation without interrupting the agent.
+	// Provided by mainrepl via lp.InjectSteerMessage.
+	SteerMessage func(string)
 }
 
 // Run starts the full-screen TUI and blocks until the user exits.
@@ -503,6 +509,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		StartupWarnings:           runOpts.StartupWarnings,
 		ClaudeMd:                  runOpts.ClaudeMd,
 		Skills:                    runOpts.Skills,
+		SteerMessage:              runOpts.SteerMessage,
 		BackgroundModel: func() string {
 			if loop != nil {
 				return loop.BackgroundModel()

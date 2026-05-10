@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/lucasb-eyer/go-colorful"
 )
 
 const (
@@ -20,7 +21,6 @@ const (
 	labelGap            = " "
 	maxBirthOffset      = time.Second
 	ellipsisFrameSpeed  = 8
-	defaultFrameCount   = 36
 	widestEllipsisWidth = 3
 )
 
@@ -42,6 +42,7 @@ type Anim struct {
 	started       time.Time
 	birthOffsets  []time.Duration
 	frames        [][]string
+	birthDots     []string // pre-rendered '.' chars at each position's gradient color
 	labelFrames   []string
 	ellipsis      []string
 	step          int
@@ -73,7 +74,7 @@ func New(size int, label string, gradFromColor, gradToColor, labelColor color.Co
 		bgColor:       bg,
 		started:       time.Now(),
 	}
-	a.frames = renderFrames(size, gradFromColor, gradToColor, bg)
+	a.frames, a.birthDots = renderFrames(size, gradFromColor, gradToColor, bg)
 	a.birthOffsets = make([]time.Duration, size)
 	for i := range a.birthOffsets {
 		a.birthOffsets[i] = time.Duration(rand.N(int64(maxBirthOffset)))
@@ -152,7 +153,7 @@ func (a *Anim) SetColorsWithBackground(gradFromColor, gradToColor, labelColor, b
 	a.gradToColor = gradToColor
 	a.labelColor = labelColor
 	a.bgColor = bgColor
-	a.frames = renderFrames(a.size, gradFromColor, gradToColor, bgColor)
+	a.frames, a.birthDots = renderFrames(a.size, gradFromColor, gradToColor, bgColor)
 	label := a.label
 	a.label = ""
 	a.SetLabel(label)
@@ -186,11 +187,9 @@ func (a *Anim) Render() string {
 	var b strings.Builder
 	for i := range a.size {
 		if !a.initialized && i < len(a.birthOffsets) && time.Since(a.started) < a.birthOffsets[i] {
-			style := lipgloss.NewStyle().Foreground(a.gradFromColor)
-			if a.bgColor != nil {
-				style = style.Background(a.bgColor)
+			if i < len(a.birthDots) {
+				b.WriteString(a.birthDots[i])
 			}
-			b.WriteString(style.Render("."))
 			continue
 		}
 		b.WriteString(frame[i])
@@ -241,15 +240,31 @@ func (a *Anim) Step() tea.Cmd {
 	})
 }
 
-func renderFrames(size int, gradFromColor, gradToColor, bgColor color.Color) [][]string {
+func renderFrames(size int, gradFromColor, gradToColor, bgColor color.Color) (frames [][]string, birthDots []string) {
 	if size < 1 {
 		size = defaultSize
 	}
-	ramp := lipgloss.Blend1D(size*2, gradFromColor, gradToColor)
+	// Build a seamless A→B→A ramp at 3× width so the scrolling wave loops
+	// without a hard color jump. HCL blending keeps colors vibrant and in-gamut.
+	ramp := hclBlend1D(size*3, gradFromColor, gradToColor, gradFromColor)
 	if len(ramp) == 0 {
 		ramp = []color.Color{gradFromColor}
 	}
-	frames := make([][]string, defaultFrameCount)
+
+	// Pre-render the static '.' shown during the birth-phase boot sequence.
+	// Each position gets the gradient color at that index so dots already
+	// paint the full gradient during startup.
+	birthDots = make([]string, size)
+	for j := range size {
+		style := lipgloss.NewStyle().Foreground(ramp[j%len(ramp)])
+		if bgColor != nil {
+			style = style.Background(bgColor)
+		}
+		birthDots[j] = style.Render(".")
+	}
+
+	numFrames := size * 2
+	frames = make([][]string, numFrames)
 	for i := range frames {
 		frames[i] = make([]string, size)
 		for j := range size {
@@ -262,7 +277,40 @@ func renderFrames(size int, gradFromColor, gradToColor, bgColor color.Color) [][
 			frames[i][j] = style.Render(string(r))
 		}
 	}
-	return frames
+	return frames, birthDots
+}
+
+// hclBlend1D produces a slice of n colors by blending through the provided
+// stops in HCL space. HCL interpolation keeps hue, chroma, and lightness
+// perceptually uniform so the gradient stays vibrant rather than washing out
+// through grey (as linear RGB blending can). Requires ≥2 stops.
+func hclBlend1D(n int, stops ...color.Color) []color.Color {
+	if n <= 0 || len(stops) < 2 {
+		return nil
+	}
+	pts := make([]colorful.Color, len(stops))
+	for i, s := range stops {
+		pts[i], _ = colorful.MakeColor(s)
+	}
+	segments := len(stops) - 1
+	sizes := make([]int, segments)
+	base := n / segments
+	rem := n % segments
+	for i := range sizes {
+		sizes[i] = base
+		if i < rem {
+			sizes[i]++
+		}
+	}
+	out := make([]color.Color, 0, n)
+	for seg := range segments {
+		c1, c2 := pts[seg], pts[seg+1]
+		for k := range sizes[seg] {
+			t := float64(k) / float64(max(sizes[seg], 1))
+			out = append(out, c1.BlendHcl(c2, t).Clamped())
+		}
+	}
+	return out
 }
 
 func renderChars(s string, c, bgColor color.Color) []string {

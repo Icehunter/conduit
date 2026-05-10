@@ -378,12 +378,23 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 	case "enter":
 		if m.running {
-			// Queue the message for delivery after the current turn completes.
 			text := strings.TrimSpace(m.input.Value())
 			if text != "" && !strings.HasPrefix(text, "/") {
-				m.pendingMessages = append(m.pendingMessages, text)
 				m.input.Reset()
-				m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
+				if m.cfg.SteerMessage != nil {
+					// Inject mid-turn: the loop will append this as a user message
+					// between the current tool batch and the next API call, so the
+					// model steers without the current turn being interrupted.
+					m.cfg.SteerMessage(text)
+					m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+					m.refreshViewport()
+					m.vp.GotoBottom()
+					m.flashMsg = "[steering → next tool round]"
+				} else {
+					// Fallback: queue for delivery after the turn ends.
+					m.pendingMessages = append(m.pendingMessages, text)
+					m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
+				}
 				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 			}
 			// Empty input while running: drill into running sub-agent log if any.
@@ -467,6 +478,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 		m.dismissWelcome()
 		m.input.Reset()
+		m.todoStripHidden = true // collapse the task strip on send so the conversation is visible
 		if isAutoPrompt {
 			// Don't pollute input history or show raw instruction text.
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "↻ Continuing unfinished tasks…"})

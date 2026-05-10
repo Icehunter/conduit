@@ -158,7 +158,7 @@ func (m Model) renderCompanionBubble() string {
 	if err != nil || sc == nil {
 		return ""
 	}
-	bones := buddy.GenerateBones(sc.UserID, sc.ForcedRarity)
+	bones := buddy.GenerateBones(m.companionUserID, sc.ForcedRarity)
 	sprite := buddy.RenderSprite(bones, m.buddyFrame)
 	spriteStyle := lipgloss.NewStyle().Background(colorWindowBg)
 	if strings.TrimSpace(m.companionBubble) == "" {

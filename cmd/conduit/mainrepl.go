@@ -743,6 +743,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 		PendingEdits: pendingTable,
 		DiffReview:   diffReviewHook,
+		SteerMessage: lp.InjectSteerMessage,
 	})
 
 	// Drain async hooks: cancel their context and wait up to 5s for them to

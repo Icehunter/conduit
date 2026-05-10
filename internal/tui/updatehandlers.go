@@ -313,8 +313,15 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	// auto-submit the first queued message now. Subsequent ones will be
 	// sent in future agentDoneMsg cycles.
 	if len(m.pendingMessages) > 0 {
+		// Preserve any text the user is actively typing so it isn't lost.
+		liveInput := strings.TrimSpace(m.input.Value())
 		next := m.pendingMessages[0]
 		m.pendingMessages = m.pendingMessages[1:]
+		// If the user is mid-typing something new, push it back so it fires
+		// after the pending message rather than being silently overwritten.
+		if liveInput != "" && liveInput != next {
+			m.pendingMessages = append([]string{liveInput}, m.pendingMessages...)
+		}
 		// Inject into input so the normal submit path fires.
 		m.input.SetValue(next)
 		// Send the synthetic Enter key to trigger submission.

@@ -15,6 +15,7 @@ import (
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/commands"
 	internalmodel "github.com/icehunter/conduit/internal/model"
+	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/provider/copilot"
 	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
@@ -37,13 +38,15 @@ type knownProviderEntry struct {
 	baseURL     string
 	catalogSlug string // provider slug in catalog data
 	isOAuth     bool
+	oauthKind   string
 }
 
 var knownProviders = []knownProviderEntry{
 	{id: "openai", displayName: "OpenAI", baseURL: "https://api.openai.com/v1/", catalogSlug: "openai"},
 	{id: "gemini", displayName: "Gemini (Google AI Studio)", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", catalogSlug: "google"},
 	{id: "openrouter", displayName: "OpenRouter", baseURL: "https://openrouter.ai/api/v1/", catalogSlug: "openrouter"},
-	{id: "github-copilot", displayName: "GitHub Copilot", isOAuth: true},
+	{id: "github-copilot", displayName: "GitHub Copilot", isOAuth: true, oauthKind: "copilot"},
+	{id: "chatgpt-codex", displayName: "ChatGPT / Codex", isOAuth: true, oauthKind: "codex"},
 }
 
 type providerFormState struct {
@@ -61,6 +64,7 @@ type providerFormState struct {
 	oauthStarting bool
 	oauthInfo     *copilot.DeviceCodeResponse
 	oauthProvider bool
+	oauthKind     string
 }
 
 type copilotOAuthStartedMsg struct {
@@ -72,6 +76,11 @@ type copilotOAuthCompletedMsg struct {
 	models  []string
 	warning string
 	err     error
+}
+
+type codexOAuthCompletedMsg struct {
+	models []string
+	err    error
 }
 
 type providerPanelRow struct {
@@ -129,6 +138,9 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 				f.step = providerFormStepOAuth
 				f.oauthStarting = true
 				f.err = ""
+				if f.oauthKind == "codex" {
+					return doneWithCmd(codexStartOAuthCmd(f.credential))
+				}
 				return doneWithCmd(copilotStartOAuthCmd(f.credential))
 			} else if f.oauthProvider && f.step == providerFormStepCredential && f.editKey != "" {
 				if err := m.advanceProviderForm(f, false, false); err != nil {
@@ -137,6 +149,14 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 				}
 				m = m.commitProviderFormIfComplete(f)
 			} else if f.step == providerFormStepOAuth {
+				if f.oauthKind == "codex" {
+					if err := m.completeCodexOAuthForm(f, nil); err != nil {
+						f.err = err.Error()
+						return done()
+					}
+					m = m.commitProviderFormIfComplete(f)
+					return done()
+				}
 				if err := m.completeCopilotOAuthForm(f, nil); err != nil {
 					f.err = err.Error()
 					return done()
@@ -250,7 +270,12 @@ func formForProvider(provider settings.ActiveProviderSettings, key string, token
 	}
 	if isCopilotProvider(provider) {
 		f.oauthProvider = true
+		f.oauthKind = "copilot"
 		f.baseURL = copilot.ChatBaseURL
+	} else if isCodexProvider(provider) {
+		f.oauthProvider = true
+		f.oauthKind = "codex"
+		f.baseURL = codex.CodexBaseURL
 	}
 	if tokenOnly {
 		f.step = providerFormStepAPIKey
@@ -270,8 +295,14 @@ func (m Model) applyProviderPicker(f *providerFormState) {
 
 	if preset.isOAuth {
 		f.oauthProvider = true
-		f.credential = m.nextCopilotCredentialAlias()
-		f.baseURL = copilot.ChatBaseURL
+		f.oauthKind = preset.oauthKind
+		if f.oauthKind == "codex" {
+			f.credential = m.nextCodexCredentialAlias()
+			f.baseURL = codex.CodexBaseURL
+		} else {
+			f.credential = m.nextCopilotCredentialAlias()
+			f.baseURL = copilot.ChatBaseURL
+		}
 		f.step = providerFormStepCredential
 		f.oauthInfo = nil
 		f.err = ""
@@ -291,11 +322,18 @@ func (m Model) applyProviderPicker(f *providerFormState) {
 	f.input = f.credential
 }
 
+func (m Model) nextCodexCredentialAlias() string {
+	return m.nextOAuthCredentialAlias(codex.ProviderID, isCodexProvider)
+}
+
 func (m Model) nextCopilotCredentialAlias() string {
-	base := copilot.ProviderID
+	return m.nextOAuthCredentialAlias(copilot.ProviderID, isCopilotProvider)
+}
+
+func (m Model) nextOAuthCredentialAlias(base string, matches func(settings.ActiveProviderSettings) bool) string {
 	used := map[string]bool{}
 	for _, provider := range m.providers {
-		if isCopilotProvider(provider) && provider.Credential != "" {
+		if matches(provider) && provider.Credential != "" {
 			used[provider.Credential] = true
 		}
 	}
@@ -322,6 +360,7 @@ func (m Model) refreshModelCommandProviders() {
 		return
 	}
 	m.ensureCopilotFallbackProviders(copilot.ProviderID)
+	m.ensureCodexFallbackProviders(codex.ProviderID)
 	commands.RegisterModelCommand(m.cfg.Commands,
 		func() string {
 			if m.cfg.Live != nil {
@@ -418,14 +457,18 @@ func (m Model) commitProviderFormIfComplete(f *providerFormState) Model {
 		if f.editKey == "" {
 			return m
 		}
-		if err := m.renameProviderGroup(f.editKey, f.credential, copilot.ChatBaseURL, ""); err != nil {
+		baseURL := copilot.ChatBaseURL
+		if f.oauthKind == "codex" {
+			baseURL = codex.CodexBaseURL
+		}
+		if err := m.renameProviderGroup(f.editKey, f.credential, baseURL, ""); err != nil {
 			f.step = providerFormStepCredential
 			f.err = err.Error()
 			return m
 		}
 		if m.settingsPanel != nil {
 			m.settingsPanel.providerForm = nil
-			m.settingsPanel.providerDetailKey = providerAccountRowKey(m.providerRows(), f.credential, copilot.ChatBaseURL)
+			m.settingsPanel.providerDetailKey = providerAccountRowKey(m.providerRows(), f.credential, baseURL)
 			m.settingsPanel.providerSel = providerIndex(m.providerRows(), m.settingsPanel.providerDetailKey)
 		}
 		m.refreshModelCommandProviders()
@@ -514,6 +557,9 @@ func (m *Model) renameProviderGroup(editKey, credential, baseURL, apiKey string)
 	if isCopilotProvider(row.provider) {
 		baseURL = copilot.ChatBaseURL
 		oldBaseURL = copilot.ChatBaseURL
+	} else if isCodexProvider(row.provider) {
+		baseURL = codex.CodexBaseURL
+		oldBaseURL = codex.CodexBaseURL
 	}
 
 	updated := map[string]string{}
@@ -527,6 +573,8 @@ func (m *Model) renameProviderGroup(editKey, credential, baseURL, apiKey string)
 		provider.BaseURL = baseURL
 		if isCopilotProvider(provider) {
 			provider.ContextWindow = copilot.ContextWindowForModel(provider.Model, provider.ContextWindow)
+		} else if isCodexProvider(provider) {
+			provider.ContextWindow = codex.ContextWindowForModel(provider.Model, provider.ContextWindow)
 		}
 		if err := settings.ValidateProviderSettings(provider); err != nil {
 			return err
@@ -685,6 +733,18 @@ func copilotModelIDs(models []catalog.ModelInfo) []string {
 	return modelIDs
 }
 
+func codexStartOAuthCmd(credential string) tea.Cmd {
+	return func() tea.Msg {
+		auth := codex.NewAuthorizerForCredential(secure.NewDefault(), credential)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if _, err := auth.AuthorizeBrowser(ctx); err != nil {
+			return codexOAuthCompletedMsg{err: err}
+		}
+		return codexOAuthCompletedMsg{models: codex.FallbackModelIDs()}
+	}
+}
+
 func (m Model) handleCopilotOAuthStarted(msg copilotOAuthStartedMsg) (Model, tea.Cmd) {
 	if m.settingsPanel == nil || m.settingsPanel.providerForm == nil {
 		return m, nil
@@ -741,6 +801,78 @@ func (m Model) handleCopilotOAuthCompleted(msg copilotOAuthCompletedMsg) (Model,
 	}
 	m.refreshViewport()
 	return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+}
+
+func (m Model) handleCodexOAuthCompleted(msg codexOAuthCompletedMsg) (Model, tea.Cmd) {
+	if m.settingsPanel == nil || m.settingsPanel.providerForm == nil {
+		return m, nil
+	}
+	f := m.settingsPanel.providerForm
+	if f.step != providerFormStepOAuth || f.oauthKind != "codex" {
+		return m, nil
+	}
+	f.oauthStarting = false
+	if msg.err != nil {
+		f.err = gracefulCodexError(msg.err)
+		m.refreshViewport()
+		return m, nil
+	}
+	if err := m.completeCodexOAuthForm(f, msg.models); err != nil {
+		f.err = err.Error()
+		m.refreshViewport()
+		return m, nil
+	}
+	if m.settingsPanel != nil {
+		m.settingsPanel.providerForm = nil
+		m.settingsPanel.providerDetailKey = ""
+		if len(msg.models) > 0 {
+			m.settingsPanel.providerSel = providerIndex(m.providerRows(), settings.ProviderKey(settings.ActiveProviderSettings{
+				Kind:       settings.ProviderKindOpenAICompatible,
+				Credential: f.credential,
+				BaseURL:    codex.CodexBaseURL,
+				Model:      msg.models[0],
+			}))
+		}
+	}
+	m.refreshModelCommandProviders()
+	m.flashMsg = fmt.Sprintf("ChatGPT / Codex connected — %d models available", len(msg.models))
+	m.refreshViewport()
+	return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+}
+
+func (m Model) completeCodexOAuthForm(f *providerFormState, models []string) error {
+	if f == nil {
+		return fmt.Errorf("codex: provider form missing")
+	}
+	if f.oauthStarting {
+		return fmt.Errorf("codex: authorization is still running")
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("codex: no models available")
+	}
+	if strings.TrimSpace(f.credential) == "" {
+		f.credential = codex.ProviderID
+	}
+	f.baseURL = codex.CodexBaseURL
+	f.apiKey = ""
+	f.step = providerFormStepAPIKey + 1
+	if m.providers == nil {
+		m.providers = map[string]settings.ActiveProviderSettings{}
+	}
+	for _, model := range models {
+		provider := settings.ActiveProviderSettings{
+			Kind:          settings.ProviderKindOpenAICompatible,
+			Credential:    f.credential,
+			BaseURL:       codex.CodexBaseURL,
+			Model:         model,
+			ContextWindow: codex.ContextWindowForModel(model, 0),
+		}
+		if err := settings.SaveProviderEntry(provider); err != nil {
+			return err
+		}
+		m.providers[settings.ProviderKey(provider)] = provider
+	}
+	return nil
 }
 
 func (m Model) completeCopilotOAuthForm(f *providerFormState, models []string) error {
@@ -810,12 +942,48 @@ func (m Model) ensureCopilotFallbackProviders(credential string) {
 	}
 }
 
+func (m Model) ensureCodexFallbackProviders(credential string) {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		credential = codex.ProviderID
+	}
+	if _, err := settings.LoadStructuredProviderCredential(secure.NewDefault(), credential); err != nil {
+		return
+	}
+	for _, provider := range m.providers {
+		if isCodexProvider(provider) && provider.Credential == credential {
+			return
+		}
+	}
+	if m.providers == nil {
+		m.providers = map[string]settings.ActiveProviderSettings{}
+	}
+	for _, model := range codex.FallbackModels() {
+		provider := settings.ActiveProviderSettings{
+			Kind:          settings.ProviderKindOpenAICompatible,
+			Credential:    credential,
+			BaseURL:       codex.CodexBaseURL,
+			Model:         model.ID,
+			ContextWindow: codex.ContextWindowForModel(model.ID, model.ContextWindow),
+		}
+		_ = settings.SaveProviderEntry(provider)
+		m.providers[settings.ProviderKey(provider)] = provider
+	}
+}
+
 func gracefulCopilotError(err error) string {
 	if errors.Is(err, copilot.ErrNotAvailable) {
 		return "GitHub authorized, but this account does not have Copilot API access."
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "GitHub Copilot authorization timed out. Press Esc and try again."
+	}
+	return err.Error()
+}
+
+func gracefulCodexError(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "ChatGPT / Codex authorization timed out. Press Esc and try again."
 	}
 	return err.Error()
 }
@@ -931,12 +1099,19 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 	errStyle := lipgloss.NewStyle().Foreground(colorError)
 
 	if f.step == providerFormStepOAuth {
-		sb.WriteString(accent.Render("  GitHub Copilot Authorization") + "\n\n")
+		name := "GitHub Copilot"
+		if f.oauthKind == "codex" {
+			name = "ChatGPT / Codex"
+		}
+		sb.WriteString(accent.Render("  "+name+" Authorization") + "\n\n")
 		if f.oauthStarting {
-			sb.WriteString(dim.Render("  Preparing GitHub Copilot connection..."))
+			sb.WriteString(dim.Render("  Preparing " + name + " connection..."))
 			return
 		}
-		if f.oauthInfo != nil {
+		if f.oauthKind == "codex" {
+			sb.WriteString(dim.Render("  Complete authorization in your browser.") + "\n")
+			sb.WriteString(dim.Render("  Waiting for authorization...") + "\n")
+		} else if f.oauthInfo != nil {
 			sb.WriteString(fmt.Sprintf("  Please visit: %s\n", f.oauthInfo.VerificationURI))
 			sb.WriteString(fmt.Sprintf("  And enter code: %s\n\n", f.oauthInfo.UserCode))
 			sb.WriteString(dim.Render("  Waiting for authorization and model discovery...") + "\n")
@@ -987,10 +1162,14 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 
 	// ── Manual form steps ────────────────────────────────────────────────────
 	if f.oauthProvider {
-		title := "Add GitHub Copilot Account"
+		name := "GitHub Copilot"
+		if f.oauthKind == "codex" {
+			name = "ChatGPT / Codex"
+		}
+		title := "Add " + name + " Account"
 		footer := "  Enter connect · Esc cancel"
 		if f.editKey != "" {
-			title = "Rename GitHub Copilot Account"
+			title = "Rename " + name + " Account"
 			footer = "  Enter save · Esc cancel"
 		}
 		sb.WriteString(accent.Render("  "+title) + "\n\n")
@@ -1137,7 +1316,7 @@ func providerDetailActionLabels() []string {
 }
 
 func providerDetailActionsFor(provider settings.ActiveProviderSettings) []string {
-	if isCopilotProvider(provider) {
+	if isCopilotProvider(provider) || isCodexProvider(provider) {
 		return []string{"edit", "delete", "back"}
 	}
 	return providerDetailActions()
@@ -1146,6 +1325,9 @@ func providerDetailActionsFor(provider settings.ActiveProviderSettings) []string
 func providerDetailActionLabelsFor(provider settings.ActiveProviderSettings) []string {
 	if isCopilotProvider(provider) {
 		return []string{"Rename GitHub Copilot account", "Disconnect GitHub Copilot", "Back"}
+	}
+	if isCodexProvider(provider) {
+		return []string{"Rename ChatGPT / Codex account", "Disconnect ChatGPT / Codex", "Back"}
 	}
 	return providerDetailActionLabels()
 }
@@ -1212,4 +1394,8 @@ func providerCredentialAliasLooksSecret(value string) bool {
 
 func isCopilotProvider(provider settings.ActiveProviderSettings) bool {
 	return strings.HasPrefix(provider.Credential, copilot.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com")
+}
+
+func isCodexProvider(provider settings.ActiveProviderSettings) bool {
+	return strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex")
 }

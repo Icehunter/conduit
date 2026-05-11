@@ -41,10 +41,20 @@ var errAlreadyWaited = errors.New("auth: Wait already called on this listener")
 // NewCallbackListener binds an OS-assigned localhost port and starts serving.
 // The returned listener is ready to receive a redirect immediately.
 func NewCallbackListener(callbackPath string) (*CallbackListener, error) {
+	return NewCallbackListenerOnAddr("127.0.0.1:0", callbackPath)
+}
+
+// NewCallbackListenerOnAddr binds the supplied local address and starts
+// serving. Product-account OAuth clients sometimes require an exact registered
+// localhost redirect URI, so callers can request a fixed port when needed.
+func NewCallbackListenerOnAddr(addr, callbackPath string) (*CallbackListener, error) {
 	if callbackPath == "" {
 		callbackPath = "/callback"
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	ln, err := net.Listen("tcp", addr) //nolint:noctx
 	if err != nil {
 		return nil, fmt.Errorf("auth: bind localhost listener: %w", err)
 	}

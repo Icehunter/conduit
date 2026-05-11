@@ -125,6 +125,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 - **Provider context windows** — custom providers can set `contextWindow`; OpenAI-compatible streams request usage metadata when the server supports it
 - **Role presets** — default, main, background, planning, and implement roles make it easy to run expensive work on one model and smaller work somewhere else
 - **Provider account OAuth plan** — see [docs/provider-account-oauth-plan.md](docs/provider-account-oauth-plan.md) for the Copilot and ChatGPT/Codex account-provider design
+- **Provider account wire checks** — see [PROVIDER_COMPATIBILITY.md](PROVIDER_COMPATIBILITY.md) and run `make wire` for Copilot and ChatGPT/Codex drift guards
 
 ### In-process RTK (token savings)
 

@@ -10,6 +10,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/provider/copilot"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -83,6 +84,41 @@ func NewProviderAPIClient(provider settings.ActiveProviderSettings, store secure
 		baseURL := strings.TrimRight(provider.BaseURL, "/")
 		if baseURL == "" {
 			return nil, fmt.Errorf("provider %q missing baseURL", settings.ProviderKey(provider))
+		}
+		if strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(baseURL, "chatgpt.com/backend-api/codex") {
+			auth := codex.NewAuthorizerForCredential(store, provider.Credential)
+			cred, err := auth.EnsureFresh(context.Background())
+			if err != nil {
+				return nil, fmt.Errorf("chatgpt/codex credential: %w", err)
+			}
+			accountID := ""
+			if cred.Metadata != nil {
+				accountID = cred.Metadata["account_id"]
+			}
+			storeResponses := false
+			var client *api.Client
+			client = api.NewClientWithProxy(api.Config{
+				ProviderKind:                        api.ProviderKindOpenAIResponses,
+				BaseURL:                             codex.CodexBaseURL,
+				AuthToken:                           cred.AccessToken,
+				UserAgent:                           fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),
+				ExtraHeaders:                        codex.Headers(accountID, "", wireVersion),
+				OpenAIResponsesSystemAsInstructions: true,
+				OpenAIResponsesOmitMaxOutputTokens:  true,
+				OpenAIResponsesStore:                &storeResponses,
+				OnAuth401: func(ctx context.Context) error {
+					if err := auth.Refresh(ctx); err != nil {
+						return err
+					}
+					latest, err := auth.EnsureFresh(ctx)
+					if err != nil {
+						return err
+					}
+					client.SetAuthToken(latest.AccessToken)
+					return nil
+				},
+			})
+			return client, nil
 		}
 		if strings.HasPrefix(provider.Credential, copilot.ProviderID) || strings.Contains(baseURL, "api.githubcopilot.com") {
 			auth := copilot.NewAuthorizerForCredential(store, provider.Credential)

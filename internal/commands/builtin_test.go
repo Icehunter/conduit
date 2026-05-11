@@ -401,6 +401,49 @@ func TestRegisterModelCommand_ModelsShowsOpenAICompatibleProviders(t *testing.T)
 	}
 }
 
+func TestRegisterModelCommand_ModelsShowsAllGroupedFallbackModels(t *testing.T) {
+	r := New()
+	p1 := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "chatgpt-codex",
+		BaseURL:    "https://chatgpt.com/backend-api/codex",
+		Model:      "gpt-5.4",
+	}
+	p2 := p1
+	p2.Model = "gpt-5.4-mini"
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(p1): p1,
+		settings.ProviderKey(p2): p2,
+	}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	foundSection := false
+	found54 := false
+	foundMini := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "ChatGPT / Codex" {
+			foundSection = true
+		}
+		if item.Value == "provider:openai-compatible.chatgpt-codex.gpt-5.4" {
+			found54 = true
+		}
+		if item.Value == "provider:openai-compatible.chatgpt-codex.gpt-5.4-mini" {
+			foundMini = true
+		}
+	}
+	if !foundSection || !found54 || !foundMini {
+		t.Fatalf("picker section=%v gpt54=%v mini=%v items=%#v", foundSection, found54, foundMini, got.Items)
+	}
+}
+
 func TestRegisterModelCommand_ModelsExpandsDirectProviderCatalogModels(t *testing.T) {
 	r := New()
 	provider := settings.ActiveProviderSettings{

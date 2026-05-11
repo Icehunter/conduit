@@ -279,6 +279,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case copilotOAuthCompletedMsg:
 		return m.handleCopilotOAuthCompleted(msg)
 
+	case codexOAuthCompletedMsg:
+		return m.handleCodexOAuthCompleted(msg)
+
 	case councilChatMsg:
 		return m.handleCouncilChat(msg)
 

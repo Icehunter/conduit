@@ -19,6 +19,7 @@ import (
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/provider/copilot"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -227,6 +228,8 @@ func (m *Model) applyEffectiveProviderForMode() {
 		}
 		if strings.HasPrefix(provider.Credential, copilot.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
 			provider.ContextWindow = copilot.ContextWindowForModel(provider.Model, provider.ContextWindow)
+		} else if strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
+			provider.ContextWindow = codex.ContextWindowForModel(provider.Model, provider.ContextWindow)
 		}
 		if m.cfg.NewProviderAPIClient == nil {
 			return
@@ -593,6 +596,8 @@ func accountProviderDisplayName(provider settings.ActiveProviderSettings) string
 		label = "OpenAI-compatible"
 		if strings.HasPrefix(provider.Credential, "github-copilot") || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
 			label = "GitHub Copilot"
+		} else if strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
+			label = "ChatGPT / Codex"
 		}
 		provider.Account = ""
 	}

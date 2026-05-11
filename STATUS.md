@@ -6,10 +6,13 @@ This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
 
 - For Claude wire/auth compatibility details see `COMPATIBILITY.md`.
+- For Copilot and ChatGPT/Codex provider-account wire details see
+  `PROVIDER_COMPATIBILITY.md`.
 - For historical CC source → Go mapping see `PARITY.md` (frozen reference; not
   the active product tracker).
 - Update rules: capability changes → this file; OAuth/header/wire changes →
-  `COMPATIBILITY.md`; CC behavioral reference notes → `PARITY.md`.
+  `COMPATIBILITY.md` for Claude or `PROVIDER_COMPATIBILITY.md` for
+  provider-account paths; CC behavioral reference notes → `PARITY.md`.
 
 **Legend:** ✅ Done · 🔶 Partial · 🔲 Planned · 🚫 Descoped
 
@@ -31,7 +34,8 @@ coming, and what's intentionally out of scope.
 | Provider auth interface (C-O3) | ✅ | `internal/providerauth/` — `Method`, `Config`, `Authorizer`, `APIKeyAuthorizer` |
 | Provider entries reference accounts (C-O3) | ✅ | Provider entries store a credential alias that resolves through secure providerauth storage; known providers reuse `openai`, `gemini`, and `openrouter` credentials |
 | GitHub Copilot auth | 🔶 | Experimental: device-code login, Copilot token exchange, model discovery, `/chat/completions`, `/responses`, and Claude `/v1/messages` routing; gracefully reports entitlement/discovery failures |
-| OpenAI ChatGPT Plus/Pro OAuth | 🔲 | C-O3 follow-on: experimental product-account provider; see `docs/provider-account-oauth-plan.md` |
+| OpenAI ChatGPT Plus/Pro OAuth | 🔶 | Experimental: browser PKCE login, secure refresh-token storage, ChatGPT/Codex model rows, and Codex Responses routing through `https://chatgpt.com/backend-api/codex/responses`; manual verification still required |
+| Provider-account wire checks | ✅ | `PROVIDER_COMPATIBILITY.md` plus `make wire` cover Copilot and ChatGPT/Codex drift guards; Claude remains under `make wire-claude` |
 
 ---
 

@@ -293,8 +293,11 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 	sort.Strings(keys)
 	items := make([]PickerOption, 0, len(keys)*2)
 	type openAIGroup struct {
-		label string
-		items []PickerOption
+		label        string
+		items        []PickerOption
+		seen         map[string]bool
+		catalogTried bool
+		hasCatalog   bool
 	}
 	openAIGroups := map[string]*openAIGroup{}
 	openAIOrder := []string{}
@@ -308,15 +311,18 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 			accountKey := provider.Credential + "\x00" + provider.BaseURL
 			group := openAIGroups[accountKey]
 			if group == nil {
-				group = &openAIGroup{label: label}
+				group = &openAIGroup{label: label, seen: map[string]bool{}}
 				openAIGroups[accountKey] = group
 				openAIOrder = append(openAIOrder, accountKey)
 			}
-			if len(group.items) == 0 {
+			if !group.catalogTried {
+				group.catalogTried = true
 				group.items = catalogModelPickerItems(provider, modelCatalog)
+				group.hasCatalog = len(group.items) > 0
 			}
-			if len(group.items) == 0 && provider.Model != "" {
+			if !group.hasCatalog && provider.Model != "" && !group.seen[provider.Model] {
 				group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
+				group.seen[provider.Model] = true
 			}
 			continue
 		}
@@ -434,6 +440,9 @@ func customModelPickerSection(provider settings.ActiveProviderSettings) (string,
 	case settings.ProviderKindOpenAICompatible:
 		if strings.HasPrefix(provider.Credential, "github-copilot") || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
 			return "GitHub Copilot", true
+		}
+		if strings.HasPrefix(provider.Credential, "chatgpt-codex") || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
+			return "ChatGPT / Codex", true
 		}
 		label := "OpenAI-compatible"
 		if provider.Credential != "" {

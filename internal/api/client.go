@@ -66,6 +66,17 @@ type Config struct {
 	// GitHub Copilot's /v1/messages shim accepts ephemeral cache_control but
 	// rejects the newer scoped cache shape.
 	StripCacheControlScope bool
+	// OpenAIResponsesSystemAsInstructions sends System blocks as a top-level
+	// Responses `instructions` field instead of a developer input item. The
+	// ChatGPT/Codex product-account endpoint follows Codex CLI's shape here.
+	OpenAIResponsesSystemAsInstructions bool
+	// OpenAIResponsesOmitMaxOutputTokens leaves max_output_tokens unset.
+	// ChatGPT/Codex applies account-specific defaults and rejects some normal
+	// API request shapes.
+	OpenAIResponsesOmitMaxOutputTokens bool
+	// OpenAIResponsesStore, when non-nil, sends the Responses store flag.
+	// ChatGPT/Codex requires this to be explicitly false.
+	OpenAIResponsesStore *bool
 }
 
 // Client sends message requests through the configured wire transport.

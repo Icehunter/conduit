@@ -252,9 +252,7 @@ func openAIToolsFromToolDefs(defs []ToolDef) []openAITool {
 			continue
 		}
 		params := def.InputSchema
-		if params == nil {
-			params = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
+		params = normalizeOpenAIToolSchema(params)
 		tools = append(tools, openAITool{
 			Type: "function",
 			Function: openAIFunction{
@@ -265,6 +263,37 @@ func openAIToolsFromToolDefs(defs []ToolDef) []openAITool {
 		})
 	}
 	return tools
+}
+
+func normalizeOpenAIToolSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	out := make(map[string]any, len(schema)+1)
+	for k, v := range schema {
+		out[k] = normalizeOpenAIToolSchemaValue(v)
+	}
+	if out["type"] == "object" {
+		if _, ok := out["properties"]; !ok {
+			out["properties"] = map[string]any{}
+		}
+	}
+	return out
+}
+
+func normalizeOpenAIToolSchemaValue(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		return normalizeOpenAIToolSchema(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeOpenAIToolSchemaValue(item)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func openAIMessagesFromMessage(msg Message) []openAIChatMessage {
@@ -641,6 +670,9 @@ func (c *Client) decodeOpenAIError(resp *http.Response) error {
 		}
 		if typ == "" {
 			typ = resp.Status
+		}
+		if typ == "usage_not_included" || env.Error.Code == "usage_not_included" {
+			return fmt.Errorf("api: %s: To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus", typ)
 		}
 		return fmt.Errorf("api: %s: %s", typ, env.Error.Message)
 	}

@@ -1,6 +1,6 @@
 .PHONY: all build install test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
         version version-patch version-minor version-major help \
-        verify-wire verify-wire-fast verify-wire-fresh
+        wire wire-strict wire-claude wire-claude-fast wire-claude-fresh wire-all
 
 BIN    := bin/conduit
 PKG    := ./...
@@ -120,17 +120,26 @@ version-major:
 	git push && git push origin "v$$NEW"; \
 	echo "Bumped $$V -> $$NEW (tagged and pushed v$$NEW)"
 
-# Wire-fingerprint drift detection against the installed claude binary.
+# Provider-account wire checks for Copilot and ChatGPT/Codex.
+wire:
+	scripts/provider-wire-check/check-all.sh
+
+wire-strict:
+	scripts/provider-wire-check/check-all.sh --strict
+
+# Claude wire-fingerprint drift detection against the installed claude binary.
 # Requires: claude on PATH, ../bun-demincer cloned.
 # BUN_DEMINCER_DIR overrides the default ../bun-demincer path.
-verify-wire:
+wire-claude:
 	node scripts/wire-check/run.mjs
 
-verify-wire-fast:
+wire-claude-fast:
 	node scripts/wire-check/run.mjs --skip-decode
 
-verify-wire-fresh:
+wire-claude-fresh:
 	node scripts/wire-check/run.mjs --force
+
+wire-all: wire wire-claude
 
 help:
 	@echo "Targets:"
@@ -152,6 +161,9 @@ help:
 	@echo "  version-patch    Bump patch (1.0.0 → 1.0.1), tag, push → triggers release"
 	@echo "  version-minor    Bump minor (1.0.0 → 1.1.0), tag, push → triggers release"
 	@echo "  version-major    Bump major (1.0.0 → 2.0.0), tag, push → triggers release"
-	@echo "  verify-wire      Decode+extract+diff vs conduit (skip-if-version-known)"
-	@echo "  verify-wire-fast Skip decode phase; require existing decoded-<v>/"
-	@echo "  verify-wire-fresh Force re-decode even if decoded-<v>/ exists"
+	@echo "  wire             Check Copilot and ChatGPT/Codex provider-account wire contracts"
+	@echo "  wire-strict      Same as wire, but require local reference checkouts"
+	@echo "  wire-claude      Decode+extract+diff Claude wire fingerprint"
+	@echo "  wire-claude-fast Skip Claude decode phase; require existing decoded-<v>/"
+	@echo "  wire-claude-fresh Force Claude re-decode even if decoded-<v>/ exists"
+	@echo "  wire-all         Provider-account wire checks + Claude wire fingerprint"

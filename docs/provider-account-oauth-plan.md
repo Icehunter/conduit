@@ -148,29 +148,39 @@ Goal: users can connect a ChatGPT Plus/Pro account and route eligible
 ChatGPT/Codex models through Conduit's role picker, with the feature clearly
 labeled until the wire path is verified.
 
+Current state: ChatGPT/Codex is experimental. Conduit has a browser PKCE flow
+against OpenAI's account issuer, extracts ChatGPT account identity from token
+claims, stores OAuth credentials securely, refreshes access tokens, exposes a
+conservative Codex model allowlist in `/models`, and routes runtime calls
+through the Codex Responses endpoint with OAuth bearer auth and
+`ChatGPT-Account-Id` when available. Manual verification with a real Plus/Pro
+account is still required before marking the capability complete.
+
 Implementation slices:
 
 1. Add a ChatGPT/Codex OAuth package.
-   - Implement PKCE browser login through the OpenAI account issuer.
+   - Implement PKCE browser login through the OpenAI account issuer. ✅
    - Implement headless device flow if the verified endpoint remains usable.
-   - Extract account identity from token claims.
-   - Refresh access tokens from refresh tokens.
-   - Store access, refresh, expiry, and account id securely.
+   - Extract account identity from token claims. ✅
+   - Refresh access tokens from refresh tokens. ✅
+   - Store access, refresh, expiry, and account id securely. ✅
 
 2. Add a ChatGPT/Codex runtime adapter.
    - Route OpenAI Responses-shaped requests to the ChatGPT Codex backend
-     endpoint.
-   - Attach OAuth bearer auth rather than API-key auth.
+     endpoint. ✅
+   - Attach OAuth bearer auth rather than API-key auth. ✅
    - Attach account identity headers when needed for organization or plan
-     subscriptions.
+     subscriptions. ✅
    - Match Codex CLI request behavior where it differs from normal OpenAI API
-     behavior.
+     behavior. 🔶 Browser OAuth, Responses endpoint, account header, system
+     instructions, and omitted max output tokens are implemented; real-account
+     stream/error behavior still needs manual verification.
 
 3. Gate model discovery and picker rows.
-   - Expose only models known to work with the ChatGPT/Codex account path.
+   - Expose only models known to work with the ChatGPT/Codex account path. ✅
    - Prefer server-confirmed model lists when available.
    - Fall back to a conservative allowlist only while the provider is marked
-     experimental.
+     experimental. ✅
    - Show plan-gating errors clearly when the user lacks Plus/Pro/Codex access.
 
 4. Keep API-key OpenAI separate.
@@ -215,8 +225,9 @@ runtime should resolve secret material at call time.
 
 Claude wire compatibility stays in `COMPATIBILITY.md`.
 
-When Copilot or ChatGPT/Codex support lands, add a separate compatibility
-section or document for provider-account wire paths. It should track:
+Copilot and ChatGPT/Codex provider-account wire compatibility is tracked in
+`PROVIDER_COMPATIBILITY.md`, with runnable checks under
+`scripts/provider-wire-check/`. It tracks:
 
 - OAuth endpoints and client identifiers.
 - Required request headers.

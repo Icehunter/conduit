@@ -15,6 +15,8 @@ import (
 	"github.com/icehunter/conduit/internal/sse"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 // TestStreamMessage_FixtureReplay: server replays the captured SSE stream
 // and our streaming reader yields the same event sequence the parser test
 // validates, plus the full request shape mirrors the non-streaming path.
@@ -453,6 +455,138 @@ func TestStreamMessage_OpenAIResponsesConvertsTextStream(t *testing.T) {
 	}
 	if promptTokens != 12 || outputTokens != 3 {
 		t.Fatalf("usage = (%d, %d), want (12, 3)", promptTokens, outputTokens)
+	}
+}
+
+func TestStreamMessage_OpenAIResponsesCodexShape(t *testing.T) {
+	var capturedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/codex/responses", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"ok\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.4\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		ProviderKind:                        ProviderKindOpenAIResponses,
+		BaseURL:                             srv.URL + "/codex",
+		AuthToken:                           "chatgpt-token",
+		OpenAIResponsesSystemAsInstructions: true,
+		OpenAIResponsesOmitMaxOutputTokens:  true,
+		OpenAIResponsesStore:                boolPtr(false),
+	}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{
+		Model:     "gpt-5.4",
+		MaxTokens: 64,
+		System:    []SystemBlock{{Type: "text", Text: "be brief"}},
+		Messages:  []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hello"}}}},
+		Tools: []ToolDef{{
+			Name:        "StructuredOutput",
+			Description: "Return structured output",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+	for {
+		_, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+	}
+	instructions, _ := capturedBody["instructions"].(string)
+	if !strings.Contains(instructions, "be brief") {
+		t.Fatalf("instructions = %#v", capturedBody["instructions"])
+	}
+	if _, ok := capturedBody["max_output_tokens"]; ok {
+		t.Fatalf("max_output_tokens should be omitted: %#v", capturedBody)
+	}
+	if capturedBody["store"] != false {
+		t.Fatalf("store = %#v, want false", capturedBody["store"])
+	}
+	input, ok := capturedBody["input"].([]any)
+	if !ok || len(input) != 1 {
+		t.Fatalf("input = %#v, want only user message", capturedBody["input"])
+	}
+	tools, ok := capturedBody["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v, want StructuredOutput function", capturedBody["tools"])
+	}
+	toolDef, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tool = %#v", tools[0])
+	}
+	params, ok := toolDef["parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("parameters = %#v", toolDef["parameters"])
+	}
+	props, ok := params["properties"].(map[string]any)
+	if !ok || len(props) != 0 {
+		t.Fatalf("properties = %#v, want empty object", params["properties"])
+	}
+}
+
+func TestStreamMessage_OpenAIResponsesAllowsMissingContentType(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/codex/responses", func(w http.ResponseWriter, r *http.Request) {
+		w.Header()["Content-Type"] = []string{""}
+		_, _ = io.WriteString(w, "event: response.created\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.5\",\"status\":\"in_progress\"}}\n\n")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"delta\":\"hello\"}\n\n")
+		_, _ = io.WriteString(w, "event: response.completed\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.5\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		ProviderKind: ProviderKindOpenAIResponses,
+		BaseURL:      srv.URL + "/codex",
+		AuthToken:    "chatgpt-token",
+	}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{
+		Model:     "gpt-5.5",
+		MaxTokens: 64,
+		Messages:  []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var text strings.Builder
+	for {
+		ev, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if ev.Type == "content_block_delta" {
+			delta, err := ev.AsContentBlockDelta()
+			if err != nil {
+				t.Fatal(err)
+			}
+			text.WriteString(delta.Delta.Text)
+		}
+	}
+	if text.String() != "hello" {
+		t.Fatalf("text = %q, want hello", text.String())
 	}
 }
 

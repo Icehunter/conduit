@@ -15,9 +15,11 @@ import (
 
 type openAIResponsesRequest struct {
 	Model           string                    `json:"model"`
+	Instructions    string                    `json:"instructions,omitempty"`
 	Input           []openAIResponsesInput    `json:"input"`
 	MaxOutputTokens int                       `json:"max_output_tokens,omitempty"`
 	Stream          bool                      `json:"stream,omitempty"`
+	Store           *bool                     `json:"store,omitempty"`
 	Tools           []openAIResponsesTool     `json:"tools,omitempty"`
 	Reasoning       *openAIResponsesReasoning `json:"reasoning,omitempty"`
 }
@@ -104,7 +106,7 @@ type openAIResponsesResponse struct {
 }
 
 func (openAIResponsesTransport) CreateMessage(ctx context.Context, c *Client, req *MessageRequest) (*MessageResponse, error) {
-	body, err := json.Marshal(openAIResponsesRequestFromMessageRequest(req, false))
+	body, err := json.Marshal(openAIResponsesRequestFromMessageRequest(req, false, c.cfg))
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal openai-responses request: %w", err)
 	}
@@ -164,7 +166,7 @@ func (openAIResponsesTransport) CreateMessage(ctx context.Context, c *Client, re
 }
 
 func (openAIResponsesTransport) StreamMessage(ctx context.Context, c *Client, req *MessageRequest) (*Stream, error) {
-	body, err := json.Marshal(openAIResponsesRequestFromMessageRequest(req, true))
+	body, err := json.Marshal(openAIResponsesRequestFromMessageRequest(req, true, c.cfg))
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal openai-responses stream request: %w", err)
 	}
@@ -179,11 +181,12 @@ func (openAIResponsesTransport) StreamMessage(ctx context.Context, c *Client, re
 		_ = resp.Body.Close()
 		return nil, err
 	}
-	if !strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "" && !strings.Contains(contentType, "event-stream") {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("api: openai-responses stream: server returned non-SSE Content-Type=%q body=%s",
-			resp.Header.Get("Content-Type"), strings.TrimSpace(string(raw)))
+			contentType, strings.TrimSpace(string(raw)))
 	}
 
 	reader, writer := io.Pipe()
@@ -209,21 +212,31 @@ func (c *Client) doOpenAIResponses(ctx context.Context, body []byte) (*http.Resp
 	return resp, nil
 }
 
-func openAIResponsesRequestFromMessageRequest(req *MessageRequest, stream bool) openAIResponsesRequest {
+func openAIResponsesRequestFromMessageRequest(req *MessageRequest, stream bool, cfg Config) openAIResponsesRequest {
 	out := openAIResponsesRequest{
-		Model:           req.Model,
-		MaxOutputTokens: req.MaxTokens,
-		Stream:          stream,
-		Tools:           openAIResponsesToolsFromToolDefs(req.Tools),
+		Model:  req.Model,
+		Stream: stream,
+		Tools:  openAIResponsesToolsFromToolDefs(req.Tools),
+	}
+	if !cfg.OpenAIResponsesOmitMaxOutputTokens {
+		out.MaxOutputTokens = req.MaxTokens
+	}
+	if cfg.OpenAIResponsesStore != nil {
+		out.Store = cfg.OpenAIResponsesStore
 	}
 	if req.Thinking != nil {
 		out.Reasoning = &openAIResponsesReasoning{Effort: "medium"}
 	}
 	if len(req.System) > 0 {
-		out.Input = append(out.Input, openAIResponsesInput{
-			Role:    "developer",
-			Content: []openAIResponsesContent{{Type: "input_text", Text: systemText(req.Model, req.System)}},
-		})
+		text := systemText(req.Model, req.System)
+		if cfg.OpenAIResponsesSystemAsInstructions {
+			out.Instructions = text
+		} else {
+			out.Input = append(out.Input, openAIResponsesInput{
+				Role:    "developer",
+				Content: []openAIResponsesContent{{Type: "input_text", Text: text}},
+			})
+		}
 	}
 	for _, msg := range req.Messages {
 		out.Input = append(out.Input, openAIResponsesInputsFromMessage(msg)...)
@@ -285,9 +298,7 @@ func openAIResponsesToolsFromToolDefs(defs []ToolDef) []openAIResponsesTool {
 			continue
 		}
 		params := def.InputSchema
-		if params == nil {
-			params = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
+		params = normalizeOpenAIToolSchema(params)
 		tools = append(tools, openAIResponsesTool{
 			Type:        "function",
 			Name:        def.Name,

@@ -110,6 +110,67 @@ func TestCreateMessage_RequestShape(t *testing.T) {
 	}
 }
 
+func TestCreateMessage_StripsCacheControlScopeWhenConfigured(t *testing.T) {
+	var capturedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id": "msg_01",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-haiku-4.5",
+			"content": [{"type":"text","text":"hi"}],
+			"stop_reason": "end_turn",
+			"usage": {"input_tokens": 1, "output_tokens": 1}
+		}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		BaseURL:                srv.URL,
+		AuthToken:              "tok-abc",
+		StripCacheControlScope: true,
+	}, srv.Client())
+	_, err := c.CreateMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4.5",
+		MaxTokens: 16,
+		System: []SystemBlock{{
+			Type: "text",
+			Text: "system",
+			CacheControl: &CacheControl{
+				Type:  "ephemeral",
+				TTL:   "5m",
+				Scope: "global",
+			},
+		}},
+		Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage: %v", err)
+	}
+	system, ok := capturedBody["system"].([]any)
+	if !ok || len(system) != 1 {
+		t.Fatalf("system = %#v", capturedBody["system"])
+	}
+	block, ok := system[0].(map[string]any)
+	if !ok {
+		t.Fatalf("system[0] = %#v", system[0])
+	}
+	cache, ok := block["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("cache_control = %#v", block["cache_control"])
+	}
+	if _, ok := cache["scope"]; ok {
+		t.Fatalf("cache_control scope was not stripped: %#v", cache)
+	}
+	if cache["type"] != "ephemeral" || cache["ttl"] != "5m" {
+		t.Fatalf("cache_control = %#v, want type+ttl preserved", cache)
+	}
+}
+
 func TestCreateMessage_MultipleBetaHeaders(t *testing.T) {
 	var capturedBeta string
 	mux := http.NewServeMux()
@@ -213,6 +274,77 @@ func TestCreateMessage_401RetryAfterRefresh(t *testing.T) {
 	}
 	if seenTokens[1] != "Bearer fresh" {
 		t.Errorf("second call token = %q", seenTokens[1])
+	}
+}
+
+func TestCreateMessage_OpenAITransports401RetryAfterRefresh(t *testing.T) {
+	tests := []struct {
+		name         string
+		providerKind string
+		path         string
+		response     string
+	}{
+		{
+			name:         "chat completions",
+			providerKind: ProviderKindOpenAICompatible,
+			path:         "/chat/completions",
+			response:     `{"id":"chatcmpl_1","model":"gpt-4.1","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`,
+		},
+		{
+			name:         "responses",
+			providerKind: ProviderKindOpenAIResponses,
+			path:         "/responses",
+			response:     `{"id":"resp_1","model":"gpt-5","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			var seenTokens []string
+			mux := http.NewServeMux()
+			mux.HandleFunc(tt.path, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				seenTokens = append(seenTokens, r.Header.Get("Authorization"))
+				if calls == 1 {
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = io.WriteString(w, `{"error":{"type":"authentication_error","message":"expired"}}`)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.response)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			var c *Client
+			cfg := Config{
+				ProviderKind: tt.providerKind,
+				BaseURL:      srv.URL,
+				AuthToken:    "stale",
+			}
+			cfg.OnAuth401 = func(ctx context.Context) error {
+				c.SetAuthToken("fresh")
+				return nil
+			}
+			c = NewClient(cfg, srv.Client())
+			resp, err := c.CreateMessage(context.Background(), &MessageRequest{
+				Model:     "gpt-test",
+				MaxTokens: 8,
+				Messages:  []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hi"}}}},
+			})
+			if err != nil {
+				t.Fatalf("CreateMessage: %v", err)
+			}
+			if len(resp.Content) == 0 || resp.Content[0].Text != "ok" {
+				t.Fatalf("response content = %#v, want ok text", resp.Content)
+			}
+			if calls != 2 {
+				t.Fatalf("calls = %d, want 2", calls)
+			}
+			if seenTokens[0] != "Bearer stale" || seenTokens[1] != "Bearer fresh" {
+				t.Fatalf("tokens = %#v, want stale then fresh", seenTokens)
+			}
+		})
 	}
 }
 

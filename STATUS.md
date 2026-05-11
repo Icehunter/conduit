@@ -30,7 +30,7 @@ coming, and what's intentionally out of scope.
 | OpenRouter API key (C-O3) | ✅ | `internal/providerauth/`; Accounts tab connect/rotate/disconnect |
 | Provider auth interface (C-O3) | ✅ | `internal/providerauth/` — `Method`, `Config`, `Authorizer`, `APIKeyAuthorizer` |
 | Provider entries reference accounts (C-O3) | ✅ | Provider entries store a credential alias that resolves through secure providerauth storage; known providers reuse `openai`, `gemini`, and `openrouter` credentials |
-| GitHub Copilot auth | 🔶 | Experimental: device-code login, Copilot token exchange, model discovery, and OpenAI-compatible chat routing with Copilot headers; gracefully reports entitlement/discovery failures |
+| GitHub Copilot auth | 🔶 | Experimental: device-code login, Copilot token exchange, model discovery, `/chat/completions`, `/responses`, and Claude `/v1/messages` routing; gracefully reports entitlement/discovery failures |
 | OpenAI ChatGPT Plus/Pro OAuth | 🔲 | C-O3 follow-on: experimental product-account provider; see `docs/provider-account-oauth-plan.md` |
 
 ---

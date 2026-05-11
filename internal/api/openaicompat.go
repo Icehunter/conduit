@@ -108,12 +108,12 @@ type openAIStreamToolCallDelta struct {
 	ExtraContent *openAIExtraContent `json:"extra_content,omitempty"`
 }
 
-func (c *Client) createOpenAICompatible(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+func (openAIChatTransport) CreateMessage(ctx context.Context, c *Client, req *MessageRequest) (*MessageResponse, error) {
 	body, err := json.Marshal(openAIRequestFromMessageRequest(req, false))
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal openai-compatible request: %w", err)
 	}
-	resp, err := withRetry(ctx, func() (*http.Response, error) {
+	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
 		return c.doOpenAI(ctx, body)
 	})
 	if err != nil {
@@ -162,12 +162,12 @@ func (c *Client) createOpenAICompatible(ctx context.Context, req *MessageRequest
 	}, nil
 }
 
-func (c *Client) streamOpenAICompatible(ctx context.Context, req *MessageRequest) (*Stream, error) {
+func (openAIChatTransport) StreamMessage(ctx context.Context, c *Client, req *MessageRequest) (*Stream, error) {
 	body, err := json.Marshal(openAIRequestFromMessageRequest(req, true))
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal openai-compatible stream request: %w", err)
 	}
-	resp, err := withRetry(ctx, func() (*http.Response, error) {
+	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
 		return c.doOpenAI(ctx, body)
 	})
 	if err != nil {

@@ -145,6 +145,31 @@ func TestContextWindowForModelClampsOldCopilotEntries(t *testing.T) {
 	}
 }
 
+func TestRuntimeRouteMappingMatchesOpenCode(t *testing.T) {
+	tests := []struct {
+		model         string
+		wantMessages  bool
+		wantResponses bool
+	}{
+		{model: "claude-haiku-4.5", wantMessages: true},
+		{model: "claude-sonnet-4.5", wantMessages: true},
+		{model: "gpt-5", wantResponses: true},
+		{model: "gpt-5.1-codex", wantResponses: true},
+		{model: "gpt-5-mini"},
+		{model: "gpt-4.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := UsesMessagesAPI(tt.model); got != tt.wantMessages {
+				t.Fatalf("UsesMessagesAPI(%q) = %v, want %v", tt.model, got, tt.wantMessages)
+			}
+			if got := ShouldUseResponsesAPI(tt.model); got != tt.wantResponses {
+				t.Fatalf("ShouldUseResponsesAPI(%q) = %v, want %v", tt.model, got, tt.wantResponses)
+			}
+		})
+	}
+}
+
 func withTestEndpoints(t *testing.T, deviceURL, pollURL, tokenURL, modelURL string) {
 	t.Helper()
 	oldHTTPClient := httpClient

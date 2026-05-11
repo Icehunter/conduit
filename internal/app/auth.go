@@ -91,12 +91,55 @@ func NewProviderAPIClient(provider settings.ActiveProviderSettings, store secure
 				return nil, fmt.Errorf("github copilot credential: %w", err)
 			}
 			var client *api.Client
+			if copilot.ShouldUseResponsesAPI(provider.Model) {
+				client = api.NewClientWithProxy(api.Config{
+					ProviderKind: api.ProviderKindOpenAIResponses,
+					BaseURL:      baseURL,
+					AuthToken:    cred.AccessToken,
+					UserAgent:    fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),
+					ExtraHeaders: copilot.ChatHeaders(),
+					OnAuth401: func(ctx context.Context) error {
+						if err := auth.Refresh(ctx); err != nil {
+							return err
+						}
+						latest, err := auth.EnsureFresh(ctx)
+						if err != nil {
+							return err
+						}
+						client.SetAuthToken(latest.AccessToken)
+						return nil
+					},
+				})
+				return client, nil
+			}
+			if copilot.UsesMessagesAPI(provider.Model) {
+				client = api.NewClientWithProxy(api.Config{
+					BaseURL:                copilot.ChatBaseURL,
+					AuthToken:              cred.AccessToken,
+					UserAgent:              fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),
+					BetaHeaders:            []string{"interleaved-thinking-2025-05-14"},
+					ExtraHeaders:           copilot.MessagesHeaders(),
+					StripCacheControlScope: true,
+					OnAuth401: func(ctx context.Context) error {
+						if err := auth.Refresh(ctx); err != nil {
+							return err
+						}
+						latest, err := auth.EnsureFresh(ctx)
+						if err != nil {
+							return err
+						}
+						client.SetAuthToken(latest.AccessToken)
+						return nil
+					},
+				})
+				return client, nil
+			}
 			client = api.NewClientWithProxy(api.Config{
-				ProviderKind: settings.ProviderKindOpenAICompatible,
+				ProviderKind: api.ProviderKindOpenAICompatible,
 				BaseURL:      baseURL,
 				AuthToken:    cred.AccessToken,
 				UserAgent:    fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),
-				ExtraHeaders: copilot.Headers(),
+				ExtraHeaders: copilot.ChatHeaders(),
 				OnAuth401: func(ctx context.Context) error {
 					if err := auth.Refresh(ctx); err != nil {
 						return err
@@ -116,7 +159,7 @@ func NewProviderAPIClient(provider settings.ActiveProviderSettings, store secure
 			return nil, fmt.Errorf("provider credential %q: %w", provider.Credential, err)
 		}
 		return api.NewClientWithProxy(api.Config{
-			ProviderKind: settings.ProviderKindOpenAICompatible,
+			ProviderKind: api.ProviderKindOpenAICompatible,
 			BaseURL:      baseURL,
 			APIKey:       key,
 			UserAgent:    fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),

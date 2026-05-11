@@ -86,10 +86,11 @@ can access in the model picker after connect, restart, and catalog refresh.
 Current state: Copilot is experimental. Conduit has a GitHub device-code login,
 GitHub-token to Copilot-token exchange, secure structured credential storage,
 model discovery, and model picker exposure through explicit provider entries.
-Runtime calls use the OpenAI-compatible chat adapter with Copilot-specific
-headers while the dedicated Copilot adapter remains future work. Entitlement,
-authorization timeout, and model-discovery failures are surfaced as recoverable
-UI errors rather than corrupting provider config.
+Runtime routing now follows OpenCode's provider layout: Claude-flavored Copilot
+models use the Anthropic `/v1/messages` shim, GPT-5-class models use
+`/responses`, and the remaining chat models use `/chat/completions`.
+Entitlement, authorization timeout, and model-discovery failures are surfaced as
+recoverable UI errors rather than corrupting provider config.
 
 Implementation slices:
 

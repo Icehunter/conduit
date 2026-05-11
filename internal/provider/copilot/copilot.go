@@ -92,11 +92,55 @@ func Headers() map[string]string {
 	}
 }
 
+func ChatHeaders() map[string]string {
+	return map[string]string{
+		"Copilot-Integration-Id": "vscode-chat",
+		"Editor-Version":         "vscode/1.105.1",
+		"Editor-Plugin-Version":  "copilot-chat/0.32.4",
+		"OpenAI-Intent":          "conversation-edits",
+		"X-GitHub-Api-Version":   "2023-07-07",
+		"x-initiator":            "user",
+	}
+}
+
+func MessagesHeaders() map[string]string {
+	return map[string]string{
+		"Copilot-Integration-Id": "vscode-chat",
+		"Editor-Version":         "vscode/1.105.1",
+		"Editor-Plugin-Version":  "copilot-chat/0.32.4",
+		"OpenAI-Intent":          "conversation-edits",
+		"X-GitHub-Api-Version":   "2023-07-07",
+		"x-initiator":            "user",
+	}
+}
+
 func ModelDiscoveryHeaders() map[string]string {
 	return map[string]string{
 		"Accept":     "application/json",
 		"User-Agent": "GitHubCopilotChat/0.32.4",
 	}
+}
+
+func UsesMessagesAPI(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "claude-")
+}
+
+func ShouldUseResponsesAPI(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	match := strings.TrimPrefix(model, "gpt-")
+	if match == model || match == "" {
+		return false
+	}
+	first := match
+	if idx := strings.IndexAny(first, ".-"); idx >= 0 {
+		first = first[:idx]
+	}
+	var major int
+	if _, err := fmt.Sscanf(first, "%d", &major); err != nil {
+		return false
+	}
+	return major >= 5 && !strings.HasPrefix(model, "gpt-5-mini")
 }
 
 func FallbackModels() []catalog.ModelInfo {
@@ -488,13 +532,14 @@ func decodeModels(r io.Reader) ([]catalog.ModelInfo, error) {
 }
 
 type copilotModel struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	ModelPickerEnabled *bool  `json:"model_picker_enabled"`
-	ContextWindowFlat  int    `json:"context_window"`
-	DisabledFlat       bool   `json:"disabled"`
-	SupportsVisionFlat bool   `json:"supports_vision"`
-	SupportsThinkFlat  bool   `json:"supports_thinking"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	ModelPickerEnabled *bool    `json:"model_picker_enabled"`
+	ContextWindowFlat  int      `json:"context_window"`
+	DisabledFlat       bool     `json:"disabled"`
+	SupportsVisionFlat bool     `json:"supports_vision"`
+	SupportsThinkFlat  bool     `json:"supports_thinking"`
+	SupportedEndpoints []string `json:"supported_endpoints"`
 	Policy             struct {
 		State string `json:"state"`
 	} `json:"policy"`

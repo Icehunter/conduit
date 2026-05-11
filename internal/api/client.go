@@ -26,10 +26,16 @@ const AnthropicVersion = "2023-06-01"
 // CLI's, we report the same string.
 const SDKPackageVersion = "0.93.0"
 
+const (
+	ProviderKindOpenAICompatible = "openai-compatible"
+	ProviderKindOpenAIResponses  = "openai-responses"
+)
+
 // Config configures a Client.
 type Config struct {
 	// ProviderKind selects the request/response wire dialect. Empty means
-	// Anthropic Messages API. "openai-compatible" uses /chat/completions.
+	// Anthropic Messages API. ProviderKindOpenAICompatible uses
+	// /chat/completions. ProviderKindOpenAIResponses uses /responses.
 	ProviderKind string
 	// BaseURL is the API origin, e.g. https://api.anthropic.com. No trailing slash.
 	BaseURL string
@@ -56,13 +62,38 @@ type Config struct {
 	// Use for headers like `anthropic-dangerous-direct-browser-access` that
 	// the real CLI sends but aren't part of the canonical core set.
 	ExtraHeaders map[string]string
+	// StripCacheControlScope removes the Anthropic prompt-cache `scope` field.
+	// GitHub Copilot's /v1/messages shim accepts ephemeral cache_control but
+	// rejects the newer scoped cache shape.
+	StripCacheControlScope bool
 }
 
-// Client posts to /v1/messages.
+// Client sends message requests through the configured wire transport.
 type Client struct {
-	mu   sync.Mutex // guards cfg.AuthToken across refresh
-	cfg  Config
-	http *http.Client
+	mu        sync.Mutex // guards cfg.AuthToken across refresh
+	cfg       Config
+	http      *http.Client
+	transport messageTransport
+}
+
+type messageTransport interface {
+	CreateMessage(context.Context, *Client, *MessageRequest) (*MessageResponse, error)
+	StreamMessage(context.Context, *Client, *MessageRequest) (*Stream, error)
+}
+
+type anthropicMessagesTransport struct{}
+type openAIChatTransport struct{}
+type openAIResponsesTransport struct{}
+
+func transportForProviderKind(kind string) messageTransport {
+	switch kind {
+	case ProviderKindOpenAICompatible:
+		return openAIChatTransport{}
+	case ProviderKindOpenAIResponses:
+		return openAIResponsesTransport{}
+	default:
+		return anthropicMessagesTransport{}
+	}
 }
 
 // NewClient returns a Client. If httpClient is nil, http.DefaultClient is used.
@@ -76,7 +107,7 @@ func NewClient(cfg Config, httpClient *http.Client) *Client {
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = fmt.Sprintf("claude-cli/0.0.0 (%s/%s)", runtime.GOOS, runtime.GOARCH)
 	}
-	return &Client{cfg: cfg, http: httpClient}
+	return &Client{cfg: cfg, http: httpClient, transport: transportForProviderKind(cfg.ProviderKind)}
 }
 
 // SetAuthToken updates the bearer token used for subsequent requests.
@@ -87,7 +118,27 @@ func (c *Client) SetAuthToken(tok string) {
 	c.mu.Unlock()
 }
 
-// CreateMessage performs a non-streaming POST /v1/messages?beta=true.
+func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
+	if req == nil || !cfg.StripCacheControlScope {
+		return req
+	}
+	out := *req
+	if len(req.System) > 0 {
+		out.System = append([]SystemBlock(nil), req.System...)
+		for i := range out.System {
+			if out.System[i].CacheControl == nil || out.System[i].CacheControl.Scope == "" {
+				continue
+			}
+			cc := *out.System[i].CacheControl
+			cc.Scope = ""
+			out.System[i].CacheControl = &cc
+		}
+	}
+	return &out
+}
+
+// CreateMessage performs a non-streaming message request using the configured
+// provider wire dialect.
 //
 // On 401 the Client invokes OnAuth401 to refresh credentials, then retries
 // the same request once. Reference: decoded/4500.js:32-44 (single retry on
@@ -97,37 +148,41 @@ func (c *Client) SetAuthToken(tok string) {
 // the error type and message, so callers can `errors.As` against APIError
 // for finer control once we add typed errors in M2.
 func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
-	if c.cfg.ProviderKind == "openai-compatible" {
-		return c.createOpenAICompatible(ctx, req)
+	return c.transport.CreateMessage(ctx, c, req)
+}
+
+func (c *Client) doWithRetryAndAuth(ctx context.Context, send func() (*http.Response, error)) (*http.Response, error) {
+	resp, err := withRetry(ctx, send)
+	if err != nil {
+		return nil, err
 	}
-	body, err := json.Marshal(req)
+	if resp.StatusCode != http.StatusUnauthorized || c.cfg.OnAuth401 == nil {
+		return resp, nil
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if err := c.cfg.OnAuth401(ctx); err != nil {
+		return nil, fmt.Errorf("api: refresh on 401: %w", err)
+	}
+	return withRetry(ctx, send)
+}
+
+// CreateMessage performs a non-streaming POST /v1/messages?beta=true.
+func (anthropicMessagesTransport) CreateMessage(ctx context.Context, c *Client, req *MessageRequest) (*MessageResponse, error) {
+	req2 := sanitizeAnthropicRequest(req, c.cfg)
+	body, err := json.Marshal(req2)
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal request: %w", err)
 	}
 
 	// withRetry handles 429 with exponential backoff, mirroring StreamMessage.
-	resp, err := withRetry(ctx, func() (*http.Response, error) {
-		return c.do(ctx, body, req.Model)
+	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
+		return c.do(ctx, body, req2.Model)
 	})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
-
-	// Single 401 retry after refresh.
-	if resp.StatusCode == http.StatusUnauthorized && c.cfg.OnAuth401 != nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-		if err := c.cfg.OnAuth401(ctx); err != nil {
-			return nil, fmt.Errorf("api: refresh on 401: %w", err)
-		}
-		resp, err = withRetry(ctx, func() (*http.Response, error) {
-			return c.do(ctx, body, req.Model)
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, c.decodeError(resp)

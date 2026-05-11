@@ -39,20 +39,23 @@ func (s *Stream) Close() error {
 	return err
 }
 
-// StreamMessage opens an event-stream connection to /v1/messages?beta=true.
-// Headers and 401 retry mirror CreateMessage. The caller is responsible for
-// reading until io.EOF and calling Close.
+// StreamMessage opens an event-stream connection using the configured provider
+// wire dialect. Headers and 401 retry mirror CreateMessage. The caller is
+// responsible for reading until io.EOF and calling Close.
 //
 // Reference: decoded/0158.js (create), 0137.js (SSE consumption), 4500.js
 // (retry semantics). The wire is HTTP+SSE — no protobuf/binary framing.
 func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Stream, error) {
-	if c.cfg.ProviderKind == "openai-compatible" {
-		return c.streamOpenAICompatible(ctx, req)
-	}
+	return c.transport.StreamMessage(ctx, c, req)
+}
+
+// StreamMessage opens an Anthropic Messages API SSE stream at
+// /v1/messages?beta=true.
+func (anthropicMessagesTransport) StreamMessage(ctx context.Context, c *Client, req *MessageRequest) (*Stream, error) {
 	// Force stream:true so a forgetful caller doesn't get a non-stream JSON
 	// response back from the server (which would fail to parse as SSE and
 	// give a confusing error).
-	req2 := *req
+	req2 := *sanitizeAnthropicRequest(req, c.cfg)
 	req2.Stream = true
 
 	body, err := json.Marshal(&req2)
@@ -60,25 +63,11 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest) (*Strea
 		return nil, fmt.Errorf("api: marshal stream request: %w", err)
 	}
 
-	resp, err := withRetry(ctx, func() (*http.Response, error) {
+	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
 		return c.doStream(ctx, body, req2.Model)
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.StatusCode == http.StatusUnauthorized && c.cfg.OnAuth401 != nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-		if err := c.cfg.OnAuth401(ctx); err != nil {
-			return nil, fmt.Errorf("api: refresh on 401: %w", err)
-		}
-		resp, err = withRetry(ctx, func() (*http.Response, error) {
-			return c.doStream(ctx, body, req2.Model)
-		})
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

@@ -225,11 +225,22 @@ func (m *Manager) Statuses() map[string]ServerStatus {
 // Close shuts down all running language servers.
 func (m *Manager) Close() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	clients := make([]*Client, 0, len(m.clients))
 	for key, cl := range m.clients {
-		_ = cl.Close()
+		clients = append(clients, cl)
 		delete(m.clients, key)
 	}
+	m.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, cl := range clients {
+		wg.Add(1)
+		go func(c *Client) {
+			defer wg.Done()
+			_ = c.Close()
+		}(cl)
+	}
+	wg.Wait()
 }
 
 // languageKey maps an extension to a stable language key.

@@ -468,12 +468,23 @@ func (m *Manager) ReadResource(ctx context.Context, serverName, uri string) ([]R
 // Close shuts down all server connections.
 func (m *Manager) Close() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	clients := make([]Client, 0, len(m.servers))
 	for _, srv := range m.servers {
 		if srv.client != nil {
-			_ = srv.client.Close()
+			clients = append(clients, srv.client)
 		}
 	}
+	m.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, client := range clients {
+		wg.Add(1)
+		go func(c Client) {
+			defer wg.Done()
+			_ = c.Close()
+		}(client)
+	}
+	wg.Wait()
 }
 
 // NamedTool is a tool from an MCP server with its qualified name.

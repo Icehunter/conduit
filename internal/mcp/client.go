@@ -261,7 +261,17 @@ func (c *stdioClient) ReadResource(ctx context.Context, uri string) ([]ResourceC
 
 func (c *stdioClient) Close() error {
 	_ = c.stdin.Close()
-	return c.cmd.Wait()
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- c.cmd.Wait() }()
+	select {
+	case err := <-waitDone:
+		return err
+	case <-time.After(2 * time.Second):
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		return <-waitDone
+	}
 }
 
 // ---- HTTP/SSE transport ---------------------------------------------------

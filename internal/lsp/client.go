@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Client wraps a language server subprocess and speaks JSON-RPC 2.0 over
@@ -193,14 +194,25 @@ func (c *Client) StoreDiagnostics(uri string, diags []Diagnostic) {
 
 // Close sends the LSP shutdown + exit sequence and waits for the process.
 func (c *Client) Close() error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	_, _ = c.Request(ctx, "shutdown", json.RawMessage("null"))
 	_ = c.Notify("exit", json.RawMessage("null"))
 	_ = c.stdin.Close()
-	if c.cmd != nil {
-		return c.cmd.Wait()
+	if c.cmd == nil {
+		return nil
 	}
-	return nil
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- c.cmd.Wait() }()
+	select {
+	case err := <-waitDone:
+		return err
+	case <-time.After(2 * time.Second):
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		return <-waitDone
+	}
 }
 
 // send writes a single JSON-RPC message (request or notification) to stdin.

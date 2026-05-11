@@ -769,16 +769,20 @@ func runREPL(continueMode bool, resumeID string) error {
 	// finish before the process tears down further state.
 	hooks.DefaultAsyncGroup.Shutdown(5 * time.Second)
 
-	// Auto-dream: after the session ends, check whether memory consolidation
-	// should fire. Mirrors autoDream.ts gate: 24h elapsed + 5 sessions.
-	// Runs synchronously (after TUI exits) so the terminal is restored before
-	// any sub-agent output. Non-fatal — failure doesn't affect the session.
-	if sess != nil {
+	// Close subprocess-backed integrations before returning to the shell so
+	// lingering MCP/LSP children cannot keep the conduit command alive.
+	lspManager.Close()
+	mcpManager.Close()
+
+	// Auto-dream: after a normal session ends, check whether memory consolidation
+	// should fire. Skip this optional network work on interrupt/cancel paths so
+	// Ctrl+C returns to the shell promptly.
+	if sess != nil && ctx.Err() == nil && tuiErr == nil {
 		sessionDir := sess.ProjectDir
 		if memdir.ShouldDream(cwd, sessionDir) {
-			dreamCtx, dreamCancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer dreamCancel()
+			dreamCtx, dreamCancel := context.WithTimeout(context.Background(), 30*time.Second)
 			_ = memdir.RunDream(dreamCtx, cwd, sessionDir, lp.RunBackgroundAgent)
+			dreamCancel()
 		}
 	}
 

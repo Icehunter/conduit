@@ -13,6 +13,8 @@ coverage.html
 # Claude Code local settings and worktrees (machine-specific, not for repo)
 .claude/settings.local.json
 .claude/worktrees/
+.worktrees/
+.worktress/
 
 # Conduit local project settings (machine-specific permissions, not for repo)
 .conduit/settings.local.json

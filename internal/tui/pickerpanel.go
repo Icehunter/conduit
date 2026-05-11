@@ -328,7 +328,7 @@ func (m Model) renderModelPicker() string {
 	var sb strings.Builder
 	title := panelTitle("Switch Model")
 	tabs := renderProviderRoleTabs(p.role)
-	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 6
+	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 10
 	ornW = max(ornW, 6)
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 

@@ -19,6 +19,7 @@ import (
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/provider/copilot"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -224,6 +225,9 @@ func (m *Model) applyEffectiveProviderForMode() {
 		if provider.Model == "" {
 			return
 		}
+		if strings.HasPrefix(provider.Credential, copilot.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
+			provider.ContextWindow = copilot.ContextWindowForModel(provider.Model, provider.ContextWindow)
+		}
 		if m.cfg.NewProviderAPIClient == nil {
 			return
 		}
@@ -259,18 +263,36 @@ func (m Model) currentProviderRole() string {
 	}
 }
 
-func (m Model) backgroundModel() string {
-	if m.cfg.BackgroundModel != nil {
-		if model := strings.TrimSpace(m.cfg.BackgroundModel()); model != "" {
-			return model
+func (m Model) compactClientAndModel() (*api.Client, string, error) {
+	provider, ok := m.providerForCurrentMode()
+	if !ok {
+		return m.cfg.APIClient, compact.DefaultModel, nil
+	}
+	if provider.Model == "" {
+		provider.Model = m.effectiveAssistantModelName()
+	}
+	switch provider.Kind {
+	case settings.ProviderKindOpenAICompatible:
+		if m.cfg.NewProviderAPIClient == nil {
+			return nil, "", fmt.Errorf("provider client is not configured")
 		}
+		client, err := m.cfg.NewProviderAPIClient(provider)
+		if err != nil {
+			return nil, "", err
+		}
+		return client, provider.Model, nil
+	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
+		if provider.Account != "" && provider.Account != auth.ActiveEmail() && m.cfg.NewAPIClient != nil {
+			tokens, err := auth.LoadForEmail(secure.NewDefault(), provider.Account)
+			if err != nil {
+				return nil, "", err
+			}
+			return m.cfg.NewAPIClient(tokens), provider.Model, nil
+		}
+		return m.cfg.APIClient, provider.Model, nil
+	default:
+		return m.cfg.APIClient, m.effectiveAssistantModelName(), nil
 	}
-	if provider, ok := m.providerForRole(settings.RoleBackground); ok &&
-		(provider.Kind == settings.ProviderKindClaudeSubscription || provider.Kind == settings.ProviderKindAnthropicAPI) &&
-		provider.Model != "" {
-		return provider.Model
-	}
-	return compact.DefaultModel
 }
 
 func (m Model) providerForCurrentMode() (settings.ActiveProviderSettings, bool) {
@@ -569,6 +591,9 @@ func accountProviderDisplayName(provider settings.ActiveProviderSettings) string
 		label = "Anthropic API"
 	case settings.ProviderKindOpenAICompatible:
 		label = "OpenAI-compatible"
+		if strings.HasPrefix(provider.Credential, "github-copilot") || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
+			label = "GitHub Copilot"
+		}
 		provider.Account = ""
 	}
 	parts := []string{label}

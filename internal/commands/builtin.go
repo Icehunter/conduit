@@ -292,21 +292,35 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 	}
 	sort.Strings(keys)
 	items := make([]PickerOption, 0, len(keys)*2)
-	expandedOpenAICompatible := map[string]bool{}
+	type openAIGroup struct {
+		label string
+		items []PickerOption
+	}
+	openAIGroups := map[string]*openAIGroup{}
+	openAIOrder := []string{}
 	for _, key := range keys {
 		provider := providers[key]
 		label, ok := customModelPickerSection(provider)
 		if !ok {
 			continue
 		}
-		modelItems := catalogModelPickerItems(provider, modelCatalog)
-		if len(modelItems) > 0 {
+		if provider.Kind == settings.ProviderKindOpenAICompatible {
 			accountKey := provider.Credential + "\x00" + provider.BaseURL
-			if expandedOpenAICompatible[accountKey] {
-				continue
+			group := openAIGroups[accountKey]
+			if group == nil {
+				group = &openAIGroup{label: label}
+				openAIGroups[accountKey] = group
+				openAIOrder = append(openAIOrder, accountKey)
 			}
-			expandedOpenAICompatible[accountKey] = true
+			if len(group.items) == 0 {
+				group.items = catalogModelPickerItems(provider, modelCatalog)
+			}
+			if len(group.items) == 0 && provider.Model != "" {
+				group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
+			}
+			continue
 		}
+		modelItems := catalogModelPickerItems(provider, modelCatalog)
 		if len(modelItems) == 0 && provider.Model != "" {
 			modelItems = []PickerOption{{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model}}
 		}
@@ -315,6 +329,14 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 		}
 		items = append(items, PickerOption{Label: label, Section: true})
 		items = append(items, modelItems...)
+	}
+	for _, accountKey := range openAIOrder {
+		group := openAIGroups[accountKey]
+		if group == nil || len(group.items) == 0 {
+			continue
+		}
+		items = append(items, PickerOption{Label: group.label, Section: true})
+		items = append(items, group.items...)
 	}
 	return items
 }
@@ -410,6 +432,9 @@ func modelIDForProvider(provider settings.ActiveProviderSettings, id string) str
 func customModelPickerSection(provider settings.ActiveProviderSettings) (string, bool) {
 	switch provider.Kind {
 	case settings.ProviderKindOpenAICompatible:
+		if strings.HasPrefix(provider.Credential, "github-copilot") || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
+			return "GitHub Copilot", true
+		}
 		label := "OpenAI-compatible"
 		if provider.Credential != "" {
 			label += " · credential " + provider.Credential

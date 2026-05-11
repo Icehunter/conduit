@@ -10,6 +10,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/profile"
+	"github.com/icehunter/conduit/internal/provider/copilot"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -75,10 +76,6 @@ func removeString(values []string, target string) []string {
 func NewProviderAPIClient(provider settings.ActiveProviderSettings, store secure.Storage, wireVersion string) (*api.Client, error) {
 	switch provider.Kind {
 	case settings.ProviderKindOpenAICompatible:
-		key, err := settings.LoadProviderCredential(store, provider.Credential)
-		if err != nil {
-			return nil, fmt.Errorf("provider credential %q: %w", provider.Credential, err)
-		}
 		entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
 		if entrypoint == "" {
 			entrypoint = "sdk-cli"
@@ -86,6 +83,37 @@ func NewProviderAPIClient(provider settings.ActiveProviderSettings, store secure
 		baseURL := strings.TrimRight(provider.BaseURL, "/")
 		if baseURL == "" {
 			return nil, fmt.Errorf("provider %q missing baseURL", settings.ProviderKey(provider))
+		}
+		if strings.HasPrefix(provider.Credential, copilot.ProviderID) || strings.Contains(baseURL, "api.githubcopilot.com") {
+			auth := copilot.NewAuthorizerForCredential(store, provider.Credential)
+			cred, err := auth.EnsureFresh(context.Background())
+			if err != nil {
+				return nil, fmt.Errorf("github copilot credential: %w", err)
+			}
+			var client *api.Client
+			client = api.NewClientWithProxy(api.Config{
+				ProviderKind: settings.ProviderKindOpenAICompatible,
+				BaseURL:      baseURL,
+				AuthToken:    cred.AccessToken,
+				UserAgent:    fmt.Sprintf("conduit/%s (external, %s)", wireVersion, entrypoint),
+				ExtraHeaders: copilot.Headers(),
+				OnAuth401: func(ctx context.Context) error {
+					if err := auth.Refresh(ctx); err != nil {
+						return err
+					}
+					latest, err := auth.EnsureFresh(ctx)
+					if err != nil {
+						return err
+					}
+					client.SetAuthToken(latest.AccessToken)
+					return nil
+				},
+			})
+			return client, nil
+		}
+		key, err := settings.LoadProviderCredential(store, provider.Credential)
+		if err != nil {
+			return nil, fmt.Errorf("provider credential %q: %w", provider.Credential, err)
 		}
 		return api.NewClientWithProxy(api.Config{
 			ProviderKind: settings.ProviderKindOpenAICompatible,

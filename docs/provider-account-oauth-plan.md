@@ -83,6 +83,14 @@ behavior are materially different.
 Goal: users can connect GitHub Copilot once, then see the models their account
 can access in the model picker after connect, restart, and catalog refresh.
 
+Current state: Copilot is experimental. Conduit has a GitHub device-code login,
+GitHub-token to Copilot-token exchange, secure structured credential storage,
+model discovery, and model picker exposure through explicit provider entries.
+Runtime calls use the OpenAI-compatible chat adapter with Copilot-specific
+headers while the dedicated Copilot adapter remains future work. Entitlement,
+authorization timeout, and model-discovery failures are surfaced as recoverable
+UI errors rather than corrupting provider config.
+
 Implementation slices:
 
 1. Add a Copilot OAuth package.
@@ -245,4 +253,3 @@ auditable, and independently testable.
 6. Implement ChatGPT/Codex OAuth as experimental.
 7. Implement ChatGPT/Codex Responses routing and model gating.
 8. Promote ChatGPT/Codex from experimental only after real-account verification.
-

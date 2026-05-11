@@ -273,6 +273,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
 
+	case copilotOAuthStartedMsg:
+		return m.handleCopilotOAuthStarted(msg)
+
+	case copilotOAuthCompletedMsg:
+		return m.handleCopilotOAuthCompleted(msg)
+
 	case councilChatMsg:
 		return m.handleCouncilChat(msg)
 

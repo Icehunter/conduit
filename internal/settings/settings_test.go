@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
 )
 
@@ -458,6 +460,32 @@ func TestProviderCredentialRoundTrip(t *testing.T) {
 	}
 	if _, err := LoadProviderCredential(store, "gemini-personal"); !errors.Is(err, secure.ErrNotFound) {
 		t.Fatalf("LoadProviderCredential after delete err = %v, want not found", err)
+	}
+}
+
+func TestStructuredProviderCredentialLoadsAsBearerToken(t *testing.T) {
+	store := secure.NewMemoryStorage()
+	cred := &providerauth.ProviderCredential{
+		AccessToken:  "copilot-token",
+		RefreshToken: "github-token",
+		Expiry:       time.Now().Add(time.Hour),
+	}
+	if err := SaveStructuredProviderCredential(store, "github-copilot", cred); err != nil {
+		t.Fatalf("SaveStructuredProviderCredential: %v", err)
+	}
+	got, err := LoadProviderCredential(store, "github-copilot")
+	if err != nil {
+		t.Fatalf("LoadProviderCredential: %v", err)
+	}
+	if got != "copilot-token" {
+		t.Fatalf("credential = %q, want access token", got)
+	}
+	loaded, err := LoadStructuredProviderCredential(store, "github-copilot")
+	if err != nil {
+		t.Fatalf("LoadStructuredProviderCredential: %v", err)
+	}
+	if loaded.RefreshToken != "github-token" {
+		t.Fatalf("refresh token = %q", loaded.RefreshToken)
 	}
 }
 

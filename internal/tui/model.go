@@ -350,7 +350,8 @@ type Config struct {
 	InitialRoles     map[string]string
 	// InitialCouncilProviders is the saved council member roster from settings.
 	InitialCouncilProviders []string
-	// BackgroundModel returns the model for helper calls such as /compact.
+	// BackgroundModel returns the configured background-role model for helpers
+	// that intentionally run out-of-band from the active chat mode.
 	BackgroundModel func() string
 	// FetchPlanUsage returns the current Claude plan usage windows for a
 	// provider/account that supports plan usage.

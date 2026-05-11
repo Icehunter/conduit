@@ -19,10 +19,10 @@ import (
 // Anthropic API. It produces:
 //   - A first main turn with stop_reason=tool_use (or end_turn when toolUse=false)
 //     and the given inputTokens in the usage field.
-//   - A compaction call (background-model) that returns a summary.
+//   - A compaction call that returns a summary.
 //   - A second main turn with stop_reason=end_turn.
 //
-// compactCalls is incremented atomically on every background-model request.
+// compactCalls is incremented atomically on every compaction request.
 func makeCompactServer(t *testing.T, inputTokens int, toolUse bool, compactCalls *atomic.Int32) *httptest.Server {
 	return makeCompactServerWithCache(t, inputTokens, 0, toolUse, compactCalls)
 }
@@ -33,7 +33,10 @@ func makeCompactServerWithCache(t *testing.T, inputTokens, cacheReadTokens int, 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Model    string `json:"model"`
+			Model  string `json:"model"`
+			System []struct {
+				Text string `json:"text"`
+			} `json:"system"`
 			Messages []struct {
 				Role string `json:"role"`
 			} `json:"messages"`
@@ -42,7 +45,7 @@ func makeCompactServerWithCache(t *testing.T, inputTokens, cacheReadTokens int, 
 
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		if body.Model == "background-model" {
+		if isCompactRequest(body.System) {
 			compactCalls.Add(1)
 			// Compaction call — return a summary.
 			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"c\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"haiku\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n")
@@ -303,9 +306,9 @@ func TestLoop_AutoCompact_DisableEnv(t *testing.T) {
 }
 
 // TestLoop_AutoCompact verifies that auto-compact fires at end_turn when input
-// tokens exceed the model's context threshold, and that the background model
-// is used for the compaction call. Uses CLAUDE_CODE_AUTO_COMPACT_WINDOW to
-// set a small window so we can test with low token counts.
+// tokens exceed the model's context threshold, and that the active model is
+// used for the compaction call. Uses CLAUDE_CODE_AUTO_COMPACT_WINDOW to set a
+// small window so we can test with low token counts.
 func TestLoop_AutoCompact(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "50000")
 
@@ -321,13 +324,16 @@ func TestLoop_AutoCompact(t *testing.T) {
 		calls++
 
 		var body struct {
-			Model string `json:"model"`
+			Model  string `json:"model"`
+			System []struct {
+				Text string `json:"text"`
+			} `json:"system"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 
 		w.Header().Set("Content-Type", "text/event-stream")
 
-		if body.Model == "background-model" {
+		if isCompactRequest(body.System) {
 			compactModel = body.Model
 			// Compaction call — return summary.
 			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"c\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"haiku\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n")
@@ -377,12 +383,12 @@ func TestLoop_AutoCompact(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Should have: turn1 (sonnet) + compact (background-model) = 2 calls.
+	// Should have: turn1 + compact on the active model = 2 calls.
 	if calls != 2 {
 		t.Errorf("calls = %d; want 2 (main turn + compact call)", calls)
 	}
-	if compactModel != "background-model" {
-		t.Errorf("compact model = %q, want background-model", compactModel)
+	if compactModel != modelName {
+		t.Errorf("compact model = %q, want %q", compactModel, modelName)
 	}
 	if !gotCompacted {
 		t.Error("EventCompacted not fired; want it fired on auto-compact")
@@ -409,5 +415,13 @@ func itoa(n int) string {
 	return fmt.Sprint(n)
 }
 
-// ensure strings import is used
-var _ = strings.Contains
+func isCompactRequest(system []struct {
+	Text string `json:"text"`
+}) bool {
+	for _, block := range system {
+		if strings.Contains(block.Text, "conversation summarizer") {
+			return true
+		}
+	}
+	return false
+}

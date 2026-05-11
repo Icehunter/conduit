@@ -30,7 +30,7 @@ coming, and what's intentionally out of scope.
 | OpenRouter API key (C-O3) | ✅ | `internal/providerauth/`; Accounts tab connect/rotate/disconnect |
 | Provider auth interface (C-O3) | ✅ | `internal/providerauth/` — `Method`, `Config`, `Authorizer`, `APIKeyAuthorizer` |
 | Provider entries reference accounts (C-O3) | ✅ | Provider entries store a credential alias that resolves through secure providerauth storage; known providers reuse `openai`, `gemini`, and `openrouter` credentials |
-| GitHub Copilot auth | 🔲 | C-O3 follow-on: product-account provider; see `docs/provider-account-oauth-plan.md` |
+| GitHub Copilot auth | 🔶 | Experimental: device-code login, Copilot token exchange, model discovery, and OpenAI-compatible chat routing with Copilot headers; gracefully reports entitlement/discovery failures |
 | OpenAI ChatGPT Plus/Pro OAuth | 🔲 | C-O3 follow-on: experimental product-account provider; see `docs/provider-account-oauth-plan.md` |
 
 ---
@@ -46,7 +46,7 @@ coming, and what's intentionally out of scope.
 | Catalog fetch/cache package (C-O2) | ✅ | `internal/catalog/` — OpenRouter fetch + 24h disk cache + built-in Anthropic snapshot |
 | Catalog refresh command (C-O2) | ✅ | `/models --refresh` fetches & caches; shows count flash on completion |
 | Catalog-assisted provider setup (C-O2) | ✅ | Provider form opens with picker (OpenAI/Gemini/OpenRouter/Custom); pre-fills base URL and credential alias; reuses saved providerauth key; model choice happens in `/models` |
-| Provider credential unlocks catalog models (C-O2/C-O3) | ✅ | One OpenAI/Gemini/OpenRouter credential exposes all matching catalog models in `/models`; selections synthesize provider+model entries for role assignment |
+| Provider credential unlocks catalog models (C-O2/C-O3) | ✅ | One OpenAI/Gemini/OpenRouter credential exposes all matching catalog models in `/models`; selections synthesize provider+model entries for role assignment; provider accounts can be edited/renamed as a group |
 | Catalog override URL / local JSON path (C-O2) | ✅ | `CONDUIT_CATALOG_URL` overrides endpoint; `CONDUIT_CATALOG_FILE` loads local JSON instead |
 | Network-failure / bad-JSON fetch tests (C-O2) | ✅ | `TestFetch_httpError`, `TestFetch_badJSON`, `TestFetch_timeout`, `TestFetch_localFile` in `catalog_test.go` |
 
@@ -58,7 +58,7 @@ coming, and what's intentionally out of scope.
 |-----------|--------|-------|
 | Streaming SSE agent loop | ✅ | `internal/agent/loop.go` |
 | Multi-turn tool dispatch | ✅ | Parallel pool (max 4 concurrent) |
-| Auto-compact | ✅ | Fires near context limit; input + cache tokens counted |
+| Auto-compact | ✅ | Fires near context limit; input + cache tokens counted; compacts through the active role's selected client/model |
 | Micro-compaction | ✅ | Clears old tool results after 60 min idle |
 | Extended thinking (`/effort`) | ✅ | low/medium/high/max budgets |
 | Fast mode (`/fast`) | ✅ | Toggles Haiku; ⚡ badge |

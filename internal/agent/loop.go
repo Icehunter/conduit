@@ -189,7 +189,6 @@ type LoopConfig struct {
 	// BackgroundModel returns the model used for helper calls such as
 	// compaction, memory extraction, and Task sub-agents. Empty means use Model.
 	BackgroundModel func() string
-
 	// IsOAuthSubscription, when true, enables the dynamic per-request billing
 	// suffix computation (SHA256 of the first user message). Set for Claude.ai
 	// Max subscription accounts only; leave false for Console API key and
@@ -505,7 +504,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					threshold = internalmodel.AutoCompactThresholdForWindow(contextWindow)
 				}
 				if inputTokens > threshold && l.consecutiveCompactFails < internalmodel.MaxConsecutiveCompactFail {
-					if result, err := compact.CompactWithModel(ctx, l.client, l.BackgroundModel(), msgs, ""); err == nil {
+					if result, err := compact.CompactWithModel(ctx, l.client, model, msgs, ""); err == nil {
 						msgs = result.NewHistory
 						l.consecutiveCompactFails = 0
 						if l.cfg.OnCompact != nil && result.Summary != "" {

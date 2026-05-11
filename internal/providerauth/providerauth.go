@@ -1,15 +1,14 @@
 // Package providerauth defines the interface and built-in implementations for
 // per-provider credential management. It covers API-key flows for catalog
-// providers such as OpenAI, Gemini, and OpenRouter.
-//
-// OAuth-based providers (Claude subscription, Anthropic Console) are handled
-// by internal/auth and are treated as reference implementations here.
+// providers such as OpenAI, Gemini, and OpenRouter, and Account-based
+// flows for product providers like GitHub Copilot and ChatGPT Plus/Pro.
 package providerauth
 
 import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // ErrMissingCredential is returned when a provider has no stored credential.
@@ -37,6 +36,24 @@ type Config struct {
 	DocsURL     string
 }
 
+// ProviderAccount represents non-secret metadata for a product-account provider.
+type ProviderAccount struct {
+	ID          string    `json:"id"`
+	ProviderID  string    `json:"provider_id"`
+	DisplayName string    `json:"display_name"`
+	Method      string    `json:"method"`
+	AddedAt     time.Time `json:"added_at"`
+	Active      bool      `json:"active"`
+}
+
+// ProviderCredential represents secret material stored in secure storage.
+type ProviderCredential struct {
+	AccessToken  string            `json:"access_token"`
+	RefreshToken string            `json:"refresh_token,omitempty"`
+	Expiry       time.Time         `json:"expiry,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
 // Authorizer can issue and store credentials for one provider.
 type Authorizer interface {
 	ProviderID() string
@@ -49,9 +66,16 @@ type Authorizer interface {
 	Validate(ctx context.Context, credential string) error
 }
 
+// AccountAuthorizer is an extended interface for providers that use account-based OAuth.
+type AccountAuthorizer interface {
+	Authorizer
+	// GetAccount returns current account metadata.
+	GetAccount(ctx context.Context) (*ProviderAccount, error)
+	// Refresh refreshes the access token if needed.
+	Refresh(ctx context.Context) error
+}
+
 // looksLikeAPIKey is a conservative check that the string could be an API key.
-// It rejects empty strings and keys that are clearly not tokens (too short,
-// contain spaces, or start with known non-key prefixes).
 func looksLikeAPIKey(s string) bool {
 	s = strings.TrimSpace(s)
 	if len(s) < 8 {

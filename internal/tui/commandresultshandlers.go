@@ -194,12 +194,17 @@ func (m Model) applyCompactResult(res commands.Result) (Model, tea.Cmd) {
 	m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Compacting conversation…"})
 	m.refreshViewport()
 	customInstructions := res.Text
-	client := m.cfg.APIClient
-	backgroundModel := m.backgroundModel()
+	client, compactModel, err := m.compactClientAndModel()
+	if err != nil {
+		m.running = false
+		m.messages = append(m.messages, Message{Role: RoleError, Content: "Compact unavailable: " + err.Error()})
+		m.refreshViewport()
+		return m, nil
+	}
 	histCopy := make([]api.Message, len(m.history))
 	copy(histCopy, m.history)
 	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
-		result, err := compact.CompactWithModel(context.Background(), client, backgroundModel, histCopy, customInstructions)
+		result, err := compact.CompactWithModel(context.Background(), client, compactModel, histCopy, customInstructions)
 		if err != nil {
 			return compactDoneMsg{err: err}
 		}

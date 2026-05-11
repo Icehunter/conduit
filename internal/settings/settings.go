@@ -103,10 +103,6 @@ type Settings struct {
 	EnableAllProjectMcpServers bool     `json:"enableAllProjectMcpServers,omitempty"`
 	// Model is the preferred model name (e.g. "claude-opus-4-7").
 	Model string `json:"model,omitempty"`
-	// ActiveProvider is conduit's provider routing selector. It is intentionally
-	// richer than "model" so API-key, OAuth/subscription, and MCP-backed
-	// providers can carry their own auth and transport fields.
-	ActiveProvider *ActiveProviderSettings `json:"activeProvider,omitempty"`
 	// Providers is conduit's named provider registry. Roles reference these
 	// keys so main/planning/background/implement can choose independently.
 	Providers map[string]ActiveProviderSettings `json:"providers,omitempty"`
@@ -150,8 +146,6 @@ type Merged struct {
 	AdditionalDirs []string
 	// Model is the preferred model override from settings (last layer wins).
 	Model string
-	// ActiveProvider is the effective conduit provider routing selector.
-	ActiveProvider *ActiveProviderSettings
 	// Providers is the merged conduit provider registry.
 	Providers map[string]ActiveProviderSettings
 	// Roles maps role names to provider keys.
@@ -349,10 +343,6 @@ func loadPaths(paths []string) *Merged {
 		}
 		if s.Model != "" {
 			merged.Model = s.Model
-		}
-		if s.ActiveProvider != nil {
-			cp := *s.ActiveProvider
-			merged.ActiveProvider = &cp
 		}
 		for k, v := range s.Providers {
 			merged.Providers[k] = v

@@ -282,7 +282,7 @@ func accountModelNames() []string {
 	return []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
 }
 
-func customModelPickerItems(providers map[string]settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
+func customModelPickerItems(providers map[string]settings.ActiveProviderSettings, _ *catalog.Catalog) []PickerOption {
 	if len(providers) == 0 {
 		return nil
 	}
@@ -293,11 +293,9 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 	sort.Strings(keys)
 	items := make([]PickerOption, 0, len(keys)*2)
 	type openAIGroup struct {
-		label        string
-		items        []PickerOption
-		seen         map[string]bool
-		catalogTried bool
-		hasCatalog   bool
+		label string
+		items []PickerOption
+		seen  map[string]bool
 	}
 	openAIGroups := map[string]*openAIGroup{}
 	openAIOrder := []string{}
@@ -305,6 +303,9 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 		provider := providers[key]
 		label, ok := customModelPickerSection(provider)
 		if !ok {
+			continue
+		}
+		if provider.Model == "" {
 			continue
 		}
 		if provider.Kind == settings.ProviderKindOpenAICompatible {
@@ -315,26 +316,15 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 				openAIGroups[accountKey] = group
 				openAIOrder = append(openAIOrder, accountKey)
 			}
-			if !group.catalogTried {
-				group.catalogTried = true
-				group.items = catalogModelPickerItems(provider, modelCatalog)
-				group.hasCatalog = len(group.items) > 0
+			if group.seen[provider.Model] {
+				continue
 			}
-			if !group.hasCatalog && provider.Model != "" && !group.seen[provider.Model] {
-				group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
-				group.seen[provider.Model] = true
-			}
-			continue
-		}
-		modelItems := catalogModelPickerItems(provider, modelCatalog)
-		if len(modelItems) == 0 && provider.Model != "" {
-			modelItems = []PickerOption{{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model}}
-		}
-		if len(modelItems) == 0 {
+			group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
+			group.seen[provider.Model] = true
 			continue
 		}
 		items = append(items, PickerOption{Label: label, Section: true})
-		items = append(items, modelItems...)
+		items = append(items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
 	}
 	for _, accountKey := range openAIOrder {
 		group := openAIGroups[accountKey]
@@ -347,92 +337,16 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 	return items
 }
 
-func catalogModelPickerItems(provider settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
-	models := catalogModelsForProvider(provider, modelCatalog)
-	if len(models) == 0 {
-		return nil
-	}
-	items := make([]PickerOption, 0, len(models))
-	seen := make(map[string]bool, len(models))
-	for _, info := range models {
-		modelID := modelIDForProvider(provider, info.ID)
-		if modelID == "" || seen[modelID] {
+func catalogProviderByKey(providers map[string]settings.ActiveProviderSettings, key string, _ *catalog.Catalog) (settings.ActiveProviderSettings, bool) {
+	for _, provider := range providers {
+		if provider.Model == "" {
 			continue
 		}
-		seen[modelID] = true
-		candidate := provider
-		candidate.Model = modelID
-		if candidate.ContextWindow == 0 && info.ContextWindow > 0 {
-			candidate.ContextWindow = info.ContextWindow
-		}
-		label := modelID
-		if info.Name != "" && info.Name != info.ID {
-			label = fmt.Sprintf("%s — %s", modelID, info.Name)
-		}
-		items = append(items, PickerOption{Value: "provider:" + settings.ProviderKey(candidate), Label: label})
-	}
-	return items
-}
-
-func catalogProviderByKey(providers map[string]settings.ActiveProviderSettings, key string, modelCatalog *catalog.Catalog) (settings.ActiveProviderSettings, bool) {
-	for _, provider := range providers {
-		for _, info := range catalogModelsForProvider(provider, modelCatalog) {
-			candidate := provider
-			candidate.Model = modelIDForProvider(provider, info.ID)
-			if candidate.ContextWindow == 0 && info.ContextWindow > 0 {
-				candidate.ContextWindow = info.ContextWindow
-			}
-			if candidate.Model != "" && settings.ProviderKey(candidate) == key {
-				return candidate, true
-			}
+		if settings.ProviderKey(provider) == key {
+			return provider, true
 		}
 	}
 	return settings.ActiveProviderSettings{}, false
-}
-
-func catalogModelsForProvider(provider settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []catalog.ModelInfo {
-	if provider.Kind != settings.ProviderKindOpenAICompatible || modelCatalog == nil {
-		return nil
-	}
-	switch providerCatalogSlug(provider) {
-	case "openai":
-		return modelCatalog.ForProvider("openai")
-	case "google":
-		return modelCatalog.ForProvider("google")
-	case "openrouter":
-		return modelCatalog.Models
-	default:
-		return nil
-	}
-}
-
-func providerCatalogSlug(provider settings.ActiveProviderSettings) string {
-	base := strings.ToLower(strings.TrimSpace(provider.BaseURL))
-	credential := strings.ToLower(strings.TrimSpace(provider.Credential))
-	switch {
-	case strings.Contains(base, "api.openai.com") || credential == "openai":
-		return "openai"
-	case strings.Contains(base, "generativelanguage.googleapis.com") || credential == "gemini" || credential == "google":
-		return "google"
-	case strings.Contains(base, "openrouter.ai") || credential == "openrouter":
-		return "openrouter"
-	default:
-		return ""
-	}
-}
-
-func modelIDForProvider(provider settings.ActiveProviderSettings, id string) string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return ""
-	}
-	if providerCatalogSlug(provider) == "openrouter" {
-		return id
-	}
-	if idx := strings.Index(id, "/"); idx >= 0 {
-		return id[idx+1:]
-	}
-	return id
 }
 
 func customModelPickerSection(provider settings.ActiveProviderSettings) (string, bool) {

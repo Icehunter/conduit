@@ -714,7 +714,6 @@ func runREPL(continueMode bool, resumeID string) error {
 		InitialLocalServer:        initialLocalServer,
 		InitialLocalDirectTool:    initialLocalDirectTool,
 		InitialLocalImplementTool: initialLocalImplementTool,
-		InitialActiveProvider:     defaultProvider,
 		InitialProviders:          s.Providers,
 		InitialRoles:              s.Roles,
 		InitialCouncilProviders:   s.CouncilProviders,

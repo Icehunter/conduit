@@ -35,7 +35,6 @@ type ConduitConfig struct {
 	EnableAllProjectMcpServers bool     `json:"enableAllProjectMcpServers,omitempty"`
 
 	Model                       string                            `json:"model,omitempty"`
-	ActiveProvider              *ActiveProviderSettings           `json:"activeProvider,omitempty"`
 	Providers                   map[string]ActiveProviderSettings `json:"providers,omitempty"`
 	Roles                       map[string]string                 `json:"roles,omitempty"`
 	CouncilProviders            []string                          `json:"councilProviders,omitempty"`
@@ -80,10 +79,9 @@ func conduitConfigFromSettings(s Settings) ConduitConfig {
 		DisabledMcpjsonServers:     s.DisabledMcpjsonServers,
 		EnableAllProjectMcpServers: s.EnableAllProjectMcpServers,
 
-		Model:          s.Model,
-		ActiveProvider: s.ActiveProvider,
-		Providers:      s.Providers,
-		Roles:          s.Roles,
+		Model:     s.Model,
+		Providers: s.Providers,
+		Roles:     s.Roles,
 
 		OutputStyle:        s.OutputStyle,
 		Theme:              s.Theme,

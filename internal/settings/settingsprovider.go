@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// ProviderForRole resolves a named role to a provider. The legacy
-// activeProvider field remains the fallback for main so existing configs keep
-// working while roles/providers land.
+// ProviderForRole resolves a named role to a provider. Missing roles fall back
+// to the default role when configured.
 func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
 	if m == nil {
 		return nil, false
@@ -17,23 +16,29 @@ func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
 	if role == "" {
 		role = RoleDefault
 	}
-	if ref := m.Roles[role]; ref != "" {
-		if provider, ok := m.Providers[ref]; ok {
-			if !m.providerAvailable(provider) {
-				return nil, false
-			}
-			cp := provider
-			return &cp, true
-		}
-	}
-	if role == RoleDefault && m.ActiveProvider != nil {
-		if !m.providerAvailable(*m.ActiveProvider) {
-			return nil, false
-		}
-		cp := *m.ActiveProvider
-		return &cp, true
+	if provider, ok := m.providerForRoleRef(role); ok {
+		return provider, true
 	}
 	return nil, false
+}
+
+func (m *Merged) providerForRoleRef(role string) (*ActiveProviderSettings, bool) {
+	if m == nil {
+		return nil, false
+	}
+	ref := m.Roles[role]
+	if ref == "" {
+		return nil, false
+	}
+	provider, ok := m.Providers[ref]
+	if !ok {
+		return nil, false
+	}
+	if !m.providerAvailable(provider) {
+		return nil, false
+	}
+	cp := provider
+	return &cp, true
 }
 
 func (m *Merged) providerAvailable(provider ActiveProviderSettings) bool {
@@ -120,8 +125,7 @@ func SaveActiveProvider(value ActiveProviderSettings) error {
 	return SaveRoleProvider(RoleDefault, value)
 }
 
-// SaveRoleProvider persists a provider and assigns it to role. For default it
-// also updates activeProvider for compatibility with older config readers.
+// SaveRoleProvider persists a provider and assigns it to role.
 func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	if err := ValidateProviderSettings(value); err != nil {
 		return err
@@ -137,15 +141,11 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 		return err
 	}
 
-	active, err := json.Marshal(value)
-	if err != nil {
+	if _, err := json.Marshal(value); err != nil {
 		return err
 	}
 	if role == "" {
 		role = RoleDefault
-	}
-	if role == RoleDefault {
-		raw["activeProvider"] = active
 	}
 
 	providers := map[string]ActiveProviderSettings{}
@@ -206,9 +206,6 @@ func DeleteProviderEntry(key string) error {
 				}
 			}
 		}
-		if cfg.ActiveProvider != nil && ProviderKey(*cfg.ActiveProvider) == key {
-			cfg.ActiveProvider = nil
-		}
 	})
 }
 
@@ -220,9 +217,6 @@ func ClearRoleProvider(role string) error {
 	return UpdateConduitConfig(func(cfg *ConduitConfig) {
 		if cfg.Roles != nil {
 			delete(cfg.Roles, role)
-		}
-		if role == RoleDefault {
-			cfg.ActiveProvider = nil
 		}
 	})
 }
@@ -239,12 +233,46 @@ func RepairConduitProviderRegistry() error {
 		return nil
 	}
 	providers, roles, changed := CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
+	cfg.Providers = providers
+	cfg.Roles = roles
+	if migrated := migrateLegacyProviderKinds(&cfg); migrated {
+		changed = true
+	}
 	if !changed {
 		return nil
 	}
-	cfg.Providers = providers
-	cfg.Roles = roles
 	return SaveConduitConfig(cfg)
+}
+
+func migrateLegacyProviderKinds(cfg *ConduitConfig) bool {
+	if cfg == nil || len(cfg.Providers) == 0 {
+		return false
+	}
+	changed := false
+	for key, provider := range cfg.Providers {
+		if provider.Kind != "openai-responses" {
+			continue
+		}
+		provider.Kind = ProviderKindOpenAICompatible
+		if provider.Model == "" {
+			provider.Model = "gpt-5.5"
+		}
+		newKey := ProviderKey(provider)
+		if newKey == key {
+			cfg.Providers[key] = provider
+			changed = true
+			continue
+		}
+		delete(cfg.Providers, key)
+		cfg.Providers[newKey] = provider
+		for role, ref := range cfg.Roles {
+			if ref == key {
+				cfg.Roles[role] = newKey
+			}
+		}
+		changed = true
+	}
+	return changed
 }
 
 // ProviderKey returns a deterministic config key for a provider.

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,11 +66,16 @@ func TestWelcomeCardUsesActiveMCPProviderDisplay(t *testing.T) {
 	m := Model{
 		cfg:       Config{Version: "test"},
 		modelName: "claude-sonnet-4-6",
-		activeProvider: &settings.ActiveProviderSettings{
-			Kind:       "mcp",
-			Server:     "local-router",
-			Model:      "qwen3-coder",
-			DirectTool: "local_direct",
+		providers: map[string]settings.ActiveProviderSettings{
+			"mcp.local-router": {
+				Kind:       "mcp",
+				Server:     "local-router",
+				Model:      "qwen3-coder",
+				DirectTool: "local_direct",
+			},
+		},
+		roles: map[string]string{
+			settings.RoleDefault: "mcp.local-router",
 		},
 	}
 	msg := m.welcomeCard()
@@ -90,12 +94,6 @@ func TestModelPickerProviderLabelOpenAICompatible(t *testing.T) {
 func TestActiveModelDisplayNameOpenAICompatible(t *testing.T) {
 	m := Model{
 		cfg: Config{Version: "test"},
-		activeProvider: &settings.ActiveProviderSettings{
-			Kind:       settings.ProviderKindOpenAICompatible,
-			Credential: "gemini-personal",
-			BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
-			Model:      "gemini-2.5-pro",
-		},
 		providers: map[string]settings.ActiveProviderSettings{
 			"openai-compatible.gemini-personal.gemini-2.5-pro": {
 				Kind:       settings.ProviderKindOpenAICompatible,
@@ -236,7 +234,6 @@ func TestPlanModeUsesPlanningProvider(t *testing.T) {
 	m := Model{
 		modelName:          "claude-sonnet-4-6",
 		permissionMode:     permissions.ModePlan,
-		activeProvider:     &settings.ActiveProviderSettings{Kind: "claude-subscription", Model: "claude-sonnet-4-6"},
 		providers:          map[string]settings.ActiveProviderSettings{"mcp.plan-router": {Kind: "mcp", Server: "plan-router", Model: "planner"}},
 		roles:              map[string]string{settings.RolePlanning: "mcp.plan-router"},
 		localDirectTool:    "local_direct",
@@ -260,9 +257,8 @@ func TestPermissionModeChangeUpdatesLoopModel(t *testing.T) {
 	saveTestClaudeAccount(t, "test@example.com")
 	loop := agent.NewLoop(nil, nil, agent.LoopConfig{Model: "claude-sonnet-4-6"})
 	m := Model{
-		cfg:            Config{Loop: loop},
-		modelName:      "claude-sonnet-4-6",
-		activeProvider: &settings.ActiveProviderSettings{Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
+		cfg:       Config{Loop: loop},
+		modelName: "claude-sonnet-4-6",
 		providers: map[string]settings.ActiveProviderSettings{
 			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
 			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7", Account: "test@example.com"},
@@ -293,8 +289,7 @@ func TestModeRoleRoutingDefaultVsMain(t *testing.T) {
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
 	saveTestClaudeAccount(t, "test@example.com")
 	m := Model{
-		modelName:      "claude-sonnet-4-6",
-		activeProvider: &settings.ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+		modelName: "claude-sonnet-4-6",
 		providers: map[string]settings.ActiveProviderSettings{
 			"mcp.local-router":                      {Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
 			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
@@ -327,12 +322,6 @@ func TestStartupWelcomeUsesSavedPermissionModeProvider(t *testing.T) {
 		ModelName: "stale-startup-model",
 		Loop:      loop,
 		Gate:      gate,
-		InitialActiveProvider: &settings.ActiveProviderSettings{
-			Kind:       "mcp",
-			Server:     "local-router",
-			Model:      "qwen3-coder",
-			DirectTool: "local_direct",
-		},
 		InitialProviders: map[string]settings.ActiveProviderSettings{
 			"mcp.local-router":                      {Kind: "mcp", Server: "local-router", Model: "qwen3-coder", DirectTool: "local_direct"},
 			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "syndicated.life@gmail.com"},
@@ -366,11 +355,6 @@ func TestPermissionModeChangeRefreshesWelcomeViewport(t *testing.T) {
 		Version:   "test",
 		ModelName: "claude-sonnet-4-6",
 		Loop:      loop,
-		InitialActiveProvider: &settings.ActiveProviderSettings{
-			Kind:    "claude-subscription",
-			Model:   "claude-sonnet-4-6",
-			Account: "test@example.com",
-		},
 		InitialProviders: map[string]settings.ActiveProviderSettings{
 			"claude-subscription.claude-sonnet-4-6": {Kind: "claude-subscription", Model: "claude-sonnet-4-6", Account: "test@example.com"},
 			"claude-subscription.claude-opus-4-7":   {Kind: "claude-subscription", Model: "claude-opus-4-7", Account: "test@example.com"},
@@ -1129,32 +1113,6 @@ func TestHistoryToDisplayMessagesLabelsLegacyGeminiContent(t *testing.T) {
 	}})
 	if len(msgs) != 1 || msgs[0].Role != RoleAssistant || msgs[0].AssistantLabel != "‹ Gemini" {
 		t.Fatalf("messages = %#v, want legacy Gemini assistant label", msgs)
-	}
-}
-
-func TestPersistClaudeActiveProviderUpdatesAccount(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("CONDUIT_CONFIG_DIR", dir)
-
-	if suffix := persistClaudeActiveProvider("claude-sonnet-4-6", "first@example.com"); suffix != "" {
-		t.Fatalf("persist first returned suffix %q", suffix)
-	}
-	if suffix := persistClaudeActiveProvider("claude-sonnet-4-6", "second@example.com"); suffix != "" {
-		t.Fatalf("persist second returned suffix %q", suffix)
-	}
-
-	data, err := os.ReadFile(settings.ConduitSettingsPath())
-	if err != nil {
-		t.Fatalf("read conduit settings: %v", err)
-	}
-	var raw struct {
-		ActiveProvider settings.ActiveProviderSettings `json:"activeProvider"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if raw.ActiveProvider.Account != "second@example.com" {
-		t.Fatalf("account = %q, want second@example.com", raw.ActiveProvider.Account)
 	}
 }
 

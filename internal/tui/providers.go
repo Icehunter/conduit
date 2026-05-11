@@ -46,10 +46,6 @@ func runLocalCall(ctx context.Context, manager *mcp.Manager, call commands.Local
 	return localCallDoneMsg{turnID: turnID, call: call, chat: chat, text: text}
 }
 
-func persistClaudeActiveProvider(model, account string) string {
-	return persistActiveProvider(accountBackedActiveProvider(model, account))
-}
-
 func accountBackedActiveProvider(model, account string, tokens ...auth.PersistedTokens) settings.ActiveProviderSettings {
 	kind := settings.ProviderKindClaudeSubscription
 	if len(tokens) > 0 {
@@ -84,13 +80,6 @@ func providerKindForAccountKind(kind string) string {
 	}
 }
 
-func persistActiveProvider(value settings.ActiveProviderSettings) string {
-	if err := settings.SaveActiveProvider(value); err != nil {
-		return fmt.Sprintf(" (failed to persist active provider: %v)", err)
-	}
-	return ""
-}
-
 func (m *Model) persistProviderForRole(role string, value settings.ActiveProviderSettings) string {
 	if role == "" {
 		role = settings.RoleDefault
@@ -108,22 +97,6 @@ func (m *Model) persistProviderForRole(role string, value settings.ActiveProvide
 		return fmt.Sprintf(" (failed to persist %s provider: %v)", role, err)
 	}
 	return ""
-}
-
-func (m *Model) setActiveProvider(value settings.ActiveProviderSettings) {
-	provider := value
-	m.activeProvider = &provider
-	switch provider.Kind {
-	case settings.ProviderKindMCP:
-		m.localMode = true
-		m.localModeServer = provider.Server
-		m.localDirectTool = provider.DirectTool
-		m.localImplementTool = provider.ImplementTool
-		m.ensureDefaultLocalTools()
-	default:
-		m.localMode = false
-		m.localModeServer = ""
-	}
 }
 
 func (m *Model) applyPermissionMode(mode permissions.Mode) {
@@ -314,12 +287,6 @@ func (m Model) providerForRole(role string) (settings.ActiveProviderSettings, bo
 			return provider, true
 		}
 	}
-	if role == settings.RoleDefault && m.activeProvider != nil {
-		if !m.providerAvailable(*m.activeProvider) {
-			return settings.ActiveProviderSettings{}, false
-		}
-		return *m.activeProvider, true
-	}
 	return settings.ActiveProviderSettings{}, false
 }
 
@@ -439,25 +406,6 @@ func (m Model) anyAccountForProviderKind(kind string) bool {
 	return false
 }
 
-func (m Model) mcpActiveProvider(server string) settings.ActiveProviderSettings {
-	directTool := m.localDirectTool
-	if directTool == "" {
-		directTool = "local_direct"
-	}
-	implementTool := m.localImplementTool
-	if implementTool == "" {
-		implementTool = "local_implement"
-	}
-	return settings.ActiveProviderSettings{
-		Kind:          settings.ProviderKindMCP,
-		Server:        server,
-		Model:         m.localModelName(server),
-		ContextWindow: m.localContextWindow(server),
-		DirectTool:    directTool,
-		ImplementTool: implementTool,
-	}
-}
-
 func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
 	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == settings.ProviderKindMCP {
 		if provider.Server == "" {
@@ -511,9 +459,6 @@ func (m Model) providerValueForRole(role string) string {
 			return providerPickerValue(provider)
 		}
 	}
-	if role == settings.RoleDefault && m.activeProvider != nil {
-		return providerPickerValue(*m.activeProvider)
-	}
 	return ""
 }
 
@@ -560,11 +505,6 @@ func (m Model) activeModelDisplayName() string {
 			return accountProviderDisplayName(provider)
 		}
 		if m.noAuth {
-			return ""
-		}
-		// activeProvider was set but its account is no longer in the store
-		// (deleted at runtime) — don't show a stale model name from startup.
-		if m.activeProvider != nil {
 			return ""
 		}
 		return m.modelName

@@ -487,13 +487,6 @@ func (m Model) handleLoginDone(msg loginDoneMsg) (Model, tea.Cmd) {
 		m.messages = nil
 		m.history = nil
 		m.welcomeDismissed = false
-		if _, ok := m.activeMCPProvider(); !ok {
-			provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email, msg.tokens)
-			m.setActiveProvider(provider)
-			if suffix := persistActiveProvider(provider); suffix != "" {
-				m.messages = append(m.messages, Message{Role: RoleError, Content: strings.TrimSpace(suffix)})
-			}
-		}
 	}
 	m.messages = append(m.messages, m.welcomeCard())
 	m.refreshViewport()
@@ -519,13 +512,6 @@ func (m Model) handleAuthReload(msg authReloadMsg) (Model, tea.Cmd) {
 		m.history = nil
 		m.welcomeDismissed = false
 		m.messages = append(m.messages, m.welcomeCard())
-		if _, ok := m.activeMCPProvider(); !ok {
-			provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email, msg.tokens)
-			m.setActiveProvider(provider)
-			if suffix := persistActiveProvider(provider); suffix != "" {
-				m.messages = append(m.messages, Message{Role: RoleError, Content: strings.TrimSpace(suffix)})
-			}
-		}
 		if m.usageStatusEnabled && m.cfg.FetchPlanUsage != nil {
 			return m.startPlanUsageFetch()
 		}

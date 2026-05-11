@@ -94,8 +94,6 @@ type RunOptions struct {
 	InitialLocalDirectTool string
 	// InitialLocalImplementTool is the MCP tool used for scoped local diffs.
 	InitialLocalImplementTool string
-	// InitialActiveProvider is the provider shape loaded from conduit.json.
-	InitialActiveProvider *settings.ActiveProviderSettings
 	// InitialProviders/Roles are conduit's named provider role bindings.
 	InitialProviders map[string]settings.ActiveProviderSettings
 	InitialRoles     map[string]string
@@ -221,7 +219,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterTerminalSetupCommand(reg)
 	commands.RegisterPromptCommands(reg)
 	commands.RegisterMCPCommand(reg, runOpts.MCPManager)
-	commands.RegisterLocalCommands(reg, runOpts.MCPManager, runOpts.InitialActiveProvider, runOpts.InitialProviders)
+	commands.RegisterLocalCommands(reg, runOpts.MCPManager, nil, runOpts.InitialProviders)
 	commands.RegisterRTKCommands(reg)
 	commands.RegisterCouncilCommands(reg)
 	commands.RegisterBuddyCommand(reg, func() string {
@@ -513,7 +511,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InitialLocalServer:        runOpts.InitialLocalServer,
 		InitialLocalDirectTool:    runOpts.InitialLocalDirectTool,
 		InitialLocalImplementTool: runOpts.InitialLocalImplementTool,
-		InitialActiveProvider:     runOpts.InitialActiveProvider,
 		InitialProviders:          runOpts.InitialProviders,
 		InitialRoles:              runOpts.InitialRoles,
 		InitialCouncilProviders:   runOpts.InitialCouncilProviders,

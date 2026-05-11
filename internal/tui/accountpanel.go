@@ -418,6 +418,11 @@ func (m Model) renderSettingsAccounts(sb *strings.Builder, p *settingsPanelState
 				nameStyle = accent
 			}
 			connected := providerauth.IsConnected(store, cfg.ID)
+			if !connected {
+				if key, err := settings.LoadProviderCredential(store, cfg.ID); err == nil && strings.TrimSpace(key) != "" {
+					connected = true
+				}
+			}
 			var badge string
 			if connected {
 				badge = "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#3fb950")).Render("api key ✓")

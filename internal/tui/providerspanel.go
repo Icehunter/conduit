@@ -359,8 +359,6 @@ func (m Model) refreshModelCommandProviders() {
 	if m.cfg.Commands == nil || m.cfg.Loop == nil {
 		return
 	}
-	m.ensureCopilotFallbackProviders(copilot.ProviderID)
-	m.ensureCodexFallbackProviders(codex.ProviderID)
 	commands.RegisterModelCommand(m.cfg.Commands,
 		func() string {
 			if m.cfg.Live != nil {
@@ -424,6 +422,11 @@ func (m Model) advanceProviderForm(f *providerFormState, backwards bool, navigat
 			f.apiKey = value
 		}
 		f.input = ""
+		if !f.oauthProvider {
+			f.step = providerFormStepOAuth + 1
+			f.err = ""
+			return nil
+		}
 	case providerFormStepOAuth:
 	}
 	f.err = ""
@@ -625,10 +628,6 @@ func (m *Model) renameProviderGroup(editKey, credential, baseURL, apiKey string)
 				}
 			}
 		}
-		if cfg.ActiveProvider != nil && sameProviderAccount(*cfg.ActiveProvider, oldCredential, oldBaseURL) {
-			cfg.ActiveProvider.Credential = credential
-			cfg.ActiveProvider.BaseURL = baseURL
-		}
 	}); err != nil {
 		return err
 	}
@@ -644,10 +643,6 @@ func (m *Model) renameProviderGroup(editKey, credential, baseURL, apiKey string)
 	}
 	m.providers = nextProviders
 	m.roles = nextRoles
-	if m.activeProvider != nil && sameProviderAccount(*m.activeProvider, oldCredential, oldBaseURL) {
-		m.activeProvider.Credential = credential
-		m.activeProvider.BaseURL = baseURL
-	}
 	return nil
 }
 
@@ -710,7 +705,7 @@ func copilotPollOAuthCmd(credential string, info *copilot.DeviceCodeResponse) te
 func discoverCopilotModels(auth *copilot.Authorizer, prefix string) tea.Msg {
 	models, err := auth.FetchModels(context.Background())
 	if err != nil {
-		return copilotOAuthCompletedMsg{models: copilotModelIDs(copilot.FallbackModels()), warning: fmt.Sprintf("%s: %v; using fallback model list", prefix, err)}
+		return copilotOAuthCompletedMsg{err: fmt.Errorf("%s: %w", prefix, err)}
 	}
 	return copilotOAuthCompletedMsg{models: copilotModelIDs(models)}
 }
@@ -727,9 +722,6 @@ func copilotModelIDs(models []catalog.ModelInfo) []string {
 		modelIDs = append(modelIDs, id)
 	}
 	sort.Strings(modelIDs)
-	if len(modelIDs) == 0 {
-		return copilotModelIDs(copilot.FallbackModels())
-	}
 	return modelIDs
 }
 
@@ -894,81 +886,110 @@ func (m Model) completeCopilotOAuthForm(f *providerFormState, models []string) e
 	f.baseURL = copilot.ChatBaseURL
 	f.apiKey = ""
 	f.step = providerFormStepAPIKey + 1
-	if m.providers == nil {
-		m.providers = map[string]settings.ActiveProviderSettings{}
-	}
+	providers := make([]settings.ActiveProviderSettings, 0, len(models))
 	for _, model := range models {
-		provider := settings.ActiveProviderSettings{
+		providers = append(providers, settings.ActiveProviderSettings{
 			Kind:          settings.ProviderKindOpenAICompatible,
 			Credential:    f.credential,
 			BaseURL:       copilot.ChatBaseURL,
 			Model:         model,
 			ContextWindow: copilot.ContextWindowForModel(model, 0),
+		})
+	}
+	return m.replaceProviderGroup(f.credential, copilot.ChatBaseURL, providers)
+}
+
+func (m *Model) replaceProviderGroup(credential, baseURL string, nextProviders []settings.ActiveProviderSettings) error {
+	if m == nil {
+		return nil
+	}
+	credential = strings.TrimSpace(credential)
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/"
+	if credential == "" || baseURL == "/" {
+		return fmt.Errorf("provider group requires a credential and base URL")
+	}
+	allowed := map[string]settings.ActiveProviderSettings{}
+	for _, provider := range nextProviders {
+		allowed[settings.ProviderKey(provider)] = provider
+	}
+	if err := settings.UpdateConduitConfig(func(cfg *settings.ConduitConfig) {
+		if cfg.Providers == nil {
+			cfg.Providers = map[string]settings.ActiveProviderSettings{}
 		}
-		if err := settings.SaveProviderEntry(provider); err != nil {
-			return err
+		cfg.Providers, cfg.Roles, _ = settings.CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
+		for key, provider := range cfg.Providers {
+			if sameProviderAccount(provider, credential, baseURL) {
+				delete(cfg.Providers, key)
+			}
 		}
-		m.providers[settings.ProviderKey(provider)] = provider
+		for key, provider := range allowed {
+			cfg.Providers[key] = provider
+		}
+		for role, ref := range cfg.Roles {
+			if ref == "" {
+				continue
+			}
+			if _, ok := cfg.Providers[ref]; ok {
+				continue
+			}
+			if removed, ok := cfg.Providers[ref]; ok {
+				_ = removed
+				continue
+			}
+			if strings.HasPrefix(ref, settings.ProviderKey(settings.ActiveProviderSettings{Kind: settings.ProviderKindOpenAICompatible, Credential: credential, BaseURL: baseURL})) {
+				delete(cfg.Roles, role)
+			}
+		}
+		if len(cfg.CouncilProviders) > 0 {
+			filtered := cfg.CouncilProviders[:0]
+			for _, ref := range cfg.CouncilProviders {
+				key := strings.TrimPrefix(ref, "provider:")
+				if _, ok := cfg.Providers[key]; ok {
+					filtered = append(filtered, ref)
+				}
+			}
+			cfg.CouncilProviders = filtered
+		}
+		if cfg.CouncilSynthesizer != "" {
+			key := strings.TrimPrefix(cfg.CouncilSynthesizer, "provider:")
+			if _, ok := cfg.Providers[key]; !ok {
+				cfg.CouncilSynthesizer = ""
+			}
+		}
+		if len(cfg.CouncilRoles) > 0 {
+			for ref := range cfg.CouncilRoles {
+				key := strings.TrimPrefix(ref, "provider:")
+				if _, ok := cfg.Providers[key]; !ok {
+					delete(cfg.CouncilRoles, ref)
+				}
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	if m.providers == nil {
+		m.providers = map[string]settings.ActiveProviderSettings{}
+	}
+	for key, provider := range m.providers {
+		if sameProviderAccount(provider, credential, baseURL) {
+			delete(m.providers, key)
+		}
+	}
+	for key, provider := range allowed {
+		m.providers[key] = provider
+	}
+	for role, ref := range m.roles {
+		if ref == "" {
+			continue
+		}
+		if _, ok := m.providers[ref]; ok {
+			continue
+		}
+		if strings.HasPrefix(ref, settings.ProviderKey(settings.ActiveProviderSettings{Kind: settings.ProviderKindOpenAICompatible, Credential: credential, BaseURL: baseURL})) {
+			delete(m.roles, role)
+		}
 	}
 	return nil
-}
-
-func (m Model) ensureCopilotFallbackProviders(credential string) {
-	credential = strings.TrimSpace(credential)
-	if credential == "" {
-		credential = copilot.ProviderID
-	}
-	if _, err := settings.LoadStructuredProviderCredential(secure.NewDefault(), credential); err != nil {
-		return
-	}
-	for _, provider := range m.providers {
-		if isCopilotProvider(provider) && provider.Credential == credential {
-			return
-		}
-	}
-	if m.providers == nil {
-		m.providers = map[string]settings.ActiveProviderSettings{}
-	}
-	for _, model := range copilot.FallbackModels() {
-		provider := settings.ActiveProviderSettings{
-			Kind:          settings.ProviderKindOpenAICompatible,
-			Credential:    credential,
-			BaseURL:       copilot.ChatBaseURL,
-			Model:         model.ID,
-			ContextWindow: copilot.ContextWindowForModel(model.ID, model.ContextWindow),
-		}
-		_ = settings.SaveProviderEntry(provider)
-		m.providers[settings.ProviderKey(provider)] = provider
-	}
-}
-
-func (m Model) ensureCodexFallbackProviders(credential string) {
-	credential = strings.TrimSpace(credential)
-	if credential == "" {
-		credential = codex.ProviderID
-	}
-	if _, err := settings.LoadStructuredProviderCredential(secure.NewDefault(), credential); err != nil {
-		return
-	}
-	for _, provider := range m.providers {
-		if isCodexProvider(provider) && provider.Credential == credential {
-			return
-		}
-	}
-	if m.providers == nil {
-		m.providers = map[string]settings.ActiveProviderSettings{}
-	}
-	for _, model := range codex.FallbackModels() {
-		provider := settings.ActiveProviderSettings{
-			Kind:          settings.ProviderKindOpenAICompatible,
-			Credential:    credential,
-			BaseURL:       codex.CodexBaseURL,
-			Model:         model.ID,
-			ContextWindow: codex.ContextWindowForModel(model.ID, model.ContextWindow),
-		}
-		_ = settings.SaveProviderEntry(provider)
-		m.providers[settings.ProviderKey(provider)] = provider
-	}
 }
 
 func gracefulCopilotError(err error) string {
@@ -1029,8 +1050,7 @@ func (m Model) renderSettingsProviders(sb *strings.Builder, p *settingsPanelStat
 		if selected {
 			labelStyle = accent
 		}
-		sb.WriteString(cursor + labelStyle.Render(accountProviderDisplayName(row.provider)) + "\n")
-		sb.WriteString("    " + dim.Render(row.key) + "\n")
+		sb.WriteString(cursor + labelStyle.Render(providerRowLabel(row.provider)) + "\n")
 	}
 	addSelected := p.providerSel == len(rows)
 	cursor := "  "
@@ -1061,7 +1081,7 @@ func (m Model) renderProviderDetail(sb *strings.Builder, p *settingsPanelState, 
 		sb.WriteString(dim.Render("  Provider no longer exists.") + "\n")
 		return
 	}
-	sb.WriteString(accent.Render("  "+accountProviderDisplayName(row.provider)) + "\n")
+	sb.WriteString(accent.Render("  "+providerRowLabel(row.provider)) + "\n")
 	sb.WriteString("  " + dim.Render(row.key) + "\n\n")
 	labels := providerDetailActionLabelsFor(row.provider)
 	ids := providerDetailActionsFor(row.provider)
@@ -1305,6 +1325,38 @@ func providerAccountRowKey(rows []providerPanelRow, credential, baseURL string) 
 		}
 	}
 	return ""
+}
+
+func providerRowLabel(provider settings.ActiveProviderSettings) string {
+	label := "Claude Subscription"
+	switch provider.Kind {
+	case settings.ProviderKindAnthropicAPI:
+		label = "Anthropic API"
+	case settings.ProviderKindOpenAICompatible:
+		label = "OpenAI-compatible"
+		if isCopilotProvider(provider) {
+			label = "GitHub Copilot"
+		} else if isCodexProvider(provider) {
+			label = "ChatGPT / Codex"
+		} else if strings.EqualFold(strings.TrimSpace(provider.Credential), "gemini") || strings.Contains(strings.ToLower(provider.BaseURL), "generativelanguage.googleapis.com") {
+			label = "Gemini"
+		}
+	case settings.ProviderKindMCP:
+		label = "MCP"
+	}
+	parts := []string{label}
+	if provider.Account != "" {
+		parts = append(parts, provider.Account)
+	}
+	if provider.Credential != "" {
+		switch provider.Kind {
+		case settings.ProviderKindAnthropicAPI, settings.ProviderKindOpenAICompatible:
+			parts = append(parts, "credential "+provider.Credential)
+		default:
+			parts = append(parts, provider.Credential)
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func providerDetailActions() []string {

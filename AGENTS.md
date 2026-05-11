@@ -49,6 +49,7 @@ internal/commands/        # Slash command handlers
 
 - **Fidelity over cleverness** — this is a port. Match TS behavior exactly, including quirks. Note divergences in `PARITY.md`.
 - **Update `STATUS.md`** whenever you complete, partially complete, or discover a stub for any tracked component. It's how humans know what works.
+- **Update memory files during work** — keep local project memory notes current as you go (per user request).
 - **RTK filtering is in-process** (`internal/rtk/`). Don't shell out to the standalone `rtk` binary. Don't trim bash output ad-hoc at call sites — add a classifier in `internal/rtk/` instead.
 - **`make verify` must pass** before any task is done. Zero lint errors, tests pass with `-race`.
 - **`./conduit`** at repo root is a build artifact. `make build` overwrites it. Don't edit it.
@@ -63,3 +64,11 @@ Standards live in `.Codex/rules/` and are loaded automatically:
 | `error-handling.md` | `*.go` | `%w` wrapping, no silent swallows, context propagation |
 | `tui.md` | `internal/tui/` | Bubble Tea v2 — no blocking in Update, model/update/view discipline |
 | `porting.md` | `*.go` | Reading TS source + decoded bundle, cross-referencing, PARITY.md updates |
+
+## Project Memory
+
+- Copilot model discovery headers (from opencode):
+  - User-Agent: `GitHubCopilotChat/0.32.4`
+  - Editor-Version: `vscode/1.105.1`
+  - Editor-Plugin-Version: `copilot-chat/0.32.4`
+  - Copilot-Integration-Id: `vscode-chat`

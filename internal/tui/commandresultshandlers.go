@@ -32,14 +32,11 @@ import (
 // applyModelSwitch handles the "model" command result.
 func (m Model) applyModelSwitch(res commands.Result) (Model, tea.Cmd) {
 	m.modelName = res.Model
-	provider := accountBackedActiveProvider(res.Model, m.cfg.Profile.Email)
-	m.setActiveProvider(provider)
-	persistSuffix := persistActiveProvider(provider)
 	m.cfg.Loop.SetModel(res.Model)
 	m.syncLive()
 	m.refreshWelcomeCardMessage()
 	if res.Text != "" {
-		m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text + persistSuffix})
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: res.Text})
 	}
 	m.refreshViewport()
 	return m.startPlanUsageFetch()
@@ -69,9 +66,6 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 		provider := *res.Provider
 		provider.Server = server
 		provider.Model = model
-		if role == settings.RoleDefault {
-			m.setActiveProvider(provider)
-		}
 		suffix := m.persistProviderForRole(role, provider)
 		m.applyEffectiveProviderForMode()
 		m.syncLive()
@@ -82,9 +76,6 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 		provider.Account = ""
 		if provider.Model == "" {
 			provider.Model = res.Model
-		}
-		if role == settings.RoleDefault {
-			m.setActiveProvider(provider)
 		}
 		suffix := m.persistProviderForRole(role, provider)
 		m.applyEffectiveProviderForMode()
@@ -105,11 +96,13 @@ func (m Model) applyProviderSwitch(res commands.Result) (Model, tea.Cmd) {
 			provider.Account = m.cfg.Profile.Email
 		}
 		if provider.Kind == settings.ProviderKindClaudeSubscription {
+			if provider.Account == "" {
+				provider.Account = m.cfg.Profile.Email
+			}
 			provider.Kind = accountBackedActiveProvider(model, provider.Account).Kind
 		}
 		if role == settings.RoleDefault {
 			m.modelName = model
-			m.setActiveProvider(provider)
 			m.cfg.Loop.SetModel(model)
 		}
 		suffix := m.persistProviderForRole(role, provider)
@@ -268,42 +261,30 @@ func (m Model) applyLocalMode(res commands.Result) (Model, tea.Cmd) {
 	}
 	switch action {
 	case "off":
-		provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email)
-		m.setActiveProvider(provider)
-		suffix := persistActiveProvider(provider)
 		m.syncLive()
 		m.refreshWelcomeCardMessage()
-		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Local mode off. Normal chat routes to Claude." + suffix})
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Local mode off. Normal chat routes to Claude."})
 	case "on":
 		if server == "" {
 			server = "local-router"
 		}
 		m.ensureDefaultLocalTools()
-		provider := m.mcpActiveProvider(server)
-		m.setActiveProvider(provider)
-		suffix := persistActiveProvider(provider)
 		m.syncLive()
 		m.refreshWelcomeCardMessage()
-		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.%s", server, suffix)})
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.", server)})
 	default:
 		if _, ok := m.activeMCPProvider(); ok {
-			provider := accountBackedActiveProvider(m.modelName, m.cfg.Profile.Email)
-			m.setActiveProvider(provider)
-			suffix := persistActiveProvider(provider)
 			m.syncLive()
 			m.refreshWelcomeCardMessage()
-			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Local mode off. Normal chat routes to Claude." + suffix})
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Local mode off. Normal chat routes to Claude."})
 		} else {
 			if server == "" {
 				server = "local-router"
 			}
 			m.ensureDefaultLocalTools()
-			provider := m.mcpActiveProvider(server)
-			m.setActiveProvider(provider)
-			suffix := persistActiveProvider(provider)
 			m.syncLive()
 			m.refreshWelcomeCardMessage()
-			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.%s", server, suffix)})
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Local mode on. Normal chat routes to %s. Use /local-mode off to return to Claude.", server)})
 		}
 	}
 	m.refreshViewport()

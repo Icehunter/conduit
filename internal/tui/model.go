@@ -343,8 +343,6 @@ type Config struct {
 	InitialLocalDirectTool string
 	// InitialLocalImplementTool is the MCP tool used for scoped local diffs.
 	InitialLocalImplementTool string
-	// InitialActiveProvider is conduit's provider routing selector.
-	InitialActiveProvider *settings.ActiveProviderSettings
 	// InitialProviders/Roles are conduit's named provider role bindings.
 	InitialProviders map[string]settings.ActiveProviderSettings
 	InitialRoles     map[string]string
@@ -468,11 +466,8 @@ type Model struct {
 	// fastMode is true when /fast is active (showing ⚡ badge).
 	fastMode bool
 
-	// activeProvider is conduit's provider routing selector. For now the TUI
-	// supports Claude subscription and MCP-backed private/local providers.
-	activeProvider *settings.ActiveProviderSettings
-	providers      map[string]settings.ActiveProviderSettings
-	roles          map[string]string
+	providers map[string]settings.ActiveProviderSettings
+	roles     map[string]string
 
 	// localMode/local* are compatibility fields for the hidden /local-mode and
 	// /local debug commands while provider routing settles.
@@ -672,23 +667,6 @@ func New(cfg Config) Model {
 		providers:          cloneProviderMap(cfg.InitialProviders),
 		roles:              cloneStringMap(cfg.InitialRoles),
 		councilProviders:   append([]string(nil), cfg.InitialCouncilProviders...),
-	}
-	if cfg.InitialActiveProvider != nil {
-		provider := *cfg.InitialActiveProvider
-		m.activeProvider = &provider
-		if provider.Kind == settings.ProviderKindMCP {
-			m.localMode = true
-			if m.localModeServer == "" {
-				m.localModeServer = provider.Server
-			}
-			if m.localDirectTool == "" {
-				m.localDirectTool = provider.DirectTool
-			}
-			if m.localImplementTool == "" {
-				m.localImplementTool = provider.ImplementTool
-			}
-			m.ensureDefaultLocalTools()
-		}
 	}
 	// Sync displayed permission mode from the gate before rendering any
 	// startup messages. The active provider is role-dependent, so welcome

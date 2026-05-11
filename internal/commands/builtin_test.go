@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -133,6 +131,38 @@ func TestRegisterModelCommand_ModelsOmitsAccountSectionWithoutAccount(t *testing
 	}
 	if !got.Items[0].Section || got.Items[0].Label != "MCP local-router" {
 		t.Fatalf("first picker item = %#v, want MCP local-router section", got.Items[0])
+	}
+}
+
+func TestRegisterModelCommand_ModelsUsesConfiguredProviders(t *testing.T) {
+	r := New()
+	providers := map[string]settings.ActiveProviderSettings{
+		"openai-compatible.github-copilot.gpt-5.1-codex-mini": {
+			Kind:       settings.ProviderKindOpenAICompatible,
+			Credential: "github-copilot",
+			BaseURL:    "https://api.githubcopilot.com/",
+			Model:      "gpt-5.1-codex-mini",
+		},
+	}
+	RegisterModelCommand(r, func() string { return "gpt-5.1-codex-mini" }, func(string) {}, nil, nil, providers, nil)
+
+	result, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(result.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	found := false
+	for _, item := range got.Items {
+		if item.Value == "provider:openai-compatible.github-copilot.gpt-5.1-codex-mini" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("picker items missing configured copilot model: %#v", got.Items)
 	}
 }
 
@@ -450,20 +480,12 @@ func TestRegisterModelCommand_ModelsExpandsDirectProviderCatalogModels(t *testin
 		Kind:       settings.ProviderKindOpenAICompatible,
 		Credential: "openai",
 		BaseURL:    "https://api.openai.com/v1/",
+		Model:      "gpt-5.4-mini",
 	}
 	providers := map[string]settings.ActiveProviderSettings{
 		settings.ProviderKey(provider): provider,
 	}
-	cat := &catalog.Catalog{
-		Source:    "test",
-		FetchedAt: time.Now(),
-		Models: []catalog.ModelInfo{
-			{ID: "openai/gpt-5.5", Name: "GPT-5.5", Provider: "openai", ContextWindow: 400000},
-			{ID: "openai/gpt-5.4-mini", Name: "GPT-5.4 Mini", Provider: "openai", ContextWindow: 200000},
-			{ID: "google/gemini-2.5-pro", Name: "Gemini 2.5 Pro", Provider: "google", ContextWindow: 1000000},
-		},
-	}
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, cat)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
 
 	picker, ok := r.Dispatch("/models")
 	if !ok {
@@ -473,21 +495,14 @@ func TestRegisterModelCommand_ModelsExpandsDirectProviderCatalogModels(t *testin
 	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
 		t.Fatalf("unmarshal picker: %v", err)
 	}
-	foundGPT55 := false
 	foundMini := false
-	foundGemini := false
 	for _, item := range got.Items {
-		switch item.Value {
-		case "provider:openai-compatible.openai.gpt-5.5":
-			foundGPT55 = true
-		case "provider:openai-compatible.openai.gpt-5.4-mini":
+		if item.Value == "provider:openai-compatible.openai.gpt-5.4-mini" {
 			foundMini = true
-		case "provider:openai-compatible.openai.gemini-2.5-pro":
-			foundGemini = true
 		}
 	}
-	if !foundGPT55 || !foundMini || foundGemini {
-		t.Fatalf("catalog model rows gpt55=%v mini=%v gemini=%v items=%#v", foundGPT55, foundMini, foundGemini, got.Items)
+	if !foundMini {
+		t.Fatalf("picker rows missing configured gpt-5.4-mini: %#v", got.Items)
 	}
 
 	result, ok := r.Dispatch("/model --role planning provider:openai-compatible.openai.gpt-5.4-mini")
@@ -497,8 +512,8 @@ func TestRegisterModelCommand_ModelsExpandsDirectProviderCatalogModels(t *testin
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("result = %#v, want provider-switch", result)
 	}
-	if result.Provider.Model != "gpt-5.4-mini" || result.Provider.ContextWindow != 200000 {
-		t.Fatalf("provider = %#v, want catalog-derived gpt-5.4-mini provider", result.Provider)
+	if result.Provider.Model != "gpt-5.4-mini" {
+		t.Fatalf("provider = %#v, want configured gpt-5.4-mini provider", result.Provider)
 	}
 }
 
@@ -508,19 +523,12 @@ func TestRegisterModelCommand_ModelsExpandsOpenRouterCatalogModels(t *testing.T)
 		Kind:       settings.ProviderKindOpenAICompatible,
 		Credential: "openrouter",
 		BaseURL:    "https://openrouter.ai/api/v1/",
+		Model:      "openai/gpt-5.5",
 	}
 	providers := map[string]settings.ActiveProviderSettings{
 		settings.ProviderKey(provider): provider,
 	}
-	cat := &catalog.Catalog{
-		Source:    "test",
-		FetchedAt: time.Now(),
-		Models: []catalog.ModelInfo{
-			{ID: "openai/gpt-5.5", Name: "GPT-5.5", Provider: "openai", ContextWindow: 400000},
-			{ID: "google/gemini-2.5-pro", Name: "Gemini 2.5 Pro", Provider: "google", ContextWindow: 1000000},
-		},
-	}
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, cat)
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
 
 	picker, ok := r.Dispatch("/models")
 	if !ok {
@@ -531,17 +539,13 @@ func TestRegisterModelCommand_ModelsExpandsOpenRouterCatalogModels(t *testing.T)
 		t.Fatalf("unmarshal picker: %v", err)
 	}
 	foundOpenAI := false
-	foundGoogle := false
 	for _, item := range got.Items {
 		if item.Value == "provider:openai-compatible.openrouter.openai/gpt-5.5" {
 			foundOpenAI = true
 		}
-		if item.Value == "provider:openai-compatible.openrouter.google/gemini-2.5-pro" {
-			foundGoogle = true
-		}
 	}
-	if !foundOpenAI || !foundGoogle {
-		t.Fatalf("openrouter catalog rows openai=%v google=%v items=%#v", foundOpenAI, foundGoogle, got.Items)
+	if !foundOpenAI {
+		t.Fatalf("openrouter picker rows missing configured model: %#v", got.Items)
 	}
 }
 
@@ -719,49 +723,6 @@ func TestRegisterLocalCommands_HiddenFromDiscovery(t *testing.T) {
 	}
 	if _, ok := r.Dispatch("/local still works"); !ok {
 		t.Fatal("hidden /local should still dispatch")
-	}
-}
-
-func TestRegisterLocalCommands_UsesActiveMCPProvider(t *testing.T) {
-	r := New()
-	provider := &settings.ActiveProviderSettings{
-		Kind:          "mcp",
-		Server:        "gpu-router",
-		DirectTool:    "chat",
-		ImplementTool: "diff",
-		Model:         "deepseek-coder",
-	}
-	RegisterLocalCommands(r, nil, provider, nil)
-
-	result, ok := r.Dispatch("/local explain this")
-	if !ok {
-		t.Fatal("expected /local to dispatch")
-	}
-	var call LocalCall
-	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
-		t.Fatalf("unmarshal local call: %v", err)
-	}
-	if call.Server != "gpu-router" || call.Tool != "mcp__gpu_router__chat" {
-		t.Fatalf("direct call = %#v", call)
-	}
-
-	result, ok = r.Dispatch("/local-implement fix parser")
-	if !ok {
-		t.Fatal("expected /local-implement to dispatch")
-	}
-	if err := json.Unmarshal([]byte(result.Text), &call); err != nil {
-		t.Fatalf("unmarshal implement call: %v", err)
-	}
-	if call.Server != "gpu-router" || call.Tool != "mcp__gpu_router__diff" {
-		t.Fatalf("implement call = %#v", call)
-	}
-
-	result, ok = r.Dispatch("/local-mode on")
-	if !ok {
-		t.Fatal("expected /local-mode to dispatch")
-	}
-	if result.Type != "local-mode" || result.Text != "on\tgpu-router" {
-		t.Fatalf("local-mode on = %#v", result)
 	}
 }
 

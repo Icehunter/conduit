@@ -118,7 +118,7 @@ func (m Model) welcomeCard() Message {
 				p.SubscriptionType = entry.SubscriptionType
 			}
 		}
-	} else if !providerOk && m.activeProvider != nil {
+	} else if !providerOk {
 		// Provider was configured but its account was deleted at runtime —
 		// clear stale subscription info from the startup profile.
 		p.SubscriptionType = ""

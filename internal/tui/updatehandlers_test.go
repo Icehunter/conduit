@@ -101,11 +101,10 @@ func TestApplyAPIRateLimitToPlanUsageMarksCurrentSessionFull(t *testing.T) {
 	m := Model{
 		cfg:                Config{Profile: profile.Info{Email: "work@example.com"}},
 		usageStatusEnabled: true,
-		activeProvider: &settings.ActiveProviderSettings{
-			Kind:    settings.ProviderKindClaudeSubscription,
-			Account: "work@example.com",
-			Model:   "claude-sonnet-4-6",
+		providers: map[string]settings.ActiveProviderSettings{
+			"claude-subscription.work@example.com.claude-sonnet-4-6": {Kind: settings.ProviderKindClaudeSubscription, Account: "work@example.com", Model: "claude-sonnet-4-6"},
 		},
+		roles: map[string]string{settings.RoleDefault: "claude-subscription.work@example.com.claude-sonnet-4-6"},
 	}
 
 	m = m.applyAgentEvent(agent.LoopEvent{

@@ -41,8 +41,7 @@ func TestLoad_ConduitSettingsOverrideClaudeSettings(t *testing.T) {
 		t.Fatalf("mkdir .conduit: %v", err)
 	}
 	overlay := Settings{
-		Model:          "claude-opus-4-7",
-		ActiveProvider: &ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"},
+		Model: "claude-opus-4-7",
 	}
 	data, _ := json.Marshal(overlay)
 	if err := os.WriteFile(filepath.Join(conduitDir, "settings.json"), data, 0o600); err != nil {
@@ -55,9 +54,6 @@ func TestLoad_ConduitSettingsOverrideClaudeSettings(t *testing.T) {
 	}
 	if merged.Model != "claude-opus-4-7" {
 		t.Fatalf("Model = %q, want conduit overlay value", merged.Model)
-	}
-	if merged.ActiveProvider == nil || merged.ActiveProvider.Kind != "mcp" || merged.ActiveProvider.Server != "local-router" {
-		t.Fatalf("ActiveProvider = %#v, want mcp local-router", merged.ActiveProvider)
 	}
 }
 
@@ -213,13 +209,13 @@ func TestProviderForRoleKeepsSameEmailDifferentAccountKinds(t *testing.T) {
 	}
 }
 
-func TestSaveActiveProviderMirrorsDefaultRole(t *testing.T) {
+func TestSaveRoleProviderMirrorsDefaultRole(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
 	value := ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"}
-	if err := SaveActiveProvider(value); err != nil {
-		t.Fatalf("SaveActiveProvider: %v", err)
+	if err := SaveRoleProvider(RoleDefault, value); err != nil {
+		t.Fatalf("SaveRoleProvider: %v", err)
 	}
 	merged, err := Load("")
 	if err != nil {
@@ -435,9 +431,6 @@ func TestClearRoleProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConduitConfig: %v", err)
 	}
-	if cfg.ActiveProvider != nil {
-		t.Fatalf("activeProvider = %#v, want nil", cfg.ActiveProvider)
-	}
 	if got := cfg.Roles[RoleDefault]; got != "" {
 		t.Fatalf("roles.default = %q, want cleared", got)
 	}
@@ -496,9 +489,6 @@ func TestSaveConduitRawKey_DoesNotWriteClaudeSettings(t *testing.T) {
 	if err := SaveRawKey("model", "claude-sonnet-4-6"); err != nil {
 		t.Fatalf("SaveRawKey: %v", err)
 	}
-	if err := SaveConduitRawKey("activeProvider", ActiveProviderSettings{Kind: "mcp", Server: "local-router", Model: "qwen3-coder"}); err != nil {
-		t.Fatalf("SaveConduitRawKey: %v", err)
-	}
 
 	if claudeData, err := os.ReadFile(UserSettingsPath()); err == nil && strings.Contains(string(claudeData), "activeProvider") {
 		t.Fatalf("Claude settings should not contain activeProvider: %s", claudeData)
@@ -508,8 +498,8 @@ func TestSaveConduitRawKey_DoesNotWriteClaudeSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read conduit settings: %v", err)
 	}
-	if !strings.Contains(string(conduitData), "activeProvider") {
-		t.Fatalf("Conduit settings should contain activeProvider: %s", conduitData)
+	if strings.Contains(string(conduitData), "activeProvider") {
+		t.Fatalf("Conduit settings should not contain activeProvider: %s", conduitData)
 	}
 }
 

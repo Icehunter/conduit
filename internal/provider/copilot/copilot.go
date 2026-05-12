@@ -116,8 +116,13 @@ func MessagesHeaders() map[string]string {
 
 func ModelDiscoveryHeaders() map[string]string {
 	return map[string]string{
-		"Accept":     "application/json",
-		"User-Agent": "GitHubCopilotChat/0.32.4",
+		"Accept":                 "application/json",
+		"Copilot-Integration-Id": "vscode-chat",
+		"Editor-Version":         "vscode/1.105.1",
+		"Editor-Plugin-Version":  "copilot-chat/0.32.4",
+		"OpenAI-Intent":          "conversation-edits",
+		"User-Agent":             "GitHubCopilotChat/0.32.4",
+		"X-GitHub-Api-Version":   "2023-07-07",
 	}
 }
 

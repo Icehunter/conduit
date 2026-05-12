@@ -136,6 +136,28 @@ func TestDecodeModelsUsesMaxPromptTokens(t *testing.T) {
 	}
 }
 
+func TestModelDiscoveryHeadersIncludeCopilotMetadata(t *testing.T) {
+	headers := ModelDiscoveryHeaders()
+	if headers["Copilot-Integration-Id"] == "" {
+		t.Fatal("ModelDiscoveryHeaders missing Copilot-Integration-Id")
+	}
+	if headers["Editor-Version"] == "" {
+		t.Fatal("ModelDiscoveryHeaders missing Editor-Version")
+	}
+	if headers["Editor-Plugin-Version"] == "" {
+		t.Fatal("ModelDiscoveryHeaders missing Editor-Plugin-Version")
+	}
+	if headers["User-Agent"] == "" {
+		t.Fatal("ModelDiscoveryHeaders missing User-Agent")
+	}
+	if headers["X-GitHub-Api-Version"] == "" {
+		t.Fatal("ModelDiscoveryHeaders missing X-GitHub-Api-Version")
+	}
+	if headers["OpenAI-Intent"] == "" {
+		t.Fatal("ModelDiscoveryHeaders missing OpenAI-Intent")
+	}
+}
+
 func TestContextWindowForModelClampsOldCopilotEntries(t *testing.T) {
 	if got := ContextWindowForModel("claude-haiku-4.5", 144000); got != 136000 {
 		t.Fatalf("haiku context = %d, want 136000", got)

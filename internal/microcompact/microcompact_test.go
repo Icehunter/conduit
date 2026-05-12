@@ -111,3 +111,52 @@ func TestApply_IdempotentOnSecondPass(t *testing.T) {
 		t.Errorf("second pass should clear nothing (already placeholders); cleared=%d", second.Cleared)
 	}
 }
+
+func TestApply_ProtectsErrorToolResults(t *testing.T) {
+	// Create messages with both error and success tool_results.
+	in := []api.Message{}
+	for i := 1; i <= 8; i++ {
+		id := "toolu_" + string(rune('0'+i))
+		in = append(in, api.Message{
+			Role: "assistant",
+			Content: []api.ContentBlock{
+				{Type: "tool_use", ID: id, Name: "Bash"},
+			},
+		})
+		// Make tools 2 and 4 be errors.
+		isError := i == 2 || i == 4
+		in = append(in, api.Message{
+			Role: "user",
+			Content: []api.ContentBlock{
+				{Type: "tool_result", ToolUseID: id, IsError: isError, ResultContent: strings.Repeat("output line\n", 100)},
+			},
+		})
+	}
+
+	got := Apply(in, time.Now().Add(-2*time.Hour), DefaultThreshold, DefaultKeepRecent)
+	if !got.Triggered {
+		t.Fatalf("expected trigger; got %+v", got)
+	}
+
+	// Verify error tool_results are never cleared.
+	for _, m := range got.Messages {
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type != "tool_result" {
+				continue
+			}
+			if b.IsError && b.ResultContent == ClearedMessage {
+				t.Errorf("error tool_result %s was cleared but should be protected", b.ToolUseID)
+			}
+		}
+	}
+
+	// Of the 8 tool_results, 5 are in keepRecent window (4,5,6,7,8).
+	// Outside window: 1, 2, 3. Tools 2 and 4 are errors, but 4 is in keepRecent.
+	// So outside and not error: tools 1 and 3 → 2 should be cleared.
+	if got.Cleared != 2 {
+		t.Errorf("Cleared = %d; want 2 (3 outside keepRecent minus 1 error)", got.Cleared)
+	}
+}

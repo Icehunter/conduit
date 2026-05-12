@@ -73,3 +73,45 @@ func TestBuildTranscript_LongToolResultTruncated(t *testing.T) {
 		t.Errorf("expected truncation marker; got: %s", got[:100])
 	}
 }
+
+func TestExtractPreviousSummary_Found(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{
+			Type: "text",
+			Text: "<summary>\n## Current State\nWorking on X\n</summary>\n\nAbove is a summary of our conversation so far.",
+		}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "Continuing..."}}},
+	}
+	got := extractPreviousSummary(msgs)
+	if !strings.Contains(got, "## Current State") {
+		t.Errorf("expected summary content; got: %s", got)
+	}
+}
+
+func TestExtractPreviousSummary_NotFound(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "Just a normal message"}}},
+	}
+	got := extractPreviousSummary(msgs)
+	if got != "" {
+		t.Errorf("expected empty; got: %s", got)
+	}
+}
+
+func TestExtractPreviousSummary_EmptyMessages(t *testing.T) {
+	got := extractPreviousSummary(nil)
+	if got != "" {
+		t.Errorf("expected empty; got: %s", got)
+	}
+}
+
+func TestExtractPreviousSummary_AssistantFirst(t *testing.T) {
+	// If somehow assistant message comes first (shouldn't happen), skip it
+	msgs := []api.Message{
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "<summary>assistant summary</summary>"}}},
+	}
+	got := extractPreviousSummary(msgs)
+	if got != "" {
+		t.Errorf("expected empty for assistant-first; got: %s", got)
+	}
+}

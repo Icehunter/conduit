@@ -238,3 +238,33 @@ func TestFileRead_StaticMetadata(t *testing.T) {
 		t.Errorf("schema type = %v", schema["type"])
 	}
 }
+
+func TestFileRead_LongLineTruncated(t *testing.T) {
+	// Generate a file with a very long line (minified JS style)
+	longLine := strings.Repeat("x", MaxLineLength+500)
+	path := writeTmp(t, "short line\n"+longLine+"\nafter long\n")
+	tt := New()
+	res, err := tt.Execute(context.Background(), input(t, map[string]any{"file_path": path}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError on long line file; content=%v", res.Content)
+	}
+	got := res.Content[0].Text
+	// Should contain truncation marker
+	if !strings.Contains(got, "chars truncated") {
+		t.Errorf("long line should show truncation marker; got:\n%s", got)
+	}
+	// Should still contain the short lines
+	if !strings.Contains(got, "short line") {
+		t.Error("short line missing")
+	}
+	if !strings.Contains(got, "after long") {
+		t.Error("line after long missing")
+	}
+	// The truncated line should not contain the full length
+	if strings.Contains(got, strings.Repeat("x", MaxLineLength+100)) {
+		t.Error("long line was not truncated")
+	}
+}

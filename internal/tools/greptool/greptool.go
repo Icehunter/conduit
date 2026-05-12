@@ -23,6 +23,7 @@ import (
 
 	rg "github.com/icehunter/conduit/internal/ripgrep"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
 
 // DefaultHeadLimit matches the real tool: 250 lines when unspecified.
@@ -249,7 +250,16 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		if len(limited) == 0 {
 			return tool.TextResult("No matches found"), nil
 		}
-		return tool.TextResult(strings.Join(limited, "\n")), nil
+		content := strings.Join(limited, "\n")
+		// Apply truncate-to-disk for large content outputs.
+		maxLines, maxBytes := truncate.Limits()
+		tr, _ := truncate.Apply(content, truncate.Options{
+			MaxLines:  maxLines,
+			MaxBytes:  maxBytes,
+			Direction: "head",
+			HasTask:   false,
+		})
+		return tool.TextResult(tr.Content), nil
 
 	case "count":
 		for i, line := range lines {

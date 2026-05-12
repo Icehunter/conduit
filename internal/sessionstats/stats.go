@@ -33,6 +33,27 @@ type Stats struct {
 	LongestSession   time.Duration
 	RangeStart       time.Time // earliest date in the loaded range
 	TotalDaysRange   int       // calendar days from rangeStart to today
+
+	// Token savings metrics (added by conduit)
+	TokenSavings TokenSavingsStats
+}
+
+// TokenSavingsStats tracks token savings from various optimization features.
+type TokenSavingsStats struct {
+	// RTK (command output filtering)
+	RTKBytesSaved int
+	RTKCallCount  int
+
+	// Microcompact (clearing old tool_results)
+	MicrocompactTokensSaved int
+	MicrocompactCallCount   int
+
+	// Truncate-to-disk (large outputs saved to disk)
+	TruncateBytesSaved int
+	TruncateCallCount  int
+
+	// Full compaction
+	CompactCallCount int
 }
 
 type ModelUsage struct {

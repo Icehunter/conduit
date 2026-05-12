@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/sessionstats"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tokens"
 )
 
@@ -29,6 +31,15 @@ const DefaultThreshold = 60 * time.Minute
 // enough recent tool context to keep working while older noisy results
 // (long file reads, big greps) shrink to the placeholder.
 const DefaultKeepRecent = 5
+
+// KeepRecent returns the configured keepRecent value, falling back to default.
+func KeepRecent() int {
+	cfg, err := settings.LoadConduitConfig()
+	if err != nil || cfg.Compaction == nil || cfg.Compaction.KeepRecent <= 0 {
+		return DefaultKeepRecent
+	}
+	return cfg.Compaction.KeepRecent
+}
 
 // Result describes what changed.
 type Result struct {
@@ -90,7 +101,16 @@ func Apply(messages []api.Message, lastAssistantTime time.Time, threshold time.D
 		}
 		var newContent []api.ContentBlock
 		for j, b := range m.Content {
-			if b.Type != "tool_result" || keepSet[b.ToolUseID] || b.ResultContent == ClearedMessage {
+			// Skip non-tool_result blocks
+			if b.Type != "tool_result" {
+				continue
+			}
+			// Never clear error tool_results — they contain critical debugging info.
+			if b.IsError {
+				continue
+			}
+			// Skip if in keep window or already cleared
+			if keepSet[b.ToolUseID] || b.ResultContent == ClearedMessage {
 				continue
 			}
 			if newContent == nil {
@@ -104,6 +124,11 @@ func Apply(messages []api.Message, lastAssistantTime time.Time, threshold time.D
 		if newContent != nil {
 			out[i].Content = newContent
 		}
+	}
+
+	// Record metrics
+	if cleared > 0 {
+		sessionstats.SessionMetrics.RecordMicrocompact(saved)
 	}
 
 	return Result{

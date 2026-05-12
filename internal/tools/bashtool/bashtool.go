@@ -27,7 +27,9 @@ import (
 	"github.com/icehunter/conduit/internal/iox"
 	"github.com/icehunter/conduit/internal/rtk"
 	"github.com/icehunter/conduit/internal/rtk/track"
+	"github.com/icehunter/conduit/internal/sessionstats"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
 
 // trackDB is the lazily-opened RTK history database (nil if unavailable).
@@ -301,6 +303,8 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	output := strings.TrimRight(sb.String(), "\n")
 	filtered := rtk.Filter(in.Command, output)
 	if filtered.SavedBytes > 0 {
+		// Record RTK savings metrics
+		sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)
 		if db := getTrackDB(); db != nil {
 			_ = db.Record(track.Row{
 				Command:       in.Command,
@@ -312,5 +316,16 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			})
 		}
 	}
-	return tool.TextResult(filtered.Filtered), nil
+
+	// Apply truncate-to-disk for large outputs after RTK filtering.
+	// This saves the full output to disk and returns a preview with hint.
+	finalOutput := filtered.Filtered
+	maxLines, maxBytes := truncate.Limits()
+	tr, _ := truncate.Apply(finalOutput, truncate.Options{
+		MaxLines:  maxLines,
+		MaxBytes:  maxBytes,
+		Direction: "tail", // bash output: most recent (tail) is usually most relevant
+		HasTask:   false,  // TODO: wire up Task tool availability
+	})
+	return tool.TextResult(tr.Content), nil
 }

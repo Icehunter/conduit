@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
 
 // MaxReadBytes is the maximum file size we'll read in one call.
@@ -25,6 +26,10 @@ const MaxReadBytes = 2 * 1024 * 1024
 // MaxLines is the maximum number of lines we'll return when no limit is
 // specified (avoids blowing up context on huge files).
 const MaxLines = 2000
+
+// MaxLineLength truncates individual lines to avoid token blowup on minified
+// files. Matches crush's MaxLineLength.
+const MaxLineLength = 2000
 
 // Tool implements the Read tool.
 type Tool struct{}
@@ -146,7 +151,13 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		if linesEmitted >= limit {
 			break
 		}
-		fmt.Fprintf(&sb, "%6d\t%s\n", lineNum, scanner.Text())
+		line := scanner.Text()
+		// Truncate very long lines to avoid token blowup on minified files.
+		if len(line) > MaxLineLength {
+			truncated := len(line) - MaxLineLength
+			line = line[:MaxLineLength] + fmt.Sprintf("... [%d chars truncated]", truncated)
+		}
+		fmt.Fprintf(&sb, "%6d\t%s\n", lineNum, line)
 		linesEmitted++
 	}
 	if err := scanner.Err(); err != nil {
@@ -154,5 +165,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	text := strings.TrimRight(sb.String(), "\n")
-	return tool.TextResult(text), nil
+
+	// Apply truncate-to-disk if output is still large (e.g., many long lines).
+	// FileRead already limits lines, but byte count can still blow up on minified files.
+	maxLines, maxBytes := truncate.Limits()
+	tr, _ := truncate.Apply(text, truncate.Options{
+		MaxLines:  maxLines,
+		MaxBytes:  maxBytes,
+		Direction: "head", // file reads: beginning is usually most relevant
+		HasTask:   false,  // TODO: wire up Task tool availability
+	})
+	return tool.TextResult(tr.Content), nil
 }

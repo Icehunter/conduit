@@ -248,6 +248,21 @@ coming, and what's intentionally out of scope.
 
 ---
 
+## Token Optimization
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| Truncate-to-disk | ✅ | Saves large outputs to `~/.conduit/truncated/`, returns preview + hint; 7-day retention; configurable limits |
+| Long-line truncation | ✅ | Max 2000 chars/line in FileReadTool; prevents single-line binary expansion |
+| Structured compaction prompt | ✅ | 5 sections: Current State, Files & Changes, Technical Context, Strategy, Next Steps |
+| Incremental compaction | ✅ | Merges `<previous-summary>` for multi-compaction sessions |
+| Error tool_result protection | ✅ | Microcompact never clears error results (debugging info is sacred) |
+| Model-aware overflow detection | ✅ | `UsableContext()`, `CheckOverflow()`; 80% micro, 95% full compact thresholds |
+| Configurable limits | ✅ | `conduit.json` `toolOutput.maxLines/maxBytes`, `compaction.keepRecent` |
+| Token savings metrics | ✅ | `sessionstats.SessionMetrics`: RTK, truncate, microcompact, compact counters |
+
+---
+
 ## Distribution
 
 | Capability | Status | Notes |

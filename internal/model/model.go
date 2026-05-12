@@ -67,6 +67,14 @@ const (
 	CompactReserveTokens      = 20_000 // MAX_OUTPUT_TOKENS_FOR_SUMMARY
 	CompactBufferTokens       = 13_000 // AUTOCOMPACT_BUFFER_TOKENS
 	MaxConsecutiveCompactFail = 3
+
+	// MicroCompactThresholdPct triggers micro-compaction when usage exceeds
+	// this percentage of usable context (before full compaction is needed).
+	MicroCompactThresholdPct = 80
+
+	// CompactThresholdPct triggers full compaction when usage exceeds this
+	// percentage of usable context.
+	CompactThresholdPct = 95
 )
 
 // ContextWindowFor returns the context window for the named model (200K default,
@@ -97,6 +105,62 @@ func AutoCompactThresholdForWindow(w int) int {
 	}
 	effective := w - CompactReserveTokens
 	return effective - CompactBufferTokens
+}
+
+// UsableContext returns the usable input token budget for the given model,
+// accounting for reserved output buffer. Mirrors opencode's overflow.ts usable().
+func UsableContext(name string, reservedOutput int) int {
+	return UsableContextForWindow(ContextWindowFor(name), reservedOutput)
+}
+
+// UsableContextForWindow returns usable context for a given window size.
+func UsableContextForWindow(window, reservedOutput int) int {
+	if window <= 0 {
+		window = ContextWindowDefault
+	}
+	if reservedOutput <= 0 {
+		reservedOutput = CompactReserveTokens
+	}
+	usable := window - reservedOutput
+	if usable < 0 {
+		return 0
+	}
+	return usable
+}
+
+// OverflowLevel describes the current context usage level.
+type OverflowLevel int
+
+const (
+	OverflowNone     OverflowLevel = iota // Below any threshold
+	OverflowMicro                         // >= MicroCompactThresholdPct, time for micro-compact
+	OverflowFull                          // >= CompactThresholdPct, time for full compact
+	OverflowCritical                      // At or above 100%, must compact immediately
+)
+
+// CheckOverflow returns the overflow level for the given token count against
+// the model's usable context. Mirrors opencode's overflow.ts isOverflow().
+func CheckOverflow(name string, inputTokens, reservedOutput int) OverflowLevel {
+	usable := UsableContext(name, reservedOutput)
+	return CheckOverflowForUsable(usable, inputTokens)
+}
+
+// CheckOverflowForUsable returns the overflow level given usable context and current tokens.
+func CheckOverflowForUsable(usable, inputTokens int) OverflowLevel {
+	if usable <= 0 || inputTokens <= 0 {
+		return OverflowNone
+	}
+	pct := (inputTokens * 100) / usable
+	switch {
+	case pct >= 100:
+		return OverflowCritical
+	case pct >= CompactThresholdPct:
+		return OverflowFull
+	case pct >= MicroCompactThresholdPct:
+		return OverflowMicro
+	default:
+		return OverflowNone
+	}
 }
 
 // contextWindowOverride reads CLAUDE_CODE_AUTO_COMPACT_WINDOW.

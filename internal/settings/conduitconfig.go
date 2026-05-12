@@ -55,6 +55,34 @@ type ConduitConfig struct {
 
 	// LSPServers maps langKey (e.g. "go", "typescript") to per-server overrides.
 	LSPServers map[string]LSPServerOverride `json:"lspServers,omitempty"`
+
+	// ToolOutput configures tool output truncation limits.
+	ToolOutput *ToolOutputConfig `json:"toolOutput,omitempty"`
+
+	// Compaction configures conversation compaction behavior.
+	Compaction *CompactionConfig `json:"compaction,omitempty"`
+}
+
+// ToolOutputConfig configures tool output truncation (truncate-to-disk).
+type ToolOutputConfig struct {
+	// MaxLines is the maximum number of lines before truncating to disk.
+	// Default: 2000.
+	MaxLines int `json:"maxLines,omitempty"`
+	// MaxBytes is the maximum bytes before truncating to disk.
+	// Default: 51200 (50KB).
+	MaxBytes int `json:"maxBytes,omitempty"`
+}
+
+// CompactionConfig configures conversation compaction behavior.
+type CompactionConfig struct {
+	// KeepRecent is the number of recent tool_results to preserve during
+	// micro-compaction. Default: 5.
+	KeepRecent int `json:"keepRecent,omitempty"`
+	// Reserved is the token budget reserved for model output when calculating
+	// usable context. Default: 20000.
+	Reserved int `json:"reserved,omitempty"`
+	// Auto enables/disables auto-compaction. Default: true.
+	Auto *bool `json:"auto,omitempty"`
 }
 
 // LSPServerOverride holds per-language-server configuration overrides.

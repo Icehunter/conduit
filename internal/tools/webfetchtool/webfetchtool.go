@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
 
 // ssrfDeniedNets are IP ranges blocked to prevent server-side request forgery
@@ -223,7 +224,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		resp.StatusCode, len(body), elapsed.Milliseconds())
 	sb.WriteString(text)
 
-	return tool.TextResult(sb.String()), nil
+	// Apply truncate-to-disk for large web content.
+	maxLines, maxBytes := truncate.Limits()
+	tr, _ := truncate.Apply(sb.String(), truncate.Options{
+		MaxLines:  maxLines,
+		MaxBytes:  maxBytes,
+		Direction: "head",
+		HasTask:   false,
+	})
+	return tool.TextResult(tr.Content), nil
 }
 
 func isHTML(contentType string) bool {

@@ -1,19 +1,30 @@
 Problem
-We want to reduce context/token usage dynamically without sacrificing quality, using proven strategies from opencode/crush and fitting conduit's architecture.
+Conduit needs to reduce context/token usage dynamically without sacrificing quality, using proven strategies from opencode/crush while fitting conduit's architecture.
 
 Approach
-Prioritize high-impact, low-risk changes that reduce tool-result payloads and improve compaction quality, then add model-aware thresholds and metrics for adaptive tuning.
+Prioritize high-impact, low-risk changes: truncate-to-disk for tool outputs, harden file reading, upgrade compaction prompts, then add model-aware thresholds and metrics for adaptive tuning.
+
+Cross-Reference Summary
+- **opencode**: Has `src/tool/truncate.ts` with MAX_LINES=2000, MAX_BYTES=50KB, configurable via `tool_output.*`. Saves full output to disk with hint to use Grep/Read with offset/limit. `src/session/overflow.ts` calculates usable context: `input_limit - reserved_buffer`. Compaction prompt (`agent/prompt/compaction.txt`) is anchored and supports `<previous-summary>` merging.
+- **crush**: `internal/agent/tools/view.go` has MaxViewSize=200KB, DefaultReadLimit=2000, MaxLineLength=2000. Binary detection via utf8.ValidString. Summary template (`templates/summary.md`) is structured with sections: Current State, Files & Changes, Technical Context, Strategy, Exact Next Steps.
+- **conduit (current)**: `internal/tools/filereadtool` already has binary detection (null bytes, utf-8 validation), MaxLines=2000. `internal/compact` uses structured `<analysis>/<summary>` prompt but lacks `<previous-summary>` merging. `internal/microcompact` clears old tool_results after cache TTL expiry. RTK filters bash output in-process.
 
 Todos
-1. Add truncate-to-disk for large tool outputs (bash/read/grep/webfetch), returning a preview plus a hint to use Grep/Read with offset/limit; include retention cleanup.
-2. Harden FileRead with binary detection and long-line truncation to avoid token blowups on binaries or minified files.
-3. Replace compaction prompt with anchored, structured summary template and support merging <previous-summary> blocks.
-4. Implement smart tool_result pruning during compaction (protect critical tools, keep recent N, truncate old; never truncate error-heavy outputs).
-5. Add model-aware overflow detection to trigger micro-compact/compact based on usable context window and reserved output buffer.
-6. Make truncation and compaction limits configurable (max_lines, max_bytes, keep_recent, reserved buffer) with safe defaults.
-7. Add token-savings metrics (rtk, microcompact, truncation) surfaced in stats/TUI for feedback loops.
-8. Update STATUS.md for newly completed capabilities and add/adjust tests for truncation/compaction behavior.
+1. **Truncate-to-disk** — Port opencode's `truncate.ts` pattern to `internal/truncate/`. Save large outputs (bash/read/grep/webfetch) to `~/.conduit/truncated/`, return preview + hint. Add 7-day retention cleanup. Integrate into bashtool, filereadtool, greptool, webfetchtool.
+2. **Long-line truncation in FileRead** — Add MaxLineLength=2000 (matches crush). Truncate excessively long lines with `... N chars truncated ...` marker. Already have binary detection.
+3. **Upgrade compaction prompt** — Replace current prompt with crush's structured template (Current State, Files & Changes, Technical Context, Strategy, Next Steps) and add opencode's `<previous-summary>` merging support for incremental compaction.
+4. **Smart tool_result pruning** — In compact/microcompact, protect error-heavy tool_results from truncation. Add `is_error` awareness to keepRecent logic. Never truncate outputs where IsError=true.
+5. **Model-aware overflow detection** — Port opencode's `overflow.ts` usable() formula. Track tokens per model, calculate `usable = input_limit - reserved_buffer`, trigger micro-compact/compact at 80%/95% thresholds.
+6. **Configurable limits** — Add `conduit.yml` config keys: `tool_output.max_lines`, `tool_output.max_bytes`, `compaction.keep_recent`, `compaction.reserved`. Wire into truncate, microcompact, and loop.go.
+7. **Token-savings metrics** — Add counters to sessionstats: `rtk_bytes_saved`, `microcompact_tokens_saved`, `truncate_calls`, `truncate_bytes_saved`. Surface in `/stats` and TUI settings panel.
+8. **Tests and STATUS.md** — Add tests for truncation (boundary cases, retention cleanup), compaction (previous-summary merging, error protection). Update STATUS.md capability matrix.
+
+Phases
+- Phase 1 (todos 1-3): Immediate token savings via truncation and better compaction — low risk, high impact.
+- Phase 2 (todos 4-6): Smarter pruning logic and configurability — medium risk, expands control.
+- Phase 3 (todos 7-8): Observability and verification — polish and feedback loops.
 
 Notes
-- Favor preserving errors/structured outputs; truncation must never hide failures.
-- Prefer incremental roll-out: Phase 1 (todos 1-3), Phase 2 (4-6), Phase 3 (7-8).
+- Errors are sacred: truncation must never hide failures. Check IsError before any pruning.
+- Prefer opencode's Task tool hint when available ("delegate to explore agent"), else Grep/Read hint.
+- crush's summary template is more comprehensive; use it as the base, keeping conduit's `<analysis>/<summary>` output format for parsing compatibility.

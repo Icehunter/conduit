@@ -31,6 +31,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/compact"
+	"github.com/icehunter/conduit/internal/healthcheck"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/microcompact"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -335,12 +336,29 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	// behaviour where hookSpecificOutput.additionalContext is injected at the
 	// system level so the model treats it with system-prompt authority.
 	var sessionReminderBlock *api.SystemBlock
+	var additionalCtxParts []string
+
+	// Run pre-flight health checks (git status, deps, etc.)
+	if l.cfg.Cwd != "" {
+		if result := healthcheck.Run(ctx, l.cfg.Cwd, healthcheck.DefaultTimeout); result.HasIssue {
+			if ctx := result.FormatContext(); ctx != "" {
+				additionalCtxParts = append(additionalCtxParts, ctx)
+			}
+		}
+	}
+
+	// Run session start hooks
 	if l.cfg.Hooks != nil && len(l.cfg.Hooks.SessionStart) > 0 {
 		if addlCtx := hooks.RunSessionStart(ctx, l.cfg.Hooks.SessionStart, l.cfg.SessionID); addlCtx != "" {
-			sessionReminderBlock = &api.SystemBlock{
-				Type: "text",
-				Text: "<system-reminder>\n" + addlCtx + "\n</system-reminder>",
-			}
+			additionalCtxParts = append(additionalCtxParts, addlCtx)
+		}
+	}
+
+	// Combine all additional context into a single system reminder block
+	if len(additionalCtxParts) > 0 {
+		sessionReminderBlock = &api.SystemBlock{
+			Type: "text",
+			Text: "<system-reminder>\n" + strings.Join(additionalCtxParts, "\n\n") + "\n</system-reminder>",
 		}
 	}
 	defer func() {

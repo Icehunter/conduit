@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ServerOverride allows per-language-server customisation in conduit.json.
@@ -222,7 +223,10 @@ func (m *Manager) Statuses() map[string]ServerStatus {
 	return out
 }
 
-// Close shuts down all running language servers.
+// CloseTimeout is the maximum time to wait for LSP servers to shut down.
+const CloseTimeout = 5 * time.Second
+
+// Close shuts down all running language servers with a timeout.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	clients := make([]*Client, 0, len(m.clients))
@@ -232,15 +236,30 @@ func (m *Manager) Close() {
 	}
 	m.mu.Unlock()
 
-	var wg sync.WaitGroup
-	for _, cl := range clients {
-		wg.Add(1)
-		go func(c *Client) {
-			defer wg.Done()
-			_ = c.Close()
-		}(cl)
+	if len(clients) == 0 {
+		return
 	}
-	wg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		var wg sync.WaitGroup
+		for _, cl := range clients {
+			wg.Add(1)
+			go func(c *Client) {
+				defer wg.Done()
+				_ = c.Close()
+			}(cl)
+		}
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(CloseTimeout):
+		// Timeout: some LSP servers didn't shut down cleanly.
+		// Continue anyway to avoid blocking the user.
+	}
 }
 
 // languageKey maps an extension to a stable language key.

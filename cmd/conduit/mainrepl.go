@@ -770,8 +770,19 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Close subprocess-backed integrations before returning to the shell so
 	// lingering MCP/LSP children cannot keep the conduit command alive.
-	lspManager.Close()
-	mcpManager.Close()
+	// Each manager has its own 5s timeout; wrap in an overall 10s timeout
+	// as a safety net to guarantee the user returns to their shell.
+	managersDone := make(chan struct{})
+	go func() {
+		lspManager.Close()
+		mcpManager.Close()
+		close(managersDone)
+	}()
+	select {
+	case <-managersDone:
+	case <-time.After(10 * time.Second):
+		// Safety timeout: managers didn't close in time, continue anyway.
+	}
 
 	// Auto-dream: after a normal session ends, check whether memory consolidation
 	// should fire. Skip this optional network work on interrupt/cancel paths so

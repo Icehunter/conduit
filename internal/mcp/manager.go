@@ -465,7 +465,10 @@ func (m *Manager) ReadResource(ctx context.Context, serverName, uri string) ([]R
 	return srv.client.ReadResource(ctx, uri)
 }
 
-// Close shuts down all server connections.
+// CloseTimeout is the maximum time to wait for MCP servers to shut down.
+const CloseTimeout = 5 * time.Second
+
+// Close shuts down all server connections with a timeout.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	clients := make([]Client, 0, len(m.servers))
@@ -476,15 +479,30 @@ func (m *Manager) Close() {
 	}
 	m.mu.Unlock()
 
-	var wg sync.WaitGroup
-	for _, client := range clients {
-		wg.Add(1)
-		go func(c Client) {
-			defer wg.Done()
-			_ = c.Close()
-		}(client)
+	if len(clients) == 0 {
+		return
 	}
-	wg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		var wg sync.WaitGroup
+		for _, client := range clients {
+			wg.Add(1)
+			go func(c Client) {
+				defer wg.Done()
+				_ = c.Close()
+			}(client)
+		}
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(CloseTimeout):
+		// Timeout: some MCP servers didn't shut down cleanly.
+		// Continue anyway to avoid blocking the user.
+	}
 }
 
 // NamedTool is a tool from an MCP server with its qualified name.

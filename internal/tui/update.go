@@ -232,9 +232,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.runStartedAt.IsZero() {
 				m.runStartedAt = time.Now()
 			}
-			m.working.SetStatus(time.Since(m.runStartedAt), m.contextInputTokens, m.totalOutputTokens)
+			m.working.SetStatus(time.Since(m.runStartedAt), m.contextInputTokens, m.totalOutputTokens, m.streamingCostUSD)
 		} else if !m.runStartedAt.IsZero() {
 			m.runStartedAt = time.Time{}
+			m.streamingCostUSD = 0 // reset streaming cost when run ends
 			m.working.ClearStatus()
 		}
 

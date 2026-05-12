@@ -132,6 +132,11 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 			Content: fmt.Sprintf("Context compacted (was at %d%% of window).", pct),
 		})
 		m.refreshViewport()
+
+	case agent.EventCost:
+		// Running cost estimate during streaming. Update the model so the
+		// working animation can display it.
+		m.streamingCostUSD = ev.CostUSD
 	}
 	return m
 }

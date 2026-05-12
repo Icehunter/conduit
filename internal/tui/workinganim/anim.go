@@ -53,6 +53,7 @@ type Anim struct {
 	elapsed      time.Duration
 	inputTokens  int
 	outputTokens int
+	costUSD      float64 // running cost estimate
 	statusFrames []string
 	statusWidth  int
 	statusText   string
@@ -100,7 +101,7 @@ func (a *Anim) SetLabel(label string) {
 	}
 	if a.statusSet {
 		// Re-render the status suffix with the new label embedded.
-		text := formatStatusSuffix(a.elapsed, a.inputTokens, a.outputTokens, a.label)
+		text := formatStatusSuffix(a.elapsed, a.inputTokens, a.outputTokens, a.costUSD, a.label)
 		a.statusText = text
 		a.statusWidth = lipgloss.Width(text)
 		a.statusFrames = renderChars(text, a.labelColor, a.bgColor)
@@ -111,11 +112,11 @@ func (a *Anim) SetColors(gradFromColor, gradToColor, labelColor color.Color) {
 	a.SetColorsWithBackground(gradFromColor, gradToColor, labelColor, a.bgColor)
 }
 
-// SetStatus enables a richer status suffix: "(thought for 5s · ↑ 1.2k · Label)".
+// SetStatus enables a richer status suffix: "(thought for 5s · ↑ 1.2k · $0.0042 · Label)".
 // Pass elapsed=0 and inputTokens=outputTokens=0 with set=false (via ClearStatus)
 // to revert to the bare label + ellipsis rendering.
-func (a *Anim) SetStatus(elapsed time.Duration, inputTokens, outputTokens int) {
-	text := formatStatusSuffix(elapsed, inputTokens, outputTokens, a.label)
+func (a *Anim) SetStatus(elapsed time.Duration, inputTokens, outputTokens int, costUSD float64) {
+	text := formatStatusSuffix(elapsed, inputTokens, outputTokens, costUSD, a.label)
 	if a.statusSet && a.statusText == text {
 		return
 	}
@@ -123,6 +124,7 @@ func (a *Anim) SetStatus(elapsed time.Duration, inputTokens, outputTokens int) {
 	a.elapsed = elapsed
 	a.inputTokens = inputTokens
 	a.outputTokens = outputTokens
+	a.costUSD = costUSD
 	a.statusText = text
 	a.statusWidth = lipgloss.Width(text)
 	a.statusFrames = renderChars(text, a.labelColor, a.bgColor)
@@ -137,6 +139,7 @@ func (a *Anim) ClearStatus() {
 	a.elapsed = 0
 	a.inputTokens = 0
 	a.outputTokens = 0
+	a.costUSD = 0
 	a.statusText = ""
 	a.statusWidth = 0
 	a.statusFrames = nil
@@ -346,8 +349,8 @@ func sameColor(a, b color.Color) bool {
 // input (model is generating), ↑ otherwise (model is consuming context).
 // When elapsed and tokens are both zero/empty, the parens collapse around
 // just the label.
-func formatStatusSuffix(elapsed time.Duration, inputTokens, outputTokens int, label string) string {
-	parts := make([]string, 0, 3)
+func formatStatusSuffix(elapsed time.Duration, inputTokens, outputTokens int, costUSD float64, label string) string {
+	parts := make([]string, 0, 4)
 	if elapsed > 0 {
 		parts = append(parts, "thought for "+formatElapsed(elapsed))
 	}
@@ -361,6 +364,9 @@ func formatStatusSuffix(elapsed time.Duration, inputTokens, outputTokens int, la
 			diff = -diff
 		}
 		parts = append(parts, direction+" "+formatTokenCount(diff))
+	}
+	if costUSD > 0 {
+		parts = append(parts, fmt.Sprintf("$%.4f", costUSD))
 	}
 	if label != "" {
 		parts = append(parts, label)

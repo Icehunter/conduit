@@ -423,6 +423,7 @@ type Model struct {
 	contextInputTokens int
 	costUSD            float64
 	prevCostUSD        float64 // cost before the current turn started; used to compute per-turn delta
+	streamingCostUSD   float64 // running cost estimate during streaming (updated on EventCost)
 
 	runStartedAt time.Time // set when running flips on; zero otherwise. Drives "thought for Xs" status.
 

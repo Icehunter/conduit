@@ -150,6 +150,11 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			if md.Usage.OutputTokens > 0 {
 				turnUsage.OutputTokens = md.Usage.OutputTokens
 			}
+			// Emit running cost estimate so the TUI can display it during streaming.
+			if turnUsage.InputTokens > 0 || turnUsage.OutputTokens > 0 {
+				cost := api.CostUSDForModel(l.cfg.Model, turnUsage)
+				handler(LoopEvent{Type: EventCost, CostUSD: cost, Usage: turnUsage})
+			}
 
 		case "message_stop":
 			// Emit per-turn usage and accumulate into the stream total.

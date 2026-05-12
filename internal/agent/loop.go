@@ -56,6 +56,7 @@ const (
 	EventAPIRetry                    // API returned 429 and the client is backing off
 	EventPartial                     // stream errored mid-turn; PartialBlocks holds what was received
 	EventUsage                       // per-API-turn usage from SSE (input + output + cache fields)
+	EventCost                        // running cost estimate (emitted on each message_delta with output tokens)
 	EventCompacted                   // auto-compact ran; CompactedInputTokens and CompactedThreshold carry context
 )
 
@@ -95,6 +96,9 @@ type LoopEvent struct {
 
 	// EventUsage carries the API-reported usage for one streamed turn.
 	Usage api.Usage
+
+	// EventCost carries the running cost estimate.
+	CostUSD float64
 
 	// EventCompacted
 	CompactedInputTokens int

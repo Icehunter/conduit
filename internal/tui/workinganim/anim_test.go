@@ -102,19 +102,21 @@ func TestFormatStatusSuffix(t *testing.T) {
 		name          string
 		elapsed       time.Duration
 		input, output int
+		cost          float64
 		label         string
 		want          string
 	}{
-		{"empty", 0, 0, 0, "", ""},
-		{"label only", 0, 0, 0, "Thinking", "(Thinking)"},
-		{"elapsed and label", 5 * time.Second, 0, 0, "Thinking", "(thought for 5s · Thinking)"},
-		{"output dominant uses down arrow", 3 * time.Second, 100, 250, "Thinking", "(thought for 3s · ↓ 150 · Thinking)"},
-		{"input dominant uses up arrow", 3 * time.Second, 1500, 200, "Thinking", "(thought for 3s · ↑ 1.3k · Thinking)"},
-		{"equal tokens uses up arrow", 1 * time.Second, 100, 100, "x", "(thought for 1s · ↑ 0 · x)"},
+		{"empty", 0, 0, 0, 0, "", ""},
+		{"label only", 0, 0, 0, 0, "Thinking", "(Thinking)"},
+		{"elapsed and label", 5 * time.Second, 0, 0, 0, "Thinking", "(thought for 5s · Thinking)"},
+		{"output dominant uses down arrow", 3 * time.Second, 100, 250, 0, "Thinking", "(thought for 3s · ↓ 150 · Thinking)"},
+		{"input dominant uses up arrow", 3 * time.Second, 1500, 200, 0, "Thinking", "(thought for 3s · ↑ 1.3k · Thinking)"},
+		{"equal tokens uses up arrow", 1 * time.Second, 100, 100, 0, "x", "(thought for 1s · ↑ 0 · x)"},
+		{"with cost", 2 * time.Second, 100, 50, 0.0035, "Model", "(thought for 2s · ↑ 50 · $0.0035 · Model)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatStatusSuffix(tt.elapsed, tt.input, tt.output, tt.label)
+			got := formatStatusSuffix(tt.elapsed, tt.input, tt.output, tt.cost, tt.label)
 			if got != tt.want {
 				t.Errorf("formatStatusSuffix() = %q, want %q", got, tt.want)
 			}
@@ -126,7 +128,7 @@ func TestSetStatusReplacesLabelInRender(t *testing.T) {
 	t.Parallel()
 
 	anim := New(6, "Thinking", color.White, color.Black, color.White)
-	anim.SetStatus(2*time.Second, 100, 250)
+	anim.SetStatus(2*time.Second, 100, 250, 0.0042)
 	anim.initialized = true
 	_ = anim.Animate(StepMsg{})
 
@@ -136,6 +138,9 @@ func TestSetStatusReplacesLabelInRender(t *testing.T) {
 	}
 	if !strings.Contains(stripANSI(out), "↓ 150") {
 		t.Errorf("render missing token diff: %q", stripANSI(out))
+	}
+	if !strings.Contains(stripANSI(out), "$0.0042") {
+		t.Errorf("render missing cost: %q", stripANSI(out))
 	}
 	if !strings.Contains(stripANSI(out), "Thinking") {
 		t.Errorf("render missing label inside parens: %q", stripANSI(out))

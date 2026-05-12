@@ -58,7 +58,11 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	panelModel.width = panelRect.Dx()
 	panelModel.panelH = panelRect.Dy()
 	panel := panelModel.renderActivePanel()
-	picker := m.renderActivePicker()
+	pickerArea := layout.pickerArea
+	if m.picker != nil && m.picker.kind == "model" {
+		pickerArea = layout.panel
+	}
+	picker := m.renderActivePicker(pickerArea)
 	modal := m.renderActiveModal()
 	if panel != "" {
 		drawFloatingRendered(scr, panelRect, panel)
@@ -237,7 +241,13 @@ func (m Model) renderActivePanel() string {
 	return ""
 }
 
-func (m Model) renderActivePicker() string {
+func (m Model) renderActivePicker(area image.Rectangle) string {
+	if area.Dx() > 0 {
+		m.width = area.Dx()
+	}
+	if area.Dy() > 0 {
+		m.panelH = area.Dy()
+	}
 	switch {
 	case m.subagentPanel != nil && m.subagentPanel.view == "list":
 		return m.renderSubagentList()

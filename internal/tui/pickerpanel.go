@@ -328,11 +328,11 @@ func (m Model) renderModelPicker() string {
 	var sb strings.Builder
 	title := panelTitle("Switch Model")
 	tabs := renderProviderRoleTabs(p.role)
-	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 10
+	ornW := headerW - lipgloss.Width(title) - lipgloss.Width(tabs) - 4
 	ornW = max(ornW, 6)
 	sb.WriteString(title + surfaceSpaces(2) + ornamentGradientText(renderSlashFill(ornW)) + surfaceSpaces(2) + tabs)
 
-	bodyRows := modelPickerBodyRows()
+	bodyRows := modelPickerBodyRows(m.panelHeight())
 	listRows := bodyRows - 6
 	listRows = max(listRows, 6)
 	// When capabilities are shown, the selected row gains an extra info line —
@@ -460,8 +460,11 @@ func modelPickerBodyListRows(body []string) int {
 	return len(body) - 4
 }
 
-func modelPickerBodyRows() int {
-	rows := floatingModelPickerSpec.maxHeight - floatingWindowStyle().GetVerticalFrameSize() - 1 - floatingBodyPadY*2
+func modelPickerBodyRows(panelHeight int) int {
+	if panelHeight <= 0 {
+		panelHeight = floatingModelPickerSpec.maxHeight
+	}
+	rows := panelHeight - floatingWindowStyle().GetVerticalFrameSize() - 1 - floatingBodyPadY*2
 	if rows < 10 {
 		return 10
 	}

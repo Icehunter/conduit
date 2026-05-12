@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -190,6 +191,35 @@ func SaveProviderEntry(value ActiveProviderSettings) error {
 		}
 		cfg.Providers, cfg.Roles, _ = CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
 		cfg.Providers[ProviderKey(value)] = value
+	})
+}
+
+// SaveDiscoveredProviderModels persists model-specific entries derived from a
+// base provider and leaves roles unchanged.
+func SaveDiscoveredProviderModels(base ActiveProviderSettings, models []string) error {
+	if base.Model != "" {
+		base.Model = ""
+	}
+	if err := ValidateProviderSettings(base); err != nil {
+		return err
+	}
+	if len(models) == 0 {
+		return nil
+	}
+	return UpdateConduitConfig(func(cfg *ConduitConfig) {
+		if cfg.Providers == nil {
+			cfg.Providers = map[string]ActiveProviderSettings{}
+		}
+		cfg.Providers, cfg.Roles, _ = CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
+		for _, model := range models {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			next := base
+			next.Model = model
+			cfg.Providers[ProviderKey(next)] = next
+		}
 	})
 }
 

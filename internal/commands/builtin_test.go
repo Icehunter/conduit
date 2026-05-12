@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -431,6 +432,46 @@ func TestRegisterModelCommand_ModelsShowsOpenAICompatibleProviders(t *testing.T)
 	}
 }
 
+func TestRegisterModelCommand_ModelsExpandsGeminiCatalogModels(t *testing.T) {
+	r := New()
+	provider := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "gemini-personal",
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+	}
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(provider): provider,
+	}
+	modelCatalog := &catalog.Catalog{Models: []catalog.ModelInfo{{
+		ID:       "google/gemini-2.5-pro",
+		Name:     "Gemini 2.5 Pro",
+		Provider: "google",
+	}}}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, modelCatalog)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	foundSection := false
+	foundModel := false
+	for _, item := range got.Items {
+		if item.Section && item.Label == "OpenAI-compatible · credential gemini-personal" {
+			foundSection = true
+		}
+		if item.Value == "provider:openai-compatible.gemini-personal.gemini-2.5-pro" && item.Label == "gemini-2.5-pro" {
+			foundModel = true
+		}
+	}
+	if !foundSection || !foundModel {
+		t.Fatalf("picker gemini catalog section=%v model=%v items=%#v", foundSection, foundModel, got.Items)
+	}
+}
+
 func TestRegisterModelCommand_ModelsShowsAllGroupedFallbackModels(t *testing.T) {
 	r := New()
 	p1 := settings.ActiveProviderSettings{
@@ -485,7 +526,12 @@ func TestRegisterModelCommand_ModelsExpandsDirectProviderCatalogModels(t *testin
 	providers := map[string]settings.ActiveProviderSettings{
 		settings.ProviderKey(provider): provider,
 	}
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
+	modelCatalog := &catalog.Catalog{Models: []catalog.ModelInfo{{
+		ID:       "openai/gpt-5.4-mini",
+		Name:     "GPT-5.4 Mini",
+		Provider: "openai",
+	}}}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, modelCatalog)
 
 	picker, ok := r.Dispatch("/models")
 	if !ok {
@@ -528,7 +574,12 @@ func TestRegisterModelCommand_ModelsExpandsOpenRouterCatalogModels(t *testing.T)
 	providers := map[string]settings.ActiveProviderSettings{
 		settings.ProviderKey(provider): provider,
 	}
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
+	modelCatalog := &catalog.Catalog{Models: []catalog.ModelInfo{{
+		ID:       "openai/gpt-5.5",
+		Name:     "GPT-5.5",
+		Provider: "openai",
+	}}}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, modelCatalog)
 
 	picker, ok := r.Dispatch("/models")
 	if !ok {

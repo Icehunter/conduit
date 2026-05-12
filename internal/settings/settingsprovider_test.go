@@ -53,3 +53,25 @@ func TestRepairConduitProviderRegistry_TransformsOpenAIResponsesKind(t *testing.
 		t.Fatalf("roles.default = %q, want migrated provider", cfg.Roles[RoleDefault])
 	}
 }
+
+func TestSaveDiscoveredProviderModels(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))
+
+	base := ActiveProviderSettings{
+		Kind:       ProviderKindOpenAICompatible,
+		Credential: "gemini-personal",
+		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai/",
+	}
+	if err := SaveDiscoveredProviderModels(base, []string{"gemini-1.5-pro"}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	cfg, err := LoadConduitConfig()
+	if err != nil {
+		t.Fatalf("LoadConduitConfig: %v", err)
+	}
+	if _, ok := cfg.Providers["openai-compatible.gemini-personal.gemini-1.5-pro"]; !ok {
+		t.Fatalf("missing discovered model entry")
+	}
+}

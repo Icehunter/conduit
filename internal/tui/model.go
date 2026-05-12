@@ -114,6 +114,7 @@ type Message struct {
 	ToolStarted  time.Time
 	ToolDuration time.Duration
 	ToolError    bool
+	ToolExpanded bool // Whether tool output is expanded (click/space to toggle)
 
 	AssistantModel    string
 	AssistantLabel    string

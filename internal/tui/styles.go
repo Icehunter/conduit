@@ -56,6 +56,7 @@ var (
 	styleInputBorderActive  lipgloss.Style
 	styleStatus             lipgloss.Style
 	styleStatusAccent       lipgloss.Style
+	styleStatusFaded        lipgloss.Style
 	styleModePurple         lipgloss.Style
 	styleModeCyan           lipgloss.Style
 	styleModeYellow         lipgloss.Style
@@ -120,6 +121,7 @@ func RebuildStyles() {
 
 	styleStatus = lipgloss.NewStyle().Foreground(colorDim).Background(colorWindowBg)
 	styleStatusAccent = lipgloss.NewStyle().Foreground(colorWindowTitle).Background(colorWindowBg).Bold(true)
+	styleStatusFaded = lipgloss.NewStyle().Foreground(colorMuted).Background(colorWindowBg).Italic(true)
 
 	styleModePurple = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModeAcceptEdits)).Background(colorWindowBg).Bold(true)
 	styleModeCyan = lipgloss.NewStyle().Foreground(lipgloss.Color(p.ModePlan)).Background(colorWindowBg).Bold(true)

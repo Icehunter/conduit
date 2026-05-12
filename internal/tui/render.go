@@ -202,10 +202,19 @@ func firstNonEmptyLine(text string) string {
 }
 
 func renderToolMessage(msg Message, width int, verbose bool) string {
+	// Constants for collapsible tool output (inspired by crush)
+	const (
+		collapsedLines     = 10
+		truncationFormat   = "… (%d lines hidden) [space to expand]"
+		expandedHintFormat = "[space to collapse]"
+	)
+
 	statusIcon := styleStatusAccent.Render("✓")
 	statusText := toolDoneVerb(msg.ToolName)
 	archived := msg.Content == "" && msg.ToolDuration == 0 && !msg.ToolError
-	if msg.Content == "running…" {
+	running := msg.Content == "running…"
+
+	if running {
 		statusIcon = styleModeYellow.Render("●")
 		statusText = "running"
 	} else if msg.ToolError {
@@ -216,8 +225,22 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 		statusText = "used"
 	}
 
+	// Expansion indicator
+	expandIcon := ""
+	result := strings.TrimSpace(msg.Content)
+	resultLines := strings.Split(result, "\n")
+	canExpand := len(resultLines) > collapsedLines && !running && !archived && result != ""
+
+	if canExpand {
+		if msg.ToolExpanded {
+			expandIcon = styleStatus.Render("▼") + " "
+		} else {
+			expandIcon = styleStatus.Render("▶") + " "
+		}
+	}
+
 	headerParts := []string{
-		statusIcon,
+		expandIcon + statusIcon,
 		styleToolBadge.Render(toolDisplayName(msg.ToolName)),
 		styleStatus.Render(statusText),
 	}
@@ -226,7 +249,6 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 	}
 	header := strings.Join(headerParts, surfaceSpaces(1))
 
-	running := msg.Content == "running…"
 	summary := toolInputSummary(msg.ToolName, msg.ToolInput)
 	if summary == "" && !msg.ToolError && !running {
 		summary = toolResultSummary(msg.ToolName, msg.Content)
@@ -237,7 +259,7 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 			header += styleStatus.Render(" · " + truncatePlainToWidth(summary, available))
 		}
 	}
-	result := strings.TrimSpace(msg.Content)
+
 	if running {
 		result = ""
 	}
@@ -245,17 +267,44 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 	bodyWidth := max(10, width-4)
 	var lines []string
 	lines = append(lines, surfaceSpaces(2)+header)
+
+	// Error output is always shown
 	if msg.ToolError && result != "" {
 		lines = append(lines, indentLines(styleErrorText.Width(bodyWidth).Render(result), surfaceSpaces(4)))
 	}
+
+	// Normal output: show based on verbose mode and expansion state
 	if verbose && !msg.ToolError && !running && !archived && result != "" {
 		var body string
-		if strings.HasPrefix(result, "```") {
-			// Fenced code block (e.g. FileEdit diff) — use markdown renderer
-			// so language-tagged blocks get syntax highlighting.
-			body = renderMarkdown(result, bodyWidth)
+
+		// Apply collapsing if not expanded and content is long
+		if canExpand && !msg.ToolExpanded {
+			displayLines := resultLines[:collapsedLines]
+			truncatedContent := strings.Join(displayLines, "\n")
+
+			if strings.HasPrefix(result, "```") {
+				body = renderMarkdown(truncatedContent, bodyWidth)
+			} else {
+				body = styleStatus.Width(bodyWidth).Render(truncatedContent)
+			}
+
+			// Add truncation hint
+			hiddenCount := len(resultLines) - collapsedLines
+			hint := styleStatusFaded.Render(fmt.Sprintf(truncationFormat, hiddenCount))
+			body += "\n" + hint
 		} else {
-			body = styleStatus.Width(bodyWidth).Render(result)
+			// Full content
+			if strings.HasPrefix(result, "```") {
+				body = renderMarkdown(result, bodyWidth)
+			} else {
+				body = styleStatus.Width(bodyWidth).Render(result)
+			}
+
+			// Add collapse hint for expanded content
+			if canExpand && msg.ToolExpanded {
+				hint := styleStatusFaded.Render(expandedHintFormat)
+				body += "\n" + hint
+			}
 		}
 		lines = append(lines, indentLines(body, surfaceSpaces(4)))
 	}

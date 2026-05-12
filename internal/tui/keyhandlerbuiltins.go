@@ -360,6 +360,31 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
+	case " ": // Space toggles expansion of the most recent expandable tool result
+		if m.running || m.input.Focused() {
+			// Don't handle space during input or when running
+			return m, nil, false
+		}
+		// Find and toggle the most recent expandable tool result
+		const collapsedLines = 10
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			msg := &m.messages[i]
+			if msg.Role == RoleTool && msg.Content != "" && msg.Content != "running…" {
+				resultLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
+				if len(resultLines) > collapsedLines {
+					msg.ToolExpanded = !msg.ToolExpanded
+					if msg.ToolExpanded {
+						m.flashMsg = "▼ expanded"
+					} else {
+						m.flashMsg = "▶ collapsed"
+					}
+					m.refreshViewport()
+					return m, tea.Tick(1000*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+				}
+			}
+		}
+		return m, nil, false
+
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to
 		// the system clipboard via OSC 52 (works in iTerm2, kitty, WezTerm).

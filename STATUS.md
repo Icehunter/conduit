@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-05-11
+Last updated: 2026-05-12
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -75,6 +75,7 @@ coming, and what's intentionally out of scope.
 | Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options |
 | Diff-first review gate | ✅ | Hunk-level Myers diff; per-hunk approve/reject/note; `acceptEditsLive` mid-turn pause |
 | Decision journal | ✅ | Append-only JSONL; `RecordDecision` tool; council auto-records verdicts |
+| Proactive health checks | ✅ | Git/deps pre-flight at session start; warnings in system context |
 
 ---
 
@@ -204,6 +205,8 @@ coming, and what's intentionally out of scope.
 | Full GFM markdown rendering | ✅ | Tables, headings, task lists, strikethrough, blockquotes, italic |
 | Syntax highlighting | ✅ | Hand-rolled; no Chroma dependency |
 | Animated work indicator | ✅ | Gradient scramble row |
+| Streaming cost display | ✅ | Live `$0.0042` as tokens stream; `workinganim.SetStatus()` |
+| Collapsible tool outputs | ✅ | ▼/▶ indicators; space to toggle; persists per-message |
 | Image/PDF paste & drag-drop | ✅ | |
 | @file mention parsing | ✅ | Line ranges, dirs, base64 blocks |
 | Custom keybindings | ✅ | `~/.conduit/keybindings.json` |

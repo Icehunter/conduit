@@ -419,7 +419,9 @@ func isCompactRequest(system []struct {
 	Text string `json:"text"`
 }) bool {
 	for _, block := range system {
-		if strings.Contains(block.Text, "conversation summarizer") {
+		// Match both old ("conversation summarizer") and new ("summarizing a coding") prompts
+		if strings.Contains(block.Text, "conversation summarizer") ||
+			strings.Contains(block.Text, "summarizing a coding conversation") {
 			return true
 		}
 	}

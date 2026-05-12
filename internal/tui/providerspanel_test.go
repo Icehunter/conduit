@@ -9,6 +9,14 @@ import (
 	"github.com/icehunter/conduit/internal/settings"
 )
 
+// emptyStorage is a mock secure.Storage that always returns ErrNotFound.
+// Used to isolate tests from real keychain credentials.
+type emptyStorage struct{}
+
+func (e *emptyStorage) Get(_, _ string) ([]byte, error) { return nil, secure.ErrNotFound }
+func (e *emptyStorage) Set(_, _ string, _ []byte) error { return nil }
+func (e *emptyStorage) Delete(_, _ string) error        { return nil }
+
 func TestAdvanceProviderForm_SkipsOAuthForNonOAuthProvider(t *testing.T) {
 	m := Model{}
 	f := &providerFormState{
@@ -84,7 +92,8 @@ func TestCompleteCopilotOAuthForm_PrunesStaleProviders(t *testing.T) {
 }
 
 func TestDiscoverCopilotModels_NoFallbackOnFailure(t *testing.T) {
-	auth := copilot.NewAuthorizerForCredential(secure.NewDefault(), copilot.ProviderID)
+	// Use empty storage to isolate from real keychain credentials
+	auth := copilot.NewAuthorizerForCredential(&emptyStorage{}, copilot.ProviderID)
 	msg := discoverCopilotModels(auth, "forced failure")
 	if completed, ok := msg.(copilotOAuthCompletedMsg); !ok || completed.err == nil {
 		t.Fatalf("expected copilotOAuthCompletedMsg with error, got %#v", msg)

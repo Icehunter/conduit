@@ -55,6 +55,68 @@ func (m *Model) applyViewportSelection() {
 	m.vp.SetContent(strings.Join(lines, "\n"))
 }
 
+// handleToolExpansionClick checks if the click is on a tool message and toggles expansion
+func (m *Model) handleToolExpansionClick(mouseY int, _ image.Rectangle) bool {
+	// Calculate which line in the viewport was clicked
+	inputRows := m.input.LineCount()
+	inputRows = max(inputRows, 1)
+	usageRows := m.usageFooterRows()
+	vpStartY := 0 // Viewport starts at top
+	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows - m.todoStripRows()
+
+	if mouseY < vpStartY || mouseY >= vpStartY+vpHeight {
+		return false // Click outside viewport
+	}
+
+	// Which line in the viewport content was clicked (accounting for scroll)
+	relativeY := mouseY - vpStartY
+	lineIndex := m.vp.YOffset() + relativeY
+
+	if lineIndex < 0 || lineIndex >= len(m.viewportLines) {
+		return false
+	}
+
+	// Check if this line is a tool header or expand/collapse hint
+	clickedLine := ansi.Strip(m.viewportLines[lineIndex])
+	trimmed := strings.TrimSpace(clickedLine)
+	isToolHeader := strings.HasPrefix(trimmed, "├─") ||
+		strings.HasPrefix(trimmed, "╰─") ||
+		strings.HasPrefix(trimmed, "✓") ||
+		strings.HasPrefix(trimmed, "●") ||
+		strings.HasPrefix(trimmed, "✗")
+	isExpandHint := strings.Contains(trimmed, "[click to expand]") ||
+		strings.Contains(trimmed, "[click to collapse]")
+
+	if !isToolHeader && !isExpandHint {
+		return false // Not a tool header or expand hint
+	}
+
+	// Look up which message this line belongs to
+	msgIndex, ok := m.lineToMessage[lineIndex]
+	if !ok {
+		return false // Line not mapped to a message
+	}
+
+	if msgIndex < 0 || msgIndex >= len(m.messages) {
+		return false
+	}
+
+	msg := &m.messages[msgIndex]
+
+	// Only toggle if it's a tool with expandable content
+	const collapsedLines = 10
+	if msg.Role == RoleTool && msg.Content != "" && msg.Content != "running…" {
+		resultLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
+		if len(resultLines) > collapsedLines {
+			msg.ToolExpanded = !msg.ToolExpanded
+			m.refreshViewport()
+			return true
+		}
+	}
+
+	return false
+}
+
 func (m Model) selectionOverlayActive() bool {
 	// Note: m.planApproval is intentionally NOT in this list — the plan-approval
 	// modal handles its own mouse selection so users can copy plan text directly
@@ -79,6 +141,15 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg, area image.Rectangle) bo
 	if mouse.Button != tea.MouseLeft || m.selectionOverlayActive() {
 		return false
 	}
+
+	// Check if click is on a tool message to toggle expansion (priority over selection)
+	if m.handleToolExpansionClick(mouse.Y, area) {
+		// Clear any selection that might have started
+		m.mouseSelect = nil
+		m.applyViewportSelection()
+		return true
+	}
+
 	pt, ok := m.mousePointInViewport(mouse.X, mouse.Y, area)
 	if !ok {
 		m.mouseSelect = nil

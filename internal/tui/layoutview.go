@@ -118,7 +118,63 @@ func (m *Model) refreshViewport() {
 	wasAtBottom := m.vp.AtBottom()
 	var sb strings.Builder
 	first := true
-	for _, msg := range m.messages {
+
+	// Track which viewport lines belong to which messages (for click-to-expand)
+	lineToMsg := make(map[int]int)
+	currentLine := 0
+
+	// Track consecutive tool calls for tree rendering
+	var toolGroup []Message
+	var toolIndices []int // message indices for the tool group
+
+	flushToolGroup := func() {
+		if len(toolGroup) == 0 {
+			return
+		}
+		if !first {
+			sb.WriteString(separator(w))
+			sb.WriteByte('\n')
+			currentLine += 2 // separator + blank line
+		}
+		first = false
+
+		// Render tool group as a tree
+		for i, toolMsg := range toolGroup {
+			var treePrefix string
+			isLast := i == len(toolGroup)-1
+			if isLast {
+				treePrefix = "  ╰─ " // Last tool in group
+			} else {
+				treePrefix = "  ├─ " // Middle tool in group
+			}
+			rendered := renderToolMessageWithPrefix(toolMsg, w, m.verboseMode, treePrefix, isLast)
+
+			// Track lines for this tool message
+			msgIndex := toolIndices[i]
+			lineCount := strings.Count(rendered, "\n") + 1
+			for j := 0; j < lineCount; j++ {
+				lineToMsg[currentLine+j] = msgIndex
+			}
+			currentLine += lineCount
+
+			sb.WriteString(rendered)
+			sb.WriteByte('\n')
+		}
+		toolGroup = nil
+		toolIndices = nil
+	}
+
+	for i, msg := range m.messages {
+		// Group consecutive tool calls together
+		if msg.Role == RoleTool {
+			toolGroup = append(toolGroup, msg)
+			toolIndices = append(toolIndices, i)
+			continue
+		}
+
+		// Flush any pending tool group before rendering non-tool message
+		flushToolGroup()
+
 		rendered := renderMessage(msg, w, m.verboseMode)
 		if rendered == "" {
 			continue // skip empty renders (e.g. pure companion quip messages)
@@ -126,11 +182,24 @@ func (m *Model) refreshViewport() {
 		if !first && msg.Role != RoleAssistantInfo {
 			sb.WriteString(separator(w))
 			sb.WriteByte('\n')
+			currentLine += 2 // separator + blank line
 		}
 		first = false
+
+		// Track lines for this message
+		lineCount := strings.Count(rendered, "\n") + 1
+		for j := 0; j < lineCount; j++ {
+			lineToMsg[currentLine+j] = i
+		}
+		currentLine += lineCount
+
 		sb.WriteString(rendered)
 		sb.WriteByte('\n')
 	}
+
+	// Flush any remaining tool group
+	flushToolGroup()
+
 	if m.streaming != "" {
 		if !first {
 			sb.WriteString(separator(w))
@@ -142,6 +211,7 @@ func (m *Model) refreshViewport() {
 			sb.WriteByte('\n')
 		}
 	}
+	m.lineToMessage = lineToMsg
 	m.setViewportContent(sb.String())
 	if wasAtBottom {
 		m.vp.GotoBottom()

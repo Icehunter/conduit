@@ -383,6 +383,7 @@ type Model struct {
 	working workinganim.Anim
 
 	viewportLines []string
+	lineToMessage map[int]int // map viewport line index to message index (for click-to-expand)
 	mouseSelect   *mouseSelectionState
 
 	width  int

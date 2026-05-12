@@ -202,11 +202,15 @@ func firstNonEmptyLine(text string) string {
 }
 
 func renderToolMessage(msg Message, width int, verbose bool) string {
+	return renderToolMessageWithPrefix(msg, width, verbose, "", true)
+}
+
+func renderToolMessageWithPrefix(msg Message, width int, verbose bool, treePrefix string, isLast bool) string {
 	// Constants for collapsible tool output (inspired by crush)
 	const (
 		collapsedLines     = 10
-		truncationFormat   = "… (%d lines hidden) [space to expand]"
-		expandedHintFormat = "[space to collapse]"
+		truncationFormat   = "… (%d lines hidden) [click to expand]"
+		expandedHintFormat = "[click to collapse]"
 	)
 
 	statusIcon := styleStatusAccent.Render("✓")
@@ -225,22 +229,12 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 		statusText = "used"
 	}
 
-	// Expansion indicator
-	expandIcon := ""
 	result := strings.TrimSpace(msg.Content)
 	resultLines := strings.Split(result, "\n")
 	canExpand := len(resultLines) > collapsedLines && !running && !archived && result != ""
 
-	if canExpand {
-		if msg.ToolExpanded {
-			expandIcon = styleStatus.Render("▼") + " "
-		} else {
-			expandIcon = styleStatus.Render("▶") + " "
-		}
-	}
-
 	headerParts := []string{
-		expandIcon + statusIcon,
+		statusIcon,
 		styleToolBadge.Render(toolDisplayName(msg.ToolName)),
 		styleStatus.Render(statusText),
 	}
@@ -254,7 +248,7 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 		summary = toolResultSummary(msg.ToolName, msg.Content)
 	}
 	if !msg.ToolError && summary != "" {
-		available := width - lipgloss.Width(surfaceSpaces(2)+header) - lipgloss.Width(" · ")
+		available := width - lipgloss.Width(header) - lipgloss.Width(" · ") - 4 // -4 for tree prefix
 		if available >= 8 {
 			header += styleStatus.Render(" · " + truncatePlainToWidth(summary, available))
 		}
@@ -264,16 +258,23 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 		result = ""
 	}
 
-	bodyWidth := max(10, width-4)
+	bodyWidth := max(10, width-6) // Adjusted for tree indentation
+
+	// Render header
 	var lines []string
-	lines = append(lines, surfaceSpaces(2)+header)
+	lines = append(lines, header)
 
-	// Error output is always shown
-	if msg.ToolError && result != "" {
-		lines = append(lines, indentLines(styleErrorText.Width(bodyWidth).Render(result), surfaceSpaces(4)))
+	// Determine continuation character for multi-line output
+	// When in a tree (treePrefix != ""), body lines don't need their own prefix
+	// because the tree rendering will add it. When standalone, use 5 spaces.
+	continuationPrefix := ""
+	if treePrefix == "" {
+		continuationPrefix = "     " // 5 spaces for standalone tools
 	}
+	// Note: For tree rendering, body lines have NO prefix here;
+	// the prefix gets added in the final tree assembly below.
 
-	// Normal output: show based on verbose mode and expansion state
+	// Add body content if we have output (indented with continuation)
 	if verbose && !msg.ToolError && !running && !archived && result != "" {
 		var body string
 
@@ -306,9 +307,49 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 				body += "\n" + hint
 			}
 		}
-		lines = append(lines, indentLines(body, surfaceSpaces(4)))
+		// Indent body lines with continuation character
+		bodyLines := strings.Split(body, "\n")
+		for _, ln := range bodyLines {
+			lines = append(lines, continuationPrefix+ln)
+		}
 	}
-	return strings.Join(lines, "\n")
+
+	// Add error output if we have an error (indented with continuation)
+	if msg.ToolError && result != "" {
+		errorBody := styleErrorText.Width(bodyWidth).Render(result)
+		errorLines := strings.Split(errorBody, "\n")
+		for _, ln := range errorLines {
+			lines = append(lines, continuationPrefix+ln)
+		}
+	}
+
+	rendered := strings.Join(lines, "\n")
+
+	// Apply tree prefix if provided
+	if treePrefix != "" {
+		renderedLines := strings.Split(rendered, "\n")
+		if len(renderedLines) > 0 {
+			// First line gets the tree prefix (e.g., "  ├─ ")
+			renderedLines[0] = treePrefix + renderedLines[0]
+
+			// Continuation lines: replace tree connector with vertical or spaces
+			var contPrefix string
+			if isLast {
+				contPrefix = "     " // 5 spaces (align with content after "  ╰─ ")
+			} else {
+				contPrefix = "  │  " // 2 spaces, vertical bar, 2 spaces
+			}
+
+			for i := 1; i < len(renderedLines); i++ {
+				// Lines already have continuation prefix from rendering above,
+				// so just add the positional prefix
+				renderedLines[i] = contPrefix + renderedLines[i]
+			}
+			return strings.Join(renderedLines, "\n")
+		}
+		return treePrefix + rendered
+	}
+	return surfaceSpaces(2) + rendered
 }
 
 func toolDisplayName(name string) string {

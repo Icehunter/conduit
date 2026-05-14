@@ -135,6 +135,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			reply:      msg.reply,
 			focusedIdx: 0,
 			selected:   make([]bool, len(msg.options)),
+			textMode:   len(msg.options) == 0,
 		}
 		m.questionAsk = state
 		m.refreshViewport()

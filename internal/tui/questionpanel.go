@@ -58,8 +58,16 @@ func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			return sendAnswer([]string{q.textBuf})
-		case "tab", "shift+tab", "esc":
-			q.textMode = false
+		case "tab", "shift+tab":
+			if len(q.options) > 0 {
+				q.textMode = false
+			}
+		case "esc":
+			if len(q.options) > 0 {
+				q.textMode = false
+			} else {
+				return cancel()
+			}
 		case "backspace", "ctrl+h":
 			if len(q.textBuf) > 0 {
 				q.textBuf = q.textBuf[:len(q.textBuf)-1]
@@ -197,7 +205,11 @@ func (m Model) renderQuestionDialog() string {
 		cursor := "█"
 		display := q.textBuf + cursor
 		sb.WriteString(stylePickerItemSelected.Render("  › "+display) + "\n")
-		sb.WriteString("\n" + stylePickerDesc.Render("Enter to submit · Tab/Esc to go back"))
+		if len(q.options) > 0 {
+			sb.WriteString("\n" + stylePickerDesc.Render("Enter to submit · Tab/Esc to go back"))
+		} else {
+			sb.WriteString("\n" + stylePickerDesc.Render("Enter to submit · Esc to cancel"))
+		}
 	} else {
 		numOpts := len(q.options)
 		// Cap visible options to avoid taking over the whole screen.

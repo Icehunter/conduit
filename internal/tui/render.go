@@ -40,7 +40,17 @@ func renderMessage(msg Message, width int, verbose bool) string {
 	case RoleAssistant:
 		content := stripCompanionMarkerGlobal(msg.Content)
 		if content == "" {
-			return "" // pure companion quip — bubble handles display, skip chat row
+			// Skip pure companion quips, but show header if this message has tools
+			// (indicated by AssistantModel being set during streaming).
+			if msg.AssistantModel == "" {
+				return "" // pure companion quip — bubble handles display, skip chat row
+			}
+			// Empty text but has tools — show the "Claude" header so tool tree has a parent
+			prefix := msg.AssistantLabel
+			if prefix == "" {
+				prefix = prefixClaude
+			}
+			return pad + styleClaudePrefix.Render(prefix)
 		}
 		prefix := msg.AssistantLabel
 		if prefix == "" {

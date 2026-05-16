@@ -23,8 +23,8 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.138` |
-| `SDKPackageVersion` | `internal/api/client.go` | `0.93.0` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.143` |
+| `SDKPackageVersion` | `internal/api/client.go` | `0.94.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
 | Token URL | `internal/auth/flow.go` | see source |
@@ -36,7 +36,7 @@ Run `make verify-wire` to check these against the current upstream fingerprint.
 
 ## Active beta headers
 
-Conduit sends 11 beta headers. Upstream CC v2.1.138 advertises 2 via the
+Conduit sends 11 beta headers. Upstream CC v2.1.143 advertises 2 via the
 extractor pattern. The extras are valid API features — this is marked DIVERGED
 in `verify.mjs`, not a blocking incompatibility. Capture with mitmproxy if a
 regression appears.
@@ -57,6 +57,14 @@ regression appears.
 ---
 
 ## Wire sync log
+
+### 2.1.138 → 2.1.143 (2026-05-16)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.143` in `cmd/conduit/main.go` |
+| `SDKPackageVersion` | Bumped to `0.94.0` in `internal/api/client.go` |
+| New headers (v143) | `x-claude-code-agent-id`, `x-claude-code-parent-agent-id` (sub-agent tracking, conduit N/A), `anthropic-agent-skills` (agent-skills beta) added to `KNOWN_HEADERS` in `extract.mjs` |
 
 ### 2.1.137 → 2.1.138 (2026-05-10)
 

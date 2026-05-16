@@ -127,6 +127,12 @@ const KNOWN_HEADERS = new Set([
   // CCR (Claude Code Remote) bridge headers — not sent by conduit (bridge-only)
   "x-claude-remote-container-id",
   "x-claude-remote-session-id",
+  // Sub-agent tracking headers (v2.1.143+) — sent only when CC spawns child agents;
+  // conduit does not implement multi-agent orchestration yet, safe to suppress.
+  "x-claude-code-agent-id",
+  "x-claude-code-parent-agent-id",
+  // Agent-skills beta header (v2.1.143+) — beta for the agent skills plugin feature.
+  "anthropic-agent-skills",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

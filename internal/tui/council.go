@@ -52,6 +52,29 @@ type roundResult struct {
 	err    error
 }
 
+// councilRoundGrace is the extra wall-clock budget on top of the per-member
+// timeout. Once `timeout + grace` has elapsed, runRoundParallel stops waiting
+// and treats any still-running members as stuck — they're ejected and the
+// round proceeds. Without this, a tool whose Execute method doesn't honour
+// ctx (historically Glob, see internal/tools/globtool) could pin the round
+// indefinitely because wg.Wait() can't return.
+const councilRoundGrace = 5 * time.Second
+
+// runMemberFn runs a single council member's sub-agent for one round. It is a
+// package-level var so tests can substitute a blocking or instant
+// implementation without standing up a real *agent.Loop.
+var runMemberFn = defaultRunMember
+
+func defaultRunMember(ctx context.Context, loop *agent.Loop, m councilMember, prompt string, tools []string) (agent.SubAgentResult, error) {
+	return loop.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+		Model:            m.model,
+		Mode:             permissions.ModeBypassPermissions,
+		Tools:            tools,
+		Client:           m.client,
+		DisableModeTools: true,
+	})
+}
+
 // runRoundParallel runs one round of the council debate in parallel across all
 // active members. Each goroutine applies the per-member timeout derived from
 // the parent context. Responses and ejections are prog.Send-ed immediately so
@@ -65,7 +88,23 @@ func runRoundParallel(
 	timeout time.Duration,
 	prog *tea.Program,
 ) (allAgreed bool, atLeastOne bool) {
-	ch := make(chan roundResult, len(members))
+	active := 0
+	for _, m := range members {
+		if m.active {
+			active++
+		}
+	}
+	if active == 0 {
+		return false, false
+	}
+
+	// Snapshot runMemberFn once so goroutines read a local copy. A package-level
+	// var read concurrently with a test restoring it would be a data race.
+	memberRunner := runMemberFn
+
+	// Buffered to fit every active member so a slow-returning goroutine never
+	// blocks on send even after we've stopped waiting.
+	ch := make(chan roundResult, active)
 	var wg sync.WaitGroup
 	for i := range members {
 		if !members[i].active {
@@ -87,13 +126,7 @@ func runRoundParallel(
 				ctx, cancel = context.WithCancel(parentCtx)
 			}
 			defer cancel()
-			r, err := loop.RunSubAgentTyped(ctx, promptFn(m), agent.SubAgentSpec{
-				Model:            m.model,
-				Mode:             permissions.ModeBypassPermissions,
-				Tools:            tools,
-				Client:           m.client,
-				DisableModeTools: true,
-			})
+			r, err := memberRunner(ctx, loop, m, promptFn(m), tools)
 			if err == nil && substantiveLen(r.Text) < councilMinResponseChars {
 				err = errEmptyCouncilResponse
 			}
@@ -115,24 +148,63 @@ func runRoundParallel(
 			ch <- roundResult{idx: idx, result: r, agreed: agreed, err: err}
 		}(i, members[i])
 	}
-	wg.Wait()
-	close(ch)
+
+	// Bound the wait: a tool whose Execute ignores ctx can leave a goroutine
+	// blocked past the per-member timeout. After timeout+grace we stop waiting
+	// and treat unfinished members as stuck so the round can complete.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	var stuck bool
+	if timeout > 0 {
+		select {
+		case <-done:
+		case <-time.After(timeout + councilRoundGrace):
+			stuck = true
+		}
+	} else {
+		<-done
+	}
 
 	allAgreed = true
 	atLeastOne = false
-	for rr := range ch {
-		if rr.err != nil {
-			members[rr.idx].active = false
-		} else {
-			atLeastOne = true
-			members[rr.idx].lastResponse = rr.result.Text
-			members[rr.idx].usage.InputTokens += rr.result.Usage.InputTokens
-			members[rr.idx].usage.OutputTokens += rr.result.Usage.OutputTokens
-			members[rr.idx].usage.CacheCreationInputTokens += rr.result.Usage.CacheCreationInputTokens
-			members[rr.idx].usage.CacheReadInputTokens += rr.result.Usage.CacheReadInputTokens
-			members[rr.idx].durationMs += rr.result.DurationMs
-			if !rr.agreed {
-				allAgreed = false
+	received := make(map[int]bool, active)
+	// Drain whatever results have arrived without blocking.
+drain:
+	for {
+		select {
+		case rr := <-ch:
+			received[rr.idx] = true
+			if rr.err != nil {
+				members[rr.idx].active = false
+			} else {
+				atLeastOne = true
+				members[rr.idx].lastResponse = rr.result.Text
+				members[rr.idx].usage.InputTokens += rr.result.Usage.InputTokens
+				members[rr.idx].usage.OutputTokens += rr.result.Usage.OutputTokens
+				members[rr.idx].usage.CacheCreationInputTokens += rr.result.Usage.CacheCreationInputTokens
+				members[rr.idx].usage.CacheReadInputTokens += rr.result.Usage.CacheReadInputTokens
+				members[rr.idx].durationMs += rr.result.DurationMs
+				if !rr.agreed {
+					allAgreed = false
+				}
+			}
+		default:
+			break drain
+		}
+	}
+	if stuck {
+		// Eject members whose goroutines never reported back. Their slot remains
+		// reserved in the buffered channel so a late send won't panic, and we
+		// leave the leaked goroutine to finish quietly in the background.
+		for i := range members {
+			if members[i].active && !received[i] {
+				members[i].active = false
+				if prog != nil {
+					prog.Send(councilMemberEjectedMsg{label: members[i].label, reason: "stuck (no response within grace window)"})
+				}
 			}
 		}
 	}

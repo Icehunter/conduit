@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -209,6 +210,59 @@ func TestRunRoundParallel_ContextCancelShortCircuits(t *testing.T) {
 		// Pass — returned promptly
 	case <-time.After(3 * time.Second):
 		t.Fatal("runRoundParallel did not return after context cancellation")
+	}
+}
+
+// TestRunRoundParallel_BoundedByGraceWindow verifies that a council member
+// whose sub-agent ignores ctx cancellation cannot pin the round forever.
+// Once timeout+grace elapses, the round must return and stuck members must
+// be marked inactive — even though their goroutines are still running.
+func TestRunRoundParallel_BoundedByGraceWindow(t *testing.T) {
+	prevFn := runMemberFn
+
+	released := make(chan struct{})
+	// leakWG is incremented in the test before runRoundParallel launches so
+	// Cleanup.leakWG.Wait() is guaranteed to see the Add before the goroutine
+	// unblocks. We add the expected count (2 members) up-front.
+	var leakWG sync.WaitGroup
+	leakWG.Add(2)
+	runMemberFn = func(ctx context.Context, _ *agent.Loop, m councilMember, prompt string, tools []string) (agent.SubAgentResult, error) {
+		defer leakWG.Done()
+		<-released
+		return agent.SubAgentResult{}, nil
+	}
+	t.Cleanup(func() {
+		close(released)
+		leakWG.Wait() // wait for leaked goroutines to finish using runMemberFn
+		runMemberFn = prevFn
+	})
+
+	members := []councilMember{
+		{label: "A", model: "m", active: true},
+		{label: "B", model: "m", active: true},
+	}
+
+	start := time.Now()
+	allAgreed, atLeastOne := runRoundParallel(
+		context.Background(), nil, members,
+		func(m councilMember) string { return "p" },
+		nil, 50*time.Millisecond, nil,
+	)
+	elapsed := time.Since(start)
+
+	if elapsed > councilRoundGrace+2*time.Second {
+		t.Errorf("runRoundParallel waited too long: %v (budget ~%v)", elapsed, councilRoundGrace)
+	}
+	if atLeastOne {
+		t.Error("atLeastOne should be false when all members are stuck")
+	}
+	if allAgreed {
+		t.Error("allAgreed should be false when no members responded")
+	}
+	for i, m := range members {
+		if m.active {
+			t.Errorf("member[%d] should be marked inactive after stuck eject", i)
+		}
 	}
 }
 

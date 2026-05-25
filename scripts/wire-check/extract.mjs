@@ -86,7 +86,8 @@ function extractTools(files) {
   for (const file of files) {
     const content = readFileSync(file, "utf8");
     // Require both markers to be present in the file — filters out non-tool files.
-    if (!content.includes("userFacingName") || (!content.includes("input_schema") && !content.includes("inputSchema"))) continue;
+    if (!content.includes("userFacingName") || (!content.includes("input_schema") && !content.includes("inputSchema")))
+      continue;
     let m;
     nameRe.lastIndex = 0;
     while ((m = nameRe.exec(content)) !== null) {
@@ -100,45 +101,64 @@ function extractTools(files) {
 // Entries are lowercase. Update this set when a new header is confirmed intentional.
 const KNOWN_HEADERS = new Set([
   // Core request headers conduit sends
-  "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
-  "x-api-key", "x-app", "x-claude-code-session-id",
-  "x-stainless-lang", "x-stainless-package-version", "x-stainless-os", "x-stainless-arch",
-  "x-stainless-runtime", "x-stainless-runtime-version", "x-stainless-retry-count",
-  "x-stainless-timeout", "x-stainless-helper", "x-anthropic-billing-header",
-  "authorization", "content-type", "accept", "user-agent",
+  "anthropic-version",
+  "anthropic-beta",
+  "anthropic-dangerous-direct-browser-access",
+  "x-api-key",
+  "x-app",
+  "x-claude-code-session-id",
+  "x-stainless-lang",
+  "x-stainless-package-version",
+  "x-stainless-os",
+  "x-stainless-arch",
+  "x-stainless-runtime",
+  "x-stainless-runtime-version",
+  "x-stainless-retry-count",
+  "x-stainless-timeout",
+  "x-stainless-helper",
+  "x-anthropic-billing-header",
+  "authorization",
+  "content-type",
+  "accept",
+  "user-agent",
   // Standard infra / rate-limit response headers (noisy — suppress whole prefix below)
-  "x-request-id", "x-organization-uuid", "x-idempotency-key",
-  "x-cloud-trace-context", "x-forwarded-for",
-  "x-client-request-id", "x-client-app",
+  "x-request-id",
+  "x-organization-uuid",
+  "x-idempotency-key",
+  "x-cloud-trace-context",
+  "x-forwarded-for",
+  "x-client-request-id",
+  "x-client-app",
   // Bridge / session headers (internal CC infra)
   "x-claude-code-session-id",
-  "x-should-retry", "x-service-name",
+  "x-should-retry",
+  "x-service-name",
   // Per-request UUID header (sent by v133+, maps to CLIENT_REQUEST_ID_HEADER)
   "x-client-request-id",
   // Auth / identity headers (v137+)
-  "anthropic-admin-api-key",    // admin API key variant
-  "anthropic-api-key",          // alternate API key header name
-  "anthropic-client-platform",  // client platform identifier
-  "anthropic-marketplace",      // marketplace feature routing
-  "anthropic-plugins",          // plugin manifest header
-  "anthropic-workspace-id",     // workspace/org scoping
+  "anthropic-admin-api-key", // admin API key variant
+  "anthropic-api-key", // alternate API key header name
+  "anthropic-client-platform", // client platform identifier
+  "anthropic-marketplace", // marketplace feature routing
+  "anthropic-plugins", // plugin manifest header
+  "anthropic-workspace-id", // workspace/org scoping
   // Security / protection headers (v137+)
-  "x-anthropic-additional-protection",  // extra rate-limit / abuse protection
+  "x-anthropic-additional-protection", // extra rate-limit / abuse protection
   // CCR (Claude Code Remote) bridge headers — not sent by conduit (bridge-only)
   "x-claude-remote-container-id",
   "x-claude-remote-session-id",
-  // Sub-agent tracking headers (v2.1.143+) — sent only when CC spawns child agents;
+  // Sub-agent tracking headers (v2.1.150+) — sent only when CC spawns child agents;
   // conduit does not implement multi-agent orchestration yet, safe to suppress.
   "x-claude-code-agent-id",
   "x-claude-code-parent-agent-id",
-  // Agent-skills beta header (v2.1.143+) — beta for the agent skills plugin feature.
+  // Agent-skills beta header (v2.1.150+) — beta for the agent skills plugin feature.
   "anthropic-agent-skills",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.
 const HEADER_PREFIX_SUPPRESS = [
-  /^anthropic-ratelimit-/,  // rate-limit response headers
-  /^x-ratelimit-/,          // standard rate-limit headers
+  /^anthropic-ratelimit-/, // rate-limit response headers
+  /^x-ratelimit-/, // standard rate-limit headers
 ];
 
 function discoverHeaders(files) {
@@ -241,7 +261,8 @@ export function runExtract(opts) {
   }
 
   fingerprint.billing_salt = extractBillingSalt(files);
-  fingerprint.billing_note = "cc_version suffix is SHA256(billing_salt + firstMsg[4,7,20] + version).slice(0,3); cch is always \"00000\" for non-bedrock/vertex";
+  fingerprint.billing_note =
+    'cc_version suffix is SHA256(billing_salt + firstMsg[4,7,20] + version).slice(0,3); cch is always "00000" for non-bedrock/vertex';
   fingerprint.sdk_package_version = extractSDKVersion(files) ?? fingerprint.sdk_package_version;
   fingerprint.stainless_runtime_version = extractStainlessRuntime(files);
   fingerprint.beta_registry = extractBetaRegistry(files);

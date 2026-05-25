@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func input(t *testing.T, v any) json.RawMessage {
@@ -197,5 +198,64 @@ func TestGlob_StaticMetadata(t *testing.T) {
 	var schema map[string]any
 	if err := json.Unmarshal(tt.InputSchema(), &schema); err != nil {
 		t.Fatalf("InputSchema not valid JSON: %v", err)
+	}
+}
+
+// TestGlob_RespectsCancelledContext verifies that a cancelled caller context
+// returns promptly rather than walking the filesystem to completion. Without
+// this, a pathological pattern over a giant tree could pin a sub-agent (e.g.
+// a council member) for many minutes after the per-member timeout fired.
+func TestGlob_RespectsCancelledContext(t *testing.T) {
+	root := makeTree(t)
+	tt := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before Execute runs
+	start := time.Now()
+	res, err := tt.Execute(ctx, input(t, map[string]any{
+		"pattern": "**/*",
+		"path":    root,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Errorf("cancelled context should produce IsError result; got: %+v", res)
+	}
+	if got := res.Content[0].Text; !strings.Contains(got, "cancelled") {
+		t.Errorf("expected 'cancelled' in error text; got: %q", got)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("cancelled glob took too long: %v", d)
+	}
+}
+
+// TestGlob_CancelDuringWalk verifies that cancelling mid-walk aborts the
+// callback. Builds a wider tree than makeTree so the walker has work to do.
+func TestGlob_CancelDuringWalk(t *testing.T) {
+	root := t.TempDir()
+	// Create enough files that the walk visits more than one callback iteration.
+	for i := 0; i < 500; i++ {
+		path := filepath.Join(root, "file"+strconv.Itoa(i)+".go")
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tt := New()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	res, err := tt.Execute(ctx, input(t, map[string]any{
+		"pattern": "**/*",
+		"path":    root,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Either "cancelled" (caller ctx fired first) or a partial result with the
+	// timeout marker is acceptable; what matters is that Execute returned in
+	// well under the wall-clock budget instead of running to completion.
+	_ = res
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("cancelled walk took too long: %v", d)
 	}
 }

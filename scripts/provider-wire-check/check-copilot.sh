@@ -25,11 +25,9 @@ assert_contains "$auth_go" "StripCacheControlScope" "Copilot Claude cache-contro
 assert_contains "$copilot_test" "gpt-5-mini" "Copilot route regression test covers gpt-5-mini exception"
 
 if optional_repo "$OPENCODE_REPO" "opencode"; then
-  sdk_dir="${OPENCODE_REPO}/packages/opencode/src/provider/sdk/copilot"
   plugin_auth="${OPENCODE_REPO}/packages/opencode/src/plugin/github-copilot/copilot.ts"
   plugin_models="${OPENCODE_REPO}/packages/opencode/src/plugin/github-copilot/models.ts"
   llm_provider="${OPENCODE_REPO}/packages/llm/src/providers/github-copilot.ts"
-  require_path "$sdk_dir" "OpenCode Copilot SDK"
   require_path "$plugin_auth" "OpenCode Copilot auth plugin"
   assert_contains "$plugin_auth" "https://api.githubcopilot.com" "OpenCode Copilot API base reference"
   assert_contains "$plugin_auth" "x-initiator" "OpenCode Copilot initiator header reference"

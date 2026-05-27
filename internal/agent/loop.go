@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,7 @@ import (
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
+	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 )
@@ -44,6 +46,7 @@ import (
 // maxConcurrentTools is the worker pool size for parallel tool execution.
 // Mirrors the coordinator's concurrency limit in src/coordinator/coordinatorMode.ts.
 const maxConcurrentTools = 4
+const maxToolUseRecoveries = 2
 
 // EventType identifies what kind of loop event the caller receives.
 type EventType int
@@ -216,6 +219,13 @@ type Loop struct {
 	// and cleared by Run (loop goroutine) via atomic.Value so no extra lock
 	// is needed.
 	steerMsg atomic.Value // stores string
+	// session-start reminder is computed once per Loop lifetime (not once per
+	// Run call) to avoid re-injecting identical startup context on every user
+	// message.
+	sessionStartMu       sync.Mutex
+	sessionStartDone     bool
+	sessionReminderUsed  bool
+	sessionReminderBlock *api.SystemBlock
 }
 
 // NewLoop constructs a Loop.
@@ -310,6 +320,137 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 	l.cfg.AskPermission = fn
 }
 
+// SetSessionID updates the active session identifier. When it changes, reset
+// the one-time SessionStart reminder state so startup context is recomputed
+// once for the new session.
+func (l *Loop) SetSessionID(id string) {
+	l.mu.Lock()
+	changed := l.cfg.SessionID != id
+	l.cfg.SessionID = id
+	l.mu.Unlock()
+	if !changed {
+		return
+	}
+	l.sessionStartMu.Lock()
+	l.sessionStartDone = false
+	l.sessionReminderUsed = false
+	l.sessionReminderBlock = nil
+	l.sessionStartMu.Unlock()
+}
+
+func (l *Loop) sessionStartReminderBlock(ctx context.Context) (*api.SystemBlock, error) {
+	l.sessionStartMu.Lock()
+	if l.sessionStartDone {
+		block := l.sessionReminderBlock
+		l.sessionStartMu.Unlock()
+		return block, nil
+	}
+	l.sessionStartMu.Unlock()
+
+	l.mu.RLock()
+	cwd := l.cfg.Cwd
+	sessionID := l.cfg.SessionID
+	hooksCfg := l.cfg.Hooks
+	l.mu.RUnlock()
+
+	var additionalCtxParts []string
+	// Run pre-flight health checks (git status, deps, etc.) once.
+	if cwd != "" {
+		if result := healthcheck.Run(ctx, cwd, healthcheck.DefaultTimeout); result.HasIssue {
+			if ctx := result.FormatContext(); ctx != "" {
+				additionalCtxParts = append(additionalCtxParts, ctx)
+			}
+		}
+	}
+	// Run SessionStart hooks once.
+	if hooksCfg != nil && len(hooksCfg.SessionStart) > 0 {
+		if addlCtx := hooks.RunSessionStart(ctx, hooksCfg.SessionStart, sessionID); addlCtx != "" {
+			additionalCtxParts = append(additionalCtxParts, addlCtx)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	var block *api.SystemBlock
+	if len(additionalCtxParts) > 0 {
+		block = &api.SystemBlock{
+			Type: "text",
+			Text: "<system-reminder>\n" + strings.Join(additionalCtxParts, "\n\n") + "\n</system-reminder>",
+		}
+	}
+
+	l.sessionStartMu.Lock()
+	defer l.sessionStartMu.Unlock()
+	if l.sessionStartDone {
+		return l.sessionReminderBlock, nil
+	}
+	l.sessionStartDone = true
+	l.sessionReminderBlock = block
+	return l.sessionReminderBlock, nil
+}
+
+func (l *Loop) consumeSessionReminderBlock() *api.SystemBlock {
+	l.sessionStartMu.Lock()
+	defer l.sessionStartMu.Unlock()
+	if l.sessionReminderUsed {
+		return nil
+	}
+	l.sessionReminderUsed = true
+	return l.sessionReminderBlock
+}
+
+func isToolUseFlowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !(strings.Contains(msg, "invalid_request_error") || strings.Contains(msg, "bad_request_error") || strings.Contains(msg, "400")) {
+		return false
+	}
+	return strings.Contains(msg, "tool_use") ||
+		strings.Contains(msg, "tool use") ||
+		strings.Contains(msg, "tool_result") ||
+		strings.Contains(msg, "tool result")
+}
+
+func stripTrailingAssistantToolUse(msgs []api.Message) ([]api.Message, bool) {
+	out := make([]api.Message, len(msgs))
+	copy(out, msgs)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role != "assistant" {
+			continue
+		}
+		filtered := make([]api.ContentBlock, 0, len(out[i].Content))
+		removed := false
+		for _, b := range out[i].Content {
+			if b.Type == "tool_use" {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		if !removed {
+			continue
+		}
+		if len(filtered) == 0 {
+			out = append(out[:i], out[i+1:]...)
+		} else {
+			out[i].Content = filtered
+		}
+		return out, true
+	}
+	return msgs, false
+}
+
+func recoverToolUseHistory(msgs []api.Message) ([]api.Message, bool) {
+	cleaned := session.FilterUnresolvedToolUses(msgs)
+	if !reflect.DeepEqual(cleaned, msgs) {
+		return cleaned, true
+	}
+	return stripTrailingAssistantToolUse(cleaned)
+}
+
 // Run executes the agentic loop starting with the given messages. handler is
 // called synchronously for each event; it must not block.
 //
@@ -320,6 +461,7 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(LoopEvent)) ([]api.Message, error) {
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
+	msgs = session.FilterUnresolvedToolUses(msgs)
 
 	// Snapshot mutable fields under the read lock so that concurrent Set*
 	// calls from the TUI goroutine cannot race with this turn's reads.
@@ -331,35 +473,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	client := l.client
 	l.mu.RUnlock()
 
-	// Fire SessionStart hooks once before the first turn. Any additionalContext
-	// is appended as an extra system block for turn 0 only — matching CC's
-	// behaviour where hookSpecificOutput.additionalContext is injected at the
-	// system level so the model treats it with system-prompt authority.
-	var sessionReminderBlock *api.SystemBlock
-	var additionalCtxParts []string
-
-	// Run pre-flight health checks (git status, deps, etc.)
-	if l.cfg.Cwd != "" {
-		if result := healthcheck.Run(ctx, l.cfg.Cwd, healthcheck.DefaultTimeout); result.HasIssue {
-			if ctx := result.FormatContext(); ctx != "" {
-				additionalCtxParts = append(additionalCtxParts, ctx)
-			}
-		}
-	}
-
-	// Run session start hooks
-	if l.cfg.Hooks != nil && len(l.cfg.Hooks.SessionStart) > 0 {
-		if addlCtx := hooks.RunSessionStart(ctx, l.cfg.Hooks.SessionStart, l.cfg.SessionID); addlCtx != "" {
-			additionalCtxParts = append(additionalCtxParts, addlCtx)
-		}
-	}
-
-	// Combine all additional context into a single system reminder block
-	if len(additionalCtxParts) > 0 {
-		sessionReminderBlock = &api.SystemBlock{
-			Type: "text",
-			Text: "<system-reminder>\n" + strings.Join(additionalCtxParts, "\n\n") + "\n</system-reminder>",
-		}
+	sessionReminderBlock, err := l.sessionStartReminderBlock(ctx)
+	if err != nil {
+		return msgs, err
 	}
 	defer func() {
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.Stop) > 0 {
@@ -377,6 +493,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	turn := 0
 	lastAssistantTime := l.cfg.LastAssistantTime
 	streamFailures := 0
+	toolUseRecoveries := 0
 	for {
 		if ctx.Err() != nil {
 			return msgs, ctx.Err()
@@ -385,6 +502,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			return msgs, nil
 		}
 		turn++
+		msgs = session.FilterUnresolvedToolUses(msgs)
 
 		// Time-based microcompact: after a long idle (cache expired), shrink
 		// older tool_results to a placeholder so the re-cache is cheaper.
@@ -404,7 +522,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 		reqSystem := system
 		if turn == 1 && sessionReminderBlock != nil {
-			reqSystem = append(append([]api.SystemBlock(nil), system...), *sessionReminderBlock)
+			if firstReminder := l.consumeSessionReminderBlock(); firstReminder != nil {
+				reqSystem = append(append([]api.SystemBlock(nil), system...), *firstReminder)
+			}
 		}
 		// For Claude.ai OAuth (Max subscription) accounts, replace the static
 		// billing block (index 0) with a dynamically computed one using the
@@ -453,6 +573,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return msgs, err
 			}
+			if toolUseRecoveries < maxToolUseRecoveries && isToolUseFlowError(err) {
+				if recovered, ok := recoverToolUseHistory(msgs); ok {
+					toolUseRecoveries++
+					msgs = recovered
+					handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: toolUseRecoveries, RetryErr: err})
+					continue
+				}
+			}
 			streamFailures++
 			if streamFailures > 3 {
 				return msgs, fmt.Errorf("agent: stream: %w", err)
@@ -461,6 +589,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			continue
 		}
 		streamFailures = 0
+		toolUseRecoveries = 0
 
 		// Emit rate-limit info from response headers before draining.
 		if rlInfo := ratelimit.Parse(stream.ResponseHeader); rlInfo.HasData() {

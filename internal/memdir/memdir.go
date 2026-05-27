@@ -102,20 +102,44 @@ func truncateEntrypoint(content string) string {
 	)
 }
 
-// BuildPrompt returns the full memory system-prompt block for the given cwd.
-// Mirrors buildMemoryLines() + loadMemoryPrompt() in src/memdir/memdir.ts —
-// includes the full type taxonomy, how-to-save instructions, when-to-access
-// guidance, and MEMORY.md content.
+// BuildPrompt returns the memory system-prompt block for the given cwd.
+// By default this uses a compact conduit-native format to reduce context
+// pressure; set CONDUIT_MEMORY_PROMPT_FULL=1 to restore the full CC-style
+// taxonomy/instructions block.
 //
 // Returns "" if MEMORY.md doesn't exist AND the directory doesn't exist
 // (no-op for fresh installs without memory configured).
 func BuildPrompt(cwd string) string {
 	memDir := Path(cwd)
-	entrypoint := EntrypointPath(cwd)
 	content, _ := loadEntrypoint(cwd)
+	truncated := truncateEntrypoint(content)
+	if strings.EqualFold(os.Getenv("CONDUIT_MEMORY_PROMPT_FULL"), "1") {
+		return buildFullPrompt(memDir, truncated)
+	}
+	return buildCompactPrompt(memDir, truncated)
+}
 
+func buildCompactPrompt(memDir, truncatedEntrypoint string) string {
 	var sb strings.Builder
+	sb.WriteString("# auto memory\n\n")
+	fmt.Fprintf(&sb, "You have a persistent memory directory at `%s/`.\n\n", memDir)
+	sb.WriteString("Use memory for durable context only (user preferences, stable project context, recurring feedback, and external references). Do not store ephemeral task state, raw activity logs, or codebase facts that can be re-read from files/git.\n\n")
+	sb.WriteString("If the user asks to remember/forget something, update memory files immediately.\n\n")
+	sb.WriteString("Memory file types: `user`, `feedback`, `project`, `reference`.\n\n")
+	sb.WriteString("Saving is always two steps:\n")
+	fmt.Fprintf(&sb, "1. Write/update a topic file with frontmatter (`name`, `description`, `type`).\n2. Add/update a one-line pointer in `%s` (`- [Title](file.md) — one-line hook`). `%s` is an index, not a memory body.\n\n", EntrypointName, EntrypointName)
+	fmt.Fprintf(&sb, "Keep `%s` concise; lines after %d are truncated in prompt context.\n\n", EntrypointName, MaxLines)
+	fmt.Fprintf(&sb, "## %s\n\n", EntrypointName)
+	if truncatedEntrypoint != "" {
+		sb.WriteString(truncatedEntrypoint)
+	} else {
+		fmt.Fprintf(&sb, "Your %s is currently empty. When you save new memories, they will appear here.\n", EntrypointName)
+	}
+	return sb.String()
+}
 
+func buildFullPrompt(memDir, truncatedEntrypoint string) string {
+	var sb strings.Builder
 	// Header.
 	sb.WriteString("# auto memory\n\n")
 	fmt.Fprintf(&sb, "You have a persistent, file-based memory system at `%s/`. This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).\n\n", memDir)
@@ -147,15 +171,12 @@ func BuildPrompt(cwd string) string {
 	sb.WriteByte('\n')
 
 	// MEMORY.md content.
-	truncated := truncateEntrypoint(content)
 	fmt.Fprintf(&sb, "## %s\n\n", EntrypointName)
-	if truncated != "" {
-		sb.WriteString(truncated)
+	if truncatedEntrypoint != "" {
+		sb.WriteString(truncatedEntrypoint)
 	} else {
 		fmt.Fprintf(&sb, "Your %s is currently empty. When you save new memories, they will appear here.\n", EntrypointName)
 	}
-
-	_ = entrypoint // used for doc clarity
 	return sb.String()
 }
 

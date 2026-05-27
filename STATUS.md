@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-05-12
+Last updated: 2026-05-27
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -67,7 +67,7 @@ coming, and what's intentionally out of scope.
 | Extended thinking (`/effort`) | ✅ | low/medium/high/max budgets |
 | Fast mode (`/fast`) | ✅ | Toggles Haiku; ⚡ badge |
 | Exponential backoff (429) | ✅ | Base 1s, 2×, max 32s, jitter, 5 retries |
-| Conversation recovery | ✅ | Partial blocks persisted; orphan tool_use filtered on resume |
+| Conversation recovery | ✅ | Partial blocks persisted; orphan tool_use filtered on resume; auto-retries after tool_use/tool_result chain validation errors by sanitizing history |
 | Mid-turn steering | ✅ | Message injected between tool batches; agent pivots without losing context |
 | Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/` |
 | Coordinator mode | ✅ | Claude as orchestrator; task-notification XML |
@@ -160,9 +160,9 @@ coming, and what's intentionally out of scope.
 | Session rename / tag | ✅ | |
 | Cost persistence | ✅ | AppendCost per turn; LoadCost on resume |
 | File access history | ✅ | |
-| MEMORY.md auto-memory | ✅ | user/feedback/project/reference types |
+| MEMORY.md auto-memory | ✅ | user/feedback/project/reference types; compact prompt mode is default to reduce token overhead (`CONDUIT_MEMORY_PROMPT_FULL=1` restores full taxonomy block) |
 | Memory extraction (auto) | ✅ | Sub-agent fires on each end_turn |
-| Session memory summaries | ✅ | `summary.md` per session; loaded on resume |
+| Session memory summaries | ✅ | `summary.md` per session; injected on resume only when transcript history is unavailable (and size-capped) |
 | Auto-dream consolidation | ✅ | 24h + 5 session gate |
 | Session worktrees | ✅ | EnterWorktree / ExitWorktree |
 

@@ -450,10 +450,13 @@ func runREPL(continueMode bool, resumeID string) error {
 		projectDir = sess.ProjectDir
 	}
 
-	// Inject prior session memory into the system blocks on resume.
+	// Inject prior session memory only when transcript history could not be
+	// loaded. If we already resumed full history, re-injecting summary.md adds
+	// duplicate context cost on every turn.
 	priorSummary := ""
-	if continueMode && sess != nil && projectDir != "" {
+	if continueMode && sess != nil && projectDir != "" && len(resumedHistory) == 0 {
 		priorSummary, _ = sessionmem.Load(sessionmem.Path(projectDir, sess.ID))
+		priorSummary = truncateResumeSummary(priorSummary, 6000)
 	}
 
 	// Build system blocks; append prior session summary on resume so the
@@ -832,4 +835,16 @@ func diffReviewFlushFailures(results []pendingedits.FlushResult) []string {
 		}
 	}
 	return failures
+}
+
+func truncateResumeSummary(summary string, maxBytes int) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" || maxBytes <= 0 || len(summary) <= maxBytes {
+		return summary
+	}
+	cut := strings.LastIndex(summary[:maxBytes], "\n")
+	if cut <= 0 {
+		cut = maxBytes
+	}
+	return summary[:cut] + "\n\n(Truncated for context efficiency. Open session-memory/summary.md for the full text.)"
 }

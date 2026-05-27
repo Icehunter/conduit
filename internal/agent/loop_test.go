@@ -240,6 +240,125 @@ func TestLoop_SessionStartAdditionalContextInjectedOnFirstRequest(t *testing.T) 
 	}
 }
 
+func TestLoop_SessionStartAdditionalContextInjectedOnlyOncePerLoop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hook command runner uses sh")
+	}
+	reg := tool.NewRegistry()
+	var captured [][]api.SystemBlock
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			System []api.SystemBlock `json:"system"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		copied := append([]api.SystemBlock(nil), body.System...)
+		captured = append(captured, copied)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(textOnlySSE("done")))
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "m",
+		MaxTokens: 1024,
+		System:    []api.SystemBlock{{Type: "text", Text: "base"}},
+		Hooks: &settings.HooksSettings{
+			SessionStart: []settings.HookMatcher{{
+				Matcher: "startup",
+				Hooks: []settings.Hook{{
+					Type:    "command",
+					Command: `printf '{"additionalContext":"startup context"}'`,
+				}},
+			}},
+		},
+	})
+
+	for _, prompt := range []string{"first", "second"} {
+		_, err := lp.Run(context.Background(), []api.Message{
+			{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: prompt}}},
+		}, func(LoopEvent) {})
+		if err != nil {
+			t.Fatalf("Run(%s): %v", prompt, err)
+		}
+	}
+
+	if len(captured) != 2 {
+		t.Fatalf("captured requests = %d; want 2", len(captured))
+	}
+	if len(captured[0]) != 2 || !strings.Contains(captured[0][1].Text, "startup context") {
+		t.Fatalf("first run should include session-start context: %+v", captured[0])
+	}
+	if len(captured[1]) != 1 {
+		t.Fatalf("second run should not re-inject session-start context: %+v", captured[1])
+	}
+}
+
+func TestLoop_SessionStartAdditionalContextReinjectsWhenSessionChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hook command runner uses sh")
+	}
+	reg := tool.NewRegistry()
+	var captured [][]api.SystemBlock
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			System []api.SystemBlock `json:"system"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		copied := append([]api.SystemBlock(nil), body.System...)
+		captured = append(captured, copied)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(textOnlySSE("done")))
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "m",
+		MaxTokens: 1024,
+		System:    []api.SystemBlock{{Type: "text", Text: "base"}},
+		SessionID: "session-a",
+		Hooks: &settings.HooksSettings{
+			SessionStart: []settings.HookMatcher{{
+				Matcher: "startup",
+				Hooks: []settings.Hook{{
+					Type:    "command",
+					Command: `printf '{"additionalContext":"startup context"}'`,
+				}},
+			}},
+		},
+	})
+
+	for _, prompt := range []string{"first", "second"} {
+		_, err := lp.Run(context.Background(), []api.Message{
+			{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: prompt}}},
+		}, func(LoopEvent) {})
+		if err != nil {
+			t.Fatalf("Run(%s): %v", prompt, err)
+		}
+	}
+	lp.SetSessionID("session-b")
+	_, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "third"}}},
+	}, func(LoopEvent) {})
+	if err != nil {
+		t.Fatalf("Run(third): %v", err)
+	}
+
+	if len(captured) != 3 {
+		t.Fatalf("captured requests = %d; want 3", len(captured))
+	}
+	if len(captured[0]) != 2 {
+		t.Fatalf("first run should include session-start context: %+v", captured[0])
+	}
+	if len(captured[1]) != 1 {
+		t.Fatalf("second run should not re-inject session-start context: %+v", captured[1])
+	}
+	if len(captured[2]) != 2 {
+		t.Fatalf("after session id change, third run should re-inject session-start context: %+v", captured[2])
+	}
+}
+
 func TestLoop_UnknownToolReturnsError(t *testing.T) {
 	reg := tool.NewRegistry()
 	// Don't register any tools — model asks for "MissingTool"
@@ -354,6 +473,45 @@ func TestLoop_APIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "authentication_error") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestLoop_RecoversFromToolUseFlowError(t *testing.T) {
+	reg := tool.NewRegistry()
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"assistant tool_use blocks must be followed by user tool_result blocks"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(textOnlySSE("recovered")))
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{Model: "m", MaxTokens: 1024, System: []api.SystemBlock{{Type: "text", Text: "base"}}})
+
+	history, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "start"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "tool_use", ID: "toolu_dup", Name: "Bash", Input: map[string]any{"command": "pwd"}}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "toolu_dup", ResultContent: "ok"}}},
+		// Duplicate tool_use id keeps this unresolved turn alive through
+		// FilterUnresolvedToolUses; recovery must strip it after API rejection.
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "tool_use", ID: "toolu_dup", Name: "Bash", Input: map[string]any{"command": "ls"}}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "continue"}}},
+	}, func(LoopEvent) {})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("api calls = %d; want 2 (error + recovered retry)", callCount)
+	}
+	last := history[len(history)-1]
+	if last.Role != "assistant" || len(last.Content) == 0 || last.Content[0].Text != "recovered" {
+		t.Fatalf("unexpected final assistant message: %+v", last)
 	}
 }
 

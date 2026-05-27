@@ -659,6 +659,9 @@ func (m Model) handleResumeLoad(msg resumeLoadMsg) (Model, tea.Cmd) {
 			resumeSession = session.FromFile(msg.filePath)
 		}
 		m.cfg.Session = resumeSession
+		if m.cfg.Loop != nil {
+			m.cfg.Loop.SetSessionID(resumeSession.ID)
+		}
 		if m.cfg.Live != nil {
 			m.cfg.Live.SetSessionID(resumeSession.ID)
 			m.cfg.Live.SetSessionFile(resumeSession.FilePath)

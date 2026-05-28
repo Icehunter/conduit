@@ -852,9 +852,6 @@ func applyHistoryBreakpoints(msgs []api.Message, priorBreakpoints int) []api.Mes
 	const wantHistory = 2
 	budget := maxCacheBreakpoints - priorBreakpoints
 	if budget <= 0 {
-		fmt.Fprintf(os.Stderr,
-			"conduit: cache breakpoint budget exhausted (%d system/tool breakpoints >= limit %d); skipping history breakpoints\n",
-			priorBreakpoints, maxCacheBreakpoints)
 		return msgs
 	}
 	allowed := budget
@@ -862,9 +859,6 @@ func applyHistoryBreakpoints(msgs []api.Message, priorBreakpoints int) []api.Mes
 		allowed = wantHistory
 	}
 	if priorBreakpoints+allowed > maxCacheBreakpoints {
-		fmt.Fprintf(os.Stderr,
-			"conduit: cache breakpoint cap: prior=%d + history=%d > limit=%d; trimming to %d history breakpoints\n",
-			priorBreakpoints, allowed, maxCacheBreakpoints, maxCacheBreakpoints-priorBreakpoints)
 		allowed = maxCacheBreakpoints - priorBreakpoints
 	}
 

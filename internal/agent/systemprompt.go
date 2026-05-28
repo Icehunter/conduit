@@ -225,36 +225,15 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, skills ...Ski
 	blocks := []api.SystemBlock{
 		{Type: "text", Text: billing},
 		{Type: "text", Text: MinimalIdentitySystem},
-		{
-			Type: "text",
-			Text: MinimalAgentSystemPrompt,
-			CacheControl: &api.CacheControl{
-				Type:  "ephemeral",
-				TTL:   "1h",
-				Scope: "global",
-			},
-		},
-		{
-			Type: "text",
-			Text: MinimalOutputGuidance,
-			CacheControl: &api.CacheControl{
-				Type:  "ephemeral",
-				TTL:   "1h",
-				Scope: "global",
-			},
-		},
+		{Type: "text", Text: MinimalAgentSystemPrompt},
+		{Type: "text", Text: MinimalOutputGuidance},
 	}
 	// Static content first (maximises cacheable prefix length).
+	// cache_control is applied ONLY to the final static block below — one
+	// breakpoint caches the entire prefix up to that point, keeping us well
+	// within Anthropic's limit of 4 total breakpoints.
 	if claudeMd != "" {
-		blocks = append(blocks, api.SystemBlock{
-			Type: "text",
-			Text: claudeMd,
-			CacheControl: &api.CacheControl{
-				Type:  "ephemeral",
-				TTL:   "1h",
-				Scope: "global",
-			},
-		})
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: claudeMd})
 	}
 	// User profile: global (~/.conduit/user.md) merged with project-scoped
 	// USER.md. Placed before MEMORY.md so it's in the stable cacheable prefix
@@ -263,34 +242,16 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, skills ...Ski
 		blocks = append(blocks, api.SystemBlock{
 			Type: "text",
 			Text: "# User profile\n\n" + userProfile,
-			CacheControl: &api.CacheControl{
-				Type:  "ephemeral",
-				TTL:   "1h",
-				Scope: "global",
-			},
 		})
 	}
 	if memory != "" {
 		blocks = append(blocks, api.SystemBlock{
 			Type: "text",
 			Text: "# User's persistent memory\n\nThe following is loaded from MEMORY.md:\n\n" + memory,
-			CacheControl: &api.CacheControl{
-				Type:  "ephemeral",
-				TTL:   "1h",
-				Scope: "global",
-			},
 		})
 	}
 	if reminder := SkillsReminder(skills); reminder != "" {
-		blocks = append(blocks, api.SystemBlock{
-			Type: "text",
-			Text: reminder,
-			CacheControl: &api.CacheControl{
-				Type:  "ephemeral",
-				TTL:   "1h",
-				Scope: "global",
-			},
-		})
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: reminder})
 	}
 	// Recent project decisions (conduit-only). Loaded from the per-project
 	// decision journal so the agent inherits prior decisions across sessions
@@ -302,13 +263,18 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, skills ...Ski
 				blocks = append(blocks, api.SystemBlock{
 					Type: "text",
 					Text: block,
-					CacheControl: &api.CacheControl{
-						Type:  "ephemeral",
-						TTL:   "1h",
-						Scope: "global",
-					},
 				})
 			}
+		}
+	}
+	// Stamp a single cache_control on the last static block. One breakpoint
+	// caches everything before it, so we only need one for the full prefix.
+	// This leaves 3 budget slots for the tool-list breakpoint + 2 history
+	// breakpoints, staying within Anthropic's limit of 4 total.
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if blocks[i].CacheControl == nil {
+			blocks[i].CacheControl = &api.CacheControl{Type: "ephemeral", TTL: "1h", Scope: "global"}
+			break
 		}
 	}
 	// Volatile blocks last (coordinator state, undercover) so they don't

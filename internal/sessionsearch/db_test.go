@@ -238,13 +238,9 @@ func TestIncrementalIndex(t *testing.T) {
 		t.Fatal("expected result after first index")
 	}
 
-	// Touch the file with a newer mtime to trigger re-index.
-	futureTime := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(path, futureTime, futureTime); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
-
-	// Append new content to the file.
+	// Append new content to the file first, then advance mtime so the
+	// incremental check detects it. Setting mtime before writing would let
+	// the write reset it back (filesystem-dependent).
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open append: %v", err)
@@ -265,6 +261,12 @@ func TestIncrementalIndex(t *testing.T) {
 	enc := json.NewEncoder(f)
 	_ = enc.Encode(entry{Type: "message", Message: raw})
 	_ = f.Close()
+
+	// Advance mtime by 2 s so indexed_at < mtime and re-index is triggered.
+	futureTime := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, futureTime, futureTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
 
 	if err := db.Index(dir); err != nil {
 		t.Fatalf("second index: %v", err)

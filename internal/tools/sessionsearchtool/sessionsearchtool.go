@@ -134,6 +134,11 @@ func (t *Tool) openDB() (*sessionsearch.DB, error) {
 	// Best-effort; don't fail if some directories are missing or empty.
 	_ = db.IndexAll(settings.ConduitDir())
 
+	// Index external sources (Claude Code, Codex) — best-effort, non-fatal.
+	for _, src := range sessionsearch.DefaultSources() {
+		_ = db.ImportExternal(src)
+	}
+
 	t.db = db
 	t.dbOk = true
 	return db, nil

@@ -560,7 +560,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			// fingerprint requires system[0] to be the billing header.
 			if s.Prompt != "" && loop != nil {
 				mem := memdir.BuildPrompt(cwd)
-				baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, m.cfg.Skills...)
+				sessionProjectDir := ""
+				if m.cfg.Session != nil {
+					sessionProjectDir = m.cfg.Session.ProjectDir
+				}
+				baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, sessionProjectDir, m.cfg.Skills...)
 				styleBlock := api.SystemBlock{
 					Type: "text",
 					Text: "# Output style: " + s.Name + "\n\n" + s.Prompt,

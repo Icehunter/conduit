@@ -39,6 +39,8 @@ type toolResult struct {
 func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, error) { //nolint:unparam
 	// Phase 1: collect tool_use blocks and run interactive checks serially
 	// (hooks + permission gate may prompt the user — must be sequential).
+	// server_tool_use blocks are intentionally skipped — they are executed
+	// server-side and their results are injected by the API automatically.
 	var tasks []toolTask
 	for _, block := range assistantBlocks {
 		if block.Type != "tool_use" {

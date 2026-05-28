@@ -17,6 +17,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/decisionlog"
+	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/undercover"
 )
 
@@ -199,19 +200,24 @@ var CoordinatorMCPNames []string
 // request shape. Caller can override BillingHeader via the
 // CLAUDE_GO_BILLING_HEADER env var.
 //
+// projectDir is the per-project conduit memory directory (e.g.
+// ~/.conduit/projects/<slug>) used to locate the project-scoped USER.md.
+// Pass "" to skip project-scoped USER.md lookup.
+//
 // Block layout (static → volatile, to maximise cacheable prefix length):
 //  1. Billing header
 //  2. Identity
 //  3. Agent system prompt        (cache_control: ephemeral 1h global)
 //  4. Output guidance            (cache_control: ephemeral 1h global)
 //  5. [optional] CLAUDE.md instructions (cache_control: ephemeral 1h global)
-//  6. [optional] Memory prompt from memdir.BuildPrompt (cache_control: ephemeral 1h global)
-//  7. [optional] Skills reminder (cache_control: ephemeral 1h global)
-//  8. [optional] Recent project decisions (cache_control: ephemeral 1h global)
-//  9. [optional] Coordinator system prompt + worker-tools context (volatile)
+//  6. [optional] User profile from USER.md (cache_control: ephemeral 1h global)
+//  7. [optional] Memory prompt from memdir.BuildPrompt (cache_control: ephemeral 1h global)
+//  8. [optional] Skills reminder (cache_control: ephemeral 1h global)
+//  9. [optional] Recent project decisions (cache_control: ephemeral 1h global)
 //
-// 10. [optional] Undercover instructions (volatile)
-func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.SystemBlock {
+// 10. [optional] Coordinator system prompt + worker-tools context (volatile)
+// 11. [optional] Undercover instructions (volatile)
+func BuildSystemBlocks(memory, claudeMd string, projectDir string, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
 		billing = v
@@ -243,6 +249,20 @@ func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.Syst
 		blocks = append(blocks, api.SystemBlock{
 			Type: "text",
 			Text: claudeMd,
+			CacheControl: &api.CacheControl{
+				Type:  "ephemeral",
+				TTL:   "1h",
+				Scope: "global",
+			},
+		})
+	}
+	// User profile: global (~/.conduit/user.md) merged with project-scoped
+	// USER.md. Placed before MEMORY.md so it's in the stable cacheable prefix
+	// (user identity changes far less often than project memory).
+	if userProfile := memdir.LoadUserProfile(projectDir); userProfile != "" {
+		blocks = append(blocks, api.SystemBlock{
+			Type: "text",
+			Text: "# User profile\n\n" + userProfile,
 			CacheControl: &api.CacheControl{
 				Type:  "ephemeral",
 				TTL:   "1h",

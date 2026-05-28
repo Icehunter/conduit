@@ -222,6 +222,22 @@ func parseContentBlock(raw json.RawMessage) (api.ContentBlock, bool) {
 		return block, true
 	case "tool_result":
 		return parseToolResultBlock(raw)
+	case "server_tool_use":
+		// server_tool_use blocks appear in assistant messages. They are round-tripped
+		// verbatim to the API — the server manages execution and result injection.
+		var block api.ContentBlock
+		if err := json.Unmarshal(raw, &block); err != nil {
+			return api.ContentBlock{}, false
+		}
+		return block, true
+	case "web_search_tool_result", "code_execution_tool_result", "web_fetch_tool_result":
+		// Server tool result blocks appear in user-role messages. The API sends
+		// them automatically; conduit round-trips them verbatim.
+		var block api.ContentBlock
+		if err := json.Unmarshal(raw, &block); err != nil {
+			return api.ContentBlock{}, false
+		}
+		return block, true
 	default:
 		return api.ContentBlock{}, false
 	}

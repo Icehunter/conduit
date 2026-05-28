@@ -100,6 +100,9 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 						ToolID:   raw.ID,
 					})
 				}
+				// server_tool_use blocks are preserved in history for API
+				// round-tripping but are not dispatched locally. No event is
+				// emitted — the server manages execution and result injection.
 			}
 
 		case "content_block_delta":
@@ -262,6 +265,27 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 				block.ThoughtSignature = meta.thoughtSignature
 			}
 			blocks = append(blocks, block)
+		case "server_tool_use":
+			// server_tool_use blocks are emitted by the API for built-in server-side
+			// tools (e.g. web_search). Conduit does not execute them locally; they are
+			// preserved verbatim in the assistant message for API round-tripping.
+			// The input accumulates as JSON in the string builder.
+			inputRaw := json.RawMessage("{}")
+			if sb != nil && sb.Len() > 0 {
+				candidate := json.RawMessage(sb.String())
+				// Only keep it if it parses as valid JSON — drop truncated blocks.
+				var probe any
+				if err := json.Unmarshal(candidate, &probe); err != nil {
+					continue
+				}
+				inputRaw = candidate
+			}
+			blocks = append(blocks, api.ContentBlock{
+				Type:            "server_tool_use",
+				ID:              meta.toolID,
+				Name:            meta.toolName,
+				ServerToolInput: inputRaw,
+			})
 		}
 	}
 	return blocks

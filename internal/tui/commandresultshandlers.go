@@ -677,7 +677,11 @@ func (m Model) applyOutputStyle(res commands.Result) (Model, tea.Cmd) {
 	if m.cfg.Loop != nil {
 		cwd, _ := os.Getwd()
 		mem := memdir.BuildPrompt(cwd)
-		baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, m.cfg.Skills...)
+		sessionProjectDir := ""
+		if m.cfg.Session != nil {
+			sessionProjectDir = m.cfg.Session.ProjectDir
+		}
+		baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, sessionProjectDir, m.cfg.Skills...)
 		if res.Text != "" {
 			styleBlock := api.SystemBlock{Type: "text", Text: "# Output style: " + res.Model + "\n\n" + res.Text}
 			newBlocks := append(baseBlocks, styleBlock)

@@ -60,7 +60,7 @@ func runPrint(args []string) error {
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:               modelName,
 		MaxTokens:           internalmodel.MaxTokens,
-		System:              agent.BuildSystemBlocks(mem, claudeMdPrompt, skillEntries...),
+		System:              agent.BuildSystemBlocks(mem, claudeMdPrompt, memdir.Path(cwd), skillEntries...),
 		Metadata:            app.BuildMetadata(),
 		MaxTurns:            50,
 		Gate:                gate,

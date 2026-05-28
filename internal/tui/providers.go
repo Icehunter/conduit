@@ -123,11 +123,15 @@ func (m Model) rebuildSystemCmd() tea.Cmd {
 	mode := m.permissionMode
 	outputStyle := m.outputStylePrompt
 	outputStyleName := m.outputStyleName
+	sessionProjectDir := ""
+	if m.cfg.Session != nil {
+		sessionProjectDir = m.cfg.Session.ProjectDir
+	}
 
 	return func() tea.Msg {
 		cwd, _ := os.Getwd()
 		mem := memdir.BuildPrompt(cwd)
-		base := agent.BuildSystemBlocks(mem, claudeMd, skills...)
+		base := agent.BuildSystemBlocks(mem, claudeMd, sessionProjectDir, skills...)
 
 		if outputStyle != "" {
 			base = append(base, api.SystemBlock{

@@ -465,7 +465,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build system blocks; append prior session summary on resume so the
 	// new turn picks up where the previous one left off. Append (not
 	// prepend) keeps the Max wire fingerprint intact.
-	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsBuf.String(), skillEntries...)
+	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsBuf.String(), projectDir, skillEntries...)
 	if strings.TrimSpace(priorSummary) != "" {
 		systemBlocks = append(systemBlocks, api.SystemBlock{
 			Type: "text",

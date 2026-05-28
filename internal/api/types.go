@@ -102,10 +102,12 @@ type Message struct {
 }
 
 // ContentBlock is one block of content in a message.
-// Union of text | image | document | tool_use | tool_result | thinking. Fields are set according to Type.
+// Union of text | image | document | tool_use | tool_result | thinking |
+// server_tool_use | web_search_tool_result | code_execution_tool_result |
+// web_fetch_tool_result. Fields are set according to Type.
 type ContentBlock struct {
 	// Common
-	Type string `json:"type"` // "text" | "image" | "document" | "tool_use" | "tool_result" | "thinking"
+	Type string `json:"type"` // "text" | "image" | "document" | "tool_use" | "tool_result" | "thinking" | "server_tool_use" | "web_search_tool_result" | "code_execution_tool_result" | "web_fetch_tool_result"
 
 	// CacheControl marks this block as a prompt-cache breakpoint when non-nil.
 	// Anthropic allows up to 4 breakpoints per request across system + messages.
@@ -143,57 +145,129 @@ type ContentBlock struct {
 	// {"content": [{...}, ...]} instead of the string form. Takes precedence
 	// over ResultContent if both are set.
 	ResultBlocks []ContentBlock `json:"-"`
+
+	// type=server_tool_use (assistant messages — server-side tools like web_search).
+	// These are NOT dispatched to local tool executors; the server resolves them.
+	// Name (above) is reused for the server tool name — both share the "name" JSON key.
+	// ServerToolInput holds the raw JSON input; it is serialized via MarshalJSON
+	// as "input" when Type == "server_tool_use" (taking precedence over Input).
+	ServerToolInput json.RawMessage `json:"-"`
+
+	// type=web_search_tool_result | code_execution_tool_result | web_fetch_tool_result
+	// (user-role messages — the API sends these back automatically).
+	// ServerContent holds the nested content blocks returned by the server tool.
+	// Serialized as "content" by MarshalJSON when IsServerToolResult() is true.
+	ServerContent []ContentBlock `json:"-"`
+}
+
+// IsServerToolResult reports whether the block is one of the API-managed
+// server tool result types: web_search_tool_result, code_execution_tool_result,
+// or web_fetch_tool_result. These blocks are sent back by the API automatically
+// and must be round-tripped verbatim — conduit does not execute them locally.
+func (cb ContentBlock) IsServerToolResult() bool {
+	switch cb.Type {
+	case "web_search_tool_result", "code_execution_tool_result", "web_fetch_tool_result":
+		return true
+	}
+	return false
 }
 
 // MarshalJSON serialises ContentBlock, ensuring the `input` field is always
 // present for tool_use blocks even when the map is nil or empty.
 // encoding/json's omitempty treats nil and empty maps identically (both
 // omitted), but the Anthropic API requires `input` on every tool_use block.
-func (b ContentBlock) MarshalJSON() ([]byte, error) {
-	m := make(map[string]any, 9)
-	m["type"] = b.Type
-	if b.CacheControl != nil {
-		m["cache_control"] = b.CacheControl
+//
+// server_tool_use blocks emit "name" and "input" (raw JSON).
+// *_tool_result blocks (web_search_tool_result, code_execution_tool_result,
+// web_fetch_tool_result) emit "tool_use_id" and "content" (nested blocks).
+func (cb ContentBlock) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, 10)
+	m["type"] = cb.Type
+	if cb.CacheControl != nil {
+		m["cache_control"] = cb.CacheControl
 	}
-	if b.Text != "" && b.Type != "tool_result" {
-		m["text"] = b.Text
+	if cb.Text != "" && cb.Type != "tool_result" {
+		m["text"] = cb.Text
 	}
-	if b.Thinking != "" {
-		m["thinking"] = b.Thinking
+	if cb.Thinking != "" {
+		m["thinking"] = cb.Thinking
 	}
-	if b.Signature != "" {
-		m["signature"] = b.Signature
+	if cb.Signature != "" {
+		m["signature"] = cb.Signature
 	}
-	if b.Source != nil {
-		m["source"] = b.Source
+	if cb.Source != nil {
+		m["source"] = cb.Source
 	}
-	if b.ID != "" {
-		m["id"] = b.ID
+	if cb.ID != "" {
+		m["id"] = cb.ID
 	}
-	if b.Name != "" {
-		m["name"] = b.Name
+	if cb.Name != "" {
+		m["name"] = cb.Name
 	}
-	if b.Type == "tool_use" {
-		if b.Input != nil {
-			m["input"] = b.Input
+	switch cb.Type {
+	case "tool_use":
+		if cb.Input != nil {
+			m["input"] = cb.Input
 		} else {
 			m["input"] = map[string]any{}
 		}
+	case "server_tool_use":
+		// Emit raw input JSON; fall back to empty object so the field is always present.
+		if len(cb.ServerToolInput) > 0 {
+			m["input"] = cb.ServerToolInput
+		} else {
+			m["input"] = json.RawMessage("{}")
+		}
 	}
-	if b.ToolUseID != "" {
-		m["tool_use_id"] = b.ToolUseID
+	if cb.ToolUseID != "" {
+		m["tool_use_id"] = cb.ToolUseID
 	}
-	if b.IsError {
-		m["is_error"] = b.IsError
+	if cb.IsError {
+		m["is_error"] = cb.IsError
 	}
-	// ResultBlocks (array form) takes precedence over ResultContent (string form)
-	// when present, to support tool results that include images or other media.
-	if len(b.ResultBlocks) > 0 {
-		m["content"] = b.ResultBlocks
-	} else if b.ResultContent != "" {
-		m["content"] = b.ResultContent
+	switch {
+	case cb.IsServerToolResult() && len(cb.ServerContent) > 0:
+		// Server tool results carry a nested content array.
+		m["content"] = cb.ServerContent
+	case len(cb.ResultBlocks) > 0:
+		// ResultBlocks (array form) takes precedence over ResultContent (string form)
+		// when present, to support tool results that include images or other media.
+		m["content"] = cb.ResultBlocks
+	case cb.ResultContent != "":
+		m["content"] = cb.ResultContent
 	}
 	return json.Marshal(m)
+}
+
+// UnmarshalJSON deserialises ContentBlock. For most types the default struct
+// unmarshalling suffices, but server_tool_use needs ServerToolInput captured as
+// raw JSON (the "input" field), and *_tool_result types need ServerContent
+// decoded as a nested []ContentBlock array.
+func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
+	// Use a type alias to avoid infinite recursion.
+	type plain ContentBlock
+	if err := json.Unmarshal(data, (*plain)(cb)); err != nil {
+		return err
+	}
+	switch cb.Type {
+	case "server_tool_use":
+		// Capture the raw "input" field as ServerToolInput.
+		var raw struct {
+			Input json.RawMessage `json:"input"`
+		}
+		if err := json.Unmarshal(data, &raw); err == nil && len(raw.Input) > 0 {
+			cb.ServerToolInput = raw.Input
+		}
+	case "web_search_tool_result", "code_execution_tool_result", "web_fetch_tool_result":
+		// Decode the nested "content" field as a []ContentBlock slice.
+		var raw struct {
+			Content []ContentBlock `json:"content"`
+		}
+		if err := json.Unmarshal(data, &raw); err == nil {
+			cb.ServerContent = raw.Content
+		}
+	}
+	return nil
 }
 
 // ImageSource is the source payload for a type=image content block.

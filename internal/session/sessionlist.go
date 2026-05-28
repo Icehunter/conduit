@@ -21,6 +21,11 @@ import (
 //     in any prior assistant message (happens when transcript chain
 //     reconstruction picks a branch that excludes the assistant turn).
 //
+// server_tool_use blocks are treated as always-resolved: the API manages their
+// execution and result injection, so they are never orphaned from conduit's
+// perspective. *_tool_result blocks (web_search_tool_result, etc.) are
+// similarly passed through untouched — they are API-managed, not client-managed.
+//
 // If filtering empties a message entirely it is dropped.
 // Mirrors src/utils/messages.ts filterUnresolvedToolUses.
 func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
@@ -38,6 +43,7 @@ func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
 	}
 
 	// Pass 2: drop orphan tool_use blocks from assistant messages.
+	// server_tool_use blocks are always kept — the server handles their results.
 	pass1 := make([]api.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role != "assistant" {
@@ -47,8 +53,11 @@ func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
 		filtered := make([]api.ContentBlock, 0, len(m.Content))
 		for _, b := range m.Content {
 			if b.Type == "tool_use" && !resolvedIDs[b.ID] {
-				continue // orphan; drop
+				continue // orphan client-managed tool_use; drop
 			}
+			// server_tool_use is always preserved: the API resolves it and injects
+			// the result automatically, so there is never a client-side tool_result
+			// to match against.
 			filtered = append(filtered, b)
 		}
 		if len(filtered) == 0 {
@@ -73,6 +82,8 @@ func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
 
 	// Pass 4: drop tool_result blocks from user messages whose tool_use_id has
 	// no corresponding tool_use in the (now-filtered) assistant messages.
+	// Server tool result blocks (*_tool_result) are always kept — they are
+	// API-managed and do not follow the client tool_use/tool_result pairing.
 	out := make([]api.Message, 0, len(pass1))
 	for _, m := range pass1 {
 		if m.Role != "user" {
@@ -82,8 +93,9 @@ func FilterUnresolvedToolUses(msgs []api.Message) []api.Message {
 		filtered := make([]api.ContentBlock, 0, len(m.Content))
 		for _, b := range m.Content {
 			if b.Type == "tool_result" && !definedIDs[b.ToolUseID] {
-				continue // orphan result; drop
+				continue // orphan client-managed tool_result; drop
 			}
+			// *_tool_result blocks (web_search_tool_result, etc.) are always kept.
 			filtered = append(filtered, b)
 		}
 		if len(filtered) == 0 {

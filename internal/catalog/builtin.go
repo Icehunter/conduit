@@ -6,8 +6,8 @@ package catalog
 func builtinModels() []ModelInfo {
 	return []ModelInfo{
 		{
-			ID:              "claude-opus-4-7",
-			Name:            "Claude Opus 4.7",
+			ID:              "claude-opus-4-8",
+			Name:            "Claude Opus 4.8",
 			Provider:        "anthropic",
 			ContextWindow:   1_000_000,
 			InputCostPer1M:  15.0,

@@ -43,5 +43,14 @@
     "binary_mtime": "2026-05-28T00:52:07.370Z",
     "binary_size": 214457760,
     "decoded_at": "2026-05-28T06:29:18.516Z"
+  },
+  {
+    "version": "2.1.154",
+    "full_version_string": "2.1.154 (Claude Code)",
+    "binary_path": "/Users/icehunter/.local/bin/claude",
+    "binary_sha256": "bc9881b107d7be1743c64c8b72dd66798f5d0947dbc48ed0d77964c473661fd4",
+    "binary_mtime": "2026-05-28T17:50:21.368Z",
+    "binary_size": 214986144,
+    "decoded_at": "2026-05-28T18:01:10.393Z"
   }
 ]

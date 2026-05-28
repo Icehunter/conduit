@@ -1,8 +1,8 @@
 {
   "extracted_at": "2026-05-25T05:08:06.186Z",
-  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.150",
-  "binary_version": "2.1.150",
-  "version": "2.1.150",
+  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.153",
+  "binary_version": "2.1.153",
+  "version": "2.1.153",
   "cch": "<<bun-macro>>",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   "oauth_beta_header": "oauth-2025-04-20",
@@ -14,10 +14,7 @@
   "billing_note": "cc_version suffix is SHA256(billing_salt + firstMsg[4,7,20] + version).slice(0,3); cch is always \"00000\" for non-bedrock/vertex",
   "sdk_package_version": "0.94.0",
   "stainless_runtime_version": "<<runtime:process.version>>",
-  "beta_registry": [
-    "oauth-2025-04-20",
-    "oidc-federation-2026-04-01"
-  ],
+  "beta_registry": ["oauth-2025-04-20", "oidc-federation-2026-04-01"],
   "oauth_scopes": [
     "org:create_api_key",
     "user:file_upload",
@@ -26,13 +23,8 @@
     "user:profile",
     "user:sessions:claude_code"
   ],
-  "tools": [
-    "ReadMcpResourceTool",
-    "mcp",
-    "mcp__",
-    "web_search"
-  ],
+  "tools": ["ReadMcpResourceTool", "mcp", "mcp__", "web_search"],
   "discovered_headers": [],
   "cch_note": "Bun compile-time macro placeholder — actual value requires live mitmproxy capture",
-  "billing_template": "x-anthropic-billing-header: cc_version=2.1.150.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.150\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
+  "billing_template": "x-anthropic-billing-header: cc_version=2.1.153.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.153\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
 }

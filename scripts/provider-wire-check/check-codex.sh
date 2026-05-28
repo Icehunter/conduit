@@ -33,7 +33,7 @@ assert_contains "$stream_test" "TestStreamMessage_OpenAIResponsesCodexShape" "Co
 assert_contains "$stream_test" "TestStreamMessage_OpenAIResponsesAllowsMissingContentType" "Codex missing content-type SSE regression test"
 
 if optional_repo "$OPENCODE_REPO" "opencode"; then
-  codex_ts="${OPENCODE_REPO}/packages/opencode/src/plugin/codex.ts"
+  codex_ts="${OPENCODE_REPO}/packages/opencode/src/plugin/openai/codex.ts"
   openai_options="${OPENCODE_REPO}/packages/llm/src/providers/openai-options.ts"
   require_path "$codex_ts" "OpenCode Codex plugin"
   assert_contains "$codex_ts" "app_EMoamEEZ73f0CkXaXp7hrann" "OpenCode Codex OAuth client id reference"

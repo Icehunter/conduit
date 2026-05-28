@@ -18,8 +18,8 @@
     "decoded_at": "2026-05-10T03:33:27.839Z"
   },
   {
-    "version": "2.1.150",
-    "full_version_string": "2.1.150 (Claude Code)",
+    "version": "2.1.153",
+    "full_version_string": "2.1.153 (Claude Code)",
     "binary_path": "/Users/icehunter/.local/bin/claude",
     "binary_sha256": "2701c6cfd68483f8faf0316a1ba6481a1455a90645ada179f0c48d8c36d722ef",
     "binary_mtime": "2026-05-16T01:16:58.561Z",
@@ -27,12 +27,21 @@
     "decoded_at": "2026-05-16T20:04:53.141Z"
   },
   {
-    "version": "2.1.150",
-    "full_version_string": "2.1.150 (Claude Code)",
+    "version": "2.1.153",
+    "full_version_string": "2.1.153 (Claude Code)",
     "binary_path": "/Users/icehunter/.local/bin/claude",
     "binary_sha256": "2f8413ea1083f108587940496a17057751344109d261fb4239ab2d45b2285c99",
     "binary_mtime": "2026-05-23T04:14:10.350Z",
     "binary_size": 213070752,
     "decoded_at": "2026-05-25T04:57:30.921Z"
+  },
+  {
+    "version": "2.1.153",
+    "full_version_string": "2.1.153 (Claude Code)",
+    "binary_path": "/Users/icehunter/.local/bin/claude",
+    "binary_sha256": "449d9c89d7a63b1d427d912a7bd6e6f23f9a7b363866697c9fa9a0012546b254",
+    "binary_mtime": "2026-05-28T00:52:07.370Z",
+    "binary_size": 214457760,
+    "decoded_at": "2026-05-28T06:29:18.516Z"
   }
 ]

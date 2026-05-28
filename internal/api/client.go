@@ -21,7 +21,7 @@ import (
 const AnthropicVersion = "2023-06-01"
 
 // SDKPackageVersion is the @anthropic-ai/sdk version we identify as. The
-// real CLI bundles SDK 0.94.0 (wire-fingerprint 2.1.150); since Anthropic's
+// real CLI bundles SDK 0.94.0 (wire-fingerprint 2.1.153); since Anthropic's
 // API rate-limits clients whose Stainless headers don't look like the official
 // CLI's, we report the same string.
 const SDKPackageVersion = "0.94.0"

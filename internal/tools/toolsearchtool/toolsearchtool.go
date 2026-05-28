@@ -7,13 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 
 	"github.com/icehunter/conduit/internal/tool"
 )
 
 // Tool implements ToolSearch.
 type Tool struct {
-	registry *tool.Registry
+	registry      *tool.Registry
+	deferredCount atomic.Int64 // set by buildToolDefs each turn
 }
 
 func New(reg *tool.Registry) *Tool { return &Tool{registry: reg} }
@@ -39,6 +41,10 @@ func (*Tool) InputSchema() json.RawMessage {
 func (*Tool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
+// SetDeferredCount records how many tools were excluded from the API request
+// this turn. Called by buildToolDefs after counting deferrable tools.
+func (t *Tool) SetDeferredCount(n int) { t.deferredCount.Store(int64(n)) }
+
 func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var in struct {
 		Query      string `json:"query"`
@@ -54,18 +60,21 @@ func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, err
 
 	tools := t.registry.All()
 	query := strings.TrimSpace(in.Query)
-	var matches []map[string]string
+	var matches []map[string]any
 
-	// "select:<name>" — direct lookup.
+	// "select:<name>" — direct lookup returning full schema.
 	if strings.HasPrefix(query, "select:") {
 		names := strings.Split(strings.TrimPrefix(query, "select:"), ",")
 		for _, name := range names {
 			name = strings.TrimSpace(name)
 			for _, tl := range tools {
 				if strings.EqualFold(tl.Name(), name) {
-					matches = append(matches, map[string]string{
-						"name":        tl.Name(),
-						"description": tl.Description(),
+					var schema map[string]any
+					_ = json.Unmarshal(tl.InputSchema(), &schema)
+					matches = append(matches, map[string]any{
+						"name":         tl.Name(),
+						"description":  tl.Description(),
+						"input_schema": schema,
 					})
 					break
 				}
@@ -82,7 +91,7 @@ func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, err
 			}
 			if strings.Contains(strings.ToLower(tl.Name()), queryLower) ||
 				strings.Contains(strings.ToLower(desc), queryLower) {
-				matches = append(matches, map[string]string{
+				matches = append(matches, map[string]any{
 					"name":        tl.Name(),
 					"description": desc,
 				})
@@ -96,7 +105,7 @@ func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, err
 	out, _ := json.Marshal(map[string]any{
 		"matches":              matches,
 		"query":                in.Query,
-		"total_deferred_tools": 0,
+		"total_deferred_tools": t.deferredCount.Load(),
 	})
 	return tool.TextResult(string(out)), nil
 }

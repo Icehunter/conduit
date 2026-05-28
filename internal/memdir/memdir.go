@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -102,21 +104,63 @@ func truncateEntrypoint(content string) string {
 	)
 }
 
+// promptCache memoizes BuildPrompt results keyed on MEMORY.md mtime.
+// Prevents redundant disk reads on every turn.
+var promptCache struct {
+	mu      sync.Mutex
+	cwd     string
+	mtime   time.Time
+	prompt  string
+	fullEnv string // tracks CONDUIT_MEMORY_PROMPT_FULL value so env changes bust the cache
+}
+
 // BuildPrompt returns the memory system-prompt block for the given cwd.
 // By default this uses a compact conduit-native format to reduce context
 // pressure; set CONDUIT_MEMORY_PROMPT_FULL=1 to restore the full CC-style
 // taxonomy/instructions block.
 //
+// Results are mtime-cached: if MEMORY.md has not changed since the last call
+// for the same cwd, the cached string is returned without a disk read.
+//
 // Returns "" if MEMORY.md doesn't exist AND the directory doesn't exist
 // (no-op for fresh installs without memory configured).
 func BuildPrompt(cwd string) string {
+	fullEnv := os.Getenv("CONDUIT_MEMORY_PROMPT_FULL")
+	entryPath := EntrypointPath(cwd)
+	var mtime time.Time
+	if info, err := os.Stat(entryPath); err == nil {
+		mtime = info.ModTime()
+	}
+
+	promptCache.mu.Lock()
+	if promptCache.cwd == cwd &&
+		promptCache.fullEnv == fullEnv &&
+		!mtime.IsZero() &&
+		promptCache.mtime.Equal(mtime) {
+		cached := promptCache.prompt
+		promptCache.mu.Unlock()
+		return cached
+	}
+	promptCache.mu.Unlock()
+
 	memDir := Path(cwd)
 	content, _ := loadEntrypoint(cwd)
 	truncated := truncateEntrypoint(content)
-	if strings.EqualFold(os.Getenv("CONDUIT_MEMORY_PROMPT_FULL"), "1") {
-		return buildFullPrompt(memDir, truncated)
+	var result string
+	if strings.EqualFold(fullEnv, "1") {
+		result = buildFullPrompt(memDir, truncated)
+	} else {
+		result = buildCompactPrompt(memDir, truncated)
 	}
-	return buildCompactPrompt(memDir, truncated)
+
+	promptCache.mu.Lock()
+	promptCache.cwd = cwd
+	promptCache.mtime = mtime
+	promptCache.fullEnv = fullEnv
+	promptCache.prompt = result
+	promptCache.mu.Unlock()
+
+	return result
 }
 
 func buildCompactPrompt(memDir, truncatedEntrypoint string) string {

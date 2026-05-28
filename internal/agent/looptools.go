@@ -287,21 +287,71 @@ func (l *Loop) notifyFileAccess(toolName string, input map[string]any) {
 	}
 }
 
+// deferredCountSetter is the subset of toolsearchtool.Tool that buildToolDefs
+// needs to report the deferred count. Using a local interface avoids an import
+// cycle between the agent and toolsearchtool packages.
+type deferredCountSetter interface {
+	SetDeferredCount(n int)
+}
+
+// apiDescriber is an optional tool extension that returns a description
+// tailored for the API request schema. Always-on MCP tools use this to send
+// a first-sentence truncation instead of the full multi-paragraph description,
+// saving tokens on every turn while keeping the full text available via
+// ToolSearch. Tools that do not implement this interface use Description().
+type apiDescriber interface {
+	APIDescription() string
+}
+
+// toolAPIDescription returns the description to use in the API schema. If the
+// tool implements apiDescriber it uses the truncated form; otherwise it falls
+// back to the standard Description().
+func toolAPIDescription(t tool.Tool) string {
+	if d, ok := t.(apiDescriber); ok {
+		return d.APIDescription()
+	}
+	return t.Description()
+}
+
 // buildToolDefs converts the registry into the API tool definitions array.
+// When ToolSearch is registered, tools that implement tool.DeferrableChecker
+// and return true from Deferrable() are excluded from the returned slice —
+// the model uses ToolSearch to discover them on demand. The excluded count is
+// reported back to ToolSearch via SetDeferredCount so it can surface an
+// accurate total_deferred_tools value.
 func buildToolDefs(reg *tool.Registry) []api.ToolDef {
 	all := reg.All()
 	if len(all) == 0 {
 		return nil
 	}
+
+	// Check if ToolSearch is present. If so, deferrable tools are excluded.
+	var countSetter deferredCountSetter
+	if ts, ok := reg.Lookup("ToolSearch"); ok {
+		if s, ok := ts.(deferredCountSetter); ok {
+			countSetter = s
+		}
+	}
+
 	defs := make([]api.ToolDef, 0, len(all))
+	var deferred int
 	for _, t := range all {
+		if countSetter != nil && tool.IsDeferrable(t) {
+			deferred++
+			continue
+		}
 		var schema map[string]any
 		_ = json.Unmarshal(t.InputSchema(), &schema)
 		defs = append(defs, api.ToolDef{
 			Name:        t.Name(),
-			Description: t.Description(),
+			Description: toolAPIDescription(t),
 			InputSchema: schema,
 		})
 	}
+
+	if countSetter != nil {
+		countSetter.SetDeferredCount(deferred)
+	}
+
 	return defs
 }

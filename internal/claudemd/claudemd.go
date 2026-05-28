@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // MaxCharCount is the recommended max character count for a single memory file.
@@ -44,9 +46,61 @@ type File struct {
 // Mirrors the TS constant of the same name.
 const memoryInstructionPrompt = "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written."
 
+// loadCache memoizes Load results keyed on cwd and the combined mtime
+// fingerprint of all loaded files. Prevents redundant disk reads every turn.
+var loadCache struct {
+	mu          sync.Mutex
+	cwd         string
+	fingerprint time.Time // max mtime across all loaded files
+	files       []File
+}
+
+// mtimeFingerprint stats each loaded file and returns the latest mtime.
+// Files that can no longer be stat'd are skipped (treated as unchanged).
+func mtimeFingerprint(files []File) time.Time {
+	var latest time.Time
+	for _, f := range files {
+		if info, err := os.Stat(f.Path); err == nil {
+			if mt := info.ModTime(); mt.After(latest) {
+				latest = mt
+			}
+		}
+	}
+	return latest
+}
+
 // Load reads all applicable CLAUDE.md files for cwd and returns them in
 // priority order (global first, local project last = highest priority).
+//
+// Results are mtime-cached per cwd: if no loaded file has changed since the
+// last call, the cached slice is returned without any disk reads.
 func Load(cwd string) ([]File, error) {
+	// Fast path: check whether the cached files are still current.
+	loadCache.mu.Lock()
+	if loadCache.cwd == cwd && len(loadCache.files) > 0 {
+		cached := loadCache.files
+		fp := loadCache.fingerprint
+		loadCache.mu.Unlock()
+		if mtimeFingerprint(cached).Equal(fp) {
+			return cached, nil
+		}
+	} else {
+		loadCache.mu.Unlock()
+	}
+	// Slow path: re-read from disk.
+	files := load(cwd)
+	fp := mtimeFingerprint(files)
+	loadCache.mu.Lock()
+	loadCache.cwd = cwd
+	loadCache.fingerprint = fp
+	loadCache.files = files
+	loadCache.mu.Unlock()
+	return files, nil
+}
+
+// load is the uncached implementation of Load.
+// File-read errors are silently skipped (same behaviour as the original Load).
+func load(cwd string) []File {
 	home, _ := os.UserHomeDir()
 	var files []File
 	seen := map[string]bool{}
@@ -96,7 +150,7 @@ func Load(cwd string) ([]File, error) {
 		expanded = append(expanded, included...)
 	}
 
-	return expanded, nil
+	return expanded
 }
 
 // BuildPrompt builds the system-prompt text block from loaded CLAUDE.md files.

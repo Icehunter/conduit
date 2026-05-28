@@ -10,6 +10,7 @@ import (
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/subagent"
+	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 )
@@ -55,6 +56,11 @@ type SubAgentSpec struct {
 	// long-form sub-agent runs (council synthesis, summarisation) where the
 	// inherited parent budget would truncate the response.
 	MaxTokens int
+	// ExtraTools are additional tools to register in the child's registry
+	// on top of (or as overrides to) the parent registry. Applied after the
+	// Tools allowlist filter, so a tool in ExtraTools is always available
+	// regardless of the allowlist.
+	ExtraTools []tool.Tool
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -107,6 +113,7 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	childCfg.OnToolBatchComplete = nil
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
+	childCfg.BackgroundReviewer = nil // sub-agents must not chain-trigger reviews
 	childCfg.Model = model
 	if spec.MaxTokens > 0 {
 		childCfg.MaxTokens = spec.MaxTokens
@@ -120,10 +127,13 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 		})
 	}
 
-	// Build the child registry (restricted or full).
+	// Build the child registry (restricted or full), then overlay ExtraTools.
 	childReg := parentReg
 	if len(spec.Tools) > 0 {
 		childReg = parentReg.Subset(spec.Tools)
+	}
+	if len(spec.ExtraTools) > 0 {
+		childReg = childReg.WithOverrides(spec.ExtraTools...)
 	}
 
 	// Clone the permission gate so child mutations don't affect the parent.
@@ -286,6 +296,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	childCfg.OnToolBatchComplete = nil
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
+	childCfg.BackgroundReviewer = nil // sub-agents must not chain-trigger reviews
 
 	// Clone the permission gate so child mutations don't affect the parent.
 	var childGate *permissions.Gate

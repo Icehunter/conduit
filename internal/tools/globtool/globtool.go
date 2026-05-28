@@ -20,6 +20,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
 
 // MaxResults caps the number of returned paths to keep tool_result blocks
@@ -45,7 +46,9 @@ const defaultTimeout = 25 * time.Second
 var errScanCapReached = errors.New("glob: scan cap reached")
 
 // Tool implements the Glob tool.
-type Tool struct{}
+type Tool struct {
+	tool.NotDeferrable
+}
 
 // New returns a fresh Glob tool.
 func New() *Tool { return &Tool{} }
@@ -215,5 +218,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		sb.WriteString("(Results are truncated. Consider using a more specific path or pattern.)\n")
 	}
 
-	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+	result := strings.TrimRight(sb.String(), "\n")
+	// Apply truncate-to-disk for large glob results. The 100-entry cap limits
+	// line count, but each path can be long; byte budgets can still be exceeded.
+	maxLines, maxBytes := truncate.Limits()
+	tr, _ := truncate.Apply(result, truncate.Options{
+		MaxLines:  maxLines,
+		MaxBytes:  maxBytes,
+		Direction: "head",
+		HasTask:   false,
+	})
+	return tool.TextResult(tr.Content), nil
 }

@@ -23,6 +23,16 @@ import (
 	"github.com/icehunter/conduit/internal/tool"
 )
 
+// staticDescription is returned by Description() unconditionally. The agent
+// catalog (available subagent_type values and their tool lists) is NOT embedded
+// here — doing so re-ships multiple KB of schema on every API request for every
+// registered plugin agent. The model can discover available types via ToolSearch
+// or by inspecting the subagent_type enum at call time.
+const staticDescription = "Launch a sub-agent to handle a complex multi-step task. " +
+	"Provide a detailed `prompt` describing exactly what the sub-agent should do. " +
+	"Optionally supply a short `description` (shown in the UI while the agent runs). " +
+	"To see available named agent types, use ToolSearch select:Task."
+
 // AgentDef is the runtime descriptor for a named sub-agent, provided by the
 // plugin agent registry.
 type AgentDef struct {
@@ -42,6 +52,7 @@ type Registry interface {
 
 // Tool implements the AgentTool.
 type Tool struct {
+	tool.NotDeferrable
 	// runAgent spawns a nested loop with the given prompt and returns the
 	// final assistant text. Provided by main at construction time.
 	runAgent func(ctx context.Context, prompt string) (string, error)
@@ -66,39 +77,7 @@ func New(
 
 func (*Tool) Name() string { return "Task" }
 
-func (t *Tool) Description() string {
-	base := "Launch a new agent to handle a specific task. " +
-		"The sub-agent has access to all the same tools. " +
-		"Provide a detailed `prompt` describing exactly what the agent should do. " +
-		"Optionally supply a short `description` (shown in the UI while the agent runs)."
-
-	if t.registry == nil {
-		return base
-	}
-	agents := t.registry.ListAgents()
-	if len(agents) == 0 {
-		return base
-	}
-
-	// Sort for stable output.
-	sorted := make([]AgentDef, len(agents))
-	copy(sorted, agents)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].QualifiedName < sorted[j].QualifiedName
-	})
-
-	var sb strings.Builder
-	sb.WriteString(base)
-	sb.WriteString("\n\nAvailable agent types and the tools they have access to:\n")
-	for _, a := range sorted {
-		toolDesc := "All tools"
-		if len(a.Tools) > 0 {
-			toolDesc = strings.Join(a.Tools, ", ")
-		}
-		fmt.Fprintf(&sb, "- %s: %s (Tools: %s)\n", a.QualifiedName, a.Description, toolDesc)
-	}
-	return sb.String()
-}
+func (*Tool) Description() string { return staticDescription }
 
 func (*Tool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{

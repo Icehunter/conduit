@@ -87,7 +87,7 @@ func runPrint(args []string) error {
 		},
 	))
 	reg.Register(skilltool.New(
-		plugins.NewSkillLoader(loadedPlugins),
+		plugins.NewSkillLoader(loadedPlugins, cwd),
 		lp.RunBackgroundAgent,
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})

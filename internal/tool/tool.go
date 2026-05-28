@@ -56,6 +56,43 @@ type Tool interface {
 	Execute(ctx context.Context, input json.RawMessage) (Result, error)
 }
 
+// DeferrableChecker is an optional extension of Tool. When a tool implements
+// this interface and Deferrable() returns true, buildToolDefs omits its full
+// schema from the API request when ToolSearch is also registered — the model
+// discovers and fetches the schema on demand via ToolSearch. Tools that do not
+// implement this interface are treated as non-deferrable (always included).
+type DeferrableChecker interface {
+	// Deferrable reports whether this tool's full schema may be withheld
+	// from the API request when ToolSearch is registered. Return false to
+	// always appear in every request.
+	Deferrable() bool
+}
+
+// IsDeferrable reports whether t opts into deferred schema sending. Tools that
+// do not implement DeferrableChecker are never deferred (false by default),
+// so existing tools require no changes.
+func IsDeferrable(t Tool) bool {
+	if d, ok := t.(DeferrableChecker); ok {
+		return d.Deferrable()
+	}
+	return false
+}
+
+// NotDeferrable is an embed struct that explicitly satisfies DeferrableChecker
+// with a permanent false return. Embed it in any tool that must always appear
+// in every API request to make the intent clear in code.
+//
+// Example:
+//
+//	type MyTool struct {
+//	    tool.NotDeferrable
+//	    // ...
+//	}
+type NotDeferrable struct{}
+
+// Deferrable always returns false — the tool is always sent to the model.
+func (NotDeferrable) Deferrable() bool { return false }
+
 // Result is what a tool returns to the agent loop. The agent envelopes
 // this into a `tool_result` content block on the next turn.
 type Result struct {

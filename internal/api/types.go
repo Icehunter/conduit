@@ -100,6 +100,10 @@ type ContentBlock struct {
 	// Common
 	Type string `json:"type"` // "text" | "image" | "document" | "tool_use" | "tool_result" | "thinking"
 
+	// CacheControl marks this block as a prompt-cache breakpoint when non-nil.
+	// Anthropic allows up to 4 breakpoints per request across system + messages.
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+
 	// type=text
 	Text string `json:"text,omitempty"`
 
@@ -133,8 +137,11 @@ type ContentBlock struct {
 // encoding/json's omitempty treats nil and empty maps identically (both
 // omitted), but the Anthropic API requires `input` on every tool_use block.
 func (b ContentBlock) MarshalJSON() ([]byte, error) {
-	m := make(map[string]any, 8)
+	m := make(map[string]any, 9)
 	m["type"] = b.Type
+	if b.CacheControl != nil {
+		m["cache_control"] = b.CacheControl
+	}
 	if b.Text != "" && b.Type != "tool_result" {
 		m["text"] = b.Text
 	}

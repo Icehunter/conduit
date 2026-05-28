@@ -20,6 +20,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
 
 // searchModel is the small fast model used for web search sub-calls.
@@ -31,6 +32,7 @@ const maxSearchUses = 8
 
 // Tool implements the WebSearch tool.
 type Tool struct {
+	tool.NotDeferrable
 	client *api.Client
 }
 
@@ -141,7 +143,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	return tool.TextResult(result), nil
+	// Apply truncate-to-disk for large search results.
+	maxLines, maxBytes := truncate.Limits()
+	tr, _ := truncate.Apply(result, truncate.Options{
+		MaxLines:  maxLines,
+		MaxBytes:  maxBytes,
+		Direction: "head",
+		HasTask:   false,
+	})
+	return tool.TextResult(tr.Content), nil
 }
 
 // drainSearchStream reads all events from the search stream and assembles

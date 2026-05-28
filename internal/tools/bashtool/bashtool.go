@@ -63,6 +63,7 @@ const MaxOutputBytes = 30000
 
 // Tool implements the Bash tool.
 type Tool struct {
+	tool.NotDeferrable
 	// env holds session-level environment variables (from settings.Merged.Env)
 	// that each subprocess should inherit in addition to the process environment.
 	env map[string]string
@@ -261,31 +262,70 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 
 	runErr := cmd.Run()
 
-	out := combined.Bytes()
-	truncated := lw.Overflow.Load()
-	if len(out) > MaxOutputBytes {
-		out = out[:MaxOutputBytes]
-		truncated = true
-	}
-
-	var sb strings.Builder
-	if len(out) > 0 {
-		sb.Write(out)
-		if !bytes.HasSuffix(out, []byte{'\n'}) {
-			sb.WriteByte('\n')
-		}
-	}
-	if truncated {
-		fmt.Fprintf(&sb, "[truncated to first %d bytes]\n", MaxOutputBytes)
-	}
+	rawOut := combined.Bytes()
+	overflowed := lw.Overflow.Load()
 
 	switch {
 	case cctx.Err() == context.DeadlineExceeded:
+		// Build timeout response from whatever we captured.
+		var sb strings.Builder
+		if len(rawOut) > 0 {
+			out := rawOut
+			if len(out) > MaxOutputBytes {
+				out = out[:MaxOutputBytes]
+			}
+			sb.Write(out)
+			if !bytes.HasSuffix(out, []byte{'\n'}) {
+				sb.WriteByte('\n')
+			}
+		}
 		fmt.Fprintf(&sb, "Command timed out after %s.\n", timeout)
 		return tool.ErrorResult(strings.TrimRight(sb.String(), "\n")), nil
 	case ctx.Err() == context.Canceled:
 		return tool.ErrorResult("Command cancelled."), nil
-	case runErr != nil:
+	}
+
+	// Step 1: RTK filter on the raw (possibly very large) output so the filter
+	// can see the full stream before we hard-cap it. RTK classifiers often
+	// achieve 10x reduction, so filtering first means the tail-drop cap never
+	// discards content that RTK would have kept.
+	rawOutput := strings.TrimRight(string(rawOut), "\n")
+	filtered := rtk.Filter(in.Command, rawOutput)
+	if filtered.SavedBytes > 0 {
+		// Record RTK savings metrics.
+		sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)
+		if db := getTrackDB(); db != nil {
+			_ = db.Record(track.Row{
+				Command:       in.Command,
+				OriginalBytes: len(filtered.Original),
+				FilteredBytes: len(filtered.Filtered),
+				SavedBytes:    filtered.SavedBytes,
+				SavedPct:      filtered.SavingsPct,
+				RecordedAt:    time.Now(),
+			})
+		}
+	}
+
+	// Step 2: hard-cap at MaxOutputBytes AFTER RTK has had a chance to reduce.
+	rtkOut := filtered.Filtered
+	hardCapped := overflowed
+	if len(rtkOut) > MaxOutputBytes {
+		rtkOut = rtkOut[:MaxOutputBytes]
+		hardCapped = true
+	}
+
+	var sb strings.Builder
+	if len(rtkOut) > 0 {
+		sb.WriteString(rtkOut)
+		if !strings.HasSuffix(rtkOut, "\n") {
+			sb.WriteByte('\n')
+		}
+	}
+	if hardCapped {
+		fmt.Fprintf(&sb, "[truncated to first %d bytes]\n", MaxOutputBytes)
+	}
+
+	if runErr != nil {
 		// Non-zero exit: surface to the model as an in-band error so it
 		// can correct course.
 		exitCode := -1
@@ -300,32 +340,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.TextResult("(no output)"), nil
 	}
 
-	output := strings.TrimRight(sb.String(), "\n")
-	filtered := rtk.Filter(in.Command, output)
-	if filtered.SavedBytes > 0 {
-		// Record RTK savings metrics
-		sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)
-		if db := getTrackDB(); db != nil {
-			_ = db.Record(track.Row{
-				Command:       in.Command,
-				OriginalBytes: len(filtered.Original),
-				FilteredBytes: len(filtered.Filtered),
-				SavedBytes:    filtered.SavedBytes,
-				SavedPct:      filtered.SavingsPct,
-				RecordedAt:    time.Now(),
-			})
-		}
-	}
-
-	// Apply truncate-to-disk for large outputs after RTK filtering.
-	// This saves the full output to disk and returns a preview with hint.
-	finalOutput := filtered.Filtered
+	// Step 3: truncate-to-disk for large outputs. HasTask=true so the hint
+	// tells the model it can delegate large file inspection to a Task sub-agent.
+	finalOutput := strings.TrimRight(sb.String(), "\n")
 	maxLines, maxBytes := truncate.Limits()
 	tr, _ := truncate.Apply(finalOutput, truncate.Options{
 		MaxLines:  maxLines,
 		MaxBytes:  maxBytes,
 		Direction: "tail", // bash output: most recent (tail) is usually most relevant
-		HasTask:   false,  // TODO: wire up Task tool availability
+		HasTask:   true,
 	})
 	return tool.TextResult(tr.Content), nil
 }

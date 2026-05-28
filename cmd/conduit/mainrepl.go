@@ -16,6 +16,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/app"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/bgreview"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/claudemd"
@@ -37,9 +38,11 @@ import (
 	"github.com/icehunter/conduit/internal/sessionmem"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
+	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
+	"github.com/icehunter/conduit/internal/tools/skillmanagetool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
@@ -598,6 +601,7 @@ func runREPL(continueMode bool, resumeID string) error {
 					_ = sessionmem.RunUpdate(ctx, path, recent, lp.RunBackgroundAgent)
 				})
 			}
+
 		},
 		OnCompact: func(summary string) {
 			if sess != nil && summary != "" {
@@ -673,12 +677,41 @@ func runREPL(continueMode bool, resumeID string) error {
 			return r.Text, err
 		},
 	))
-	skillLoader := plugins.NewSkillLoader(loadedPlugins)
+	skillLoader := plugins.NewSkillLoader(loadedPlugins, cwd)
 	reg.Register(skilltool.New(
 		skillLoader,
 		lp.RunBackgroundAgent,
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
+			return r.Text, err
+		},
+	))
+
+	// Wire periodic background memory and skill reviews. The reviewer fires
+	// after every Nth end_turn (memory: 5, skill: 7) and runs a restricted
+	// sub-agent. Skill reviews inject the SkillManage tool via ExtraTools so
+	// the main registry is not polluted. Memory reviews use the standard tools
+	// (Read/Write/Glob/Grep) already in the registry.
+	lp.SetBackgroundReviewer(bgreview.NewSplit(
+		bgreview.Config{}, // defaults: memory every 5 turns, skill every 7 turns
+		cwd,
+		// Memory review runner — uses the standard background model and registry.
+		func(ctx context.Context, prompt string, tools []string) (string, error) {
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+				Tools:      tools,
+				Background: true,
+				Mode:       permissions.ModeBypassPermissions,
+			})
+			return r.Text, err
+		},
+		// Skill review runner — augments child registry with SkillManage.
+		func(ctx context.Context, prompt string, tools []string) (string, error) {
+			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+				Tools:      tools,
+				ExtraTools: []tool.Tool{skillmanagetool.New(cwd)},
+				Background: true,
+				Mode:       permissions.ModeBypassPermissions,
+			})
 			return r.Text, err
 		},
 	))

@@ -181,6 +181,9 @@ coming, and what's intentionally out of scope.
 | Plugin MCP server sync | ✅ | |
 | Plugin output styles | ✅ | |
 | Bundled skills (`/simplify`, `/remember`) | ✅ | |
+| FS-based skill discovery (agentskills.io) | ✅ | `~/.conduit/skills/`, `~/.claude/skills/`, `<cwd>/.claude/skills/`; YAML frontmatter + `references/` support; `internal/skills/fsloader.go` |
+| Background memory/skill nudge prompts | ✅ | `/memory-review`, `/skill-review` bundled skills; `bgreview` fires every 5/7 end_turns |
+| SkillManage tool | ✅ | `internal/tools/skillmanagetool/`; create/view/update/list in project or global scope |
 
 ---
 

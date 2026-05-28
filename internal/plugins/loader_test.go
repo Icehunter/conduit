@@ -420,7 +420,7 @@ func TestSkillLoader_PluginSkillFound(t *testing.T) {
 	}
 
 	p, _ := loadPlugin(dir)
-	loader := NewSkillLoader([]*Plugin{p})
+	loader := NewSkillLoader([]*Plugin{p}, "")
 
 	tests := []struct {
 		query string

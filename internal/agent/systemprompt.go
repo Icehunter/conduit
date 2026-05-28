@@ -199,17 +199,18 @@ var CoordinatorMCPNames []string
 // request shape. Caller can override BillingHeader via the
 // CLAUDE_GO_BILLING_HEADER env var.
 //
-// Block layout:
+// Block layout (static → volatile, to maximise cacheable prefix length):
 //  1. Billing header
 //  2. Identity
-//  3. Agent system prompt (cache_control: ephemeral, scope: global)
-//  4. Output guidance (cache_control: ephemeral)
-//  5. [optional] Coordinator system prompt + worker-tools context (when coordinator mode active)
-//  6. [optional] CLAUDE.md instructions (claudeMd != "")
-//  7. [optional] Full memory prompt from memdir.BuildPrompt (memory != "")
-//     Includes type taxonomy, how-to-save instructions, and MEMORY.md content.
-//  8. [optional] Skills reminder (skills non-empty)
-//  9. [optional] Recent project decisions from decisionlog (conduit-only)
+//  3. Agent system prompt        (cache_control: ephemeral 1h global)
+//  4. Output guidance            (cache_control: ephemeral 1h global)
+//  5. [optional] CLAUDE.md instructions (cache_control: ephemeral 1h global)
+//  6. [optional] Memory prompt from memdir.BuildPrompt (cache_control: ephemeral 1h global)
+//  7. [optional] Skills reminder (cache_control: ephemeral 1h global)
+//  8. [optional] Recent project decisions (cache_control: ephemeral 1h global)
+//  9. [optional] Coordinator system prompt + worker-tools context (volatile)
+//
+// 10. [optional] Undercover instructions (volatile)
 func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
@@ -231,38 +232,71 @@ func BuildSystemBlocks(memory, claudeMd string, skills ...SkillEntry) []api.Syst
 			Type: "text",
 			Text: MinimalOutputGuidance,
 			CacheControl: &api.CacheControl{
-				Type: "ephemeral",
-				TTL:  "1h",
+				Type:  "ephemeral",
+				TTL:   "1h",
+				Scope: "global",
 			},
 		},
 	}
-	if coordinator.IsActive() {
-		blocks = append(blocks, api.SystemBlock{Type: "text", Text: coordinator.SystemPrompt()})
-		if ctx := coordinator.UserContext(CoordinatorMCPNames); ctx != "" {
-			blocks = append(blocks, api.SystemBlock{Type: "text", Text: ctx})
-		}
-	}
+	// Static content first (maximises cacheable prefix length).
 	if claudeMd != "" {
-		blocks = append(blocks, api.SystemBlock{Type: "text", Text: claudeMd})
+		blocks = append(blocks, api.SystemBlock{
+			Type: "text",
+			Text: claudeMd,
+			CacheControl: &api.CacheControl{
+				Type:  "ephemeral",
+				TTL:   "1h",
+				Scope: "global",
+			},
+		})
 	}
 	if memory != "" {
 		blocks = append(blocks, api.SystemBlock{
 			Type: "text",
 			Text: "# User's persistent memory\n\nThe following is loaded from MEMORY.md:\n\n" + memory,
+			CacheControl: &api.CacheControl{
+				Type:  "ephemeral",
+				TTL:   "1h",
+				Scope: "global",
+			},
 		})
 	}
 	if reminder := SkillsReminder(skills); reminder != "" {
-		blocks = append(blocks, api.SystemBlock{Type: "text", Text: reminder})
+		blocks = append(blocks, api.SystemBlock{
+			Type: "text",
+			Text: reminder,
+			CacheControl: &api.CacheControl{
+				Type:  "ephemeral",
+				TTL:   "1h",
+				Scope: "global",
+			},
+		})
 	}
-	// Block 9: recent project decisions (conduit-only).
-	// Loaded from the per-project decision journal so the agent inherits prior
-	// decisions across sessions without re-discovering them. Capped at 3 KB so
-	// the block never crowds out higher-priority content.
+	// Recent project decisions (conduit-only). Loaded from the per-project
+	// decision journal so the agent inherits prior decisions across sessions
+	// without re-discovering them. Capped at 3 KB so the block never crowds
+	// out higher-priority content.
 	if cwd, err := os.Getwd(); err == nil {
 		if recent, err := decisionlog.Recent(cwd, 20); err == nil && len(recent) > 0 {
 			if block := decisionlog.FormatPromptBlock(recent, 3072); block != "" {
-				blocks = append(blocks, api.SystemBlock{Type: "text", Text: block})
+				blocks = append(blocks, api.SystemBlock{
+					Type: "text",
+					Text: block,
+					CacheControl: &api.CacheControl{
+						Type:  "ephemeral",
+						TTL:   "1h",
+						Scope: "global",
+					},
+				})
 			}
+		}
+	}
+	// Volatile blocks last (coordinator state, undercover) so they don't
+	// break the static cacheable prefix above.
+	if coordinator.IsActive() {
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: coordinator.SystemPrompt()})
+		if ctx := coordinator.UserContext(CoordinatorMCPNames); ctx != "" {
+			blocks = append(blocks, api.SystemBlock{Type: "text", Text: ctx})
 		}
 	}
 	if instructions := undercover.GetUndercoverInstructions(); instructions != "" {

@@ -42,7 +42,9 @@ var store struct {
 }
 
 // Tool implements the TodoWrite tool.
-type Tool struct{}
+type Tool struct {
+	tool.NotDeferrable
+}
 
 // New returns a fresh TodoWrite tool.
 func New() *Tool { return &Tool{} }

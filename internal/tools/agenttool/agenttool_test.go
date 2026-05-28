@@ -125,21 +125,37 @@ func TestAgentTool_SubagentTypeFallsBackToRunAgent(t *testing.T) {
 	}
 }
 
-func TestAgentTool_DescriptionListsAgents(t *testing.T) {
+func TestAgentTool_DescriptionIsStatic(t *testing.T) {
+	// Description() must return the short static string regardless of whether
+	// a registry is present. The agent catalog is no longer embedded in the
+	// tool schema (it was causing multi-KB bloat per API request per plugin).
+	// The model discovers available agent types via ToolSearch instead.
 	reg := &fakeRegistry{agents: []AgentDef{
 		{QualifiedName: "p:a", Description: "Agent A", Tools: []string{"Read"}},
 		{QualifiedName: "p:b", Description: "Agent B"},
 	}}
-	at := New(runAgent, reg, nil)
-	desc := at.Description()
-	if !strings.Contains(desc, "p:a") {
-		t.Error("description should list p:a")
+	tests := []struct {
+		name string
+		at   *Tool
+	}{
+		{"no registry", New(runAgent, nil, nil)},
+		{"with registry", New(runAgent, reg, nil)},
 	}
-	if !strings.Contains(desc, "p:b") {
-		t.Error("description should list p:b")
-	}
-	if !strings.Contains(desc, "Read") {
-		t.Error("description should show tool allowlist")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desc := tt.at.Description()
+			if desc != staticDescription {
+				t.Errorf("Description() = %q; want staticDescription", desc)
+			}
+			// Must NOT embed the catalog — no agent names or tool lists.
+			if strings.Contains(desc, "p:a") || strings.Contains(desc, "p:b") {
+				t.Error("Description() must not embed the agent catalog")
+			}
+			// Must still mention ToolSearch so the model knows where to look.
+			if !strings.Contains(desc, "ToolSearch") {
+				t.Error("Description() should reference ToolSearch for discovery")
+			}
+		})
 	}
 }
 

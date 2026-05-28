@@ -202,6 +202,15 @@ type LoopConfig struct {
 	// Max subscription accounts only; leave false for Console API key and
 	// OpenAI-compatible providers so their billing block is unchanged.
 	IsOAuthSubscription bool
+
+	// BackgroundReviewer, when non-nil, is called after each end_turn to
+	// trigger periodic background memory and skill reviews. It is nil by
+	// default so existing code paths and sub-agents are unaffected.
+	// The reviewer runs fire-and-forget goroutines internally; the loop
+	// does not need to manage their lifetimes.
+	BackgroundReviewer interface {
+		OnEndTurn(ctx context.Context)
+	}
 }
 
 // Loop drives the agentic query cycle.
@@ -247,6 +256,15 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 // (earlier ones were superseded). The loop clears the slot after consuming it.
 func (l *Loop) InjectSteerMessage(text string) {
 	l.steerMsg.Store(text)
+}
+
+// SetBackgroundReviewer wires a background review scheduler into the loop.
+// It is safe to call after NewLoop (e.g., after the sub-agent runner is
+// available). A nil value disables background reviews.
+func (l *Loop) SetBackgroundReviewer(r interface{ OnEndTurn(ctx context.Context) }) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cfg.BackgroundReviewer = r
 }
 
 // SetModel updates the model used for new requests (from /model slash command).
@@ -492,6 +510,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 	turn := 0
 	lastAssistantTime := l.cfg.LastAssistantTime
+	lastInputTokens := 0 // last reported input token count; 0 means unknown
 	streamFailures := 0
 	toolUseRecoveries := 0
 	for {
@@ -504,9 +523,10 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		turn++
 		msgs = session.FilterUnresolvedToolUses(msgs)
 
-		// Time-based microcompact: after a long idle (cache expired), shrink
-		// older tool_results to a placeholder so the re-cache is cheaper.
-		if l.cfg.MicroCompact && !lastAssistantTime.IsZero() {
+		// Micro-compact: two triggers — time-based (cache expired) or token-pressure
+		// (lastInputTokens exceeds MicroCompactThresholdPct of context window).
+		// Either condition alone is sufficient to compact.
+		if l.cfg.MicroCompact {
 			gap := l.cfg.MicroCompactGap
 			if gap == 0 {
 				gap = microcompact.DefaultThreshold
@@ -515,8 +535,19 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if keep == 0 {
 				keep = microcompact.DefaultKeepRecent
 			}
-			if r := microcompact.Apply(msgs, lastAssistantTime, gap, keep); r.Triggered {
-				msgs = r.Messages
+			triggerTime := !lastAssistantTime.IsZero() && time.Since(lastAssistantTime) >= gap
+			triggerTokens := false
+			if lastInputTokens > 0 {
+				cw := contextWindow
+				if cw <= 0 {
+					cw = internalmodel.ContextWindowFor(model)
+				}
+				triggerTokens = lastInputTokens > cw*internalmodel.MicroCompactThresholdPct/100
+			}
+			if triggerTime || triggerTokens {
+				if r := microcompact.Apply(msgs, lastAssistantTime, gap, keep); r.Triggered {
+					msgs = r.Messages
+				}
 			}
 		}
 
@@ -536,11 +567,17 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				reqSystem = updated
 			}
 		}
+		// Add cache_control breakpoints on the last 2 non-system messages.
+		// Anthropic allows 4 total cache breakpoints: 2 are used on system blocks
+		// (MinimalAgentSystemPrompt, MinimalOutputGuidance, …); the remaining 2
+		// go on the last-2 user/assistant turns to cache the conversation prefix.
+		// Work on a shallow-copy so the stored msgs slice is not mutated.
+		reqMsgs := applyHistoryBreakpoints(msgs)
 		req := &api.MessageRequest{
 			Model:     model,
 			MaxTokens: l.cfg.MaxTokens,
 			System:    reqSystem,
-			Messages:  msgs,
+			Messages:  reqMsgs,
 			Stream:    true,
 			Tools:     tools,
 			Metadata:  l.cfg.Metadata,
@@ -549,6 +586,36 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			req.Thinking = &api.ThinkingConfig{
 				Type:         "enabled",
 				BudgetTokens: thinkingBudget,
+			}
+		}
+
+		// Pre-flight token estimate: len(JSON bytes) / 4 is a cheap proxy for
+		// token count. If it exceeds the model's context window, compact before
+		// sending — a single-turn blowup would hit a hard API error otherwise.
+		if l.cfg.MicroCompact {
+			if raw, err := json.Marshal(req.Messages); err == nil {
+				estimatedTokens := len(raw) / 4
+				cw := contextWindow
+				if cw <= 0 {
+					cw = internalmodel.ContextWindowFor(model)
+				}
+				if estimatedTokens > cw {
+					keep := l.cfg.MicroCompactKeep
+					if keep == 0 {
+						keep = microcompact.DefaultKeepRecent
+					}
+					// Seed a non-zero timestamp so Apply doesn't short-circuit,
+					// and use a 0 gap so any elapsed time triggers compaction.
+					seed := lastAssistantTime
+					if seed.IsZero() {
+						seed = time.Now().Add(-time.Hour)
+					}
+					if r := microcompact.Apply(msgs, seed, 0, keep); r.Triggered {
+						msgs = r.Messages
+						reqMsgs = applyHistoryBreakpoints(msgs)
+						req.Messages = reqMsgs
+					}
+				}
 			}
 		}
 
@@ -602,6 +669,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 		assistantBlocks, _, usage, err := l.drainStream(ctx, stream, handler)
 		inputTokens := usage.PromptInputTokens()
+		if inputTokens > 0 {
+			lastInputTokens = inputTokens
+		}
 		_ = stream.Close()
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -679,6 +749,11 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if l.cfg.OnEndTurn != nil {
 				l.cfg.OnEndTurn(msgs)
 			}
+			// Periodic background memory/skill review. Fire-and-forget;
+			// the reviewer manages its own goroutines and single-flight logic.
+			if l.cfg.BackgroundReviewer != nil {
+				l.cfg.BackgroundReviewer.OnEndTurn(ctx)
+			}
 			return msgs, nil
 		}
 
@@ -702,6 +777,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if pause := l.cfg.OnToolBatchComplete(0); pause {
 				if l.cfg.OnEndTurn != nil {
 					l.cfg.OnEndTurn(msgs)
+				}
+				if l.cfg.BackgroundReviewer != nil {
+					l.cfg.BackgroundReviewer.OnEndTurn(ctx)
 				}
 				return msgs, nil
 			}
@@ -746,4 +824,45 @@ func firstUserMessageText(msgs []api.Message) string {
 		}
 	}
 	return ""
+}
+
+// applyHistoryBreakpoints returns a shallow copy of msgs with cache_control
+// breakpoints set on the last content block of each of the last 2 messages.
+// Anthropic allows 4 cache breakpoints per request; 2 are used on system
+// blocks. These 2 message breakpoints cache the growing conversation prefix,
+// which is the highest-value use of the remaining budget.
+//
+// The function never mutates the input slice or any existing ContentBlock.
+func applyHistoryBreakpoints(msgs []api.Message) []api.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	ephemeral := &api.CacheControl{Type: "ephemeral"}
+
+	// Find indices of the last 2 messages (in reverse).
+	targets := make([]int, 0, 2)
+	for i := len(msgs) - 1; i >= 0 && len(targets) < 2; i-- {
+		if len(msgs[i].Content) > 0 {
+			targets = append(targets, i)
+		}
+	}
+	if len(targets) == 0 {
+		return msgs
+	}
+
+	// Build a shallow copy of the slice.
+	out := make([]api.Message, len(msgs))
+	copy(out, msgs)
+
+	for _, idx := range targets {
+		m := out[idx]
+		// Shallow-copy the content slice for this message.
+		newContent := make([]api.ContentBlock, len(m.Content))
+		copy(newContent, m.Content)
+		// Set cache_control on the last block.
+		last := len(newContent) - 1
+		newContent[last].CacheControl = ephemeral
+		out[idx].Content = newContent
+	}
+	return out
 }

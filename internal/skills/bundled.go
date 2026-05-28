@@ -43,8 +43,30 @@ func Bundled() []skilltool.Command {
 			Description:   "Capture the current session's repeatable process into a new skill file for future reuse.",
 			Body:          "Review the conversation to identify the repeatable workflow. Write a concise SKILL.md capturing the steps, then save it to .claude/skills/<name>/SKILL.md (project) or ~/.claude/skills/<name>/SKILL.md (personal) as the user prefers.",
 		},
+		{
+			QualifiedName: "memory-review",
+			Description:   "Review session memory and save important facts to MEMORY.md.",
+			Body:          memoryReviewPrompt,
+		},
+		{
+			QualifiedName: "skill-review",
+			Description:   "Review this session and update or create skills for reusable workflows.",
+			Body:          skillReviewPrompt,
+		},
 	}
 }
+
+const memoryReviewPrompt = `Review this conversation and save anything genuinely worth remembering to MEMORY.md.
+
+Read the current memory with the memdir_read tool, then decide what's new and non-obvious. Add entries using memdir_write. Be conservative: only save facts that would help future sessions and aren't derivable from the code itself.
+`
+
+const skillReviewPrompt = `Review this conversation and capture any reusable workflow as a skill.
+
+Priority: UPDATE an existing skill before CREATING a new one. Use SkillManage to list, view, create, and update skills.
+
+Be active but concise: most sessions produce at most one skill update. A skill body should be actionable in 10-20 lines.
+`
 
 const simplifyPrompt = `# Simplify: Code Review and Cleanup
 

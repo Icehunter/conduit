@@ -29,6 +29,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/notebookedittool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/repltool"
+	"github.com/icehunter/conduit/internal/tools/sessionsearchtool"
 	"github.com/icehunter/conduit/internal/tools/sleeptool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
@@ -43,7 +44,7 @@ import (
 // BuildSkillEntries converts loaded plugin commands, plugin skills, and
 // bundled skills into SkillEntry values for the system prompt skill listing.
 func BuildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {
-	loader := plugins.NewSkillLoader(ps)
+	loader := plugins.NewSkillLoader(ps, "")
 	var entries []agent.SkillEntry
 
 	// Bundled built-in skills first.
@@ -130,6 +131,7 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
 	reg.Register(websearchtool.New(client))
+	reg.Register(sessionsearchtool.New())
 	reg.Register(lsptool.New(lspManager))
 	reg.Register(&configtool.ConfigTool{})
 	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})

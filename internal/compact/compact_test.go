@@ -34,7 +34,7 @@ func TestBuildTranscript_Basic(t *testing.T) {
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "Hello"}}},
 		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "Hi there"}}},
 	}
-	got := buildTranscript(msgs)
+	got := buildTranscript(msgs, nil)
 	if !strings.Contains(got, "User: Hello") {
 		t.Errorf("missing user line; got: %s", got)
 	}
@@ -52,7 +52,7 @@ func TestBuildTranscript_ToolCall(t *testing.T) {
 			{Type: "tool_result", ResultContent: "output"},
 		}},
 	}
-	got := buildTranscript(msgs)
+	got := buildTranscript(msgs, nil)
 	if !strings.Contains(got, "tool call: Bash") {
 		t.Errorf("missing tool call; got: %s", got)
 	}
@@ -68,7 +68,7 @@ func TestBuildTranscript_LongToolResultTruncated(t *testing.T) {
 			{Type: "tool_result", ResultContent: long},
 		}},
 	}
-	got := buildTranscript(msgs)
+	got := buildTranscript(msgs, nil)
 	if !strings.Contains(got, "truncated") {
 		t.Errorf("expected truncation marker; got: %s", got[:100])
 	}

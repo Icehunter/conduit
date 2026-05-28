@@ -830,6 +830,27 @@ func runREPL(continueMode bool, resumeID string) error {
 			_ = memdir.RunDream(dreamCtx, cwd, sessionDir, lp.RunBackgroundAgent)
 			dreamCancel()
 		}
+
+		// Curator: weekly deep-clean pass — consolidates memory and prunes/merges
+		// skills. Fires after 7 days or 10 accumulated sessions, whichever comes
+		// first. Runs in the background so it does not block the shell return.
+		if memdir.ShouldRunCurator(cwd, sessionDir) {
+			curatorCtx, curatorCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			go func() {
+				defer curatorCancel()
+				// Use RunSubAgentTyped with ExtraTools so the curator agent has
+				// access to SkillManage in addition to the standard tool set.
+				runner := func(ctx context.Context, prompt string) (string, error) {
+					r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+						ExtraTools: []tool.Tool{skillmanagetool.New(cwd)},
+						Background: true,
+						Mode:       permissions.ModeBypassPermissions,
+					})
+					return r.Text, err
+				}
+				_ = memdir.RunCurator(curatorCtx, cwd, sessionDir, runner)
+			}()
+		}
 	}
 
 	// Drain in-flight background memory goroutines. Cancel bgCtx first so

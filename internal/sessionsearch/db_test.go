@@ -79,7 +79,7 @@ func TestIndexAndSearch(t *testing.T) {
 		t.Fatalf("index: %v", err)
 	}
 
-	windows, err := db.Search("widget_config", 5)
+	windows, err := db.Search("widget_config", "", 5)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestSearchNoResults(t *testing.T) {
 		t.Fatalf("index: %v", err)
 	}
 
-	windows, err := db.Search("nonexistent_query_abc123", 5)
+	windows, err := db.Search("nonexistent_query_abc123", "", 5)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestIncrementalIndex(t *testing.T) {
 	}
 
 	// Verify we get a result.
-	w, err := db.Search("initial", 5)
+	w, err := db.Search("initial", "", 5)
 	if err != nil {
 		t.Fatalf("first search: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestIncrementalIndex(t *testing.T) {
 		t.Fatalf("second index: %v", err)
 	}
 
-	w2, err := db.Search("xyz987", 5)
+	w2, err := db.Search("xyz987", "", 5)
 	if err != nil {
 		t.Fatalf("second search: %v", err)
 	}
@@ -291,5 +291,126 @@ func TestIndexNonExistentDir(t *testing.T) {
 	db := openMemDB(t)
 	if err := db.Index("/tmp/conduit-does-not-exist-xyz"); err != nil {
 		t.Fatalf("index nonexistent dir should not error: %v", err)
+	}
+}
+
+// TestIndexAll verifies that IndexAll walks two fake project directories and
+// indexes sessions from both, making them searchable with their respective
+// project slugs.
+func TestIndexAll(t *testing.T) {
+	// Build a fake conduit directory structure:
+	//   <conduitDir>/projects/<slug-alpha>/sess-alpha.jsonl
+	//   <conduitDir>/projects/<slug-beta>/sess-beta.jsonl
+	conduitDir := t.TempDir()
+	projectsDir := filepath.Join(conduitDir, "projects")
+
+	alphaDir := filepath.Join(projectsDir, "slug-alpha")
+	betaDir := filepath.Join(projectsDir, "slug-beta")
+	for _, d := range []string{alphaDir, betaDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	makeJSONL(t, alphaDir, "sess-alpha", []struct{ role, text string }{
+		{"user", "alpha project xyzalphatoken configure"},
+	})
+	makeJSONL(t, betaDir, "sess-beta", []struct{ role, text string }{
+		{"user", "beta project xyzbetatoken configure"},
+	})
+
+	db := openMemDB(t)
+	if err := db.IndexAll(conduitDir); err != nil {
+		t.Fatalf("IndexAll: %v", err)
+	}
+
+	// Global search must find both sessions (both contain "configure").
+	all, err := db.Search("configure", "", 10)
+	if err != nil {
+		t.Fatalf("search all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 windows from global search, got %d", len(all))
+	}
+
+	// Filtered search must find only the alpha session (unique term).
+	alphaResults, err := db.Search("xyzalphatoken", "slug-alpha", 10)
+	if err != nil {
+		t.Fatalf("search alpha: %v", err)
+	}
+	if len(alphaResults) != 1 {
+		t.Errorf("expected 1 window for slug-alpha, got %d", len(alphaResults))
+	}
+	if len(alphaResults) > 0 && alphaResults[0].ProjectSlug != "slug-alpha" {
+		t.Errorf("expected project_slug slug-alpha, got %q", alphaResults[0].ProjectSlug)
+	}
+
+	// Filtered search must find only the beta session (unique term).
+	betaResults, err := db.Search("xyzbetatoken", "slug-beta", 10)
+	if err != nil {
+		t.Fatalf("search beta: %v", err)
+	}
+	if len(betaResults) != 1 {
+		t.Errorf("expected 1 window for slug-beta, got %d", len(betaResults))
+	}
+
+	// Browse must show both sessions with their slugs.
+	summaries, err := db.Browse(10)
+	if err != nil {
+		t.Fatalf("browse after IndexAll: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Errorf("expected 2 summaries, got %d", len(summaries))
+	}
+	slugsSeen := make(map[string]bool)
+	for _, s := range summaries {
+		slugsSeen[s.ProjectSlug] = true
+	}
+	if !slugsSeen["slug-alpha"] || !slugsSeen["slug-beta"] {
+		t.Errorf("expected both project slugs in summaries, got %v", slugsSeen)
+	}
+}
+
+// TestIndexAllEmptyProjects verifies that IndexAll is a no-op when the
+// projects directory does not exist.
+func TestIndexAllEmptyProjects(t *testing.T) {
+	conduitDir := t.TempDir() // projects/ subdirectory does not exist
+	db := openMemDB(t)
+	if err := db.IndexAll(conduitDir); err != nil {
+		t.Fatalf("IndexAll on missing projects dir: %v", err)
+	}
+}
+
+// TestSearchProjectSlugFilter verifies that a slug filter hides sessions from
+// other projects even when their content would otherwise match.
+func TestSearchProjectSlugFilter(t *testing.T) {
+	dir := t.TempDir()
+	makeJSONL(t, dir, "sess-only", []struct{ role, text string }{
+		{"user", "shared keyword configure"},
+	})
+
+	db := openMemDB(t)
+	if err := db.Index(dir); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	slug := filepath.Base(dir)
+
+	// Correct slug returns a hit.
+	hits, err := db.Search("configure", slug, 5)
+	if err != nil {
+		t.Fatalf("search with slug: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Error("expected a hit when filtering by the correct slug")
+	}
+
+	// Wrong slug returns no hits.
+	miss, err := db.Search("configure", "wrong-slug", 5)
+	if err != nil {
+		t.Fatalf("search with wrong slug: %v", err)
+	}
+	if len(miss) != 0 {
+		t.Errorf("expected no hits for wrong slug, got %d", len(miss))
 	}
 }

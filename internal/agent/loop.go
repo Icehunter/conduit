@@ -567,12 +567,13 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				reqSystem = updated
 			}
 		}
-		// Add cache_control breakpoints on the last 2 non-system messages.
-		// Anthropic allows 4 total cache breakpoints: 2 are used on system blocks
-		// (MinimalAgentSystemPrompt, MinimalOutputGuidance, …); the remaining 2
-		// go on the last-2 user/assistant turns to cache the conversation prefix.
-		// Work on a shallow-copy so the stored msgs slice is not mutated.
-		reqMsgs := applyHistoryBreakpoints(msgs)
+		// Add cache_control breakpoints on the last N non-system messages.
+		// Anthropic allows 4 total cache breakpoints across system + tools + history.
+		// Count how many are already consumed by system blocks and the tool list so
+		// we don't exceed the limit. Work on a shallow-copy so the stored msgs slice
+		// is not mutated.
+		priorBP := countSystemBreakpoints(reqSystem, tools)
+		reqMsgs := applyHistoryBreakpoints(msgs, priorBP)
 		req := &api.MessageRequest{
 			Model:     model,
 			MaxTokens: l.cfg.MaxTokens,
@@ -612,7 +613,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					}
 					if r := microcompact.Apply(msgs, seed, 0, keep); r.Triggered {
 						msgs = r.Messages
-						reqMsgs = applyHistoryBreakpoints(msgs)
+						reqMsgs = applyHistoryBreakpoints(msgs, priorBP)
 						req.Messages = reqMsgs
 					}
 				}
@@ -826,22 +827,50 @@ func firstUserMessageText(msgs []api.Message) string {
 	return ""
 }
 
+// maxCacheBreakpoints is Anthropic's hard limit on cache_control breakpoints
+// per request, counting system blocks + tool list + message history combined.
+const maxCacheBreakpoints = 4
+
 // applyHistoryBreakpoints returns a shallow copy of msgs with cache_control
-// breakpoints set on the last content block of each of the last 2 messages.
-// Anthropic allows 4 cache breakpoints per request; 2 are used on system
-// blocks. These 2 message breakpoints cache the growing conversation prefix,
-// which is the highest-value use of the remaining budget.
+// breakpoints set on the last content block of the last N messages, where N
+// is determined by the remaining budget after accounting for breakpoints already
+// consumed by system blocks and the tool list.
+//
+// Anthropic allows 4 cache breakpoints per request total. System blocks and the
+// tool list each consume some of that budget. If the total would exceed 4, a
+// warning is logged and history breakpoints are trimmed from the oldest first
+// (system block breakpoints take priority over history breakpoints).
 //
 // The function never mutates the input slice or any existing ContentBlock.
-func applyHistoryBreakpoints(msgs []api.Message) []api.Message {
+func applyHistoryBreakpoints(msgs []api.Message, priorBreakpoints int) []api.Message {
 	if len(msgs) == 0 {
 		return msgs
 	}
 	ephemeral := &api.CacheControl{Type: "ephemeral"}
 
-	// Find indices of the last 2 messages (in reverse).
-	targets := make([]int, 0, 2)
-	for i := len(msgs) - 1; i >= 0 && len(targets) < 2; i-- {
+	// How many history breakpoints can we place within the limit?
+	const wantHistory = 2
+	budget := maxCacheBreakpoints - priorBreakpoints
+	if budget <= 0 {
+		fmt.Fprintf(os.Stderr,
+			"conduit: cache breakpoint budget exhausted (%d system/tool breakpoints >= limit %d); skipping history breakpoints\n",
+			priorBreakpoints, maxCacheBreakpoints)
+		return msgs
+	}
+	allowed := budget
+	if allowed > wantHistory {
+		allowed = wantHistory
+	}
+	if priorBreakpoints+allowed > maxCacheBreakpoints {
+		fmt.Fprintf(os.Stderr,
+			"conduit: cache breakpoint cap: prior=%d + history=%d > limit=%d; trimming to %d history breakpoints\n",
+			priorBreakpoints, allowed, maxCacheBreakpoints, maxCacheBreakpoints-priorBreakpoints)
+		allowed = maxCacheBreakpoints - priorBreakpoints
+	}
+
+	// Find indices of the last `allowed` messages (in reverse).
+	targets := make([]int, 0, allowed)
+	for i := len(msgs) - 1; i >= 0 && len(targets) < allowed; i-- {
 		if len(msgs[i].Content) > 0 {
 			targets = append(targets, i)
 		}
@@ -865,4 +894,21 @@ func applyHistoryBreakpoints(msgs []api.Message) []api.Message {
 		out[idx].Content = newContent
 	}
 	return out
+}
+
+// countSystemBreakpoints returns the number of cache_control breakpoints set
+// on the system blocks and tools list that will be sent in the request.
+func countSystemBreakpoints(system []api.SystemBlock, tools []api.ToolDef) int {
+	n := 0
+	for i := range system {
+		if system[i].CacheControl != nil {
+			n++
+		}
+	}
+	for i := range tools {
+		if tools[i].CacheControl != nil {
+			n++
+		}
+	}
+	return n
 }

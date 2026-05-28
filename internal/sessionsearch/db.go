@@ -23,16 +23,18 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS sessions (
-    id           TEXT    PRIMARY KEY,
-    path         TEXT    NOT NULL,
-    indexed_at   INTEGER NOT NULL,
+    id            TEXT    PRIMARY KEY,
+    project_slug  TEXT    NOT NULL DEFAULT '',
+    path          TEXT    NOT NULL,
+    indexed_at    INTEGER NOT NULL,
     message_count INTEGER NOT NULL
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
-    session_id UNINDEXED,
-    msg_index  UNINDEXED,
-    role       UNINDEXED,
+    session_id   UNINDEXED,
+    project_slug UNINDEXED,
+    msg_index    UNINDEXED,
+    role         UNINDEXED,
     content,
     tokenize = 'porter ascii'
 );
@@ -55,7 +57,115 @@ func Open(path string) (*DB, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("sessionsearch: schema: %w", err)
 	}
-	return &DB{conn: conn}, nil
+	db := &DB{conn: conn}
+	if err := db.migrate(); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("sessionsearch: migrate: %w", err)
+	}
+	return db, nil
+}
+
+// migrate adds columns that may be missing from databases created before the
+// project_slug feature was introduced. SQLite's "ADD COLUMN IF NOT EXISTS" is
+// not universally available, so we query the column list instead.
+func (db *DB) migrate() error {
+	ctx := context.Background()
+
+	// sessions table: add project_slug if missing.
+	if err := db.addColumnIfMissing(ctx, "sessions", "project_slug", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
+	// messages FTS5 virtual table: FTS5 does not support ALTER TABLE ADD
+	// COLUMN. If project_slug is missing we drop and recreate the table,
+	// accepting that the existing full-text index is rebuilt on next Index
+	// call. Check presence via fts5_aux pragma (content_rowid metadata).
+	// The simplest portable check is to attempt a SELECT and look for the
+	// column in the result-set descriptor.
+	hasProjCol, err := db.ftsHasColumn(ctx, "messages", "project_slug")
+	if err != nil {
+		return err
+	}
+	if !hasProjCol {
+		// Drop and recreate the FTS5 table; existing rows are lost but will
+		// be re-indexed on next Index/IndexAll call.
+		if _, err := db.conn.ExecContext(ctx, `DROP TABLE IF EXISTS messages`); err != nil {
+			return fmt.Errorf("sessionsearch: drop messages: %w", err)
+		}
+		if _, err := db.conn.ExecContext(ctx, `
+CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
+    session_id   UNINDEXED,
+    project_slug UNINDEXED,
+    msg_index    UNINDEXED,
+    role         UNINDEXED,
+    content,
+    tokenize = 'porter ascii'
+);`); err != nil {
+			return fmt.Errorf("sessionsearch: recreate messages: %w", err)
+		}
+		// Force re-index of all sessions by clearing indexed_at so that
+		// the next Index/IndexAll call picks them all up.
+		if _, err := db.conn.ExecContext(ctx, `UPDATE sessions SET indexed_at = 0`); err != nil {
+			return fmt.Errorf("sessionsearch: reset indexed_at: %w", err)
+		}
+	}
+	return nil
+}
+
+// addColumnIfMissing uses PRAGMA table_info to check for a column and issues
+// ALTER TABLE … ADD COLUMN only when it is absent.
+func (db *DB) addColumnIfMissing(ctx context.Context, table, column, definition string) error {
+	rows, err := db.conn.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return fmt.Errorf("sessionsearch: pragma table_info %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sessionsearch: pragma scan %s: %w", table, err)
+	}
+
+	_, err = db.conn.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition)
+	if err != nil {
+		return fmt.Errorf("sessionsearch: alter %s add %s: %w", table, column, err)
+	}
+	return nil
+}
+
+// ftsHasColumn checks whether the named FTS5 virtual table has a given column
+// by inspecting the first row of the table (or the schema if empty).
+func (db *DB) ftsHasColumn(ctx context.Context, table, column string) (bool, error) {
+	// Use a LIMIT 0 query and inspect column names via ColumnTypes.
+	rows, err := db.conn.QueryContext(ctx, `SELECT * FROM `+table+` LIMIT 0`) //nolint:gosec // table is always a hardcoded string literal at call sites
+	if err != nil {
+		// Table might not exist yet; treat as "doesn't have the column".
+		return false, nil //nolint:nilerr
+	}
+	defer func() { _ = rows.Close() }()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return false, fmt.Errorf("sessionsearch: fts columns %s: %w", table, err)
+	}
+	for _, c := range cols {
+		if c == column {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Close releases the database connection.
@@ -65,14 +175,47 @@ func (db *DB) Close() error {
 
 // Index incrementally indexes all *.jsonl files under projectDir.
 // Files whose mtime is not newer than the stored indexed_at timestamp
-// are skipped.
+// are skipped. projectSlug is stored alongside each indexed session so that
+// results can be filtered by project later.
 func (db *DB) Index(projectDir string) error {
-	entries, err := os.ReadDir(projectDir)
+	slug := filepath.Base(projectDir)
+	return db.indexDir(projectDir, slug)
+}
+
+// IndexAll walks conduitDir/projects/ and indexes every project's JSONL files.
+// Only re-indexes files whose mtime is newer than the stored index timestamp.
+// Safe to call frequently — skips up-to-date files.
+func (db *DB) IndexAll(conduitDir string) error {
+	projectsDir := filepath.Join(conduitDir, "projects")
+	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("sessionsearch: readdir %s: %w", projectDir, err)
+		return fmt.Errorf("sessionsearch: readdir projects %s: %w", projectsDir, err)
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		slug := e.Name()
+		dir := filepath.Join(projectsDir, slug)
+		// Best-effort per project; a bad directory doesn't abort the rest.
+		_ = db.indexDir(dir, slug)
+	}
+	return nil
+}
+
+// indexDir is the shared implementation for Index and IndexAll. It walks dir,
+// indexes *.jsonl files, and records projectSlug alongside each session.
+func (db *DB) indexDir(dir, projectSlug string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("sessionsearch: readdir %s: %w", dir, err)
 	}
 
 	for _, e := range entries {
@@ -83,7 +226,7 @@ func (db *DB) Index(projectDir string) error {
 		if err != nil {
 			continue
 		}
-		path := filepath.Join(projectDir, e.Name())
+		path := filepath.Join(dir, e.Name())
 		sessionID := strings.TrimSuffix(e.Name(), ".jsonl")
 		mtime := info.ModTime().UnixMilli()
 
@@ -96,7 +239,7 @@ func (db *DB) Index(projectDir string) error {
 			continue
 		}
 
-		if err := db.indexFile(sessionID, path, mtime); err != nil {
+		if err := db.indexFile(sessionID, projectSlug, path, mtime); err != nil {
 			// Non-fatal: skip bad files, keep going.
 			continue
 		}
@@ -106,7 +249,7 @@ func (db *DB) Index(projectDir string) error {
 
 // indexFile parses a single JSONL transcript and upserts its messages
 // into the FTS index.
-func (db *DB) indexFile(sessionID, path string, mtime int64) error {
+func (db *DB) indexFile(sessionID, projectSlug, path string, mtime int64) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("sessionsearch: read %s: %w", path, err)
@@ -170,8 +313,8 @@ func (db *DB) indexFile(sessionID, path string, mtime int64) error {
 		}
 
 		if _, err := tx.ExecContext(context.Background(),
-			`INSERT INTO messages(session_id, msg_index, role, content) VALUES (?, ?, ?, ?)`,
-			sessionID, msgIndex, role, text,
+			`INSERT INTO messages(session_id, project_slug, msg_index, role, content) VALUES (?, ?, ?, ?, ?)`,
+			sessionID, projectSlug, msgIndex, role, text,
 		); err != nil {
 			return fmt.Errorf("sessionsearch: insert message: %w", err)
 		}
@@ -179,8 +322,8 @@ func (db *DB) indexFile(sessionID, path string, mtime int64) error {
 	}
 
 	if _, err := tx.ExecContext(context.Background(),
-		`INSERT OR REPLACE INTO sessions(id, path, indexed_at, message_count) VALUES (?, ?, ?, ?)`,
-		sessionID, path, mtime, msgIndex,
+		`INSERT OR REPLACE INTO sessions(id, project_slug, path, indexed_at, message_count) VALUES (?, ?, ?, ?, ?)`,
+		sessionID, projectSlug, path, mtime, msgIndex,
 	); err != nil {
 		return fmt.Errorf("sessionsearch: upsert session: %w", err)
 	}
@@ -224,6 +367,7 @@ func extractText(raw json.RawMessage) string {
 // anchor, with context lines on either side.
 type MessageWindow struct {
 	SessionID   string          `json:"session_id"`
+	ProjectSlug string          `json:"project_slug"`
 	SessionDate time.Time       `json:"session_date"`
 	Messages    []WindowMessage `json:"messages"`
 }
@@ -240,6 +384,7 @@ type WindowMessage struct {
 // SessionSummary is a lightweight descriptor for a recent session.
 type SessionSummary struct {
 	SessionID    string    `json:"session_id"`
+	ProjectSlug  string    `json:"project_slug"`
 	Date         time.Time `json:"date"`
 	MessageCount int       `json:"message_count"`
 	Preview      string    `json:"preview"`
@@ -247,27 +392,41 @@ type SessionSummary struct {
 
 // Search runs a full-text query and returns up to maxResults windows,
 // each containing the matched message and up to 3 surrounding messages.
-func (db *DB) Search(query string, maxResults int) ([]MessageWindow, error) {
+// projectSlug filters results to a specific project; pass "" to search all.
+func (db *DB) Search(query string, projectSlug string, maxResults int) ([]MessageWindow, error) {
 	if maxResults <= 0 {
 		maxResults = 5
 	}
-	rows, err := db.conn.QueryContext(context.Background(),
-		`SELECT session_id, msg_index FROM messages WHERE content MATCH ? ORDER BY rank LIMIT ?`,
-		query, maxResults,
+
+	var (
+		rows *sql.Rows
+		err  error
 	)
+	if projectSlug == "" {
+		rows, err = db.conn.QueryContext(context.Background(),
+			`SELECT session_id, project_slug, msg_index FROM messages WHERE content MATCH ? ORDER BY rank LIMIT ?`,
+			query, maxResults,
+		)
+	} else {
+		rows, err = db.conn.QueryContext(context.Background(),
+			`SELECT session_id, project_slug, msg_index FROM messages WHERE content MATCH ? AND project_slug = ? ORDER BY rank LIMIT ?`,
+			query, projectSlug, maxResults,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sessionsearch: fts query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	type match struct {
-		sessionID string
-		msgIndex  int
+		sessionID   string
+		projectSlug string
+		msgIndex    int
 	}
 	var matches []match
 	for rows.Next() {
 		var m match
-		if err := rows.Scan(&m.sessionID, &m.msgIndex); err != nil {
+		if err := rows.Scan(&m.sessionID, &m.projectSlug, &m.msgIndex); err != nil {
 			continue
 		}
 		matches = append(matches, m)
@@ -281,6 +440,10 @@ func (db *DB) Search(query string, maxResults int) ([]MessageWindow, error) {
 		w, err := db.Scroll(m.sessionID, m.msgIndex, 3)
 		if err != nil || w == nil {
 			continue
+		}
+		// Ensure project slug is propagated (Scroll fills it from DB).
+		if w.ProjectSlug == "" {
+			w.ProjectSlug = m.projectSlug
 		}
 		// Mark the specific match message.
 		for i := range w.Messages {
@@ -331,9 +494,10 @@ func (db *DB) Scroll(sessionID string, aroundMsgIndex int, windowSize int) (*Mes
 		return nil, nil
 	}
 
-	sessionDate := db.sessionDate(sessionID)
+	sessionDate, projectSlug := db.sessionMeta(sessionID)
 	return &MessageWindow{
 		SessionID:   sessionID,
+		ProjectSlug: projectSlug,
 		SessionDate: sessionDate,
 		Messages:    msgs,
 	}, nil
@@ -346,7 +510,7 @@ func (db *DB) Browse(maxSessions int) ([]SessionSummary, error) {
 		maxSessions = 10
 	}
 	rows, err := db.conn.QueryContext(context.Background(),
-		`SELECT s.id, s.indexed_at, s.message_count,
+		`SELECT s.id, s.project_slug, s.indexed_at, s.message_count,
 		        COALESCE((SELECT content FROM messages WHERE session_id = s.id AND msg_index = 0 LIMIT 1), '')
 		 FROM sessions s
 		 ORDER BY s.indexed_at DESC
@@ -362,15 +526,17 @@ func (db *DB) Browse(maxSessions int) ([]SessionSummary, error) {
 	for rows.Next() {
 		var (
 			id           string
+			projectSlug  string
 			indexedAtMs  int64
 			messageCount int
 			preview      string
 		)
-		if err := rows.Scan(&id, &indexedAtMs, &messageCount, &preview); err != nil {
+		if err := rows.Scan(&id, &projectSlug, &indexedAtMs, &messageCount, &preview); err != nil {
 			continue
 		}
 		summaries = append(summaries, SessionSummary{
 			SessionID:    id,
+			ProjectSlug:  projectSlug,
 			Date:         time.UnixMilli(indexedAtMs).UTC(),
 			MessageCount: messageCount,
 			Preview:      truncatePreview(preview, 200),
@@ -382,16 +548,17 @@ func (db *DB) Browse(maxSessions int) ([]SessionSummary, error) {
 	return summaries, nil
 }
 
-// sessionDate returns the indexed_at time for the session, or zero time
-// if the session is not in the sessions table.
-func (db *DB) sessionDate(sessionID string) time.Time {
+// sessionMeta returns the indexed_at time and project_slug for the session,
+// or zero values if the session is not in the sessions table.
+func (db *DB) sessionMeta(sessionID string) (time.Time, string) {
 	var ms int64
+	var slug string
 	row := db.conn.QueryRowContext(context.Background(),
-		`SELECT indexed_at FROM sessions WHERE id = ?`, sessionID)
-	if err := row.Scan(&ms); err != nil {
-		return time.Time{}
+		`SELECT indexed_at, project_slug FROM sessions WHERE id = ?`, sessionID)
+	if err := row.Scan(&ms, &slug); err != nil {
+		return time.Time{}, ""
 	}
-	return time.UnixMilli(ms).UTC()
+	return time.UnixMilli(ms).UTC(), slug
 }
 
 // truncatePreview shortens s to at most maxLen runes.

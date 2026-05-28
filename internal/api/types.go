@@ -53,6 +53,10 @@ type ToolDef struct {
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema,omitempty"`
 
+	// CacheControl marks the end of a cacheable tool-list prefix when non-nil.
+	// Set on the last ToolDef so the system+tools block is cached as a unit.
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+
 	// Extra holds additional native-tool fields (e.g. max_uses, allowed_domains).
 	// Keys from Extra are merged into the JSON output via custom MarshalJSON.
 	Extra map[string]any `json:"-"`
@@ -61,7 +65,7 @@ type ToolDef struct {
 // MarshalJSON serialises ToolDef, merging Extra fields into the top-level object.
 func (td ToolDef) MarshalJSON() ([]byte, error) {
 	// Build a map with all non-empty fields.
-	m := make(map[string]any, 6+len(td.Extra))
+	m := make(map[string]any, 7+len(td.Extra))
 	if td.Type != "" {
 		m["type"] = td.Type
 	}
@@ -73,6 +77,9 @@ func (td ToolDef) MarshalJSON() ([]byte, error) {
 	}
 	if td.InputSchema != nil {
 		m["input_schema"] = td.InputSchema
+	}
+	if td.CacheControl != nil {
+		m["cache_control"] = td.CacheControl
 	}
 	for k, v := range td.Extra {
 		m[k] = v
@@ -128,8 +135,14 @@ type ContentBlock struct {
 	// type=tool_result (us → assistant, in a user-role message)
 	ToolUseID string `json:"tool_use_id,omitempty"` // matches ID from tool_use block
 	IsError   bool   `json:"is_error,omitempty"`
-	// Content for tool_result: string or []ContentBlock. We send string for simplicity.
+	// ResultContent is the string form of tool_result content. Serialized as
+	// {"content": "..."} for backward compatibility with simple text results.
 	ResultContent string `json:"content,omitempty"`
+	// ResultBlocks is the array form of tool_result content, used when the result
+	// contains non-text blocks (e.g. images). When set, serialized as
+	// {"content": [{...}, ...]} instead of the string form. Takes precedence
+	// over ResultContent if both are set.
+	ResultBlocks []ContentBlock `json:"-"`
 }
 
 // MarshalJSON serialises ContentBlock, ensuring the `input` field is always
@@ -173,7 +186,11 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	if b.IsError {
 		m["is_error"] = b.IsError
 	}
-	if b.ResultContent != "" {
+	// ResultBlocks (array form) takes precedence over ResultContent (string form)
+	// when present, to support tool results that include images or other media.
+	if len(b.ResultBlocks) > 0 {
+		m["content"] = b.ResultBlocks
+	} else if b.ResultContent != "" {
 		m["content"] = b.ResultContent
 	}
 	return json.Marshal(m)

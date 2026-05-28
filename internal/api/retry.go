@@ -116,9 +116,18 @@ func parseRateLimitReset(h string) time.Time {
 	return time.Time{}
 }
 
+// isRetryableStatus reports whether the HTTP status should trigger a retry.
+// 429 (Too Many Requests), 503 (Service Unavailable), and 529 (Anthropic
+// overloaded) are all transient and benefit from exponential back-off.
+func isRetryableStatus(code int) bool {
+	return code == http.StatusTooManyRequests ||
+		code == http.StatusServiceUnavailable ||
+		code == 529
+}
+
 // withRetry wraps a function that returns (*http.Response, error), retrying
-// on 429 with exponential backoff. On 401 it is not retried here; the caller
-// handles 401 separately.
+// on 429, 503, and 529 with exponential backoff. On 401 it is not retried
+// here; the caller handles 401 separately.
 func withRetry(ctx context.Context, fn func() (*http.Response, error)) (*http.Response, error) {
 	var resp *http.Response
 	var err error
@@ -128,11 +137,11 @@ func withRetry(ctx context.Context, fn func() (*http.Response, error)) (*http.Re
 		if err != nil {
 			return nil, err
 		}
-		if resp.StatusCode != http.StatusTooManyRequests {
+		if !isRetryableStatus(resp.StatusCode) {
 			return resp, nil
 		}
 
-		// 429 — read retry-after before closing body.
+		// 429 / 503 / 529 — read retry-after before closing body.
 		retryAfter := parseRetryAfter(resp.Header.Get("retry-after"))
 		decodeErr := decodeErrorFromResp(resp)
 		// Must consume and close before retrying.

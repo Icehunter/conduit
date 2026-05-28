@@ -164,6 +164,7 @@ coming, and what's intentionally out of scope.
 | Memory extraction (auto) | ✅ | Sub-agent fires on each end_turn |
 | Session memory summaries | ✅ | `summary.md` per session; injected on resume only when transcript history is unavailable (and size-capped) |
 | Auto-dream consolidation | ✅ | 24h + 5 session gate |
+| Curator (weekly memory+skill hygiene) | ✅ | fires after 7d or 10 sessions; consolidates duplicates, prunes stale entries |
 | Session worktrees | ✅ | EnterWorktree / ExitWorktree |
 
 ---

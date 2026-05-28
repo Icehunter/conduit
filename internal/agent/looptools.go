@@ -353,5 +353,13 @@ func buildToolDefs(reg *tool.Registry) []api.ToolDef {
 		countSetter.SetDeferredCount(deferred)
 	}
 
+	// Mark the last tool definition as a prompt-cache breakpoint so the
+	// system+tools prefix is cached as a stable unit. Only applied when the
+	// list is non-empty and ToolSearch is not mid-turn (deferral count is
+	// already accounted for above, so the slice is stable at this point).
+	if len(defs) > 0 {
+		defs[len(defs)-1].CacheControl = &api.CacheControl{Type: "ephemeral", TTL: "1h", Scope: "global"}
+	}
+
 	return defs
 }

@@ -69,8 +69,11 @@ func TestAskUserQuestion_NoAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !res.IsError {
-		t.Error("expected error when user provides no answer")
+	if res.IsError {
+		t.Error("expected non-error neutral result when user dismisses question")
+	}
+	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "dismissed") {
+		t.Errorf("expected dismiss framing in result, got: %v", res.Content)
 	}
 }
 

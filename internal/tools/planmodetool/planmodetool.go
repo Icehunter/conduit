@@ -79,6 +79,10 @@ Remember: DO NOT write or edit any files yet. This is a read-only exploration an
 type PlanApprovalDecision struct {
 	// Approved is true when the user accepts the plan.
 	Approved bool
+	// Discuss is true when the user chose "chat about this" rather than
+	// rejecting. The plan remains active; the model should wait for the
+	// user's follow-up message instead of revising blindly.
+	Discuss bool
 	// Mode is the permission mode to activate on approval.
 	// Defaults to ModeBypassPermissions when zero.
 	Mode permissions.Mode
@@ -146,6 +150,14 @@ func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 	}
 
 	if !decision.Approved {
+		if decision.Discuss {
+			return tool.TextResult(
+				"The user chose to discuss the plan further before approving. " +
+					"They did NOT reject it — do not assume what needs to change. " +
+					"Stay in plan mode and wait for their next message; read it carefully before revising anything. " +
+					"Do not begin implementation.",
+			), nil
+		}
 		msg := "User rejected the plan."
 		if decision.Feedback != "" {
 			msg += " Feedback: " + decision.Feedback + ". Return to plan mode and revise."

@@ -137,9 +137,9 @@ func (o planApprovalOption) decision() planmodetool.PlanApprovalDecision {
 	case planApprovalKindDefault:
 		return planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}
 	case planApprovalKindChat:
-		return planmodetool.PlanApprovalDecision{Approved: false}
+		return planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}
 	}
-	return planmodetool.PlanApprovalDecision{Approved: false}
+	return planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}
 }
 
 // handlePlanApprovalKey handles keyboard input while the plan-approval modal
@@ -164,9 +164,10 @@ func (m Model) handlePlanApprovalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc", "ctrl+c":
-		// Esc collapses to the "chat about this" path: rejected, user can
-		// type a follow-up that the model will treat as plan refinement.
-		return send(planmodetool.PlanApprovalDecision{Approved: false})
+		// Esc collapses to the "chat about this" path: the user wants to
+		// keep talking, not reject. Signal Discuss so the model waits for
+		// the user's next message rather than guessing what to revise.
+		return send(planmodetool.PlanApprovalDecision{Approved: false, Discuss: true})
 	case "1", "2", "3", "4", "5":
 		idx := int(key[0] - '1')
 		if idx >= 0 && idx < len(planApprovalOptions) {

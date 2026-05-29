@@ -188,6 +188,33 @@ func TestExitPlanMode_RejectedWithFeedback(t *testing.T) {
 	}
 }
 
+func TestExitPlanMode_DiscussReturnsNeutralTextResult(t *testing.T) {
+	var modeSet bool
+	tool := &ExitPlanMode{
+		SetMode: func(_ permissions.Mode) { modeSet = true },
+		AskApprove: func(_ context.Context, _ string) PlanApprovalDecision {
+			return PlanApprovalDecision{Approved: false, Discuss: true}
+		},
+	}
+	res, err := tool.Execute(context.Background(), json.RawMessage(`{"plan":"draft plan"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.IsError {
+		t.Error("Discuss path should return non-error TextResult, not an error")
+	}
+	if modeSet {
+		t.Error("SetMode should not be called on Discuss path")
+	}
+	if len(res.Content) == 0 {
+		t.Fatal("expected content in discuss result")
+	}
+	text := strings.ToLower(res.Content[0].Text)
+	if !strings.Contains(text, "discuss") && !strings.Contains(text, "wait") {
+		t.Errorf("discuss result should mention discussion/wait, got: %s", res.Content[0].Text)
+	}
+}
+
 func TestExitPlanMode_InvalidInput(t *testing.T) {
 	tool := &ExitPlanMode{}
 	res, err := tool.Execute(context.Background(), json.RawMessage(`not-json`))

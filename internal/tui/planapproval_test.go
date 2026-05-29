@@ -64,8 +64,8 @@ func TestPlanApproval_QuickPickReturnsCorrectDecision(t *testing.T) {
 		{"2", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEdits}, true},
 		{"3", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEditsLive}, true},
 		{"4", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}, true},
-		{"5", planmodetool.PlanApprovalDecision{Approved: false}, true},
-		{"esc", planmodetool.PlanApprovalDecision{Approved: false}, true},
+		{"5", planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}, true},
+		{"esc", planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}, true},
 		{"6", planmodetool.PlanApprovalDecision{}, false}, // out of range, no send
 	}
 	for _, tt := range tests {

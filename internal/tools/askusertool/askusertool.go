@@ -89,7 +89,11 @@ func (t *AskUserQuestion) Execute(ctx context.Context, raw json.RawMessage) (too
 
 	answers := t.Ask(ctx, inp.Question, inp.Options, inp.MultiSelect)
 	if len(answers) == 0 {
-		return tool.ErrorResult("No answer provided. The user did not respond."), nil
+		return tool.TextResult(
+			"The user dismissed the question without selecting an option. " +
+				"They likely want to clarify or redirect — do not assume an answer. " +
+				"Wait for their next message.",
+		), nil
 	}
 
 	return tool.TextResult(strings.Join(answers, "\n")), nil

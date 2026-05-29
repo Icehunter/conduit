@@ -36,10 +36,10 @@ func TestCatalog_Lookup(t *testing.T) {
 		wantID string
 		wantOK bool
 	}{
-		{"claude-opus-4-7", "claude-opus-4-7", true},
+		{"claude-opus-4-8", "claude-opus-4-8", true},
 		{"claude-sonnet-4-6", "claude-sonnet-4-6", true},
-		{"CLAUDE-OPUS-4-7", "claude-opus-4-7", true},           // case-insensitive
-		{"anthropic/claude-opus-4-7", "claude-opus-4-7", true}, // provider-prefixed
+		{"CLAUDE-OPUS-4-8", "claude-opus-4-8", true},           // case-insensitive
+		{"anthropic/claude-opus-4-8", "claude-opus-4-8", true}, // provider-prefixed
 		{"no-such-model-xyz", "", false},
 	}
 	for _, tt := range tests {

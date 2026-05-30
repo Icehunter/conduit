@@ -88,6 +88,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m2, cmd := m.handlePermissionKey(msg)
 		return m2, cmd, true
 	}
+	// AskUserQuestion dialog intercepts all keys when active.
+	if m.questionAsk != nil {
+		m2, cmd := m.handleQuestionKey(msg)
+		return m2, cmd, true
+	}
 
 	// User-customizable keybindings. Checked after overlay handlers so
 	// modal overlays always own their own key space. "command:*" actions

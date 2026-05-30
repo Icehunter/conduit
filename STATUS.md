@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-05-27
+Last updated: 2026-05-29
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -72,7 +72,7 @@ coming, and what's intentionally out of scope.
 | Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/` |
 | Coordinator mode | ✅ | Claude as orchestrator; task-notification XML |
 | Council mode | ✅ | Parallel multi-model debate, synthesis, convergence detection, roles, voting |
-| Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options |
+| Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options; "chat about this" (Discuss:true) yields the turn — agent stops and waits for user input |
 | Diff-first review gate | ✅ | Hunk-level Myers diff; per-hunk approve/reject/note; `acceptEditsLive` mid-turn pause |
 | Decision journal | ✅ | Append-only JSONL; `RecordDecision` tool; council auto-records verdicts |
 | Proactive health checks | ✅ | Git/deps pre-flight at session start; warnings in system context |
@@ -100,7 +100,7 @@ coming, and what's intentionally out of scope.
 | EnterPlanMode / ExitPlanMode | ✅ | |
 | EnterWorktree / ExitWorktree | ✅ | git worktree add/remove |
 | EnterAutoMode / ExitAutoMode | ✅ | Conduit-original; bypassPermissions with user consent |
-| AskUserQuestion | ✅ | |
+| AskUserQuestion | ✅ | Dismiss (Esc/ctrl+c) yields the turn (agent stops, waits for user); digit keys focus option only, Enter confirms; popup deferred while user has unsent draft (focus guard swallows first key) |
 | ConfigTool | ✅ | get/set/allow/deny/env |
 | MCPTool | ✅ | MCP tool proxy |
 | ListMcpResources / ReadMcpResource | ✅ | |

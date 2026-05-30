@@ -29,12 +29,6 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m2, cmd, true
 	}
 
-	// AskUserQuestion dialog captures all keys when active.
-	if m.questionAsk != nil {
-		m2, cmd := m.handleQuestionKey(msg)
-		return m2, cmd, true
-	}
-
 	// Viewport scrollback. Plain Up/Down/PgUp/PgDn are owned by the chat
 	// input (history navigation, multi-line cursor, textarea paging).
 	// Users still need a way to scroll the chat transcript without

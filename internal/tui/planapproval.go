@@ -123,9 +123,9 @@ func (pa *planApprovalPickerState) resize(vpWidth, vpHeight int) {
 }
 
 // optionDecision maps an option index to the PlanApprovalDecision sent back
-// to the ExitPlanMode tool. The "chat about this" option is functionally
-// equivalent to a rejection from the model's perspective; it differs only in
-// the user-facing label.
+// to the ExitPlanMode tool. The "chat about this" option (Discuss:true) tells
+// the loop to yield control back to the user without treating it as a
+// rejection — the model stays in plan mode and waits for the next message.
 func (o planApprovalOption) decision() planmodetool.PlanApprovalDecision {
 	switch o.kind {
 	case planApprovalKindBypass:

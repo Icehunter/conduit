@@ -53,6 +53,7 @@ regression appears.
 | Beta header count | 2 detected | 11 sent | Extra betas are valid API features; no API rejection observed |
 | Tool names `mcp`/`mcp__` | Pass-through aliases | `ListMcpResources`/`ReadMcpResource` | Conduit's MCP surface is explicit, not aliased |
 | Auto-updater | npm self-replace | Passive GitHub Release notifier | Conduit ships as a static binary |
+| AskUserQuestion quick-pick | Digit 1-9 immediately selects and submits in single-select | Digit focuses the option; Enter confirms; first key after open is swallowed (focus guard); popup queued if user has unsent draft | Prevent stray keystrokes (popup appearing mid-typing) from auto-submitting |
 
 ---
 

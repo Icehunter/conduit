@@ -313,7 +313,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 						lines2 := strings.Split(prefix2, "\n")
 						targetCol := len(lines2[len(lines2)-1])
 						m.input.CursorStart()
-						for i := 0; i < targetLine; i++ {
+						for range targetLine {
 							m.input.CursorDown()
 						}
 						m.input.SetCursorColumn(targetCol)

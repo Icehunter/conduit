@@ -9,6 +9,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strings"
 )
 
@@ -178,9 +179,7 @@ func (r *Registry) All() []Tool {
 // versions of mode-change tools without mutating the parent registry.
 func (r *Registry) WithOverrides(tools ...Tool) *Registry {
 	out := &Registry{tools: make(map[string]Tool, len(r.tools))}
-	for k, v := range r.tools {
-		out.tools[k] = v
-	}
+	maps.Copy(out.tools, r.tools)
 	for _, t := range tools {
 		out.tools[t.Name()] = t
 	}

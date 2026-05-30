@@ -868,10 +868,7 @@ func applyHistoryBreakpoints(msgs []api.Message, priorBreakpoints int) []api.Mes
 	if budget <= 0 {
 		return msgs
 	}
-	allowed := budget
-	if allowed > wantHistory {
-		allowed = wantHistory
-	}
+	allowed := min(budget, wantHistory)
 	if priorBreakpoints+allowed > maxCacheBreakpoints {
 		allowed = maxCacheBreakpoints - priorBreakpoints
 	}

@@ -801,7 +801,7 @@ func TestLoop_ParallelTools_ConcurrentExecution(t *testing.T) {
 	// If tools were sequential, the second would never start while the first is blocked.
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-started:
 		case <-timer.C:

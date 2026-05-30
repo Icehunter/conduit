@@ -128,16 +128,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case questionAskMsg:
 		// AskUserQuestion: open the interactive selection dialog overlay.
-		state := &questionAskState{
-			question:   msg.question,
-			options:    msg.options,
-			multi:      msg.multi,
-			reply:      msg.reply,
-			focusedIdx: 0,
-			selected:   make([]bool, len(msg.options)),
-			textMode:   len(msg.options) == 0,
+		if m.input.Value() != "" {
+			// User is mid-draft. Queue the question until their input clears.
+			// The tool goroutine blocks on <-reply; a pending question deferred
+			// here will surface as soon as the input empties (see promotion check
+			// in KeyPressMsg). On cancelTurn, the ctx.Done() unblocks the goroutine.
+			copy := msg // copy to avoid pointer aliasing
+			m.pendingQuestion = &copy
+			m.flashMsg = "question waiting — send or clear your draft first"
+			m.refreshViewport()
+			return m, nil
 		}
-		m.questionAsk = state
+		// Input is empty — activate immediately.
+		m.questionAsk = newQuestionAskState(msg)
 		m.refreshViewport()
 		m.vp.GotoBottom()
 		return m, nil
@@ -518,6 +521,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Recompute @ file picker matches after every key.
 	if !m.running {
 		m = m.updateAtMatches()
+	}
+
+	// If a question was deferred while the user was typing and the input is
+	// now empty, promote it to the active dialog.
+	if m.pendingQuestion != nil && m.questionAsk == nil && m.input.Value() == "" {
+		m.questionAsk = newQuestionAskState(*m.pendingQuestion)
+		m.pendingQuestion = nil
+		m.refreshViewport()
+		m.vp.GotoBottom()
 	}
 
 	return m, tea.Batch(cmds...)

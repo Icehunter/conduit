@@ -402,6 +402,7 @@ type Model struct {
 	turnProviderKind  string                   // provider kind captured for transcript display metadata
 	pendingMessages   []string                 // messages typed while agent is running; drained after turn ends
 	questionAsk       *questionAskState        // non-nil when AskUserQuestion is waiting for user input
+	pendingQuestion   *questionAskMsg          // non-nil when a question arrived while user has unsent text
 	planApproval      *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
 	diffReview        *diffReviewState         // non-nil when diff-first review gate is open
 	todoStripHidden   bool                     // ctrl+t toggles; strip is shown by default when todos present

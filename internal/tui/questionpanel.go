@@ -22,15 +22,47 @@ type questionAskState struct {
 	selected   []bool // multi-select checked state per option
 	textMode   bool   // Tab was pressed — show free-text input instead
 	textBuf    string // text typed in textMode
+
+	// guardFirstKey swallows the first key after the dialog opens so a
+	// keystroke already in flight (user was typing when the popup appeared)
+	// cannot auto-select or auto-submit. Esc/ctrl+c pass through so the
+	// user can dismiss immediately.
+	guardFirstKey bool
 }
 
 // submitIdx returns the virtual index for the "Submit" button in multi-select.
 func (q *questionAskState) submitIdx() int { return len(q.options) }
 
+// newQuestionAskState constructs a questionAskState from a questionAskMsg with
+// guardFirstKey set so the first keypress after the dialog opens is swallowed.
+func newQuestionAskState(msg questionAskMsg) *questionAskState {
+	return &questionAskState{
+		question:      msg.question,
+		options:       msg.options,
+		multi:         msg.multi,
+		reply:         msg.reply,
+		focusedIdx:    0,
+		selected:      make([]bool, len(msg.options)),
+		textMode:      len(msg.options) == 0,
+		guardFirstKey: true,
+	}
+}
+
 // handleQuestionKey handles all keyboard input while the question dialog is active.
 func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	q := m.questionAsk
 	key := msg.String()
+
+	// Focus guard: swallow the first key after the dialog opens so a
+	// keystroke already in flight cannot auto-select or auto-submit.
+	// Esc and ctrl+c pass through so the user can dismiss immediately.
+	if q.guardFirstKey {
+		q.guardFirstKey = false
+		if key != "esc" && key != "ctrl+c" {
+			m.questionAsk = q
+			return m, nil
+		}
+	}
 
 	// sendAnswer closes the dialog, posts the answer to the reply channel as a
 	// tea.Cmd (non-blocking), and adds the answer to the chat log.
@@ -143,7 +175,9 @@ func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 
 	default:
-		// Numeric quick-pick: "1".."9"
+		// Numeric focus: "1".."9" moves focus (single-select) or toggles+focuses (multi).
+		// In single-select, Enter is required to confirm — digits no longer instant-submit
+		// so a stray digit in flight cannot auto-select.
 		if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
 			n := int(key[0] - '1')
 			if n < numOpts {
@@ -151,12 +185,7 @@ func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 					q.selected[n] = !q.selected[n]
 					q.focusedIdx = n
 				} else {
-					o := q.options[n]
-					answer := o.Value
-					if answer == "" {
-						answer = o.Label
-					}
-					return sendAnswer([]string{answer})
+					q.focusedIdx = n // focus only; Enter confirms
 				}
 			}
 		}
@@ -271,7 +300,7 @@ func (m Model) renderQuestionDialog() string {
 			}
 			sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Space toggle · Enter submit · Tab to type"))
 		} else {
-			sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1-9 quick pick · Tab to type"))
+			sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1-9 focus · Tab to type"))
 		}
 	}
 

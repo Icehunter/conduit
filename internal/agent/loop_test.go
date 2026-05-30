@@ -1133,3 +1133,87 @@ func TestLoop_EmitsUsageEventPerTurn(t *testing.T) {
 		t.Errorf("turn 2 usage = %+v, want input=20 output=8", usages[1])
 	}
 }
+
+// stopTurnTool is a fakeTool variant whose Execute returns StopTurn: true.
+type stopTurnTool struct {
+	name   string
+	result string
+}
+
+func (s *stopTurnTool) Name() string                             { return s.name }
+func (s *stopTurnTool) Description() string                      { return "stop-turn fake" }
+func (s *stopTurnTool) InputSchema() json.RawMessage             { return json.RawMessage(`{"type":"object"}`) }
+func (s *stopTurnTool) IsReadOnly(_ json.RawMessage) bool        { return true }
+func (s *stopTurnTool) IsConcurrencySafe(_ json.RawMessage) bool { return false }
+func (s *stopTurnTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
+	return tool.StopTurnResult(s.result), nil
+}
+
+// TestLoop_StopTurnHaltsAfterOneBatch verifies that when a tool returns
+// StopTurn: true the loop ends immediately after the tool batch without
+// making a second API call. The history must end with the tool_result block.
+func TestLoop_StopTurnHaltsAfterOneBatch(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&stopTurnTool{name: "Discuss", result: "stopped"})
+
+	var mu sync.Mutex
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(singleToolUseSSEForTool("Discuss", "toolu_stop_01")))
+	}))
+	defer srv.Close()
+
+	c := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "test"}, srv.Client())
+	lp := NewLoop(c, reg, LoopConfig{
+		Model:     "test-model",
+		MaxTokens: 1024,
+	})
+
+	history, err := lp.Run(context.Background(), []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "discuss"}}},
+	}, func(LoopEvent) {})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	got := requestCount
+	mu.Unlock()
+
+	if got != 1 {
+		t.Errorf("API requests = %d; want 1 (StopTurn should prevent second call)", got)
+	}
+
+	// History must end with a user message containing a tool_result block.
+	if len(history) == 0 {
+		t.Fatal("history is empty")
+	}
+	last := history[len(history)-1]
+	if last.Role != "user" {
+		t.Errorf("last history message role = %q; want %q", last.Role, "user")
+	}
+	foundResult := false
+	for _, blk := range last.Content {
+		if blk.Type == "tool_result" && blk.ToolUseID == "toolu_stop_01" {
+			foundResult = true
+		}
+	}
+	if !foundResult {
+		t.Errorf("history last message missing tool_result for toolu_stop_01: %+v", last)
+	}
+}
+
+// singleToolUseSSEForTool is like singleToolUseSSE but lets the caller pick
+// the tool name (singleToolUseSSE hard-codes "Bash").
+func singleToolUseSSEForTool(toolName, toolID string) string {
+	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + toolID + "\",\"name\":\"" + toolName + "\",\"input\":{}}}\n\n" +
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
+		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+}

@@ -105,6 +105,13 @@ type Result struct {
 	// successfully and reports an error result"; an err return means the
 	// tool itself blew up.
 	IsError bool
+	// StopTurn, when true, tells the agent loop to end the current turn
+	// after appending this tool_result — instead of making another API
+	// call. Used by tools that hand control back to the user (ExitPlanMode
+	// "discuss", AskUserQuestion dismiss) so the model does not keep
+	// proposing. The tool_result is still recorded in history; the model
+	// reads it plus the user's next message on the following turn.
+	StopTurn bool
 }
 
 // ResultBlock is a single content block in a tool's result.
@@ -119,6 +126,15 @@ type ResultBlock struct {
 // tool returns one block of text.
 func TextResult(text string) Result {
 	return Result{Content: []ResultBlock{{Type: "text", Text: text}}}
+}
+
+// StopTurnResult constructs a Result that signals the agent loop to end the
+// current turn and return control to the user. The tool_result is still
+// recorded in history so the model can read it on the next turn.
+func StopTurnResult(text string) Result {
+	r := TextResult(text)
+	r.StopTurn = true
+	return r
 }
 
 // ErrorResult constructs a Result that signals an in-band error.

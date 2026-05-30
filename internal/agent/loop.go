@@ -759,7 +759,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		// Execute tools, build a user message with all tool_results.
-		toolResults, err := l.executeTools(ctx, assistantBlocks, handler)
+		toolResults, stopTurn, err := l.executeTools(ctx, assistantBlocks, handler)
 		if err != nil {
 			return msgs, fmt.Errorf("agent: execute tools: %w", err)
 		}
@@ -767,6 +767,20 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			Role:    "user",
 			Content: toolResults,
 		})
+
+		// A tool requested that control return to the user (e.g. ExitPlanMode
+		// "discuss", AskUserQuestion dismiss). Treat it like end_turn: the
+		// assistant tool_use + user tool_result are both in history, so the
+		// conversation is valid. The TUI re-submits with the user's next message.
+		if stopTurn {
+			if l.cfg.OnEndTurn != nil {
+				l.cfg.OnEndTurn(msgs)
+			}
+			if l.cfg.BackgroundReviewer != nil {
+				l.cfg.BackgroundReviewer.OnEndTurn(ctx)
+			}
+			return msgs, nil
+		}
 
 		// Mid-turn pause hook (acceptEditsLive mode). If the callback signals
 		// that the user wants to review now, treat this as an end_turn: run

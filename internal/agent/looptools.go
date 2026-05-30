@@ -23,9 +23,10 @@ type toolTask struct {
 
 // toolResult holds the outcome of one tool execution.
 type toolResult struct {
-	idx     int
-	text    string
-	isError bool
+	idx      int
+	text     string
+	isError  bool
+	stopTurn bool
 }
 
 // executeTools runs all tool_use blocks in the assistant message sequentially
@@ -36,7 +37,7 @@ type toolResult struct {
 //  2. PreToolUse hooks (if configured).
 //  3. Tool execution.
 //  4. PostToolUse hooks (if configured).
-func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, error) { //nolint:unparam
+func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, bool, error) { //nolint:unparam
 	// Phase 1: collect tool_use blocks and run interactive checks serially
 	// (hooks + permission gate may prompt the user — must be sequential).
 	// server_tool_use blocks are intentionally skipped — they are executed
@@ -132,7 +133,7 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 	}
 
 	if len(tasks) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Phase 2: execute tools. Run concurrency-safe tools in parallel (bounded
@@ -189,7 +190,7 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				if len(res.Content) > 0 {
 					text = res.Content[0].Text
 				}
-				taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError}
+				taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError, stopTurn: res.StopTurn}
 			}()
 		}
 		wg.Wait()
@@ -213,13 +214,17 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if len(res.Content) > 0 {
 			text = res.Content[0].Text
 		}
-		taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError}
+		taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError, stopTurn: res.StopTurn}
 	}
 
 	// Phase 3: assemble results in original order + run PostToolUse hooks.
 	var results []api.ContentBlock
+	stopTurn := false
 	for i, task := range tasks {
 		tr := taskResults[i]
+		if tr.stopTurn {
+			stopTurn = true
+		}
 		// PostToolUse fires unconditionally — error results included — so hook
 		// authors that log or route tool activity see every outcome. Matches
 		// TS reference (runPostToolUseHooks fires without an isError guard).
@@ -240,7 +245,7 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			ResultContent: tr.text,
 		})
 	}
-	return results, nil
+	return results, stopTurn, nil
 }
 
 // toolPermissionInput extracts the meaningful string to match against permission

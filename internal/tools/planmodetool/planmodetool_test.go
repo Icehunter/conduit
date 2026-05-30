@@ -124,6 +124,9 @@ func TestExitPlanMode_ApprovedEnablesAutoMode(t *testing.T) {
 	if res.IsError {
 		t.Errorf("unexpected error: %v", res.Content)
 	}
+	if res.StopTurn {
+		t.Error("approved path should not set StopTurn")
+	}
 	if got != permissions.ModeBypassPermissions {
 		t.Errorf("mode = %v; want ModeBypassPermissions", got)
 	}
@@ -164,6 +167,9 @@ func TestExitPlanMode_RejectedKeepsPlanMode(t *testing.T) {
 	if !res.IsError {
 		t.Error("expected error result when plan rejected")
 	}
+	if res.StopTurn {
+		t.Error("rejected path should not set StopTurn")
+	}
 	if modeSet {
 		t.Error("SetMode should not be called when plan is rejected")
 	}
@@ -201,7 +207,10 @@ func TestExitPlanMode_DiscussReturnsNeutralTextResult(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	if res.IsError {
-		t.Error("Discuss path should return non-error TextResult, not an error")
+		t.Error("Discuss path should return non-error result, not an error")
+	}
+	if !res.StopTurn {
+		t.Error("Discuss path must set StopTurn = true to hand control back to user")
 	}
 	if modeSet {
 		t.Error("SetMode should not be called on Discuss path")

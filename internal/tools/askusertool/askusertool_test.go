@@ -20,6 +20,9 @@ func TestAskUserQuestion_ReturnsAnswer(t *testing.T) {
 	if res.IsError {
 		t.Errorf("unexpected error: %v", res.Content)
 	}
+	if res.StopTurn {
+		t.Error("real answer path must not set StopTurn")
+	}
 	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "option A") {
 		t.Errorf("result = %v; want option A", res.Content)
 	}
@@ -71,6 +74,9 @@ func TestAskUserQuestion_NoAnswer(t *testing.T) {
 	}
 	if res.IsError {
 		t.Error("expected non-error neutral result when user dismisses question")
+	}
+	if !res.StopTurn {
+		t.Error("dismiss path must set StopTurn = true to hand control back to user")
 	}
 	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "dismissed") {
 		t.Errorf("expected dismiss framing in result, got: %v", res.Content)

@@ -151,7 +151,7 @@ func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 
 	if !decision.Approved {
 		if decision.Discuss {
-			return tool.TextResult(
+			return tool.StopTurnResult(
 				"The user chose to discuss the plan further before approving. " +
 					"They did NOT reject it — do not assume what needs to change. " +
 					"Stay in plan mode and wait for their next message; read it carefully before revising anything. " +

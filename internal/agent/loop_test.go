@@ -1140,10 +1140,17 @@ type stopTurnTool struct {
 	result string
 }
 
-func (s *stopTurnTool) Name() string                             { return s.name }
-func (s *stopTurnTool) Description() string                      { return "stop-turn fake" }
-func (s *stopTurnTool) InputSchema() json.RawMessage             { return json.RawMessage(`{"type":"object"}`) }
-func (s *stopTurnTool) IsReadOnly(_ json.RawMessage) bool        { return true }
+func (s *stopTurnTool) Name() string                      { return s.name }
+func (s *stopTurnTool) Description() string               { return "stop-turn fake" }
+func (s *stopTurnTool) InputSchema() json.RawMessage      { return json.RawMessage(`{"type":"object"}`) }
+func (s *stopTurnTool) IsReadOnly(_ json.RawMessage) bool { return true }
+
+// IsConcurrencySafe returns false, routing this tool through the serial path.
+// Tools that yield control to the user (ExitPlanMode, AskUserQuestion) are by
+// definition not concurrency-safe — they block on user interaction and must
+// never run alongside other tools. The parallel path in looptools.go propagates
+// res.StopTurn identically (same one-liner), so the serial path is sufficient
+// to verify end-to-end StopTurn behavior without duplicating the test.
 func (s *stopTurnTool) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 func (s *stopTurnTool) Execute(_ context.Context, _ json.RawMessage) (tool.Result, error) {
 	return tool.StopTurnResult(s.result), nil

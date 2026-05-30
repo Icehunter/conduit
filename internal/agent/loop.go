@@ -773,6 +773,11 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		// assistant tool_use + user tool_result are both in history, so the
 		// conversation is valid. The TUI re-submits with the user's next message.
 		if stopTurn {
+			// Mirror the end_turn notification: StopTurn hands the turn back to the
+			// user, so the "ready" signal is equally applicable here.
+			if l.cfg.NotifyOnComplete {
+				hooks.Notify("conduit · ready", "Your turn.")
+			}
 			if l.cfg.OnEndTurn != nil {
 				l.cfg.OnEndTurn(msgs)
 			}

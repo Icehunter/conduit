@@ -206,7 +206,13 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 	case "ctrl+c":
 		if m.questionAsk != nil {
-			m.questionAsk.reply <- nil
+			// Non-blocking send: if the reader goroutine already exited via
+			// ctx.Done() the buffered slot may be full or gone — don't block
+			// the Bubble Tea event loop.
+			select {
+			case m.questionAsk.reply <- nil:
+			default:
+			}
 			m.questionAsk = nil
 			m.pendingQuestion = nil // goroutine unblocks via ctx.Done()
 		}

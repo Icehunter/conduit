@@ -45,9 +45,15 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (Model, tea.Cmd) {
 func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 	if m.questionAsk != nil {
 		// Cancel a pending AskUserQuestion — send nil so the tool returns
-		// "no answer" rather than blocking forever.
-		m.questionAsk.reply <- nil
+		// "no answer" rather than blocking forever. Use a non-blocking select
+		// in case the reader goroutine already exited via ctx.Done() and the
+		// buffered slot is full or has no reader.
+		select {
+		case m.questionAsk.reply <- nil:
+		default:
+		}
 		m.questionAsk = nil
+		m.pendingQuestion = nil
 	}
 	if m.running && m.cancelTurn != nil {
 		m.cancelTurn()

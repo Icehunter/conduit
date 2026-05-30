@@ -87,4 +87,7 @@ func TestPendingQuestion_PromotedOnInputClear(t *testing.T) {
 	if m3model.pendingQuestion != nil {
 		t.Fatal("pendingQuestion should be cleared after promotion")
 	}
+	if !m3model.questionAsk.guardFirstKey {
+		t.Error("promoted question dialog should have guardFirstKey set")
+	}
 }

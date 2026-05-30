@@ -208,8 +208,6 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if m.questionAsk != nil {
 			m.questionAsk.reply <- nil
 			m.questionAsk = nil
-		}
-		if m.pendingQuestion != nil {
 			m.pendingQuestion = nil // goroutine unblocks via ctx.Done()
 		}
 		if m.councilCancel != nil {

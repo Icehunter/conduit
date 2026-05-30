@@ -83,6 +83,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.running {
 				m = m.updateAtMatches()
 			}
+			// A consumed key (e.g. Backspace, Ctrl+C clearing the input) may have
+			// emptied the textarea. Promote any deferred question immediately so
+			// the dialog surfaces without waiting for the non-consumed code path.
+			if m.pendingQuestion != nil && m.questionAsk == nil && m.input.Value() == "" {
+				m.questionAsk = newQuestionAskState(*m.pendingQuestion)
+				m.pendingQuestion = nil
+				m.refreshViewport()
+				m.vp.GotoBottom()
+			}
 			return m, tea.Batch(cmds...)
 		}
 		// Not consumed — fall through so textarea and viewport get the key.

@@ -1,8 +1,8 @@
 {
-  "extracted_at": "2026-06-02T16:30:07.540Z",
-  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.160",
-  "binary_version": "2.1.160",
-  "version": "2.1.160",
+  "extracted_at": "2026-05-30T08:42:31.316Z",
+  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.158",
+  "binary_version": "2.1.158",
+  "version": "2.1.158",
   "cch": "<<bun-macro>>",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   "oauth_beta_header": "oauth-2025-04-20",
@@ -20,8 +20,6 @@
   ],
   "oauth_scopes": [
     "org:create_api_key",
-    "user:design:read",
-    "user:design:write",
     "user:file_upload",
     "user:inference",
     "user:mcp_servers",
@@ -36,5 +34,5 @@
   ],
   "discovered_headers": [],
   "cch_note": "Bun compile-time macro placeholder — actual value requires live mitmproxy capture",
-  "billing_template": "x-anthropic-billing-header: cc_version=2.1.160.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.160\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
+  "billing_template": "x-anthropic-billing-header: cc_version=2.1.158.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.158\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
 }

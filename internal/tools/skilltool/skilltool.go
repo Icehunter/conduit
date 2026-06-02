@@ -20,13 +20,14 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/skillusage"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
 // SubAgent is the minimal interface the SkillTool needs from the agent loop
 // to spawn a nested run.
 type SubAgent interface {
-	Run(ctx context.Context, messages []api.Message, handler func(interface{})) ([]api.Message, error)
+	Run(ctx context.Context, messages []api.Message, handler func(any)) ([]api.Message, error)
 }
 
 // Command is one resolved skill command, ready to execute.
@@ -135,5 +136,6 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("skilltool: %v", err)), nil
 	}
+	skillusage.BumpUse(name)
 	return tool.TextResult(result), nil
 }

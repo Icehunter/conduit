@@ -708,7 +708,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				Tools:      tools,
-				ExtraTools: []tool.Tool{skillmanagetool.New(cwd)},
+				ExtraTools: []tool.Tool{skillmanagetool.New(cwd, skillmanagetool.WithAgentProvenance())},
 				Background: true,
 				Mode:       permissions.ModeBypassPermissions,
 			})

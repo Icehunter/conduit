@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/skillusage"
 )
 
 const (
@@ -115,15 +119,65 @@ func RunCurator(ctx context.Context, cwd, projectDir string, runAgent func(ctx c
 		})
 	}()
 
-	prompt := buildCuratorPrompt(cwd, projectDir)
+	// Snapshot skills before mutating (best-effort).
+	if _, err := skillusage.Snapshot(); err != nil {
+		log.Printf("curator: pre-run snapshot failed: %v", err)
+	} else {
+		skillusage.PruneBackups(5)
+	}
+
+	// Apply deterministic lifecycle transitions (no LLM required).
+	transitions := skillusage.ApplyTransitions(time.Now(), 30, 90)
+	for _, tr := range transitions {
+		archiveAgentSkill(tr.Name)
+	}
+
+	agentSkills := skillusage.AgentCreatedNames()
+	prompt := buildCuratorPrompt(cwd, projectDir, agentSkills)
 	_, err := runAgent(ctx, prompt)
 	return err
 }
 
+// archiveAgentSkill moves an agent-created skill that has been marked archived
+// by ApplyTransitions from its live directory to ~/.conduit/skills/.archive/<name>/.
+// Errors are logged but not returned — the LLM curator pass continues regardless.
+func archiveAgentSkill(name string) {
+	conduitSkillsDir := filepath.Join(settings.ConduitDir(), "skills")
+	src := filepath.Join(conduitSkillsDir, name)
+	archiveDir := filepath.Join(conduitSkillsDir, ".archive")
+	dst := filepath.Join(archiveDir, name)
+
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return // already gone or never had a dir
+	}
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		log.Printf("curator: archive: mkdir %s: %v", archiveDir, err)
+		return
+	}
+	if err := os.Rename(src, dst); err != nil {
+		log.Printf("curator: archive: rename %s → %s: %v", src, dst, err)
+	}
+}
+
 // buildCuratorPrompt returns the weekly maintenance prompt for the curator agent.
-func buildCuratorPrompt(cwd, projectDir string) string {
+// agentSkills is the list of agent-created skill names to include in the prompt.
+func buildCuratorPrompt(cwd, projectDir string, agentSkills []string) string {
 	memDir := Path(cwd)
 	memFile := filepath.Join(memDir, EntrypointName)
+
+	var agentSkillsList string
+	if len(agentSkills) == 0 {
+		agentSkillsList = "none"
+	} else {
+		var sb strings.Builder
+		for _, s := range agentSkills {
+			sb.WriteString("- ")
+			sb.WriteString(s)
+			sb.WriteString("\n")
+		}
+		agentSkillsList = strings.TrimRight(sb.String(), "\n")
+	}
+
 	return fmt.Sprintf(`You are performing a weekly maintenance pass on this project's memory and skills.
 
 ## Memory maintenance
@@ -141,19 +195,26 @@ Use the Read and Write tools to update memory files directly. MEMORY.md is an in
 
 ## Skill maintenance
 
-Use the SkillManage tool (actions: list, view, update) to review skills:
-- List all available skills with action="list"
-- View each skill body with action="view" to check accuracy and relevance
+You are performing a CONSOLIDATION pass on agent-created skills. You must NEVER edit, archive, or delete user-authored or pinned skills.
+
+Agent-created skills available for review:
+%s
+
+Use SkillManage (actions: list, view, update) to review each of these skills:
+- View each skill body to check accuracy and relevance
 - Archive skills that are clearly obsolete by rewriting their body to start with "# ARCHIVED:" using action="update"
-- Merge skill pairs that address the same workflow by combining their content into one and archiving the other
+- Merge skill pairs that address the same workflow by combining content into one and archiving the other
+- Promote any project-scoped skill that you judge to be general-purpose: use action="promote" to move it to global-conduit scope
 - Keep skill bodies under 30 lines where possible
 
-Be conservative: when in doubt, keep rather than delete. Prefer merging into an existing skill over creating a new one.
+IMPORTANT: Only operate on the agent-created skills listed above. Do not modify any other skills.
+
+Be conservative: when in doubt, keep rather than delete.
 
 Project directory (session transcripts, for context): %s
 
 Return a brief summary of what you consolidated, updated, or pruned. If nothing changed, say so.`,
-		memFile, memDir, projectDir)
+		memFile, memDir, agentSkillsList, projectDir)
 }
 
 // loadCuratorState reads the curator state from projectDir/curator-state.json.

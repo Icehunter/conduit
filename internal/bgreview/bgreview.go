@@ -171,14 +171,36 @@ Be conservative: only save what's genuinely non-obvious and would help future se
 
 // skillReviewPrompt returns the skill review prompt for the background agent.
 func skillReviewPrompt() string {
-	return `Review this session and consider whether any reusable workflow should be captured as a skill.
+	return `Review this session and consider whether any reusable workflow should be captured or improved as a skill.
 
-You have access to the SkillManage tool (list, view, create, update actions).
+## Step 1: Gap detection
+First, list all available skills with SkillManage action="list". Did this session require a capability that NO existing skill covers? If yes, and a clear reusable pattern emerged, you should create a new skill.
 
-Priority order:
-1. UPDATE a skill that was used this session if you noticed improvements
-2. PATCH a skill that partially applies but could be made more general
-3. CREATE a new skill only if a clear reusable pattern emerged
+## Step 2: Choose scope deliberately
+For every create or promote operation, choose scope carefully:
+- Use scope="project" ONLY when the skill is specific to THIS repo (its particular file layout, build commands, config files, or project conventions). Future-you in a different repo would NOT benefit from it.
+- Use scope="global-conduit" for general skills — workflows, debugging patterns, tool usage patterns, communication patterns — that would help across ANY project. When unsure, prefer global-conduit.
+- If you spot an existing PROJECT-scoped skill that is actually general, use action="promote" to move it to global-conduit.
 
-Be active but conservative: most sessions produce at most one skill update. Prefer updating over creating.`
+## Step 3: Decision hierarchy (in order)
+1. PATCH/UPDATE a skill that was used or observed this session if you noticed an improvement
+2. UPDATE an existing umbrella skill if this session adds a useful case or refinement
+3. CREATE a new skill only when nothing covers this class of work
+4. PROMOTE a project-scoped skill to global-conduit if it turned out to be general
+
+Be active: most sessions produce at least one useful skill update or creation. A pass that does nothing is a missed learning opportunity — but only when there is genuinely something to capture.
+
+## What to capture
+- Treat user corrections and expressions of frustration as FIRST-CLASS skill signals. If the user had to redirect you, encode the lesson as a guardrail or step in the relevant skill.
+- Reusable approaches: multi-step workflows, debugging patterns, API usage patterns, tool sequences.
+- Fixes and solutions: capture THE FIX, not the failure. "When X fails, do Y" is useful. "X is broken" is harmful.
+
+## What NOT to capture — these HARDEN INTO REFUSALS the agent cites against itself
+- Environment-dependent failures ("the build broke because of a missing tool") — those are transient
+- Negative capability claims ("tool X doesn't support Y") unless you verified it authoritatively
+- One-off task narratives ("I helped the user refactor function Foo") — not reusable
+- Transient errors, network failures, flaky test results
+
+## Skill structure
+Skills should be class-level umbrella documents (rich SKILL.md + optional references/ files), not per-session notes. Each skill covers a TYPE of work, not a single instance.`
 }

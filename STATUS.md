@@ -164,7 +164,7 @@ coming, and what's intentionally out of scope.
 | Memory extraction (auto) | ✅ | Sub-agent fires on each end_turn |
 | Session memory summaries | ✅ | `summary.md` per session; injected on resume only when transcript history is unavailable (and size-capped) |
 | Auto-dream consolidation | ✅ | 24h + 5 session gate |
-| Curator (weekly memory+skill hygiene) | ✅ | fires after 7d or 10 sessions; consolidates duplicates, prunes stale entries |
+| Curator (weekly memory+skill hygiene) | ✅ | fires after 7d or 10 sessions; snapshot + deterministic transitions (active→stale 30d→archived 90d) before LLM consolidation; only touches agent-created non-pinned skills; promotes general project skills to global-conduit; `internal/memdir/curator.go` |
 | Session worktrees | ✅ | EnterWorktree / ExitWorktree |
 
 ---
@@ -183,8 +183,12 @@ coming, and what's intentionally out of scope.
 | Plugin output styles | ✅ | |
 | Bundled skills (`/simplify`, `/remember`) | ✅ | |
 | FS-based skill discovery (agentskills.io) | ✅ | `~/.conduit/skills/`, `~/.claude/skills/`, `<cwd>/.claude/skills/`; YAML frontmatter + `references/` support; `internal/skills/fsloader.go` |
-| Background memory/skill nudge prompts | ✅ | `/memory-review`, `/skill-review` bundled skills; `bgreview` fires every 5/7 end_turns |
-| SkillManage tool | ✅ | `internal/tools/skillmanagetool/`; create/view/update/list in project or global scope |
+| Background memory/skill nudge prompts | ✅ | `bgreview` fires every 5/7 end_turns; skill review is gap-driven (detects missing capability, creates skill if needed), scope-classified (project vs global-conduit), and hardened with "capture the fix not the failure" guardrails |
+| SkillManage tool | ✅ | `internal/tools/skillmanagetool/`; create/view/update/list/promote; project + global-conduit + global scopes; `WithAgentProvenance()` option marks agent-created skills; telemetry hooks into `internal/skillusage/` |
+| Skill usage telemetry | ✅ | `internal/skillusage/`; per-skill use/view/patch counts, provenance (agent vs user), lifecycle state, pinning; JSON store at `~/.conduit/skill-usage.json` |
+| Skill lifecycle transitions | ✅ | deterministic active→stale (30d) →archived (90d) idle transitions; pinned and user-authored skills exempt; runs in curator before LLM pass |
+| Skill backups + rollback | ✅ | `internal/skillusage/backup.go`; tar.gz snapshot of `~/.conduit/skills/` + `~/.claude/skills/` before every curator mutation; prune to 5 most recent; rollback with pre-rollback snapshot |
+| `/skills` subcommands | ✅ | `status`, `pin`, `unpin`, `backups`, `rollback` backed by `internal/skillusage/`; `internal/commands/skills.go` |
 
 ---
 

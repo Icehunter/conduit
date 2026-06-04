@@ -120,6 +120,7 @@ func (m Model) rebuildSystemCmd() tea.Cmd {
 	loop := m.cfg.Loop
 	claudeMd := m.cfg.ClaudeMd
 	skills := m.cfg.Skills
+	agents := m.cfg.Agents
 	mode := m.permissionMode
 	outputStyle := m.outputStylePrompt
 	outputStyleName := m.outputStyleName
@@ -131,7 +132,7 @@ func (m Model) rebuildSystemCmd() tea.Cmd {
 	return func() tea.Msg {
 		cwd, _ := os.Getwd()
 		mem := memdir.BuildPrompt(cwd)
-		base := agent.BuildSystemBlocks(mem, claudeMd, sessionProjectDir, skills...)
+		base := agent.BuildSystemBlocks(mem, claudeMd, sessionProjectDir, agents, skills...)
 
 		if outputStyle != "" {
 			base = append(base, api.SystemBlock{

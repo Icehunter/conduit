@@ -349,8 +349,9 @@ func runREPL(continueMode bool, resumeID string) error {
 		}
 	}
 
-	// Build skill listing for the system prompt.
+	// Build skill and agent listings for the system prompt.
 	skillEntries := app.BuildSkillEntries(loadedPlugins)
+	agentEntries := app.BuildAgentEntries(loadedPlugins)
 
 	// Load auto-memory: ensure the directory exists and build the full memory
 	// system-prompt block (type taxonomy + MEMORY.md content).
@@ -465,7 +466,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build system blocks; append prior session summary on resume so the
 	// new turn picks up where the previous one left off. Append (not
 	// prepend) keeps the Max wire fingerprint intact.
-	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsBuf.String(), projectDir, skillEntries...)
+	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsBuf.String(), projectDir, agentEntries, skillEntries...)
 	if strings.TrimSpace(priorSummary) != "" {
 		systemBlocks = append(systemBlocks, api.SystemBlock{
 			Type: "text",
@@ -744,6 +745,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		AskUser:                   rOpts.AskUser,
 		ClaudeMd:                  claudeMdPrompt + mcpInstructionsBuf.String(),
 		Skills:                    skillEntries,
+		Agents:                    agentEntries,
 		InitialOutputStyle:        s.OutputStyle,
 		InitialUsageStatusEnabled: usageStatusEnabled,
 		InitialLocalMode:          initialLocalMode,

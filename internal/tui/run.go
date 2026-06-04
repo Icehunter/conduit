@@ -122,6 +122,8 @@ type RunOptions struct {
 	ClaudeMd string
 	// Skills is the skill listing from the initial BuildSystemBlocks call.
 	Skills []agent.SkillEntry
+	// Agents is the agent types listing from the initial BuildSystemBlocks call.
+	Agents []agent.AgentEntry
 
 	// PendingEdits is the staging table for the diff-first review gate.
 	// When non-nil, end-of-turn triggers the diff review overlay if staged
@@ -517,6 +519,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		StartupWarnings:           runOpts.StartupWarnings,
 		ClaudeMd:                  runOpts.ClaudeMd,
 		Skills:                    runOpts.Skills,
+		Agents:                    runOpts.Agents,
 		SteerMessage:              runOpts.SteerMessage,
 		BackgroundModel: func() string {
 			if loop != nil {
@@ -564,7 +567,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				if m.cfg.Session != nil {
 					sessionProjectDir = m.cfg.Session.ProjectDir
 				}
-				baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, sessionProjectDir, m.cfg.Skills...)
+				baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, sessionProjectDir, m.cfg.Agents, m.cfg.Skills...)
 				styleBlock := api.SystemBlock{
 					Type: "text",
 					Text: "# Output style: " + s.Name + "\n\n" + s.Prompt,

@@ -191,6 +191,35 @@ type SkillEntry struct {
 	Description string
 }
 
+// AgentEntry is one item in the agent types listing.
+type AgentEntry struct {
+	Name        string
+	Description string
+}
+
+// AgentTypesReminder returns the system-reminder block injected when named
+// sub-agent types are available. Mirrors the real CC dynamic block that lists
+// available subagent_type values for the Task tool.
+func AgentTypesReminder(agents []AgentEntry) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("Available agent types for the Agent tool:\n")
+	for _, a := range agents {
+		desc := a.Description
+		if len([]rune(desc)) > 200 {
+			desc = string([]rune(desc)[:199]) + "…"
+		}
+		if desc != "" {
+			fmt.Fprintf(&sb, "- %s: %s\n", a.Name, desc)
+		} else {
+			fmt.Fprintf(&sb, "- %s\n", a.Name)
+		}
+	}
+	return sb.String()
+}
+
 // CoordinatorMCPNames can be set at startup to make BuildSystemBlocks inject
 // the connected MCP server names into the coordinator worker-context block.
 // Should be populated from the MCPManager before the first request.
@@ -217,7 +246,7 @@ var CoordinatorMCPNames []string
 //
 // 10. [optional] Coordinator system prompt + worker-tools context (volatile)
 // 11. [optional] Undercover instructions (volatile)
-func BuildSystemBlocks(memory, claudeMd string, projectDir string, skills ...SkillEntry) []api.SystemBlock {
+func BuildSystemBlocks(memory, claudeMd string, projectDir string, agents []AgentEntry, skills ...SkillEntry) []api.SystemBlock {
 	billing := BillingHeader
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
 		billing = v
@@ -248,6 +277,12 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, skills ...Ski
 		blocks = append(blocks, api.SystemBlock{
 			Type: "text",
 			Text: "# User's persistent memory\n\nThe following is loaded from MEMORY.md:\n\n" + memory,
+		})
+	}
+	if reminder := AgentTypesReminder(agents); reminder != "" {
+		blocks = append(blocks, api.SystemBlock{
+			Type: "text",
+			Text: "<system-reminder>\n" + reminder + "</system-reminder>",
 		})
 	}
 	if reminder := SkillsReminder(skills); reminder != "" {

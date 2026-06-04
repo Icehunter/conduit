@@ -31,7 +31,8 @@ import (
 const staticDescription = "Launch a sub-agent to handle a complex multi-step task. " +
 	"Provide a detailed `prompt` describing exactly what the sub-agent should do. " +
 	"Optionally supply a short `description` (shown in the UI while the agent runs). " +
-	"To see available named agent types, use ToolSearch select:Task."
+	"Available subagent_type values are listed in the system prompt under 'Available agent types'; " +
+	"if none match, omit the subagent_type field."
 
 // AgentDef is the runtime descriptor for a named sub-agent, provided by the
 // plugin agent registry.

@@ -151,9 +151,9 @@ func TestAgentTool_DescriptionIsStatic(t *testing.T) {
 			if strings.Contains(desc, "p:a") || strings.Contains(desc, "p:b") {
 				t.Error("Description() must not embed the agent catalog")
 			}
-			// Must still mention ToolSearch so the model knows where to look.
-			if !strings.Contains(desc, "ToolSearch") {
-				t.Error("Description() should reference ToolSearch for discovery")
+			// Must tell the model where to find subagent types.
+			if !strings.Contains(desc, "system prompt") {
+				t.Error("Description() should direct the model to the system prompt for agent type discovery")
 			}
 		})
 	}

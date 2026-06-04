@@ -44,6 +44,7 @@ func runPrint(args []string) error {
 	cwd, _ := os.Getwd()
 	loadedPlugins, _ := plugins.LoadAll(cwd)
 	skillEntries := app.BuildSkillEntries(loadedPlugins)
+	agentEntries := app.BuildAgentEntries(loadedPlugins)
 	_ = memdir.EnsureDir(cwd)
 	mem := memdir.BuildPrompt(cwd)
 	claudeMdFiles, _ := instructions.Load(cwd)
@@ -60,7 +61,7 @@ func runPrint(args []string) error {
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:               modelName,
 		MaxTokens:           internalmodel.MaxTokens,
-		System:              agent.BuildSystemBlocks(mem, claudeMdPrompt, memdir.Path(cwd), skillEntries...),
+		System:              agent.BuildSystemBlocks(mem, claudeMdPrompt, memdir.Path(cwd), agentEntries, skillEntries...),
 		Metadata:            app.BuildMetadata(),
 		MaxTurns:            50,
 		Gate:                gate,

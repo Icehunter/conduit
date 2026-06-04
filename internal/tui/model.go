@@ -366,6 +366,8 @@ type Config struct {
 	// Skills is the skill listing injected into the initial system blocks.
 	// Stored alongside ClaudeMd for the same reason.
 	Skills []agent.SkillEntry
+	// Agents is the agent types listing injected into the initial system blocks.
+	Agents []agent.AgentEntry
 
 	// SteerMessage, when non-nil, injects a user message into the running agent
 	// loop between tool-call batches instead of cancelling the current turn.

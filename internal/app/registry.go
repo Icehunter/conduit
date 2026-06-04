@@ -41,6 +41,21 @@ import (
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 )
 
+// BuildAgentEntries converts loaded plugin agents into AgentEntry values for
+// the system prompt agent types listing (the "Available agent types" reminder).
+func BuildAgentEntries(ps []*plugins.Plugin) []agent.AgentEntry {
+	var entries []agent.AgentEntry
+	for _, p := range ps {
+		for _, a := range p.Agents {
+			entries = append(entries, agent.AgentEntry{
+				Name:        a.QualifiedName,
+				Description: a.Description,
+			})
+		}
+	}
+	return entries
+}
+
 // BuildSkillEntries converts loaded plugin commands, plugin skills, and
 // bundled skills into SkillEntry values for the system prompt skill listing.
 func BuildSkillEntries(ps []*plugins.Plugin) []agent.SkillEntry {

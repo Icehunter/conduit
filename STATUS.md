@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-05-29
+Last updated: 2026-06-04
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -69,7 +69,7 @@ coming, and what's intentionally out of scope.
 | Exponential backoff (429) | ✅ | Base 1s, 2×, max 32s, jitter, 5 retries |
 | Conversation recovery | ✅ | Partial blocks persisted; orphan tool_use filtered on resume; auto-retries after tool_use/tool_result chain validation errors by sanitizing history |
 | Mid-turn steering | ✅ | Message injected between tool batches; agent pivots without losing context |
-| Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/` |
+| Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/`; sub-agent token usage recorded in session JSONL via `OnSubAgentUsage` (P1); child loops capped at 50 turns via `DefaultSubAgentMaxTurns` (P4) |
 | Coordinator mode | ✅ | Claude as orchestrator; task-notification XML |
 | Council mode | ✅ | Parallel multi-model debate, synthesis, convergence detection, roles, voting |
 | Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options; "chat about this" (Discuss:true) yields the turn — agent stops and waits for user input |

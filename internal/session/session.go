@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -46,7 +47,14 @@ type Entry struct {
 }
 
 // Session manages the JSONL transcript for one conversation.
+//
+// Session is safe for concurrent use: Append and all methods that call it are
+// protected by an internal mutex. ReplaceHistory and TruncateLines hold the
+// same lock for the duration of their atomic file replacement, so they are
+// also safe to call concurrently with Append (e.g. from the agent loop and
+// an OnSubAgentUsage callback running concurrently).
 type Session struct {
+	mu         sync.Mutex
 	ID         string
 	ProjectDir string
 	FilePath   string
@@ -145,10 +153,10 @@ func ImportLegacyProject(cwd string) (int, error) {
 			continue
 		}
 		destPath := filepath.Join(ProjectDirInConfig(cwd, settings.ConduitDir()), e.Name())
-		if _, err := os.Stat(destPath); err == nil {
+		if _, statErr := os.Stat(destPath); statErr == nil {
 			continue
-		} else if err != nil && !os.IsNotExist(err) {
-			return imported, fmt.Errorf("session: stat %s: %w", destPath, err)
+		} else if !os.IsNotExist(statErr) {
+			return imported, fmt.Errorf("session: stat %s: %w", destPath, statErr)
 		}
 		if _, err := ImportForWrite(cwd, filepath.Join(legacyDir, e.Name())); err != nil {
 			return imported, err
@@ -171,7 +179,7 @@ func New(cwd, sessionID string) (*Session, error) {
 	}, nil
 }
 
-// Append writes one entry to the JSONL file.
+// Append writes one entry to the JSONL file. Safe for concurrent use.
 func (s *Session) Append(entry Entry) error {
 	entry.SessionID = s.ID
 	if entry.Timestamp == 0 {
@@ -181,6 +189,8 @@ func (s *Session) Append(entry Entry) error {
 	if err != nil {
 		return fmt.Errorf("session: marshal: %w", err)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	f, err := os.OpenFile(s.FilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("session: open: %w", err)
@@ -256,7 +266,10 @@ func (s *Session) Snapshot() int {
 // messages. Non-message metadata entries (custom-title, session_settings,
 // cost, etc.) are preserved so session labels and settings survive compaction.
 // Used by manual /compact to keep the on-disk state consistent with memory.
+// Safe for concurrent use.
 func (s *Session) ReplaceHistory(msgs []api.Message, summary string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Read existing entries; keep everything that isn't a message or summary
 	// (custom-title, session_settings, cost — anything we might want later).
 	data, err := os.ReadFile(s.FilePath)
@@ -264,7 +277,7 @@ func (s *Session) ReplaceHistory(msgs []api.Message, summary string) error {
 		return fmt.Errorf("session: compact read %s: %w", s.FilePath, err)
 	}
 	var metaLines []string
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -327,8 +340,10 @@ func (s *Session) ReplaceHistory(msgs []api.Message, summary string) error {
 // lines, then atomically renames it over the original. This is used by the
 // /rewind command to remove turns from the on-disk transcript so /resume
 // reflects the rewound state. A no-op if n >= the current line count or if
-// the file doesn't exist.
+// the file doesn't exist. Safe for concurrent use.
 func (s *Session) TruncateLines(n int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, err := os.ReadFile(s.FilePath)
 	if err != nil {
 		if os.IsNotExist(err) {

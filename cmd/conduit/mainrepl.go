@@ -510,6 +510,12 @@ func runREPL(continueMode bool, resumeID string) error {
 				_ = sess.AppendFileAccess(op, path)
 			}
 		},
+		OnSubAgentUsage: func(subModel string, usage api.Usage) {
+			if sess != nil {
+				costUSD := api.CostUSDForModel(subModel, usage)
+				_ = sess.AppendCost(usage.InputTokens, usage.OutputTokens, costUSD)
+			}
+		},
 		OnEndTurn: func(history []api.Message) {
 			snapshot := make([]api.Message, len(history))
 			copy(snapshot, history)

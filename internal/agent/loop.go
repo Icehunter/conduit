@@ -48,6 +48,12 @@ import (
 const maxConcurrentTools = 4
 const maxToolUseRecoveries = 2
 
+// DefaultSubAgentMaxTurns is applied to child loops whose MaxTurns was 0
+// (unbounded). The parent loop's own limit (50 in mainrepl.go) is inherited
+// via the copied config, so this only affects loops that never set a cap
+// (e.g. background reviewers, council members, tests).
+const DefaultSubAgentMaxTurns = 50
+
 // EventType identifies what kind of loop event the caller receives.
 type EventType int
 
@@ -158,6 +164,13 @@ type LoopConfig struct {
 	// OnFileAccess is called after each file tool execution with the operation
 	// ("read" or "write") and the file path. Used to populate /files output.
 	OnFileAccess func(op, path string)
+
+	// OnSubAgentUsage is called after a sub-agent loop completes with the model
+	// name and aggregated token usage across all turns of that sub-agent. Used
+	// to record sub-agent cost events in the session JSONL so that Task tool
+	// charges appear in ledger output. Runs in the agent-loop goroutine; callers
+	// must not assume TUI goroutine context.
+	OnSubAgentUsage func(model string, usage api.Usage)
 
 	// OnEndTurn fires after each end_turn (no tool_use) with the up-to-date
 	// message history. Mirrors CC's post-Stop extractMemories trigger. The

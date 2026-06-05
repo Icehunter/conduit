@@ -107,12 +107,25 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 		childClient = spec.Client
 	}
 
+	// Cap subagent iterations at DefaultSubAgentMaxTurns unless the parent
+	// explicitly configured a higher limit. The parent loop's own MaxTurns
+	// (set to 50 in mainrepl.go) is inherited, so this only affects loops that
+	// did not set a limit (e.g. bgreview, council, tests with MaxTurns=0).
+	//
+	// Note: there is no way to request an explicitly unbounded child loop.
+	// MaxTurns=0 in a child LoopConfig is always replaced by DefaultSubAgentMaxTurns.
+	// If an unbounded child is ever needed, introduce a dedicated sentinel value.
+	if childCfg.MaxTurns == 0 {
+		childCfg.MaxTurns = DefaultSubAgentMaxTurns
+	}
+
 	// Strip side-effect callbacks — same as runSubAgentWithModel.
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
 	childCfg.OnToolBatchComplete = nil
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
+	childCfg.OnSubAgentUsage = nil    // child sub-agents report to their own parent
 	childCfg.BackgroundReviewer = nil // sub-agents must not chain-trigger reviews
 	childCfg.Model = model
 	if spec.MaxTokens > 0 {
@@ -214,6 +227,14 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	})
 	durationMs := time.Since(start).Milliseconds()
 
+	// Report sub-agent token cost to the parent session ledger.
+	l.mu.RLock()
+	onSubAgentUsage := l.cfg.OnSubAgentUsage
+	l.mu.RUnlock()
+	if onSubAgentUsage != nil && totalUsage.InputTokens+totalUsage.OutputTokens > 0 {
+		onSubAgentUsage(model, totalUsage)
+	}
+
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
 	if coordinator.IsActive() {
@@ -288,6 +309,18 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	childCfg := l.cfg
 	l.mu.RUnlock()
 
+	// Cap subagent iterations at DefaultSubAgentMaxTurns unless the parent
+	// explicitly configured a higher limit. The parent loop's own MaxTurns
+	// (set to 50 in mainrepl.go) is inherited, so this only affects loops that
+	// did not set a limit (e.g. bgreview, council, tests with MaxTurns=0).
+	//
+	// Note: there is no way to request an explicitly unbounded child loop.
+	// MaxTurns=0 in a child LoopConfig is always replaced by DefaultSubAgentMaxTurns.
+	// If an unbounded child is ever needed, introduce a dedicated sentinel value.
+	if childCfg.MaxTurns == 0 {
+		childCfg.MaxTurns = DefaultSubAgentMaxTurns
+	}
+
 	// Sub-agents must not fire parent-session side effects. Strip callbacks
 	// and notifications so a sub-agent end_turn doesn't send desktop pings
 	// or re-trigger memory extraction / session-memory updates.
@@ -296,6 +329,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	childCfg.OnToolBatchComplete = nil
 	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
+	childCfg.OnSubAgentUsage = nil    // child sub-agents report to their own parent
 	childCfg.BackgroundReviewer = nil // sub-agents must not chain-trigger reviews
 
 	// Clone the permission gate so child mutations don't affect the parent.
@@ -359,7 +393,25 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}
-	history, err := child.Run(ctx, msgs, subAgentEventHandler(childID))
+	var totalUsage api.Usage
+	baseHandler := subAgentEventHandler(childID)
+	history, err := child.Run(ctx, msgs, func(ev LoopEvent) {
+		baseHandler(ev)
+		if ev.Type == EventUsage {
+			totalUsage.InputTokens += ev.Usage.InputTokens
+			totalUsage.OutputTokens += ev.Usage.OutputTokens
+			totalUsage.CacheCreationInputTokens += ev.Usage.CacheCreationInputTokens
+			totalUsage.CacheReadInputTokens += ev.Usage.CacheReadInputTokens
+		}
+	})
+
+	// Report sub-agent token cost to the parent session ledger.
+	l.mu.RLock()
+	onSubAgentUsage := l.cfg.OnSubAgentUsage
+	l.mu.RUnlock()
+	if onSubAgentUsage != nil && totalUsage.InputTokens+totalUsage.OutputTokens > 0 {
+		onSubAgentUsage(model, totalUsage)
+	}
 
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 

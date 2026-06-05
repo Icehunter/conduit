@@ -328,3 +328,214 @@ func TestApply_DedupIdenticalCandidates(t *testing.T) {
 		t.Errorf("expected 3 dedup markers; got %d", dupMarkers)
 	}
 }
+
+// imgMsg builds a user message containing a single image block with the given base64 data.
+func imgMsg(data string) api.Message {
+	return api.Message{
+		Role: "user",
+		Content: []api.ContentBlock{
+			{
+				Type: "image",
+				Source: &api.ImageSource{
+					Type:      "base64",
+					MediaType: "image/png",
+					Data:      data,
+				},
+			},
+		},
+	}
+}
+
+// docMsg builds a user message containing a single document block.
+func docMsg(data string) api.Message {
+	return api.Message{
+		Role: "user",
+		Content: []api.ContentBlock{
+			{
+				Type: "document",
+				Source: &api.ImageSource{
+					Type:      "base64",
+					MediaType: "application/pdf",
+					Data:      data,
+				},
+			},
+		},
+	}
+}
+
+// pastTime returns a time far enough in the past to trigger microcompact.
+func pastTime() time.Time {
+	return time.Now().Add(-2 * time.Hour)
+}
+
+func TestApply_ImageElision(t *testing.T) {
+	const imgData = "aGVsbG8gd29ybGQ=" // base64 "hello world"
+
+	tests := []struct {
+		name              string
+		messages          []api.Message
+		keepRecent        int
+		wantImagesCleared int
+		wantImagesKept    int // images/documents with original source remaining
+	}{
+		{
+			name: "single image keepRecent=1: kept",
+			messages: []api.Message{
+				imgMsg(imgData),
+			},
+			keepRecent:        1,
+			wantImagesCleared: 0,
+			wantImagesKept:    1,
+		},
+		{
+			name: "two images keepRecent=1: first cleared, last kept",
+			messages: []api.Message{
+				imgMsg(imgData),
+				imgMsg(imgData),
+			},
+			keepRecent:        1,
+			wantImagesCleared: 1,
+			wantImagesKept:    1,
+		},
+		{
+			name: "three images keepRecent=2: first cleared, last two kept",
+			messages: []api.Message{
+				imgMsg(imgData),
+				imgMsg(imgData),
+				imgMsg(imgData),
+			},
+			keepRecent:        2,
+			wantImagesCleared: 1,
+			wantImagesKept:    2,
+		},
+		{
+			name: "document blocks cleared same as images",
+			messages: []api.Message{
+				docMsg(imgData),
+				docMsg(imgData),
+				docMsg(imgData),
+			},
+			keepRecent:        1,
+			wantImagesCleared: 2,
+			wantImagesKept:    1,
+		},
+		{
+			name: "keepRecent=0 floored to 1: last image kept",
+			messages: []api.Message{
+				imgMsg(imgData),
+				imgMsg(imgData),
+				imgMsg(imgData),
+			},
+			keepRecent:        0,
+			wantImagesCleared: 2,
+			wantImagesKept:    1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Apply(tt.messages, pastTime(), DefaultThreshold, tt.keepRecent)
+
+			clearedCount := 0
+			keptCount := 0
+			for _, m := range got.Messages {
+				for _, b := range m.Content {
+					if b.Type == "text" && (b.Text == imageClearedMsg || b.Text == documentClearedMsg) {
+						clearedCount++
+					} else if b.Type == "image" || b.Type == "document" {
+						keptCount++
+					}
+				}
+			}
+			if clearedCount != tt.wantImagesCleared {
+				t.Errorf("clearedCount = %d; want %d", clearedCount, tt.wantImagesCleared)
+			}
+			if keptCount != tt.wantImagesKept {
+				t.Errorf("keptCount = %d; want %d", keptCount, tt.wantImagesKept)
+			}
+			if got.ImagesCleared != tt.wantImagesCleared {
+				t.Errorf("Result.ImagesCleared = %d; want %d", got.ImagesCleared, tt.wantImagesCleared)
+			}
+			if tt.wantImagesCleared > 0 && !got.Triggered {
+				t.Error("expected Triggered=true when images cleared")
+			}
+		})
+	}
+}
+
+func TestApply_ImageElisionMixedWithToolResults(t *testing.T) {
+	// Mix of tool_results (via assistant turn) and image user messages.
+	// keepRecent=1 should clear old tool_results AND old images independently.
+	const imgData = "dGVzdA==" // base64 "test"
+
+	in := []api.Message{
+		// Old tool_use + result (will be cleared by tool_result pass)
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "tool_use", ID: "t1", Name: "Bash"}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "t1", ResultContent: strings.Repeat("old result\n", 20)}}},
+		// Old image (will be cleared by image pass)
+		imgMsg(imgData),
+		// Recent tool_use + result (kept)
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "tool_use", ID: "t2", Name: "Bash"}}},
+		{Role: "user", Content: []api.ContentBlock{{Type: "tool_result", ToolUseID: "t2", ResultContent: "recent result"}}},
+		// Recent image (kept)
+		imgMsg(imgData),
+	}
+
+	got := Apply(in, pastTime(), DefaultThreshold, 1)
+	if !got.Triggered {
+		t.Fatal("expected trigger")
+	}
+
+	// Check tool_result clearing.
+	for _, m := range got.Messages {
+		for _, b := range m.Content {
+			if b.ToolUseID == "t1" && !isPlaceholder(b.ResultContent) {
+				t.Errorf("old tool_result t1 was not cleared; got %q", b.ResultContent)
+			}
+			if b.ToolUseID == "t2" && isPlaceholder(b.ResultContent) {
+				t.Errorf("recent tool_result t2 was cleared but should be kept")
+			}
+		}
+	}
+
+	// Check image clearing.
+	imgCleared := 0
+	imgKept := 0
+	for _, m := range got.Messages {
+		for _, b := range m.Content {
+			if b.Type == "text" && b.Text == imageClearedMsg {
+				imgCleared++
+			} else if b.Type == "image" {
+				imgKept++
+			}
+		}
+	}
+	if imgCleared != 1 {
+		t.Errorf("imgCleared = %d; want 1", imgCleared)
+	}
+	if imgKept != 1 {
+		t.Errorf("imgKept = %d; want 1", imgKept)
+	}
+	if got.ImagesCleared != 1 {
+		t.Errorf("Result.ImagesCleared = %d; want 1", got.ImagesCleared)
+	}
+}
+
+func TestApply_ImageElisionIdempotent(t *testing.T) {
+	const imgData = "dGVzdA==" // base64 "test"
+	in := []api.Message{
+		imgMsg(imgData),
+		imgMsg(imgData),
+	}
+
+	first := Apply(in, pastTime(), DefaultThreshold, 1)
+	if first.ImagesCleared != 1 {
+		t.Fatalf("first pass: ImagesCleared = %d; want 1", first.ImagesCleared)
+	}
+
+	// Second pass on already-cleared messages: should not double-clear.
+	second := Apply(first.Messages, pastTime(), DefaultThreshold, 1)
+	if second.ImagesCleared != 0 {
+		t.Errorf("second pass: ImagesCleared = %d; want 0 (idempotent)", second.ImagesCleared)
+	}
+}

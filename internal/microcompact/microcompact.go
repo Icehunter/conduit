@@ -27,6 +27,12 @@ import (
 // 1-liners produced by informativePlaceholder are used for new clears.
 const ClearedMessage = "[Old tool result content cleared]"
 
+// imageClearedMsg is the placeholder text block substituted for cleared image blocks.
+const imageClearedMsg = "[image content cleared]"
+
+// documentClearedMsg is the placeholder text block substituted for cleared document blocks.
+const documentClearedMsg = "[document content cleared]"
+
 // DefaultThreshold matches CC's gapThresholdMinutes default. The server's
 // prompt cache has a 1h TTL — past that, the prefix would be re-tokenized
 // regardless, so clearing is free.
@@ -56,11 +62,12 @@ func KeepRecent() int {
 
 // Result describes what changed.
 type Result struct {
-	Messages    []api.Message
-	TokensSaved int
-	Cleared     int // number of tool_results replaced
-	Kept        int // number of tool_results kept intact
-	Triggered   bool
+	Messages      []api.Message
+	TokensSaved   int
+	Cleared       int // number of tool_results replaced
+	Kept          int // number of tool_results kept intact
+	ImagesCleared int // number of image/document blocks replaced
+	Triggered     bool
 }
 
 // Apply runs time-based microcompact on messages. lastAssistantTime is
@@ -99,8 +106,10 @@ func ApplyWithContext(messages []api.Message, lastAssistantTime time.Time, thres
 		}
 	}
 	if len(ids) <= keepRecent {
-		// Nothing to clear — every tool_result is in the keep window.
-		return Result{Messages: messages, Kept: len(ids)}
+		// No tool_results to clear — every tool_result is in the keep window.
+		// Still continue to the image/document pass: images can need clearing
+		// even in conversations with few or no tool invocations.
+		return applyImagePass(messages, keepRecent, Result{Messages: messages, Kept: len(ids)})
 	}
 
 	// Task 3.8: token-budget keep sizing.
@@ -141,9 +150,9 @@ func ApplyWithContext(messages []api.Message, lastAssistantTime time.Time, thres
 		if keepN > keepRecent {
 			keepRecent = keepN
 		}
-		// Re-check: if all IDs fit in the budget, nothing to do.
+		// Re-check: if all IDs fit in the budget, no tool_results to clear.
 		if len(ids) <= keepRecent {
-			return Result{Messages: messages, Kept: len(ids)}
+			return applyImagePass(messages, keepRecent, Result{Messages: messages, Kept: len(ids)})
 		}
 	}
 
@@ -285,19 +294,107 @@ func ApplyWithContext(messages []api.Message, lastAssistantTime time.Time, thres
 		}
 	}
 
-	// Record metrics
 	totalCleared := cleared + dupCleared
 	totalSaved := saved + dupSaved
-	if totalCleared > 0 {
-		sessionstats.SessionMetrics.RecordMicrocompact(totalSaved)
-	}
 
-	return Result{
+	// Pass 2: elide old image/document blocks.
+	// RecordMicrocompact is called once inside applyImagePass with the combined
+	// tool_result + image savings, avoiding a double-count on the call counter.
+	return applyImagePass(out, keepRecent, Result{
 		Messages:    out,
 		TokensSaved: totalSaved,
 		Cleared:     totalCleared,
 		Kept:        keepRecent,
 		Triggered:   totalCleared > 0,
+	})
+}
+
+// applyImagePass elides old image and document blocks in user messages,
+// keeping the last keepRecent such blocks intact. It merges the result into
+// base (accumulating TokensSaved, ImagesCleared, Triggered) and returns it.
+// Messages are taken from base.Messages so tool_result pass output flows through.
+func applyImagePass(messages []api.Message, keepRecent int, base Result) Result {
+	// Collect (msgIdx, blockIdx) for every image/document block across all user messages.
+	type imgRef struct {
+		msgIdx   int // index into messages
+		blockIdx int // index into message.Content
+	}
+	var imgRefs []imgRef
+	for i, m := range messages {
+		if m.Role != "user" {
+			continue
+		}
+		for j, b := range m.Content {
+			if b.Type == "image" || b.Type == "document" {
+				imgRefs = append(imgRefs, imgRef{msgIdx: i, blockIdx: j})
+			}
+		}
+	}
+
+	if len(imgRefs) <= keepRecent {
+		// All image/document blocks fit within the keep window.
+		return base
+	}
+
+	// Work on a copy of the messages slice so we don't mutate the caller's slice.
+	out := make([]api.Message, len(messages))
+	copy(out, messages)
+
+	imagesSaved := 0
+	imagesCleared := 0
+
+	// Track which message indices have already had their content slice copied
+	// (copy-on-write: allocate once per message).
+	copiedMsg := make(map[int]bool)
+	toClear := imgRefs[:len(imgRefs)-keepRecent]
+	for _, ref := range toClear {
+		b := out[ref.msgIdx].Content[ref.blockIdx]
+		// Idempotency: if the block is already a text placeholder, skip it.
+		// (Blocks already cleared are type "text", not "image"/"document".)
+		if b.Type == "text" {
+			continue
+		}
+		// Determine placeholder text and estimate token savings.
+		placeholder := imageClearedMsg
+		if b.Type == "document" {
+			placeholder = documentClearedMsg
+		}
+		dataLen := 0
+		if b.Source != nil {
+			dataLen = len(b.Source.Data)
+		}
+		imagesSaved += dataLen / 4 // base64 bytes → token heuristic
+
+		// Copy-on-write: allocate a new content slice for this message only once.
+		if !copiedMsg[ref.msgIdx] {
+			newContent := make([]api.ContentBlock, len(out[ref.msgIdx].Content))
+			copy(newContent, out[ref.msgIdx].Content)
+			out[ref.msgIdx].Content = newContent
+			copiedMsg[ref.msgIdx] = true
+		}
+		out[ref.msgIdx].Content[ref.blockIdx] = api.ContentBlock{
+			Type: "text",
+			Text: placeholder,
+		}
+		imagesCleared++
+	}
+
+	// Record one combined metric per Apply call: tool_result savings (carried in
+	// base.TokensSaved) plus image savings from this pass. This prevents the
+	// double-count that would occur if both the tool_result pass and this pass
+	// called RecordMicrocompact independently.
+	combinedSaved := base.TokensSaved + imagesSaved
+	if base.Triggered || imagesCleared > 0 {
+		sessionstats.SessionMetrics.RecordMicrocompact(combinedSaved)
+	}
+
+	return Result{
+		Messages:      out,
+		TokensSaved:   base.TokensSaved + imagesSaved,
+		Cleared:       base.Cleared,
+		Kept:          base.Kept,
+		ImagesCleared: imagesCleared,
+		Triggered:     base.Triggered || imagesCleared > 0,
 	}
 }
 
@@ -347,7 +444,7 @@ func informativePlaceholder(b api.ContentBlock, toolName string) string {
 	case "Grep", "ripgrep":
 		// Count non-empty lines as matches.
 		matches := 0
-		for _, line := range strings.Split(content, "\n") {
+		for line := range strings.SplitSeq(content, "\n") {
 			if strings.TrimSpace(line) != "" {
 				matches++
 			}
@@ -399,10 +496,7 @@ func extractBashExitCode(content string) int {
 // file contents directly.
 func extractReadPath(content string) string {
 	// Look for a line that looks like a file path (starts with / or ./).
-	firstLine := content
-	if idx := strings.IndexByte(content, '\n'); idx >= 0 {
-		firstLine = content[:idx]
-	}
+	firstLine, _, _ := strings.Cut(content, "\n")
 	firstLine = strings.TrimSpace(firstLine)
 	if strings.HasPrefix(firstLine, "/") || strings.HasPrefix(firstLine, "./") || strings.HasPrefix(firstLine, "../") {
 		return firstLine

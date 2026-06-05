@@ -130,11 +130,21 @@ func (c *Client) SetAuthToken(tok string) {
 }
 
 func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
-	if req == nil || !cfg.StripCacheControlScope {
+	if req == nil {
+		return req
+	}
+	// Strip conduit-internal model suffixes (e.g. "[1m]") before the model ID
+	// reaches the wire. These suffixes control context-window and beta-header
+	// behaviour internally but are not valid Anthropic API model identifiers.
+	hasSuffix := strings.HasSuffix(strings.ToLower(req.Model), "[1m]")
+	if !cfg.StripCacheControlScope && !hasSuffix {
 		return req
 	}
 	out := *req
-	if len(req.System) > 0 {
+	if hasSuffix {
+		out.Model = req.Model[:len(req.Model)-4]
+	}
+	if cfg.StripCacheControlScope && len(req.System) > 0 {
 		out.System = append([]SystemBlock(nil), req.System...)
 		for i := range out.System {
 			if out.System[i].CacheControl == nil || out.System[i].CacheControl.Scope == "" {
@@ -187,8 +197,10 @@ func (anthropicMessagesTransport) CreateMessage(ctx context.Context, c *Client, 
 	}
 
 	// withRetry handles 429 with exponential backoff, mirroring StreamMessage.
+	// Pass req.Model (original, pre-sanitize) so filterBetasForModel can see any
+	// conduit-internal suffixes (e.g. "[1m]") and gate beta headers correctly.
 	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
-		return c.do(ctx, body, req2.Model)
+		return c.do(ctx, body, req.Model)
 	})
 	if err != nil {
 		return nil, err

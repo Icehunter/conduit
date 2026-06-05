@@ -15,19 +15,42 @@ func TestFilterBetasForModel(t *testing.T) {
 		"effort-2025-11-24",
 	}
 
+	// All betas except context-1m, which is suppressed for non-[1m] models.
+	allBetasNo1M := []string{
+		"claude-code-20250219",
+		"oauth-2025-04-20",
+		"interleaved-thinking-2025-05-14",
+		"context-management-2025-06-27",
+		"effort-2025-11-24",
+	}
+
 	tests := []struct {
 		name  string
 		model string
 		want  []string
 	}{
 		{
-			name:  "sonnet passes all betas",
+			// sonnet without [1m] suffix: context-1m beta suppressed.
+			name:  "sonnet strips context-1m (no [1m] suffix)",
 			model: "claude-sonnet-4-6",
+			want:  allBetasNo1M,
+		},
+		{
+			// opus without [1m] suffix: context-1m beta suppressed.
+			name:  "opus strips context-1m (no [1m] suffix)",
+			model: "claude-opus-4-7",
+			want:  allBetasNo1M,
+		},
+		{
+			// sonnet with [1m] suffix: context-1m beta passed through.
+			name:  "sonnet[1m] keeps context-1m beta",
+			model: "claude-sonnet-4-6[1m]",
 			want:  allBetas,
 		},
 		{
-			name:  "opus passes all betas",
-			model: "claude-opus-4-7",
+			// opus with [1m] suffix: context-1m beta passed through.
+			name:  "opus[1m] keeps context-1m beta",
+			model: "claude-opus-4-7[1m]",
 			want:  allBetas,
 		},
 		{
@@ -61,14 +84,16 @@ func TestFilterBetasForModel(t *testing.T) {
 			},
 		},
 		{
-			name:  "empty model passes all",
+			// Empty model string: no [1m] suffix, so context-1m is suppressed.
+			name:  "empty model strips context-1m",
 			model: "",
-			want:  allBetas,
+			want:  allBetasNo1M,
 		},
 		{
-			name:  "unknown model passes all",
+			// Unknown non-[1m] model: context-1m suppressed.
+			name:  "unknown model strips context-1m",
 			model: "some-other-provider/model-v1",
-			want:  allBetas,
+			want:  allBetasNo1M,
 		},
 		{
 			name:  "models/ path prefix stripped before match",

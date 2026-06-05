@@ -47,6 +47,7 @@ regression appears.
 
 | Area | CC behavior | Conduit behavior | Why |
 |------|-------------|-----------------|-----|
+| Context window default | Auto-1M for sonnet-4/opus-4 | 200K default for all models; 1M requires explicit `[1m]` suffix (e.g. `claude-sonnet-4-6[1m]`); `context-1m-2025-08-07` beta header gated the same way | Context growth control; 80% micro-compact threshold fires at ~160K instead of ~800K, preventing runaway input token accumulation |
 | `ExitPlanMode` approval | Returns bool | Returns `PlanApprovalDecision` struct; user picks auto/accept-edits/default/chat | Richer plan flow with council path |
 | System prompt | Byte-identical to CC TS | Conduit-authored equivalent | Avoids IP reproduction; same behavioral sections |
 | BashTool on Windows | `BashTool` registered | `Shell` (PowerShell) registered instead | Go `os/exec` on Windows uses PowerShell |

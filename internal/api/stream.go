@@ -63,8 +63,10 @@ func (anthropicMessagesTransport) StreamMessage(ctx context.Context, c *Client, 
 		return nil, fmt.Errorf("api: marshal stream request: %w", err)
 	}
 
+	// Pass req.Model (original, pre-sanitize) so filterBetasForModel can see any
+	// conduit-internal suffixes (e.g. "[1m]") and gate beta headers correctly.
 	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
-		return c.doStream(ctx, body, req2.Model)
+		return c.doStream(ctx, body, req.Model)
 	})
 	if err != nil {
 		return nil, err

@@ -78,13 +78,19 @@ const (
 )
 
 // ContextWindowFor returns the context window for the named model (200K default,
-// 1M for models that contain "sonnet-4" or "opus-4" or end with "[1m]").
-// Mirrors getContextWindowForModel in the TS source. The
-// CLAUDE_CODE_AUTO_COMPACT_WINDOW env var can cap the returned value.
+// 1M only when the name ends with "[1m]").
+//
+// Conduit intentionally diverges from CC here: CC auto-promotes sonnet-4 and
+// opus-4 to 1M, which delays compaction until ~800K tokens. Conduit defaults to
+// 200K so the 80% micro-compact threshold fires at ~160K, preventing runaway
+// context growth. Users who need 1M append "[1m]" to the model name (e.g.
+// "claude-sonnet-4-6[1m]"). See COMPATIBILITY.md § Intentional divergences.
+//
+// The CLAUDE_CODE_AUTO_COMPACT_WINDOW env var can further cap the returned value.
 func ContextWindowFor(name string) int {
 	n := strings.ToLower(name)
 	window := ContextWindowDefault
-	if strings.HasSuffix(n, "[1m]") || strings.Contains(n, "sonnet-4") || strings.Contains(n, "opus-4") {
+	if strings.HasSuffix(n, "[1m]") {
 		window = ContextWindow1M
 	}
 	if cap := contextWindowOverride(); cap > 0 && cap < window {
@@ -171,6 +177,16 @@ func contextWindowOverride() int {
 		}
 	}
 	return 0
+}
+
+// StripSuffix removes conduit-internal model suffixes from a model name before
+// it is sent to the API. Suffixes like "[1m]" signal capabilities internally
+// but are not valid model IDs on the wire.
+func StripSuffix(name string) string {
+	if strings.HasSuffix(strings.ToLower(name), "[1m]") {
+		return name[:len(name)-4]
+	}
+	return name
 }
 
 // Resolve returns the model name to use, applying priority order.

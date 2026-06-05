@@ -27,8 +27,23 @@ var modelBetaDenylist = map[string][]string{
 // filterBetasForModel returns a copy of betas with any entries that are
 // denylisted for the given model removed. Safe to call with an empty or
 // nil betas slice; always returns a non-nil slice.
+//
+// In addition to the per-family denylist, context-1m-2025-08-07 is suppressed
+// for any model that does NOT carry an explicit "[1m]" suffix. Conduit defaults
+// to a 200K context window; sending the 1M-context beta to non-opt-in models
+// is misleading and inconsistent with the actual window in use.
 func filterBetasForModel(betas []string, model string) []string {
 	deny := betaDenylistForModel(model)
+
+	// Gate context-1m beta on explicit opt-in via [1m] suffix.
+	wants1M := strings.HasSuffix(strings.ToLower(model), "[1m]")
+	if !wants1M {
+		if deny == nil {
+			deny = make(map[string]bool)
+		}
+		deny["context-1m-2025-08-07"] = true
+	}
+
 	if len(deny) == 0 {
 		return betas
 	}

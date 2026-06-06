@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-06-04
+Last updated: 2026-06-06
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -67,9 +67,11 @@ coming, and what's intentionally out of scope.
 | Extended thinking (`/effort`) | ✅ | low/medium/high/max budgets |
 | Fast mode (`/fast`) | ✅ | Toggles Haiku; ⚡ badge |
 | Exponential backoff (429) | ✅ | Base 1s, 2×, max 32s, jitter, 5 retries |
+| Retry-compact on stream failure | ✅ | Before each stream-failure retry the history payload is microcompacted when estimated size exceeds cw/4, preventing unbounded token amplification across retries |
+| Non-streaming request timeout | ✅ | `CreateMessage` wraps every call in a 5-minute `context.WithTimeout`; a trickling server cannot stall the loop indefinitely |
 | Conversation recovery | ✅ | Partial blocks persisted; orphan tool_use filtered on resume; auto-retries after tool_use/tool_result chain validation errors by sanitizing history |
 | Mid-turn steering | ✅ | Message injected between tool batches; agent pivots without losing context |
-| Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/`; sub-agent token usage recorded in session JSONL via `OnSubAgentUsage` (P1); child loops capped at 50 turns via `DefaultSubAgentMaxTurns` (P4) |
+| Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/`; sub-agent token usage recorded in session JSONL via `OnSubAgentUsage`; child loops capped at 50 turns (`DefaultSubAgentMaxTurns`); cap returns `ErrMaxTurnsExceeded` — TUI shows a soft notice, subagent result carries an incomplete marker so the parent model knows the child was truncated rather than finished |
 | Coordinator mode | ✅ | Claude as orchestrator; task-notification XML |
 | Council mode | ✅ | Parallel multi-model debate, synthesis, convergence detection, roles, voting |
 | Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options; "chat about this" (Discuss:true) yields the turn — agent stops and waits for user input |
@@ -83,7 +85,7 @@ coming, and what's intentionally out of scope.
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| BashTool | ✅ | RTK filtering; Unix/macOS. Windows: Shell (PowerShell) instead |
+| BashTool | ✅ | RTK filtering; Unix/macOS. Windows: Shell (PowerShell) instead; logs to stderr when raw output exceeds the 120 KB pre-RTK capture cap so silent tail-drops are visible |
 | FileReadTool | ✅ | Line-range support |
 | FileWriteTool | ✅ | |
 | FileEditTool | ✅ | Exact-string replacement |
@@ -100,7 +102,7 @@ coming, and what's intentionally out of scope.
 | EnterPlanMode / ExitPlanMode | ✅ | |
 | EnterWorktree / ExitWorktree | ✅ | git worktree add/remove |
 | EnterAutoMode / ExitAutoMode | ✅ | Conduit-original; bypassPermissions with user consent |
-| AskUserQuestion | ✅ | Dismiss (Esc/ctrl+c) yields the turn (agent stops, waits for user); digit keys focus option only, Enter confirms; popup deferred while user has unsent draft (focus guard swallows first key) |
+| AskUserQuestion | ✅ | Dismiss (Esc/ctrl+c) yields the turn (agent stops, waits for user); digit keys focus option only, Enter confirms; all async-opened overlays (permission prompt, plan approval, diff review, AskUserQuestion) swallow the first non-Esc keystroke to prevent buffered keystrokes from auto-accepting dialogs |
 | ConfigTool | ✅ | get/set/allow/deny/env |
 | MCPTool | ✅ | MCP tool proxy |
 | ListMcpResources / ReadMcpResource | ✅ | |
@@ -225,6 +227,8 @@ coming, and what's intentionally out of scope.
 | Settings panel | ✅ | Status, Config, Stats, Usage, Providers, Accounts tabs |
 | Rate limit display | ✅ | `anthropic-ratelimit-*` headers; <20% warning |
 | Claude plan usage footer | ✅ | 5h/7d windows; `/toggle-usage` |
+| Async-dialog keystroke guard | ✅ | Permission prompt, plan approval, diff review, and AskUserQuestion overlays each carry `guardFirstKey`; the first non-Esc key after async open is swallowed, preventing buffered Enter/Space from auto-accepting |
+| Mid-agent draft preservation | ✅ | Queued messages drain to the input box only when it is empty; an arriving `agentDone` event never clobbers an in-progress draft |
 | `conduit serve` (local server) | 🔲 | C-O4: session/message/event endpoints |
 | `conduit attach` (attach client) | 🔲 | C-O4 |
 | Multi-session switcher panel | 🔲 | C-O5: depends on server spine |
@@ -271,6 +275,7 @@ coming, and what's intentionally out of scope.
 | Model-aware overflow detection | ✅ | `UsableContext()`, `CheckOverflow()`; 80% micro, 95% full compact thresholds |
 | Configurable limits | ✅ | `conduit.json` `toolOutput.maxLines/maxBytes`, `compaction.keepRecent` |
 | Token savings metrics | ✅ | `sessionstats.SessionMetrics`: RTK, truncate, microcompact, compact counters |
+| Usage observability | ✅ | stderr logs on `message_delta` decode failure (turn token counts lost) and on OpenAI-compat streams that end without usage data; silent zero-counts are now visible |
 
 ---
 

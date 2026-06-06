@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.160` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.167` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.94.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -36,7 +36,7 @@ Run `make verify-wire` to check these against the current upstream fingerprint.
 
 ## Active beta headers
 
-Conduit sends 11 beta headers. Upstream CC v2.1.160 advertises 2 via the
+Conduit sends 11 beta headers. Upstream CC v2.1.167 advertises 2 via the
 extractor pattern. The extras are valid API features — this is marked DIVERGED
 in `verify.mjs`, not a blocking incompatibility. Capture with mitmproxy if a
 regression appears.
@@ -60,11 +60,11 @@ regression appears.
 
 ## Wire sync log
 
-### 2.1.153 → 2.1.160 (2026-05-28)
+### 2.1.153 → 2.1.167 (2026-05-28)
 
 | Item | Action |
 |------|--------|
-| `Version` | Bumped to `2.1.160` in `cmd/conduit/main.go` |
+| `Version` | Bumped to `2.1.167` in `cmd/conduit/main.go` |
 | New model `claude-opus-4-8` | Added to builtin catalog; 1M context window, thinking=true, same pricing tier as opus 4.7 |
 | 15 new betas in upstream registry | All are per-request, conditional, or LaunchDarkly-gated — none added to global `betaHeaders` |
 

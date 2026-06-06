@@ -286,8 +286,12 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	if err != nil {
 		return SubAgentResult{DurationMs: durationMs}, err
 	}
+	text := extractLastAssistantText(history)
+	if text == "" {
+		text = "[Subagent completed without producing text output]"
+	}
 	return SubAgentResult{
-		Text:       extractLastAssistantText(history),
+		Text:       text,
 		Usage:      totalUsage,
 		ToolUses:   countToolUses(history),
 		DurationMs: durationMs,
@@ -483,7 +487,11 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	if err != nil {
 		return "", err
 	}
-	return extractLastAssistantText(history), nil
+	text := extractLastAssistantText(history)
+	if text == "" {
+		text = "[Subagent completed without producing text output]"
+	}
+	return text, nil
 }
 
 // subAgentEventHandler returns a LoopEvent handler that forwards tool events

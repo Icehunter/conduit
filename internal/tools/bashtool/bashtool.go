@@ -289,6 +289,11 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// can see the full stream before we hard-cap it. RTK classifiers often
 	// achieve 10x reduction, so filtering first means the tail-drop cap never
 	// discards content that RTK would have kept.
+	if overflowed {
+		// The subprocess exceeded the in-memory capture cap (4×MaxOutputBytes).
+		// RTK never saw the tail; log so the silent truncation is discoverable.
+		fmt.Fprintf(os.Stderr, "conduit: bashtool: command %q output exceeded %d bytes; tail silently dropped before RTK filter\n", in.Command, int64(MaxOutputBytes)*4)
+	}
 	rawOutput := strings.TrimRight(string(rawOut), "\n")
 	filtered := rtk.Filter(in.Command, rawOutput)
 	if filtered.SavedBytes > 0 {

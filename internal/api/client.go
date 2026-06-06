@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // AnthropicVersion is the value sent for the `anthropic-version` header on
@@ -188,8 +189,21 @@ func (c *Client) doWithRetryAndAuth(ctx context.Context, send func() (*http.Resp
 	return withRetry(ctx, send)
 }
 
+// nonStreamingTimeout is the per-request deadline applied to CreateMessage
+// calls. Streaming calls are excluded — they can take minutes. 5 minutes is
+// generous for a non-streaming response; a trickling server won't hang forever.
+const nonStreamingTimeout = 5 * time.Minute
+
 // CreateMessage performs a non-streaming POST /v1/messages?beta=true.
 func (anthropicMessagesTransport) CreateMessage(ctx context.Context, c *Client, req *MessageRequest) (*MessageResponse, error) {
+	// Apply a per-request timeout for non-streaming calls. The caller's ctx
+	// may have no deadline (e.g. context.Background()), leaving the request
+	// open indefinitely if the server trickles bytes. Streaming calls do not
+	// use CreateMessage, so this timeout is safe to apply unconditionally.
+	tctx, cancel := context.WithTimeout(ctx, nonStreamingTimeout)
+	defer cancel()
+	ctx = tctx
+
 	req2 := sanitizeAnthropicRequest(req, c.cfg)
 	body, err := json.Marshal(req2)
 	if err != nil {

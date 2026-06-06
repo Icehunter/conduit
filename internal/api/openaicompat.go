@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/sse"
@@ -627,6 +628,11 @@ func convertOpenAIStream(body io.ReadCloser, writer *io.PipeWriter, fallbackMode
 	if finalUsage != nil {
 		usage["input_tokens"] = finalUsage.PromptTokens
 		usage["output_tokens"] = finalUsage.CompletionTokens
+	} else {
+		// The upstream provider did not send a usage chunk. Token counts for
+		// this turn will be zero, causing compaction thresholds and cost
+		// tracking to undercount. Log so the gap is visible when debugging.
+		fmt.Fprintf(os.Stderr, "conduit: openaicompat: stream ended without usage data; token counts will be zero for this turn\n")
 	}
 	if err := writeAnthropicEvent("message_delta", map[string]any{
 		"type":  "message_delta",

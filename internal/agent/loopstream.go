@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -135,6 +136,9 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 		case "message_delta":
 			md, err := ev.AsMessageDelta()
 			if err != nil {
+				// A malformed message_delta loses output_tokens and stop_reason
+				// for this turn. Log so token undercounts are not silent.
+				fmt.Fprintf(os.Stderr, "conduit: drainStream: message_delta decode error (usage/stop_reason lost): %v\n", err)
 				continue
 			}
 			stopReason = md.Delta.StopReason

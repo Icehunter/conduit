@@ -673,6 +673,8 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			if streamFailures > 3 {
 				return msgs, fmt.Errorf("agent: stream: %w", err)
 			}
+			// Compact before resending — avoids amplifying a large payload on each retry.
+			msgs = retryCompact(msgs, lastAssistantTime, contextWindow, model)
 			handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: streamFailures, RetryErr: err})
 			continue
 		}
@@ -724,6 +726,8 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				}
 				return msgs, fmt.Errorf("agent: drain: %w", err)
 			}
+			// Compact before resending — avoids amplifying a large payload on each retry.
+			msgs = retryCompact(msgs, lastAssistantTime, contextWindow, model)
 			handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: streamFailures, RetryErr: err})
 			continue
 		}
@@ -924,6 +928,32 @@ func applyHistoryBreakpoints(msgs []api.Message, priorBreakpoints int) []api.Mes
 		out[idx].Content = newContent
 	}
 	return out
+}
+
+// retryCompact applies microcompact to the history before a retry so the
+// re-sent payload is smaller than the payload that just failed. Only runs when
+// the estimated message size exceeds a quarter of the context window; tiny
+// histories are left unchanged.
+func retryCompact(msgs []api.Message, seed time.Time, contextWindow int, model string) []api.Message {
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		return msgs
+	}
+	estimated := len(raw) / 4
+	cw := contextWindow
+	if cw <= 0 {
+		cw = internalmodel.ContextWindowFor(model)
+	}
+	if estimated < cw/4 {
+		return msgs
+	}
+	if seed.IsZero() {
+		seed = time.Now().Add(-time.Hour)
+	}
+	if r := microcompact.Apply(msgs, seed, 0, microcompact.DefaultKeepRecent); r.Triggered {
+		return r.Messages
+	}
+	return msgs
 }
 
 // countSystemBreakpoints returns the number of cache_control breakpoints set

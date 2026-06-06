@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/auth"
@@ -241,6 +242,29 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 				m.tallyTokens()
 			}
 		}
+	} else if errors.Is(msg.err, agent.ErrMaxTurnsExceeded) {
+		// Turn cap reached — not a fatal error. Adopt the history and usage
+		// that accumulated up to the cap, just like a clean end_turn, then
+		// surface a soft notice so the user knows the conversation was bounded.
+		m.history = m.annotateTurnProvider(msg.history)
+		if msg.usage.InputTokens > 0 || msg.usage.OutputTokens > 0 {
+			m.applyAPIUsage(msg.usage, msg.contextInputTokens)
+		} else {
+			m.tallyTokens()
+		}
+		turnCostDelta := m.costUSD - m.prevCostUSD
+		if turnCostDelta > 0 {
+			m.turnCosts = append(m.turnCosts, turnCostDelta)
+			if m.cfg.Live != nil {
+				m.cfg.Live.AppendTurnCost(turnCostDelta)
+			}
+		}
+		m.prevCostUSD = m.costUSD
+		m.persistNewMessages(msg.history)
+		m.messages = append(m.messages, Message{
+			Role:    RoleSystem,
+			Content: "Turn limit reached. Send a message to continue.",
+		})
 	} else if msg.err != nil {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
 		// Persist any assistant turns that completed before the error (e.g.
@@ -315,22 +339,15 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		}
 	}
 
-	// Drain pending messages: if the user typed while we were running,
-	// auto-submit the first queued message now. Subsequent ones will be
-	// sent in future agentDoneMsg cycles.
-	if len(m.pendingMessages) > 0 {
-		// Preserve any text the user is actively typing so it isn't lost.
-		liveInput := strings.TrimSpace(m.input.Value())
+	// Drain pending messages: if the user typed a complete message while we
+	// were running, auto-submit the first queued message now. Only drain when
+	// the input is empty — if the user is mid-typing, leave their draft and
+	// the queue intact. The generic Update tail drains pending messages
+	// whenever the input empties (mirrors the pendingQuestion promotion).
+	if len(m.pendingMessages) > 0 && strings.TrimSpace(m.input.Value()) == "" {
 		next := m.pendingMessages[0]
 		m.pendingMessages = m.pendingMessages[1:]
-		// If the user is mid-typing something new, push it back so it fires
-		// after the pending message rather than being silently overwritten.
-		if liveInput != "" && liveInput != next {
-			m.pendingMessages = append([]string{liveInput}, m.pendingMessages...)
-		}
-		// Inject into input so the normal submit path fires.
 		m.input.SetValue(next)
-		// Send the synthetic Enter key to trigger submission.
 		cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
 	}
 

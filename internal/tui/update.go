@@ -127,10 +127,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case permissionAskMsg:
 		m.permPrompt = &permissionPromptState{
-			toolName:  msg.toolName,
-			toolInput: msg.toolInput,
-			reply:     msg.reply,
-			selected:  0,
+			toolName:      msg.toolName,
+			toolInput:     msg.toolInput,
+			reply:         msg.reply,
+			selected:      0,
+			guardFirstKey: true,
 		}
 		m.refreshViewport()
 		return m, nil
@@ -539,6 +540,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingQuestion = nil
 		m.refreshViewport()
 		m.vp.GotoBottom()
+	}
+
+	// If pending messages are queued and the input is now empty (and no agent
+	// is running), drain the first one. This fires when the user clears or
+	// submits a draft that was blocking the drain in handleAgentDone, ensuring
+	// typed-while-running messages are not permanently lost.
+	if len(m.pendingMessages) > 0 && !m.running && strings.TrimSpace(m.input.Value()) == "" {
+		next := m.pendingMessages[0]
+		m.pendingMessages = m.pendingMessages[1:]
+		m.input.SetValue(next)
+		cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
 	}
 
 	return m, tea.Batch(cmds...)

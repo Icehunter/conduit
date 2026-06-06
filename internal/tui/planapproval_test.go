@@ -12,14 +12,16 @@ import (
 )
 
 // makePlanApprovalModel constructs a minimal Model with a populated
-// plan-approval state. width is the screen width; the modal renders inside
-// a typical chat-viewport rect.
+// plan-approval state. The guard is cleared so direct handlePlanApprovalKey
+// calls exercise the key-handling logic without triggering the first-key guard
+// (the guard itself is tested in TestPlanApproval_GuardFirstKey below).
 func makePlanApprovalModel(t *testing.T, plan string) Model {
 	t.Helper()
 	m := Model{width: 100, height: 40}
 	reply := make(chan planmodetool.PlanApprovalDecision, 1)
 	// 80x20 inner viewport: matches a real-world inset modal at 100x40.
 	m.planApproval = newPlanApprovalState(plan, reply, 80, 20)
+	m.planApproval.guardFirstKey = false // guard tests are in TestPlanApproval_GuardFirstKey
 	return m
 }
 
@@ -166,5 +168,66 @@ func TestPlanApproval_RecordPlanRectPositionsViewport(t *testing.T) {
 	}
 	if got.Dy() != m.planApproval.vp.Height() {
 		t.Errorf("planRect height = %d, want %d", got.Dy(), m.planApproval.vp.Height())
+	}
+}
+
+// TestPlanApproval_GuardFirstKey verifies that the first keystroke after the
+// plan-approval modal opens is swallowed (so an in-flight Enter from the user's
+// text box cannot auto-approve the plan). The guard resets after one key, so
+// the second identical key should act normally.
+func TestPlanApproval_GuardFirstKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		passThru bool // esc/ctrl+c bypass the guard
+	}{
+		{"enter swallowed", "enter", false},
+		{"space swallowed", " ", false},
+		{"1 swallowed", "1", false},
+		{"down swallowed", "down", false},
+		{"esc passes through", "esc", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reply := make(chan planmodetool.PlanApprovalDecision, 1)
+			m := Model{width: 100, height: 40}
+			m.planApproval = newPlanApprovalState("stub plan", reply, 80, 20)
+			// Guard must be set by newPlanApprovalState.
+			if !m.planApproval.guardFirstKey {
+				t.Fatal("guardFirstKey should be true after newPlanApprovalState")
+			}
+
+			m2, cmd := m.handlePlanApprovalKey(makeKey(tt.key))
+			if tt.passThru {
+				// Esc should close the modal immediately (Discuss decision).
+				if m2.planApproval != nil {
+					t.Error("esc should bypass the guard and close the modal")
+				}
+				if cmd == nil {
+					t.Error("esc should produce a command")
+				}
+			} else {
+				// Key should be swallowed: modal stays open, no command, guard cleared.
+				if m2.planApproval == nil {
+					t.Error("modal should still be open after guard swallow")
+				}
+				if cmd != nil {
+					t.Errorf("key %q should be swallowed (no cmd) but got a command", tt.key)
+				}
+				if m2.planApproval.guardFirstKey {
+					t.Error("guardFirstKey should be false after first key is swallowed")
+				}
+				// Second identical key must now act normally (e.g. "1" should commit).
+				if tt.key == "1" {
+					m3, cmd2 := m2.handlePlanApprovalKey(makeKey("1"))
+					if cmd2 == nil {
+						t.Error("second key '1' should produce a command after guard clears")
+					}
+					if m3.planApproval != nil {
+						t.Error("modal should be closed after second key '1'")
+					}
+				}
+			}
+		})
 	}
 }

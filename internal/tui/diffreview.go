@@ -93,6 +93,12 @@ type diffReviewState struct {
 	noteInput string
 
 	diffVP viewport.Model
+
+	// guardFirstKey swallows the first key after the overlay opens so a
+	// keystroke already in flight (e.g. an Enter mid-press when the agent
+	// finished a batch) cannot immediately approve or revert a hunk.
+	// Esc/ctrl+c pass through so the user can dismiss immediately.
+	guardFirstKey bool
 }
 
 // newDiffReviewState constructs the overlay from a list of drained pending edits.
@@ -100,7 +106,7 @@ type diffReviewState struct {
 // call resizes them to fit the modal frame.
 func newDiffReviewState(entries []pendingedits.Entry, reply chan<- DiffReviewResult) *diffReviewState {
 	const initW, initH = 80, 24
-	dr := &diffReviewState{reply: reply}
+	dr := &diffReviewState{reply: reply, guardFirstKey: true}
 	dr.entries = make([]diffReviewEntry, len(entries))
 	for i, e := range entries {
 		lines := pendingedits.Diff(e.OrigContent, e.NewContent)
@@ -223,6 +229,17 @@ func (m Model) handleDiffReviewKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	dr := m.diffReview
 	if dr == nil {
 		return m, nil
+	}
+	// Focus guard: swallow the first key after the overlay opens so a
+	// keystroke already in flight cannot immediately approve or revert a hunk.
+	// Esc/ctrl+c pass through so the user can dismiss or revert-all immediately.
+	if dr.guardFirstKey {
+		dr.guardFirstKey = false
+		key := msg.String()
+		if key != "esc" && key != "ctrl+c" {
+			m.diffReview = dr
+			return m, nil
+		}
 	}
 
 	close := func(result DiffReviewResult) (Model, tea.Cmd) {

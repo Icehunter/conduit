@@ -54,6 +54,13 @@ const maxToolUseRecoveries = 2
 // (e.g. background reviewers, council members, tests).
 const DefaultSubAgentMaxTurns = 50
 
+// ErrMaxTurnsExceeded is returned by Run when the loop exhausts its MaxTurns
+// budget before reaching a natural end_turn. Callers should treat it as a
+// soft limit rather than a fatal error: the conversation history in the first
+// return value reflects the state at the cap. Foreground callers may surface a
+// soft notice; subagent callers should mark the result as potentially incomplete.
+var ErrMaxTurnsExceeded = errors.New("agent: max turns exceeded")
+
 // EventType identifies what kind of loop event the caller receives.
 type EventType int
 
@@ -531,7 +538,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			return msgs, ctx.Err()
 		}
 		if l.cfg.MaxTurns > 0 && turn >= l.cfg.MaxTurns {
-			return msgs, nil
+			return msgs, ErrMaxTurnsExceeded
 		}
 		turn++
 		msgs = session.FilterUnresolvedToolUses(msgs)

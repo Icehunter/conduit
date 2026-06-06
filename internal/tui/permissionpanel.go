@@ -12,6 +12,11 @@ type permissionPromptState struct {
 	toolInput string
 	reply     chan<- permissionReply
 	selected  int // 0=Allow once, 1=Always allow, 2=Deny
+
+	// guardFirstKey swallows the first key after the dialog opens so a
+	// keystroke already in flight (user was typing when the prompt appeared)
+	// cannot auto-accept the tool. Esc/ctrl+c pass through immediately.
+	guardFirstKey bool
 }
 
 var permissionOptions = []string{"Allow once", "Always allow", "Deny"}
@@ -19,6 +24,18 @@ var permissionOptions = []string{"Allow once", "Always allow", "Deny"}
 // handlePermissionKey routes keys to the permission modal.
 func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	p := m.permPrompt
+	// Focus guard: swallow the first key after the dialog opens so a
+	// keystroke already in flight (e.g. the Enter that was mid-press when
+	// the agent triggered a permission check) cannot auto-accept the tool.
+	// Esc and ctrl+c bypass the guard so the user can dismiss immediately.
+	if p.guardFirstKey {
+		p.guardFirstKey = false
+		key := msg.String()
+		if key != "esc" && key != "ctrl+c" {
+			m.permPrompt = p
+			return m, nil
+		}
+	}
 	switch msg.String() {
 	case "up", "left", "shift+tab":
 		if p.selected > 0 {

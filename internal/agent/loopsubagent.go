@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -238,7 +239,7 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
 	if coordinator.IsActive() {
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrMaxTurnsExceeded) {
 			notif := coordinator.TaskNotification(
 				agentID, "failed",
 				fmt.Sprintf("Agent failed: %v", err),
@@ -248,14 +249,40 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 		}
 		toolUses := countToolUses(history)
 		text := extractLastAssistantText(history)
+		summary := "Agent completed"
+		if errors.Is(err, ErrMaxTurnsExceeded) {
+			summary = "Agent reached turn limit; response may be incomplete"
+			if text != "" {
+				text += "\n\n[Note: agent reached its turn limit; response may be incomplete]"
+			} else {
+				text = "[Agent reached its turn limit without producing text output]"
+			}
+		}
 		notif := coordinator.TaskNotification(
 			agentID, "completed",
-			"Agent completed",
+			summary,
 			text, 0, toolUses, durationMs,
 		)
 		return SubAgentResult{Text: notif, Usage: totalUsage, ToolUses: toolUses, DurationMs: durationMs}, nil
 	}
 
+	if errors.Is(err, ErrMaxTurnsExceeded) {
+		// The child ran to its turn cap without a clean end_turn. Return the
+		// partial last-assistant text with an incomplete marker so the parent
+		// model knows the subagent did not finish rather than guessing.
+		text := extractLastAssistantText(history)
+		if text != "" {
+			text += "\n\n[Note: agent reached its turn limit; response may be incomplete]"
+		} else {
+			text = "[Agent reached its turn limit without producing text output]"
+		}
+		return SubAgentResult{
+			Text:       text,
+			Usage:      totalUsage,
+			ToolUses:   countToolUses(history),
+			DurationMs: durationMs,
+		}, nil
+	}
 	if err != nil {
 		return SubAgentResult{DurationMs: durationMs}, err
 	}
@@ -416,8 +443,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	agentID := fmt.Sprintf("agent-%x", start.UnixNano()&0xffffff)
 
 	if coordinator.IsActive() {
-		var result string
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrMaxTurnsExceeded) {
 			notif := coordinator.TaskNotification(
 				agentID, "failed",
 				fmt.Sprintf("Agent failed: %v", err),
@@ -426,15 +452,34 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 			return notif, nil
 		}
 		toolUses := countToolUses(history)
-		result = extractLastAssistantText(history)
+		result := extractLastAssistantText(history)
+		summary := "Agent completed"
+		if errors.Is(err, ErrMaxTurnsExceeded) {
+			summary = "Agent reached turn limit; response may be incomplete"
+			if result != "" {
+				result += "\n\n[Note: agent reached its turn limit; response may be incomplete]"
+			} else {
+				result = "[Agent reached its turn limit without producing text output]"
+			}
+		}
 		notif := coordinator.TaskNotification(
 			agentID, "completed",
-			"Agent completed",
+			summary,
 			result, 0, toolUses, time.Since(start).Milliseconds(),
 		)
 		return notif, nil
 	}
 
+	if errors.Is(err, ErrMaxTurnsExceeded) {
+		// The child ran to its turn cap without a clean end_turn.
+		text := extractLastAssistantText(history)
+		if text != "" {
+			text += "\n\n[Note: agent reached its turn limit; response may be incomplete]"
+		} else {
+			text = "[Agent reached its turn limit without producing text output]"
+		}
+		return text, nil
+	}
 	if err != nil {
 		return "", err
 	}

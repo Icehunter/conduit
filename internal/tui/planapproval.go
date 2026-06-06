@@ -67,6 +67,11 @@ type planApprovalPickerState struct {
 
 	// selected is the highlighted option index.
 	selected int
+
+	// guardFirstKey swallows the first key after the modal opens so a
+	// keystroke already in flight cannot auto-approve the plan. Esc/ctrl+c
+	// bypass the guard so the user can dismiss or discuss immediately.
+	guardFirstKey bool
 }
 
 // planApprovalAskMsg is sent by the ExitPlanMode callback to open the modal.
@@ -91,11 +96,12 @@ func newPlanApprovalState(plan string, reply chan<- planmodetool.PlanApprovalDec
 	vp.MouseWheelEnabled = false  // we own mouse handling for selection
 	vp.SetContent(rendered)
 	return &planApprovalPickerState{
-		reply:     reply,
-		plan:      plan,
-		vp:        vp,
-		planLines: strings.Split(rendered, "\n"),
-		selected:  0,
+		reply:         reply,
+		plan:          plan,
+		vp:            vp,
+		planLines:     strings.Split(rendered, "\n"),
+		selected:      0,
+		guardFirstKey: true,
 	}
 }
 
@@ -149,6 +155,18 @@ func (m Model) handlePlanApprovalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	pa := m.planApproval
 	if pa == nil {
 		return m, nil
+	}
+	// Focus guard: swallow the first key after the modal opens so a keystroke
+	// already in flight cannot auto-approve the plan (option 0 = auto mode,
+	// ModeBypassPermissions). Esc/ctrl+c pass through so the user can
+	// immediately switch to the "chat about this" path.
+	if pa.guardFirstKey {
+		pa.guardFirstKey = false
+		key := msg.String()
+		if key != "esc" && key != "ctrl+c" {
+			m.planApproval = pa
+			return m, nil
+		}
 	}
 
 	send := func(d planmodetool.PlanApprovalDecision) (Model, tea.Cmd) {

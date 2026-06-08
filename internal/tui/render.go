@@ -120,10 +120,19 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		if msg.WelcomeCard {
 			return renderWelcomeCard(msg.Content, width)
 		}
-		// If the content contains markdown (fenced block, heading), render it
-		// as markdown so code blocks, diff highlighting, etc. work.
+		// Route multi-line or markdown-flavoured content through the renderer
+		// so bold, lists, inline code, headings, and fenced blocks all display
+		// correctly instead of appearing as raw syntax characters.
+		// Single-line plain text keeps the inline "· " prefix style.
 		trimmed := strings.TrimSpace(msg.Content)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "#") {
+		hasMarkdown := strings.Contains(msg.Content, "\n") ||
+			strings.HasPrefix(trimmed, "```") ||
+			strings.HasPrefix(trimmed, "#") ||
+			strings.Contains(trimmed, "**") ||
+			strings.Contains(trimmed, "- ") ||
+			strings.Contains(trimmed, "* ") ||
+			strings.Contains(trimmed, "`")
+		if hasMarkdown {
 			body := renderMarkdown(msg.Content, inner)
 			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
 		}

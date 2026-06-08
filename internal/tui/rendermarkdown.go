@@ -188,7 +188,7 @@ func renderTable(lines []string, width int) string {
 			if total > width-4 {
 				total = width - 4
 			}
-			sb.WriteString(styleSep.Render(ornamentGradientText(strings.Repeat("─", total))))
+			sb.WriteString(styleHRule.Render(strings.Repeat("─", total)))
 			sb.WriteByte('\n')
 		}
 	}
@@ -244,7 +244,7 @@ func renderLine(line string, width int) string {
 			(trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '_')) {
 		w := width
 		w = max(w, 1)
-		return styleSep.Render(ornamentGradientText(strings.Repeat("─", w)))
+		return styleHRule.Render(strings.Repeat("─", w))
 	}
 
 	// Headings.
@@ -362,5 +362,5 @@ func applyDelim(line, delim string, style lipgloss.Style) string {
 // separator returns a full-width dim rule.
 func separator(width int) string {
 	width = max(width, 1)
-	return styleSep.Render(ornamentGradientText(strings.Repeat("─", width)))
+	return styleHRule.Render(strings.Repeat("─", width))
 }

@@ -103,19 +103,33 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				l.mu.RLock()
 				askPermission := l.cfg.AskPermission
 				l.mu.RUnlock()
-				if !hookApproved && askPermission != nil {
-					allow, alwaysAllow := askPermission(ctx, block.Name, permInput)
-					if !allow {
-						task.denied = true
-						task.denyMsg = fmt.Sprintf("%s denied by user", block.Name)
-						tasks = append(tasks, task)
-						continue
-					}
-					if alwaysAllow {
-						rule := permissions.SuggestRule(block.Name, permInput)
-						l.cfg.Gate.AllowForSession(rule)
-						if l.cfg.Cwd != "" {
-							_ = permissions.PersistAllow(rule, l.cfg.Cwd)
+				if !hookApproved {
+					if askPermission == nil {
+						// No interactive prompt available (e.g. sub-agent). In plan
+						// mode writes must not proceed silently — deny so the model
+						// reports it cannot write rather than bypassing user intent.
+						if l.cfg.Gate.Mode() == permissions.ModePlan {
+							task.denied = true
+							task.denyMsg = fmt.Sprintf("%s denied: writes are not permitted in plan mode", block.Name)
+							tasks = append(tasks, task)
+							continue
+						}
+						// Other modes allow writes without prompting when there is no
+						// interactive session (background sub-agents).
+					} else {
+						allow, alwaysAllow := askPermission(ctx, block.Name, permInput)
+						if !allow {
+							task.denied = true
+							task.denyMsg = fmt.Sprintf("%s denied by user", block.Name)
+							tasks = append(tasks, task)
+							continue
+						}
+						if alwaysAllow {
+							rule := permissions.SuggestRule(block.Name, permInput)
+							l.cfg.Gate.AllowForSession(rule)
+							if l.cfg.Cwd != "" {
+								_ = permissions.PersistAllow(rule, l.cfg.Cwd)
+							}
 						}
 					}
 				}

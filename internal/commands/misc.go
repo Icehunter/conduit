@@ -100,40 +100,41 @@ func RegisterMiscCommands(r *Registry) {
 	})
 }
 
-// RegisterFeedbackCommand adds /feedback that opens a pre-filled GitHub issue
-// in the user's default browser. version is shown in the issue body.
-func RegisterFeedbackCommand(r *Registry, version string) {
+// RegisterBugCommand adds /bug that opens a pre-filled GitHub bug-report issue.
+func RegisterBugCommand(r *Registry, version string) {
 	r.Register(Command{
-		Name:        "feedback",
-		Description: "Open a GitHub issue to share feedback (/feedback <text>)",
+		Name:        "bug",
+		Description: "Report a bug — opens a pre-filled GitHub issue (/bug <short description>)",
 		Handler: func(args string) Result {
 			text := strings.TrimSpace(args)
 			if text == "" {
-				return Result{Type: "text", Text: "Usage: /feedback <text>\nExample: /feedback pressing X causes Y"}
+				return Result{Type: "text", Text: "Usage: /bug <short description>\nExample: /bug plan mode still writes files"}
 			}
-			issueURL := buildFeedbackURL(text, version)
+			issueURL := buildBugURL(text, version)
 			if err := browser.Open(issueURL); err != nil {
 				return Result{Type: "text", Text: fmt.Sprintf(
 					"Could not open browser automatically.\nPlease open this URL manually:\n%s", issueURL,
 				)}
 			}
-			return Result{Type: "text", Text: "Opening browser to create GitHub issue…"}
+			return Result{Type: "text", Text: "Opening browser to file bug report…"}
 		},
 	})
 }
 
-// buildFeedbackURL constructs a GitHub new-issue URL pre-filled with the
-// feedback text and version metadata. The title is truncated to 60 runes.
-func buildFeedbackURL(text, version string) string {
+// buildBugURL constructs a GitHub new-issue URL pre-filled with a structured
+// bug-report template. The title is truncated to 60 runes.
+func buildBugURL(text, version string) string {
 	title := text
 	if len([]rune(title)) > 60 {
 		title = string([]rune(title)[:60])
 	}
-	body := text + "\n\n---\nVersion: " + version + " | OS: " + runtime.GOOS
+	body := "## Summary\n" + text +
+		"\n\n## Steps to reproduce\n1. \n2. \n3. \n\n## Expected behavior\n\n## Actual behavior\n\n" +
+		"---\nVersion: " + version + " | OS: " + runtime.GOOS
 	return "https://github.com/icehunter/conduit/issues/new" +
-		"?title=" + url.QueryEscape("[Feedback] "+title) +
+		"?title=" + url.QueryEscape("[Bug] "+title) +
 		"&body=" + url.QueryEscape(body) +
-		"&labels=" + url.QueryEscape("feedback")
+		"&labels=" + url.QueryEscape("bug")
 }
 
 // themeStatusText renders a heading + the active palette as a color swatch

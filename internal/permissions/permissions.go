@@ -44,6 +44,11 @@ const (
 type Gate struct {
 	mu   sync.RWMutex
 	mode Mode
+	// maxMode is the permission ceiling established when a gate is cloned from a
+	// parent. SetMode will not raise the mode above this ceiling, preventing
+	// sub-agents from escalating beyond the permission level of their parent.
+	maxMode    Mode
+	hasMaxMode bool
 
 	cwd          string
 	trustedRoots []string
@@ -70,9 +75,35 @@ func New(cwd string, trustedRoots []string, mode Mode, allow, deny, ask []string
 	}
 }
 
-// SetMode changes the active permission mode.
+// modePermissiveness returns a numeric level for a Mode used to enforce
+// ceiling checks on cloned gates. Higher values are more permissive.
+func modePermissiveness(m Mode) int {
+	switch m {
+	case ModeCouncil:
+		return 0
+	case ModePlan:
+		return 1
+	case ModeDefault:
+		return 2
+	case ModeAcceptEditsLive:
+		return 3
+	case ModeAcceptEdits:
+		return 4
+	case ModeBypassPermissions:
+		return 5
+	default:
+		return 2
+	}
+}
+
+// SetMode changes the active permission mode. If the gate was cloned from a
+// parent (hasMaxMode == true) the mode is clamped to the parent's ceiling so
+// sub-agents cannot escalate beyond the permission level they were spawned with.
 func (g *Gate) SetMode(m Mode) {
 	g.mu.Lock()
+	if g.hasMaxMode && modePermissiveness(m) > modePermissiveness(g.maxMode) {
+		m = g.maxMode
+	}
 	g.mode = m
 	g.mu.Unlock()
 }
@@ -107,12 +138,15 @@ func (g *Gate) AllowForSession(rule string) {
 
 // Clone returns a deep copy of the Gate — all rules and current mode are
 // inherited but future mutations (SetMode, AllowForSession) on either side
-// are independent. Used to give sub-agents isolated permission scopes.
+// are independent. The clone records the parent's current mode as a ceiling so
+// sub-agents cannot escalate beyond the permission level they were spawned with.
 func (g *Gate) Clone() *Gate {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return &Gate{
 		mode:         g.mode,
+		maxMode:      g.mode,
+		hasMaxMode:   true,
 		cwd:          g.cwd,
 		trustedRoots: append([]string(nil), g.trustedRoots...),
 		allow:        append([]string(nil), g.allow...),
@@ -226,6 +260,20 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		}
 	}
 
+	// Plan and council modes are intentionally restrictive phases — allow-lists
+	// and ask-lists are skipped so that pre-existing "always allow" rules cannot
+	// silently promote writes past the mode boundary. The mode itself is the
+	// decision for non-read-only tools.
+	if mode == ModePlan || mode == ModeCouncil {
+		if toolIsReadOnly(toolName, toolInput) {
+			return DecisionAllow
+		}
+		if mode == ModeCouncil {
+			return DecisionDeny
+		}
+		return DecisionAsk
+	}
+
 	// Session-level allow (from "always allow" prompts).
 	for _, rule := range sessionAllow {
 		if matchRule(rule, toolName, toolInput) {
@@ -253,19 +301,6 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		return DecisionAllow
 	case ModeAcceptEdits, ModeAcceptEditsLive:
 		if toolIsEdit(toolName) {
-			return DecisionAllow
-		}
-		return DecisionAsk
-	case ModeCouncil:
-		// Council mode is strictly read-only. Non-read-only tools are denied
-		// outright (not prompted) so the model self-corrects to ExitPlanMode
-		// rather than asking the user to approve writes mid-debate.
-		if toolIsReadOnly(toolName, toolInput) {
-			return DecisionAllow
-		}
-		return DecisionDeny
-	case ModePlan:
-		if toolIsReadOnly(toolName, toolInput) {
 			return DecisionAllow
 		}
 		return DecisionAsk

@@ -243,6 +243,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
 	commands.RegisterRecordingCommand(reg)
+	commands.RegisterCustomCommands(reg, cwd)
 
 	sessionStart := time.Now()
 

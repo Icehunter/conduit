@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.167` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.168` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.94.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -59,6 +59,13 @@ regression appears.
 ---
 
 ## Wire sync log
+
+### 2.1.167 → 2.1.168 (2026-06-08)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.168` in `cmd/conduit/main.go` |
+| `anthropic-mcp-client-capabilities` header | No-op. Feature-gated off in CC (`Yp7()` returns `false` unconditionally). Only applies to `claudeai-proxy`+stateless MCP init-projection caching; conduit does not implement `claudeai-proxy` MCP. |
 
 ### 2.1.153 → 2.1.167 (2026-05-28)
 

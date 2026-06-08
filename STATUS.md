@@ -185,6 +185,7 @@ coming, and what's intentionally out of scope.
 | Plugin output styles | ✅ | |
 | Bundled skills (`/simplify`, `/remember`) | ✅ | |
 | FS-based skill discovery (agentskills.io) | ✅ | `~/.conduit/skills/`, `~/.claude/skills/`, `<cwd>/.claude/skills/`; YAML frontmatter + `references/` support; `internal/skills/fsloader.go` |
+| Custom user slash commands | ✅ | `~/.claude/commands/*.md` + `<cwd>/.claude/commands/*.md`; YAML frontmatter `description:`; `$ARGUMENTS` substitution; `internal/commands/custom.go` |
 | Background memory/skill nudge prompts | ✅ | `bgreview` fires every 5/7 end_turns; skill review is gap-driven (detects missing capability, creates skill if needed), scope-classified (project vs global-conduit), and hardened with "capture the fix not the failure" guardrails |
 | SkillManage tool | ✅ | `internal/tools/skillmanagetool/`; create/view/update/list/promote; project + global-conduit + global scopes; `WithAgentProvenance()` option marks agent-created skills; telemetry hooks into `internal/skillusage/` |
 | Skill usage telemetry | ✅ | `internal/skillusage/`; per-skill use/view/patch counts, provenance (agent vs user), lifecycle state, pinning; JSON store at `~/.conduit/skill-usage.json` |

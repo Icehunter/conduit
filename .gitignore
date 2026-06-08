@@ -18,3 +18,4 @@ coverage.html
 
 # Conduit local project settings (machine-specific permissions, not for repo)
 .conduit/settings.local.json
+superpowers/

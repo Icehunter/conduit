@@ -133,8 +133,27 @@ func renderMessage(msg Message, width int, verbose bool) string {
 			strings.Contains(trimmed, "* ") ||
 			strings.Contains(trimmed, "`")
 		if hasMarkdown {
-			body := renderMarkdown(msg.Content, inner)
-			return pad + styleSystemText.Render("· ") + "\n" + indentLines(body, pad)
+			const (
+				sysCollapsed       = 10
+				sysTruncateFmt     = "… (%d lines hidden) [click to expand]"
+				sysExpandedHintFmt = "[click to collapse]"
+			)
+			rawLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
+			canExpand := len(rawLines) > sysCollapsed
+			prefix := pad + styleSystemText.Render("· ") + "\n"
+			var body string
+			if canExpand && !msg.ToolExpanded {
+				clipped := strings.Join(rawLines[:sysCollapsed], "\n")
+				body = renderMarkdown(clipped, inner)
+				hidden := len(rawLines) - sysCollapsed
+				body += "\n" + styleStatusFaded.Render(fmt.Sprintf(sysTruncateFmt, hidden))
+			} else {
+				body = renderMarkdown(msg.Content, inner)
+				if canExpand && msg.ToolExpanded {
+					body += "\n" + styleStatusFaded.Render(sysExpandedHintFmt)
+				}
+			}
+			return prefix + indentLines(body, pad)
 		}
 		// Wrap to terminal width — /session, /status, /usage etc. emit long
 		// lines (file paths, session IDs, rate-limit URLs) that otherwise

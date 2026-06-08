@@ -103,9 +103,11 @@ func (m *Model) handleToolExpansionClick(mouseY int, _ image.Rectangle) bool {
 
 	msg := &m.messages[msgIndex]
 
-	// Only toggle if it's a tool with expandable content
+	// Toggle for tool messages (header or hint click) and system messages (hint click only).
 	const collapsedLines = 10
-	if msg.Role == RoleTool && msg.Content != "" && msg.Content != "running…" {
+	eligible := (msg.Role == RoleTool && msg.Content != "" && msg.Content != "running…") ||
+		(msg.Role == RoleSystem && isExpandHint && msg.Content != "")
+	if eligible {
 		resultLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
 		if len(resultLines) > collapsedLines {
 			msg.ToolExpanded = !msg.ToolExpanded

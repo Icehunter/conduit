@@ -808,6 +808,15 @@ func runREPL(continueMode bool, resumeID string) error {
 		LSPManager:     lspManager,
 	})
 
+	// Fast exit: skip all cleanup drains regardless of how the TUI exited.
+	// Terminal state was already restored by Bubble Tea; session data was
+	// written synchronously during OnEndTurn; the OS kills LSP/MCP
+	// subprocesses. The drain stack can block up to 25s — not acceptable.
+	if tuiErr != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
+
 	// Drain async hooks: cancel their context and wait up to 5s for them to
 	// finish before the process tears down further state.
 	hooks.DefaultAsyncGroup.Shutdown(5 * time.Second)

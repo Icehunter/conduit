@@ -75,7 +75,7 @@ func (t *MCPTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
 
-func (t *MCPTool) IsReadOnly(_ json.RawMessage) bool        { return false }
+func (t *MCPTool) IsReadOnly(_ json.RawMessage) bool        { return t.def.Annotations.ReadOnlyHint }
 func (t *MCPTool) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
 // Deferrable implements tool.DeferrableChecker. MCP tools are deferrable by

@@ -39,11 +39,20 @@ type McpJSON struct {
 	McpServers map[string]ServerConfig `json:"mcpServers"`
 }
 
+// ToolAnnotations holds the MCP 2024-11-05 tool annotation hints.
+// These are advisory — tools must not rely on clients honoring them.
+type ToolAnnotations struct {
+	// ReadOnlyHint, when true, indicates the tool has no persistent side effects.
+	// conduit uses this in plan mode to auto-approve the call without prompting.
+	ReadOnlyHint bool `json:"readOnlyHint,omitempty"`
+}
+
 // ToolDef is the tool shape returned by tools/list.
 type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	Annotations ToolAnnotations `json:"annotations,omitempty"`
 }
 
 // ResourceDef is one resource entry from resources/list.

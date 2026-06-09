@@ -77,7 +77,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if consumed {
 			// Key was fully handled — skip textarea/viewport so the raw key
 			// doesn't also move the textarea cursor or scroll the viewport.
-			if !m.running && m.cfg.Commands != nil {
+			if m.cfg.Commands != nil {
 				m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
 			}
 			if !m.running {
@@ -525,7 +525,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, taCmd, vpCmd)
 
 	// Recompute command picker matches after every key so the list stays live.
-	if !m.running && m.cfg.Commands != nil {
+	if m.cfg.Commands != nil {
 		m.cmdMatches, m.cmdSelected = m.computeCommandMatches()
 	}
 	// Recompute @ file picker matches after every key.

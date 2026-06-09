@@ -58,7 +58,7 @@ func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// Esc and ctrl+c pass through so the user can dismiss immediately.
 	if q.guardFirstKey {
 		q.guardFirstKey = false
-		if key != "esc" && key != "ctrl+c" {
+		if key != "esc" && key != "ctrl+c" && key != "enter" {
 			m.questionAsk = q
 			return m, nil
 		}

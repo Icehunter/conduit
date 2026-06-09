@@ -93,7 +93,7 @@ func localChatPromptFromContent(content []api.ContentBlock, model string) string
 // the selection index if the match set changed.
 func (m Model) computeCommandMatches() ([]commands.Command, int) {
 	text := m.input.Value()
-	if !strings.HasPrefix(text, "/") || strings.Contains(text, " ") || m.running {
+	if !strings.HasPrefix(text, "/") || strings.Contains(text, " ") {
 		return nil, 0
 	}
 	query := strings.ToLower(strings.TrimPrefix(text, "/"))
@@ -134,7 +134,7 @@ func (m Model) computeCommandMatches() ([]commands.Command, int) {
 
 func (m Model) commandPickerActive() bool {
 	text := m.input.Value()
-	return !m.running && m.cfg.Commands != nil && strings.HasPrefix(text, "/") && !strings.Contains(text, " ")
+	return m.cfg.Commands != nil && strings.HasPrefix(text, "/") && !strings.Contains(text, " ")
 }
 
 func (m Model) openCommandPicker() Model {

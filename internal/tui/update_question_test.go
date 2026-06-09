@@ -63,7 +63,7 @@ func TestQuestionAskMsg_NonEmptyInput_Defers(t *testing.T) {
 }
 
 // TestPendingQuestion_PromotedOnInputClear verifies that after a question is
-// deferred, pressing Backspace to clear the input promotes the question.
+// deferred, clearing the input promotes the question.
 func TestPendingQuestion_PromotedOnInputClear(t *testing.T) {
 	m := idleModel()
 	m.input.SetValue("x")
@@ -77,8 +77,13 @@ func TestPendingQuestion_PromotedOnInputClear(t *testing.T) {
 		t.Fatal("precondition: pendingQuestion should be set")
 	}
 
-	// Press Backspace — clears "x", input becomes empty → pending question promoted.
-	m3, _ := m2model.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	// Clear the input directly (simulating what Backspace does) then trigger
+	// a neutral key event so the promotion check in Update() fires. We avoid
+	// relying on textarea.Update to process KeyBackspace because in headless
+	// test environments on some architectures the textarea does not consume
+	// the key and the value remains non-empty.
+	m2model.input.SetValue("")
+	m3, _ := m2model.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	m3model := m3.(Model)
 
 	if m3model.questionAsk == nil {

@@ -3,6 +3,7 @@ package pendingedits
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -46,8 +47,10 @@ func TestFlushOne_OverwritePreservesMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %v, want 0600 preserved", st.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("mode = %v, want 0600 preserved", st.Mode().Perm())
+		}
 	}
 	got, _ := os.ReadFile(path)
 	if string(got) != "new" {

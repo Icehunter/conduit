@@ -38,7 +38,7 @@ func TestFilterBetasForModel(t *testing.T) {
 		{
 			// opus without [1m] suffix: context-1m beta suppressed.
 			name:  "opus strips context-1m (no [1m] suffix)",
-			model: "claude-opus-4-7",
+			model: "claude-opus-4-8",
 			want:  allBetasNo1M,
 		},
 		{
@@ -50,7 +50,7 @@ func TestFilterBetasForModel(t *testing.T) {
 		{
 			// opus with [1m] suffix: context-1m beta passed through.
 			name:  "opus[1m] keeps context-1m beta",
-			model: "claude-opus-4-7[1m]",
+			model: "claude-opus-4-8[1m]",
 			want:  allBetas,
 		},
 		{

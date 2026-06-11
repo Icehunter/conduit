@@ -88,5 +88,23 @@
     "binary_mtime": "2026-06-07T04:15:03.495Z",
     "binary_size": 220055328,
     "decoded_at": "2026-06-08T17:49:18.033Z"
+  },
+  {
+    "version": "2.1.172",
+    "full_version_string": "2.1.172 (Claude Code)",
+    "binary_path": "/Users/icehunter/.local/bin/claude",
+    "binary_sha256": "3c31f345575bf6f261c7e19981f6491bb93eeb0ffb499e95033610a7184831ce",
+    "binary_mtime": "2026-06-10T21:15:48.002Z",
+    "binary_size": 223390752,
+    "decoded_at": "2026-06-10T23:14:02.499Z"
+  },
+  {
+    "version": "2.1.173",
+    "full_version_string": "2.1.173 (Claude Code)",
+    "binary_path": "/Users/icehunter/.local/bin/claude",
+    "binary_sha256": "235c1bacdcc7f9d8d92368c95a0c66c26fcac98f878f21b10c73af340bc331ab",
+    "binary_mtime": "2026-06-11T03:32:09.389Z",
+    "binary_size": 223390752,
+    "decoded_at": "2026-06-11T04:20:55.772Z"
   }
 ]

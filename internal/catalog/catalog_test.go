@@ -276,7 +276,7 @@ func TestProviderFromID(t *testing.T) {
 		id   string
 		want string
 	}{
-		{"anthropic/claude-opus-4-7", "anthropic"},
+		{"anthropic/claude-fable-5", "anthropic"},
 		{"openai/gpt-4o", "openai"},
 		{"no-slash", "unknown"},
 	}

@@ -45,14 +45,14 @@ func TestModelNormalize_MigratesOldSonnet(t *testing.T) {
 func TestModelNormalize_LeavesCurrentModelAlone(t *testing.T) {
 	dir := t.TempDir()
 	writeSettings(t, dir, map[string]any{
-		"model": "claude-opus-4-7",
+		"model": "claude-fable-5",
 	})
 	Run(dir)
 	raw := readSettings(t, dir)
 	var got string
 	_ = json.Unmarshal(raw["model"], &got)
-	if got != "claude-opus-4-7" {
-		t.Errorf("model = %q, want unchanged claude-opus-4-7", got)
+	if got != "claude-fable-5" {
+		t.Errorf("model = %q, want unchanged claude-fable-5", got)
 	}
 }
 

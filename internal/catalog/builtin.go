@@ -1,10 +1,21 @@
 package catalog
 
 // builtinModels returns a baked-in snapshot of well-known Anthropic models.
-// Pricing is approximate public pricing (USD / 1M tokens) as of 2025-07.
+// Pricing is approximate public pricing (USD / 1M tokens) as of 2026-06.
 // This snapshot is used when the network is unavailable and no cache exists.
 func builtinModels() []ModelInfo {
 	return []ModelInfo{
+		{
+			ID:              "claude-fable-5",
+			Name:            "Claude Fable 5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  15.0,
+			OutputCostPer1M: 75.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
 		{
 			ID:              "claude-opus-4-8",
 			Name:            "Claude Opus 4.8",

@@ -112,7 +112,7 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 
 	modelName := snap.model
 	if modelName == "" {
-		modelName = "claude-sonnet-4-6"
+		modelName = "claude-fable-5"
 	}
 	row("Model", modelName+" · "+dim.Render(modelDescription(modelName)))
 

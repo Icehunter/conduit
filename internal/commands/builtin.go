@@ -269,15 +269,15 @@ func accountModelPickerItems(provider settings.ActiveProviderSettings) []PickerO
 	models := accountModelNames()
 	return []PickerOption{
 		{Label: section, Section: true},
-		{Value: providerPickerValue(provider, models[0]), Label: "Opus 4.8   — latest, most capable"},
-		{Value: providerPickerValue(provider, models[1]), Label: "Opus 4.7   — most capable"},
-		{Value: providerPickerValue(provider, models[2]), Label: "Sonnet 4.6 — balanced (default)"},
+		{Value: providerPickerValue(provider, models[0]), Label: "Fable 5    — most capable (default)"},
+		{Value: providerPickerValue(provider, models[1]), Label: "Opus 4.8   — powerful, extended thinking"},
+		{Value: providerPickerValue(provider, models[2]), Label: "Sonnet 4.6 — balanced"},
 		{Value: providerPickerValue(provider, models[3]), Label: "Haiku 4.5  — fastest, cheapest"},
 	}
 }
 
 func accountModelNames() []string {
-	return []string{"claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
+	return []string{"claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
 }
 
 func customModelPickerItems(providers map[string]settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
@@ -613,10 +613,10 @@ func RegisterCoordinatorCommand(r *Registry) {
 func resolveModelName(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	switch s {
-	case "opus4.8", "opus-4.8":
+	case "fable", "fable5", "fable-5":
+		return "claude-fable-5"
+	case "opus4.8", "opus-4.8", "opus", "opus4", "opus-4":
 		return "claude-opus-4-8"
-	case "opus", "opus4", "opus-4", "opus4.7", "opus-4.7":
-		return "claude-opus-4-7"
 	case "sonnet", "sonnet4", "sonnet-4", "sonnet4.6", "sonnet-4.6":
 		return "claude-sonnet-4-6"
 	case "haiku", "haiku4", "haiku-4", "haiku4.5", "haiku-4.5":

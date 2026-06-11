@@ -7,7 +7,7 @@
 //  4. settings.json "model" field (via SetDefault at startup)
 //  5. Default constant
 //
-// The default matches the model shipped in Claude Code 2.1.126.
+// The default matches the model shipped in Claude Code 2.1.173.
 package model
 
 import (
@@ -40,8 +40,8 @@ func SetDefault(name string) {
 	settingsDefault.Store(&name)
 }
 
-// Default is the hardcoded fallback model. Matches Claude Code 2.1.126.
-const Default = "claude-opus-4-7"
+// Default is the hardcoded fallback model. Matches Claude Code 2.1.173.
+const Default = "claude-fable-5"
 
 // Fast is the faster/cheaper model used when /fast is active.
 // Mirrors getSmallFastModel() — Sonnet for fast responses.

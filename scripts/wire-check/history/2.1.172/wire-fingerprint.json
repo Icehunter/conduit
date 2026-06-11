@@ -1,8 +1,8 @@
 {
-  "extracted_at": "2026-06-11T04:20:55.789Z",
-  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.173",
-  "binary_version": "2.1.173",
-  "version": "2.1.173",
+  "extracted_at": "2026-06-10T23:14:02.521Z",
+  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.172",
+  "binary_version": "2.1.172",
+  "version": "2.1.172",
   "cch": "<<bun-macro>>",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   "oauth_beta_header": "oauth-2025-04-20",
@@ -39,5 +39,5 @@
     "anthropic-skills"
   ],
   "cch_note": "Bun compile-time macro placeholder — actual value requires live mitmproxy capture",
-  "billing_template": "x-anthropic-billing-header: cc_version=2.1.173.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.173\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
+  "billing_template": "x-anthropic-billing-header: cc_version=2.1.172.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.172\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
 }

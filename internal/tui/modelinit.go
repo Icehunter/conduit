@@ -121,7 +121,7 @@ func coordTick() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return coordTickMsg{} })
 }
 
-// shortModelName converts "claude-opus-4-7" → "Opus 4.7".
+// shortModelName converts "claude-fable-5" → "Fable 5".
 // Strips date suffixes like "-20251001" so "claude-haiku-4-5-20251001" → "Haiku 4.5".
 func shortModelName(name string) string {
 	name = strings.TrimPrefix(name, "claude-")

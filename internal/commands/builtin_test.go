@@ -235,7 +235,7 @@ func TestRegisterModelCommand_ClaudeSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-4-7" {
+	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-4-8" {
 		t.Fatalf("provider = %#v, want Claude Opus provider", result.Provider)
 	}
 }
@@ -261,7 +261,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-4-7" || result.Provider.Account != "api@example.com" {
+	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-4-8" || result.Provider.Account != "api@example.com" {
 		t.Fatalf("provider = %#v, want Anthropic API Opus provider", result.Provider)
 	}
 
@@ -276,7 +276,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if !got.Items[0].Section || got.Items[0].Label != "Anthropic API · api@example.com" {
 		t.Fatalf("first picker item = %#v, want Anthropic API section", got.Items[0])
 	}
-	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-opus-4-8" {
+	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-fable-5" {
 		t.Fatalf("first model value = %q, want provider key", got.Items[1].Value)
 	}
 }
@@ -378,7 +378,7 @@ func TestRegisterModelCommand_ProviderKeySelectionCarriesAccount(t *testing.T) {
 		nil,
 	)
 
-	result, ok := r.Dispatch("/model --role planning provider:claude-subscription.personal@example.com.claude-opus-4-7")
+	result, ok := r.Dispatch("/model --role planning provider:claude-subscription.personal@example.com.claude-opus-4-8")
 	if !ok {
 		t.Fatal("expected provider key selection to dispatch")
 	}
@@ -388,10 +388,10 @@ func TestRegisterModelCommand_ProviderKeySelectionCarriesAccount(t *testing.T) {
 	if result.Role != settings.RolePlanning {
 		t.Fatalf("role = %q, want planning", result.Role)
 	}
-	if result.Provider.Kind != "claude-subscription" || result.Provider.Account != "personal@example.com" || result.Provider.Model != "claude-opus-4-7" {
+	if result.Provider.Kind != "claude-subscription" || result.Provider.Account != "personal@example.com" || result.Provider.Model != "claude-opus-4-8" {
 		t.Fatalf("provider = %#v, want personal Claude Opus", result.Provider)
 	}
-	if key := settings.ProviderKey(*result.Provider); key != "claude-subscription.personal@example.com.claude-opus-4-7" {
+	if key := settings.ProviderKey(*result.Provider); key != "claude-subscription.personal@example.com.claude-opus-4-8" {
 		t.Fatalf("provider key = %q, want account-scoped key", key)
 	}
 }
@@ -679,7 +679,7 @@ func TestRegisterModelCommand_RoleSelection(t *testing.T) {
 	if result.Role != settings.RolePlanning {
 		t.Fatalf("role = %q, want planning", result.Role)
 	}
-	if result.Provider == nil || result.Provider.Model != "claude-opus-4-7" {
+	if result.Provider == nil || result.Provider.Model != "claude-opus-4-8" {
 		t.Fatalf("provider = %#v, want opus provider", result.Provider)
 	}
 	if called {

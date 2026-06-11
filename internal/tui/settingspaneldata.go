@@ -57,7 +57,7 @@ func (p *settingsPanelState) rebuildConfigItems() {
 	}
 	model := snap.model
 	if model == "" {
-		model = "claude-sonnet-4-6"
+		model = "claude-fable-5"
 	}
 
 	// Resolve display name for permission mode.
@@ -150,8 +150,8 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			label:      "Model",
 			kind:       "enum",
 			value:      modelDisplayName(model),
-			options:    []string{"Default (recommended)", "Opus", "Haiku"},
-			optionVals: []string{"claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"},
+			options:    []string{"Fable 5 (default)", "Opus 4.8", "Sonnet 4.6", "Haiku 4.5"},
+			optionVals: []string{"claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
 		},
 		{
 			id:      "effort",

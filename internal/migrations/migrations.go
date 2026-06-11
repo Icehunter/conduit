@@ -57,8 +57,10 @@ var modelNormalize = Migration{
 			// Sonnet 3.5 variants → current Sonnet
 			"claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
 			"claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
-			// Opus 3 → Opus 4
-			"claude-3-opus-20240229": "claude-opus-4-7",
+			// Opus 4.7 → Opus 4.8 (4.7 is no longer in the model picker)
+			"claude-opus-4-7": "claude-opus-4-8",
+			// Opus 3 → Opus 4.8
+			"claude-3-opus-20240229": "claude-opus-4-8",
 			// Haiku 3.5 → Haiku 4.5
 			"claude-3-5-haiku-20241022": "claude-haiku-4-5-20251001",
 		}

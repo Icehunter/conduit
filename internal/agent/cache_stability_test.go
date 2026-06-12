@@ -156,9 +156,11 @@ func TestHashCachedPrefix_ChangesOnDiff(t *testing.T) {
 	}
 }
 
-// TestHashCachedPrefix_NoCachedContent returns a non-zero hash when only tools
-// are present (tools are always hashed when non-empty).
-func TestHashCachedPrefix_NoCachedContent(t *testing.T) {
+// TestHashCachedPrefix_ToolsAlwaysHashed verifies that tools contribute to the
+// hash even when no system blocks or history messages have cache_control set.
+// buildToolDefs always places a cache_control breakpoint on the last tool def,
+// so the tools block is always part of the cached prefix.
+func TestHashCachedPrefix_ToolsAlwaysHashed(t *testing.T) {
 	tools := []api.ToolDef{
 		{Name: "Alpha", Description: "do alpha"},
 	}

@@ -603,6 +603,8 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		// Detect silent cache busts: warn if the cached-prefix content changes
 		// between turns. This is advisory-only — the request always proceeds.
 		if sum := hashCachedPrefix(reqSystem, tools, reqMsgs); sum != 0 {
+			// lastCachedPrefixHash is zero on the first turn — no prior cache
+			// exists, so skip the comparison to avoid a false-positive warning.
 			if l.lastCachedPrefixHash != 0 && sum != l.lastCachedPrefixHash {
 				log.Printf("agent: cached prefix changed between turns (potential cache miss)")
 			}

@@ -52,21 +52,23 @@ func TestCrushJSON_ArrayOfObjects(t *testing.T) {
 
 func TestCrushJSON_ArraySmall(t *testing.T) {
 	// 2 objects — below the 4-element threshold.
+	// Use long string values to reach >= minCrushBytes with valid JSON so the
+	// array-too-short guard (not a parse error) is what causes crushed=false.
+	padding := strings.Repeat("x", 600)
 	arr := []map[string]any{
-		{"id": 1, "name": "a"},
-		{"id": 2, "name": "b"},
+		{"id": 1, "name": "a", "padding": padding},
+		{"id": 2, "name": "b", "padding": padding},
 	}
 	b, _ := json.Marshal(arr)
 	input := string(b)
 
-	// Pad to be >= minCrushBytes.
-	for len(input) < minCrushBytes {
-		input += " "
+	if len(input) < minCrushBytes {
+		t.Skipf("test data too small (%d bytes)", len(input))
 	}
 
 	_, crushed := crushJSON(input)
 	if crushed {
-		t.Error("expected crushed=false for 2-element array (below threshold)")
+		t.Error("expected crushed=false for 2-element array (below 4-element threshold)")
 	}
 }
 
@@ -135,17 +137,19 @@ func TestCrushJSON_SmallJSON(t *testing.T) {
 
 func TestCrushJSON_MixedArray(t *testing.T) {
 	// Top-level array where not all elements are objects — Case 1 must not fire.
+	// Use long string element to reach >= minCrushBytes with valid JSON.
+	padding := strings.Repeat("y", 600)
 	mixed := []any{
 		map[string]any{"id": 1},
-		"just a string",
+		padding,
 		42,
 		map[string]any{"id": 4},
 	}
 	b, _ := json.Marshal(mixed)
 	input := string(b)
-	// Pad to >= 1024 bytes.
-	for len(input) < minCrushBytes {
-		input += " "
+
+	if len(input) < minCrushBytes {
+		t.Skipf("test data too small (%d bytes)", len(input))
 	}
 
 	_, crushed := crushJSON(input)

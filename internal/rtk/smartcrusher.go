@@ -123,19 +123,25 @@ func crushObject(original string, obj map[string]any) (string, bool) {
 	return out, crushed
 }
 
-// applySmartCrusher runs crushJSON on output and, if compression occurred,
-// stores the original in the CCR store and returns the crushed text with a
-// recovery footer. cmd is unused today but may be used for per-command tuning.
-func applySmartCrusher(_ string, output string, store *ccr.Store) (string, bool) {
-	crushed, ok := crushJSON(output)
+// applySmartCrusher runs crushJSON on crushInput and, if compression occurred,
+// stores storeContent (the true original, before any command-rule filtering) in
+// the CCR store and returns the crushed text with a recovery footer.
+// Separating crushInput from storeContent ensures that when a command rule has
+// already filtered the output, the CCR entry points to the unmodified original
+// rather than the intermediate rule-filtered form.
+// cmd is unused today but may be used for per-command tuning.
+func applySmartCrusher(_ string, crushInput, storeContent string, store *ccr.Store) (string, bool) {
+	crushed, ok := crushJSON(crushInput)
 	if !ok {
-		return output, false
+		return crushInput, false
 	}
 
-	handle, err := store.Put(output)
+	handle, err := store.Put(storeContent)
 	if err != nil {
+		// Without a CCR handle the model has no recovery path, so fall back to
+		// returning the original rather than an unrecoverable compressed form.
 		log.Printf("rtk: smartcrusher: ccr put failed: %v", err)
-		return crushed, true
+		return crushInput, false
 	}
 
 	out := crushed + fmt.Sprintf("[JSON compressed by SmartCrusher; recover with CCRRetrieve handle=%q]", handle)

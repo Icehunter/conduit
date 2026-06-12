@@ -91,18 +91,18 @@ func Filter(cmd, output string) Result {
 	// SmartCrusher: content-based JSON compression, fires as fallback.
 	// Runs whether or not a command rule matched, as long as the output
 	// was not already heavily compressed (SavedBytes >= 50% of original).
+	// Pass the raw original (output) as storeContent so the CCR entry always
+	// covers the true unfiltered bytes, even when a command rule already ran.
 	if result.SavedBytes*2 < orig {
-		if crushedOut, ok := applySmartCrusher(cmd, result.Filtered, getStore()); ok {
+		if crushedOut, ok := applySmartCrusher(cmd, result.Filtered, output, getStore()); ok {
 			result.Filtered = crushedOut
-			// Re-compute savings against the original input.
-			comp := len(result.Filtered)
-			saved := orig - comp
-			if saved > result.SavedBytes {
-				result.SavedBytes = saved
-				result.SavingsPct = float64(saved) / float64(orig) * 100
+			// Always sync SavedBytes/SavingsPct to reflect the actual Filtered size.
+			result.SavedBytes = orig - len(result.Filtered)
+			if orig > 0 {
+				result.SavingsPct = float64(result.SavedBytes) / float64(orig) * 100
 			}
-			// Handle from SmartCrusher is embedded in footer; clear the RTK handle
-			// to avoid a duplicate footer from bashtool.
+			// The recovery footer is embedded in result.Filtered by SmartCrusher;
+			// clear Handle so bashtool does not emit a second footer.
 			result.Handle = ""
 		}
 	}

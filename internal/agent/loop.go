@@ -882,20 +882,31 @@ func hasToolUse(blocks []api.ContentBlock) bool {
 	return false
 }
 
-// liveZoneBoundary returns the index of the oldest message in msgs that
-// carries a cache_control breakpoint on any of its content blocks.
-// Messages before this index form the stable cached prefix; mutating them
-// would bust the provider's KV cache. Returns 0 if no breakpoints exist
-// (entire history is live).
+// liveZoneBoundary returns the exclusive upper bound of the cached prefix in
+// msgs — i.e., the smallest index such that all messages at index < boundary
+// should be treated as byte-immutable to preserve the provider's KV cache.
+//
+// It scans all messages and finds the LAST one carrying a cache_control
+// breakpoint (not the first): everything up to and including that message
+// forms the cached prefix, because Anthropic caches the prefix up to each
+// breakpoint. Returning first-breakpoint-index would leave messages between
+// two breakpoints eligible for compaction, silently busting the cache on
+// longer sessions.
+//
+// Returns 0 if no breakpoints exist (entire history is live).
 func liveZoneBoundary(msgs []api.Message) int {
+	last := -1
 	for i, m := range msgs {
 		for _, blk := range m.Content {
 			if blk.CacheControl != nil {
-				return i
+				last = i
 			}
 		}
 	}
-	return 0
+	if last < 0 {
+		return 0
+	}
+	return last + 1
 }
 
 // firstUserMessageText returns the text content of the first user message in

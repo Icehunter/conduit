@@ -81,7 +81,7 @@ coming, and what's intentionally out of scope.
 
 ---
 
-## Tools (35 built-in)
+## Tools (36 built-in)
 
 | Tool | Status | Notes |
 |------|--------|-------|
@@ -112,6 +112,7 @@ coming, and what's intentionally out of scope.
 | SyntheticOutputTool | ✅ | Coordinator signalling |
 | LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation offload |
 | RecordDecision | ✅ | Conduit-original; decision journal |
+| CCRRetrieve | ✅ | Conduit-original; retrieves content-addressed originals from the CCR store; supports offset/limit line-range and pattern grep; output re-truncated via `truncate.Apply` |
 
 ---
 
@@ -261,6 +262,8 @@ coming, and what's intentionally out of scope.
 | Filters: git, go, cargo, npm, pytest, eslint, docker, terraform, aws, make, … | ✅ | |
 | SQLite analytics (`/rtk gain`) | ✅ | |
 | `rtk discover` (unclassified command scan) | ✅ | |
+| CCR store | ✅ | `internal/ccr/`; content-addressed, SHA-256-keyed, 7-day TTL; deduplicates identical content; RTK attaches handle to filtered output so compression is recoverable |
+| SmartCrusher | ✅ | `internal/rtk/smartcrusher.go`; structural JSON compression: array-of-homogeneous-objects → schema+sample, deep nested object large-leaf collapse; fires as content-based fallback after command classifiers; original stored in CCR for recovery |
 
 ---
 
@@ -277,6 +280,9 @@ coming, and what's intentionally out of scope.
 | Configurable limits | ✅ | `conduit.json` `toolOutput.maxLines/maxBytes`, `compaction.keepRecent` |
 | Token savings metrics | ✅ | `sessionstats.SessionMetrics`: RTK, truncate, microcompact, compact counters |
 | Usage observability | ✅ | stderr logs on `message_delta` decode failure (turn token counts lost) and on OpenAI-compat streams that end without usage data; silent zero-counts are now visible |
+| Live-zone compaction | ✅ | Micro-compaction skips messages inside the Anthropic prompt-cache prefix (0..`liveZoneBoundary`); only the live zone (after the last `cache_control` breakpoint) is compacted, keeping the cached prefix byte-identical and avoiding gratuitous cache misses |
+| Cache-stable tool ordering | ✅ | `buildToolDefs` sorts all tool definitions alphabetically before building the defs slice; cache_control breakpoint always lands on the same (last alphabetical) tool regardless of registry iteration order |
+| Volatile-prefix detection | ✅ | FNV-1a hash of system blocks + tools + cached history messages stored on the Loop struct; advisory `log.Printf` warning emitted when the hash changes between turns (signals a potential silent cache miss) |
 
 ---
 

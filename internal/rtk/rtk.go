@@ -16,23 +16,11 @@ package rtk
 import (
 	"log"
 	"strings"
-	"sync"
 
 	"github.com/icehunter/conduit/internal/ccr"
 )
 
-// defaultCCRStore is the lazily-initialized package-level CCR store.
-var (
-	ccrOnce  sync.Once
-	ccrStore *ccr.Store
-)
-
-func getStore() *ccr.Store {
-	ccrOnce.Do(func() {
-		ccrStore = ccr.DefaultStore()
-	})
-	return ccrStore
-}
+func getStore() *ccr.Store { return ccr.Default() }
 
 // Result is returned by Filter.
 type Result struct {

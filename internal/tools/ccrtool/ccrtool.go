@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/icehunter/conduit/internal/ccr"
 	"github.com/icehunter/conduit/internal/tool"
@@ -21,16 +20,7 @@ type store interface {
 	Slice(handle string, offset, limit int) (string, error)
 }
 
-// Package-level singleton store, mirroring the pattern in internal/rtk.
-var (
-	defaultOnce  sync.Once
-	defaultStore *ccr.Store
-)
-
-func getStore() *ccr.Store {
-	defaultOnce.Do(func() { defaultStore = ccr.DefaultStore() })
-	return defaultStore
-}
+func getStore() *ccr.Store { return ccr.Default() }
 
 // Tool implements the CCRRetrieve tool.
 type Tool struct{}

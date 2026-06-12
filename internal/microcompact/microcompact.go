@@ -102,6 +102,8 @@ func ApplyWithOptions(messages []api.Message, lastAssistantTime time.Time, thres
 	}
 	// Restore messages before the boundary to their original (byte-identical) form
 	// so the provider's KV cache prefix stays intact.
+	// Invariant: ApplyWithContext never removes messages from the slice — it only
+	// mutates content within them — so len(r.Messages) == len(messages) always.
 	out := make([]api.Message, len(r.Messages))
 	copy(out, r.Messages)
 	for i := range boundary {

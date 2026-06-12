@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"log"
 	"os"
 	"reflect"
 	"strings"
@@ -607,14 +606,8 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		priorBP := countSystemBreakpoints(reqSystem, tools)
 		reqMsgs := applyHistoryBreakpoints(msgs, priorBP)
 
-		// Detect silent cache busts: warn if the cached-prefix content changes
-		// between turns. This is advisory-only — the request always proceeds.
+		// Track the cached-prefix hash so future diagnostics can detect busts.
 		if sum := hashCachedPrefix(reqSystem, tools, reqMsgs); sum != 0 {
-			// lastCachedPrefixHash is zero on the first turn — no prior cache
-			// exists, so skip the comparison to avoid a false-positive warning.
-			if l.lastCachedPrefixHash != 0 && sum != l.lastCachedPrefixHash {
-				log.Printf("agent: cached prefix changed between turns (potential cache miss)")
-			}
 			l.lastCachedPrefixHash = sum
 		}
 
@@ -1030,7 +1023,9 @@ func hashCachedPrefix(system []api.SystemBlock, tools []api.ToolDef, msgs []api.
 		h.Write(b)
 	}
 
-	// Hash tool definitions (always part of the cached prefix when non-empty).
+	// Hash tool definitions. The full list is always hashed because buildToolDefs
+	// places a cache_control breakpoint on the last element, so Anthropic caches
+	// everything up to and including that tool — i.e. the entire list.
 	if len(tools) > 0 {
 		b, err := json.Marshal(tools)
 		if err != nil {

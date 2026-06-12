@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icehunter/conduit/internal/settings"
@@ -45,6 +46,18 @@ type FileInfo struct {
 // DefaultStore returns a Store rooted at ConduitDir()/ccr/.
 func DefaultStore() *Store {
 	return &Store{dir: filepath.Join(settings.ConduitDir(), "ccr")}
+}
+
+var (
+	defaultOnce  sync.Once
+	defaultStore *Store
+)
+
+// Default returns the process-wide singleton Store rooted at ConduitDir()/ccr/.
+// All callers share the same instance so in-memory state (if added later) stays coherent.
+func Default() *Store {
+	defaultOnce.Do(func() { defaultStore = DefaultStore() })
+	return defaultStore
 }
 
 // NewStore returns a Store backed by the given directory.

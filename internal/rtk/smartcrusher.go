@@ -68,13 +68,12 @@ func crushArray(original string, arr []any) (string, bool) {
 	sort.Strings(keys)
 
 	n := len(objects)
-	sampleCount := min(3, n)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "[%d objects — keys: %s]\n", n, strings.Join(keys, ", "))
-	fmt.Fprintf(&sb, "sample[0..%d]:\n", sampleCount-1)
+	fmt.Fprintf(&sb, "sample[0..2]:\n")
 
-	for i := range sampleCount {
+	for i := range 3 {
 		b, err := json.MarshalIndent(objects[i], "  ", "  ")
 		if err != nil {
 			return original, false

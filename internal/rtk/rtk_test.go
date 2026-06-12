@@ -180,6 +180,50 @@ func TestFilter_AWSSecretsRedacted(t *testing.T) {
 	}
 }
 
+func TestFilter_SmartCrusher(t *testing.T) {
+	// Build a large JSON array (>= 1024 bytes, 20 homogeneous objects) and
+	// pass it through Filter with an unclassified command so only SmartCrusher fires.
+	// We use a command that is NOT in the RTK registry so rule=nil and
+	// SmartCrusher is the only compression path.
+	const n = 20
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := range n {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(`{"id":`)
+		sb.WriteString(itoa(i + 1))
+		sb.WriteString(`,"name":"item-`)
+		sb.WriteString(itoa(i + 1))
+		sb.WriteString(`","status":"active","created_at":"2024-01-01T00:00:00Z","description":"A longer description to pad bytes for item `)
+		sb.WriteString(itoa(i + 1))
+		sb.WriteString(`"}`)
+	}
+	sb.WriteString("]")
+	jsonOut := sb.String()
+
+	if len(jsonOut) < 1024 {
+		t.Fatalf("test JSON too small (%d bytes); increase object fields", len(jsonOut))
+	}
+
+	r := Filter("custom-api-tool list-objects --format json", jsonOut)
+
+	if r.SavedBytes <= 0 {
+		t.Errorf("expected SavedBytes > 0 from SmartCrusher; got %d", r.SavedBytes)
+	}
+	if !contains(r.Filtered, "[20 objects") {
+		t.Errorf("expected '[20 objects' header in SmartCrusher output; got: %s", r.Filtered[:min(200, len(r.Filtered))])
+	}
+	if !contains(r.Filtered, "SmartCrusher") {
+		t.Errorf("expected 'SmartCrusher' footer in output; got: %s", r.Filtered[max(0, len(r.Filtered)-200):])
+	}
+	// Handle should be cleared (footer is embedded in Filtered).
+	if r.Handle != "" {
+		t.Errorf("expected Handle to be empty after SmartCrusher; got %q", r.Handle)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
 		func() bool {

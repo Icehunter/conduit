@@ -58,38 +58,52 @@ func IsClassified(cmd string) bool {
 func Filter(cmd, output string) Result {
 	cmd = strings.TrimSpace(cmd)
 	output = stripANSI(output)
-
-	rule := classify(cmd)
-	if rule == nil {
-		return Result{Original: output, Filtered: output}
-	}
-
-	filtered := rule.filter(cmd, output)
-
 	orig := len(output)
-	comp := len(filtered)
-	saved := orig - comp
-	pct := 0.0
-	if orig > 0 {
-		pct = float64(saved) / float64(orig) * 100
+
+	result := Result{Original: output, Filtered: output}
+
+	// Apply command-rule compression if a rule is registered for this command.
+	if rule := classify(cmd); rule != nil {
+		filtered := rule.filter(cmd, output)
+		comp := len(filtered)
+		saved := orig - comp
+		pct := 0.0
+		if orig > 0 {
+			pct = float64(saved) / float64(orig) * 100
+		}
+		result.Filtered = filtered
+		result.SavedBytes = saved
+		result.SavingsPct = pct
+		result.Category = rule.category
+
+		// Store the original output in CCR so the agent can retrieve it later.
+		// We store the pre-filter content to give access to the full uncompressed stream.
+		if saved > 0 {
+			handle, err := getStore().Put(output)
+			if err != nil {
+				log.Printf("rtk: ccr put failed; handle not set: %v", err)
+			} else {
+				result.Handle = handle
+			}
+		}
 	}
 
-	result := Result{
-		Original:   output,
-		Filtered:   filtered,
-		SavedBytes: saved,
-		SavingsPct: pct,
-		Category:   rule.category,
-	}
-
-	// Store the original output in CCR so the agent can retrieve it later.
-	// We store the pre-filter content to give access to the full uncompressed stream.
-	if saved > 0 {
-		handle, err := getStore().Put(output)
-		if err != nil {
-			log.Printf("rtk: ccr put failed; handle not set: %v", err)
-		} else {
-			result.Handle = handle
+	// SmartCrusher: content-based JSON compression, fires as fallback.
+	// Runs whether or not a command rule matched, as long as the output
+	// was not already heavily compressed (SavedBytes >= 50% of original).
+	if result.SavedBytes*2 < orig {
+		if crushedOut, ok := applySmartCrusher(cmd, result.Filtered, getStore()); ok {
+			result.Filtered = crushedOut
+			// Re-compute savings against the original input.
+			comp := len(result.Filtered)
+			saved := orig - comp
+			if saved > result.SavedBytes {
+				result.SavedBytes = saved
+				result.SavingsPct = float64(saved) / float64(orig) * 100
+			}
+			// Handle from SmartCrusher is embedded in footer; clear the RTK handle
+			// to avoid a duplicate footer from bashtool.
+			result.Handle = ""
 		}
 	}
 

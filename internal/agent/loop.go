@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"log"
 	"os"
 	"reflect"
 	"strings"
@@ -255,6 +257,9 @@ type Loop struct {
 	sessionStartDone     bool
 	sessionReminderUsed  bool
 	sessionReminderBlock *api.SystemBlock
+	// lastCachedPrefixHash is a FNV-1a hash of the cached-prefix content sent
+	// in the previous turn, used to detect silent cache busts.
+	lastCachedPrefixHash uint64
 }
 
 // NewLoop constructs a Loop.
@@ -594,6 +599,16 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		// is not mutated.
 		priorBP := countSystemBreakpoints(reqSystem, tools)
 		reqMsgs := applyHistoryBreakpoints(msgs, priorBP)
+
+		// Detect silent cache busts: warn if the cached-prefix content changes
+		// between turns. This is advisory-only — the request always proceeds.
+		if sum := hashCachedPrefix(reqSystem, tools, reqMsgs); sum != 0 {
+			if l.lastCachedPrefixHash != 0 && sum != l.lastCachedPrefixHash {
+				log.Printf("agent: cached prefix changed between turns (potential cache miss)")
+			}
+			l.lastCachedPrefixHash = sum
+		}
+
 		req := &api.MessageRequest{
 			Model:     model,
 			MaxTokens: l.cfg.MaxTokens,
@@ -954,6 +969,51 @@ func retryCompact(msgs []api.Message, seed time.Time, contextWindow int, model s
 		return r.Messages
 	}
 	return msgs
+}
+
+// hashCachedPrefix computes a FNV-1a hash of the content that will be cached
+// by Anthropic's prompt cache for this turn: system blocks with cache_control
+// set, the tool definitions list, and history messages with cache_control set.
+// Returns 0 if JSON marshalling fails so callers can safely skip on error.
+func hashCachedPrefix(system []api.SystemBlock, tools []api.ToolDef, msgs []api.Message) uint64 {
+	h := fnv.New64a()
+
+	// Hash cached system blocks.
+	for i := range system {
+		if system[i].CacheControl == nil {
+			continue
+		}
+		b, err := json.Marshal(system[i])
+		if err != nil {
+			return 0
+		}
+		h.Write(b)
+	}
+
+	// Hash tool definitions (always part of the cached prefix when non-empty).
+	if len(tools) > 0 {
+		b, err := json.Marshal(tools)
+		if err != nil {
+			return 0
+		}
+		h.Write(b)
+	}
+
+	// Hash cached history messages.
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.CacheControl == nil {
+				continue
+			}
+			b, err := json.Marshal(block)
+			if err != nil {
+				return 0
+			}
+			h.Write(b)
+		}
+	}
+
+	return h.Sum64()
 }
 
 // countSystemBreakpoints returns the number of cache_control breakpoints set

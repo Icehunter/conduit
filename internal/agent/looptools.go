@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -353,6 +354,19 @@ func buildToolDefs(reg *tool.Registry) []api.ToolDef {
 			countSetter = s
 		}
 	}
+
+	// Sort alphabetically so the tools list is byte-identical across runs and
+	// the cache_control breakpoint always lands on the same tool regardless of
+	// registry iteration order.
+	slices.SortFunc(all, func(a, b tool.Tool) int {
+		if a.Name() < b.Name() {
+			return -1
+		}
+		if a.Name() > b.Name() {
+			return 1
+		}
+		return 0
+	})
 
 	defs := make([]api.ToolDef, 0, len(all))
 	var deferred int

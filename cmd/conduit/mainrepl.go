@@ -19,6 +19,7 @@ import (
 	"github.com/icehunter/conduit/internal/bgreview"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/catalog"
+	"github.com/icehunter/conduit/internal/ccr"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/globalconfig"
 	"github.com/icehunter/conduit/internal/hooks"
@@ -46,6 +47,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
+	"github.com/icehunter/conduit/internal/truncate"
 	"github.com/icehunter/conduit/internal/tui"
 	"github.com/icehunter/conduit/internal/updater"
 )
@@ -191,6 +193,13 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Run one-shot settings migrations before loading. Idempotent: completed
 	// IDs are recorded in settings.json so they never re-run.
 	migrations.Run(settings.ClaudeDir())
+
+	// Best-effort background cleanup for truncated outputs and CCR store.
+	// Both operations are idempotent and non-fatal — we fire-and-forget.
+	go func() {
+		_ = truncate.Cleanup()           // best-effort; failure is non-fatal
+		_ = ccr.DefaultStore().Cleanup() // best-effort; failure is non-fatal
+	}()
 
 	// Load settings (missing/invalid files are fine — defaults apply).
 	s, settingsErr := settings.Load(cwd)

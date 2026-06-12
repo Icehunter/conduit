@@ -296,6 +296,11 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	rawOutput := strings.TrimRight(string(rawOut), "\n")
 	filtered := rtk.Filter(in.Command, rawOutput)
+	// If RTK stored the original in the CCR archive, append a recovery hint
+	// so the model knows it can retrieve the full output on demand.
+	if filtered.Handle != "" {
+		filtered.Filtered += "\n[full output compressed; recover with CCRRetrieve handle=\"" + filtered.Handle + "\"]"
+	}
 	if filtered.SavedBytes > 0 {
 		// Record RTK savings metrics.
 		sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)

@@ -14,6 +14,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
+	"github.com/icehunter/conduit/internal/tools/ccrtool"
 	"github.com/icehunter/conduit/internal/tools/configtool"
 	"github.com/icehunter/conduit/internal/tools/decisiontool"
 	"github.com/icehunter/conduit/internal/tools/fileedittool"
@@ -131,6 +132,7 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(filereadtool.New())
 	reg.Register(filewritetool.NewWithStager(stager))
 	reg.Register(globtool.New())
+	reg.Register(ccrtool.New())
 	reg.Register(greptool.New())
 	reg.Register(notebookedittool.New())
 	reg.Register(repltool.New())

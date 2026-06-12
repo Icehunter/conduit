@@ -14,8 +14,25 @@
 package rtk
 
 import (
+	"log"
 	"strings"
+	"sync"
+
+	"github.com/icehunter/conduit/internal/ccr"
 )
+
+// defaultCCRStore is the lazily-initialized package-level CCR store.
+var (
+	ccrOnce  sync.Once
+	ccrStore *ccr.Store
+)
+
+func getStore() *ccr.Store {
+	ccrOnce.Do(func() {
+		ccrStore = ccr.DefaultStore()
+	})
+	return ccrStore
+}
 
 // Result is returned by Filter.
 type Result struct {
@@ -24,6 +41,9 @@ type Result struct {
 	SavedBytes int
 	SavingsPct float64
 	Category   string
+	// Handle is set when the original output was stored in the CCR store.
+	// Format: "ccr:<key>". Empty when no compression occurred.
+	Handle string
 }
 
 // IsClassified returns true if the command is handled by a RTK filter rule.
@@ -54,11 +74,24 @@ func Filter(cmd, output string) Result {
 		pct = float64(saved) / float64(orig) * 100
 	}
 
-	return Result{
+	result := Result{
 		Original:   output,
 		Filtered:   filtered,
 		SavedBytes: saved,
 		SavingsPct: pct,
 		Category:   rule.category,
 	}
+
+	// Store the original output in CCR so the agent can retrieve it later.
+	// We store the pre-filter content to give access to the full uncompressed stream.
+	if saved > 0 {
+		handle, err := getStore().Put(output)
+		if err != nil {
+			log.Printf("rtk: ccr put failed; handle not set: %v", err)
+		} else {
+			result.Handle = handle
+		}
+	}
+
+	return result
 }

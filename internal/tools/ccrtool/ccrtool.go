@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/icehunter/conduit/internal/ccr"
 	"github.com/icehunter/conduit/internal/tool"
@@ -18,6 +19,17 @@ import (
 type store interface {
 	Get(handle string) (string, error)
 	Slice(handle string, offset, limit int) (string, error)
+}
+
+// Package-level singleton store, mirroring the pattern in internal/rtk.
+var (
+	defaultOnce  sync.Once
+	defaultStore *ccr.Store
+)
+
+func getStore() *ccr.Store {
+	defaultOnce.Do(func() { defaultStore = ccr.DefaultStore() })
+	return defaultStore
 }
 
 // Tool implements the CCRRetrieve tool.
@@ -33,7 +45,8 @@ func (*Tool) Name() string { return "CCRRetrieve" }
 func (*Tool) Description() string {
 	return "Retrieve the original content of a compressed output by its CCR handle. " +
 		"Use when you need the full detail that was compressed away. " +
-		"Supports offset/limit for line ranges and pattern for substring filtering."
+		"Supports offset/limit for line ranges and pattern for case-insensitive substring filtering. " +
+		"When both are specified, offset/limit is applied first, then pattern filters the result."
 }
 
 // InputSchema is the JSON Schema sent to the model.
@@ -66,7 +79,7 @@ type input struct {
 
 // Execute retrieves content from the CCR store and returns it.
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
-	return executeWithStore(ctx, ccr.DefaultStore(), raw)
+	return executeWithStore(ctx, getStore(), raw)
 }
 
 // executeWithStore is the testable core — accepts any store implementation.
@@ -86,26 +99,17 @@ func executeWithStore(ctx context.Context, s store, raw json.RawMessage) (tool.R
 		err  error
 	)
 
-	switch {
-	case in.Pattern != "":
-		// Retrieve all lines then filter.
-		text, err = s.Get(in.Handle)
-		if err != nil {
-			return tool.ErrorResult(fmt.Sprintf("ccr retrieve: %v", err)), nil
-		}
-		text = filterLines(text, in.Pattern)
-
-	case in.Offset != 0 || in.Limit != 0:
+	// Apply offset/limit first (if requested), then pattern-filter — they compose.
+	if in.Offset != 0 || in.Limit != 0 {
 		text, err = s.Slice(in.Handle, in.Offset, in.Limit)
-		if err != nil {
-			return tool.ErrorResult(fmt.Sprintf("ccr retrieve: %v", err)), nil
-		}
-
-	default:
+	} else {
 		text, err = s.Get(in.Handle)
-		if err != nil {
-			return tool.ErrorResult(fmt.Sprintf("ccr retrieve: %v", err)), nil
-		}
+	}
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("ccr retrieve: %v", err)), nil
+	}
+	if in.Pattern != "" {
+		text = filterLines(text, in.Pattern)
 	}
 
 	// Re-run through truncate so a full retrieval can't blow up the context.

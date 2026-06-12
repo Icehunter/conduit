@@ -296,19 +296,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	rawOutput := strings.TrimRight(string(rawOut), "\n")
 	filtered := rtk.Filter(in.Command, rawOutput)
-	// If RTK stored the original in the CCR archive, append a recovery hint
-	// so the model knows it can retrieve the full output on demand.
-	if filtered.Handle != "" {
-		filtered.Filtered += "\n[full output compressed; recover with CCRRetrieve handle=\"" + filtered.Handle + "\"]"
-	}
 	if filtered.SavedBytes > 0 {
-		// Record RTK savings metrics.
+		// Record RTK savings metrics. Use the pre-footer filtered size so the
+		// recovery hint bytes do not distort /rtk gain analytics.
 		sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)
 		if db := getTrackDB(); db != nil {
 			_ = db.Record(track.Row{
 				Command:       in.Command,
 				OriginalBytes: len(filtered.Original),
-				FilteredBytes: len(filtered.Filtered),
+				FilteredBytes: len(filtered.Filtered), // pre-footer size
 				SavedBytes:    filtered.SavedBytes,
 				SavedPct:      filtered.SavingsPct,
 				RecordedAt:    time.Now(),
@@ -333,6 +329,11 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	if hardCapped {
 		fmt.Fprintf(&sb, "[truncated to first %d bytes]\n", MaxOutputBytes)
+	}
+	// Append the CCR recovery footer AFTER the hard-cap so the handle hint is
+	// never silently truncated mid-string.
+	if filtered.Handle != "" {
+		fmt.Fprintf(&sb, "[full output compressed; recover with CCRRetrieve handle=%q]\n", filtered.Handle)
 	}
 
 	if runErr != nil {

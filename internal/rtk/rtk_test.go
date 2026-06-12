@@ -4,7 +4,10 @@
 
 package rtk
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFilter_NoMatch(t *testing.T) {
 	r := Filter("echo hello", "hello")
@@ -126,14 +129,11 @@ FAILED test_foo.py::test_baz - AssertionError: assert 1 == 2
 }
 
 func TestFilter_LSOutput(t *testing.T) {
-	var lines []string
-	for i := 0; i < 300; i++ {
-		lines = append(lines, "file.txt")
+	var sb strings.Builder
+	for range 300 {
+		sb.WriteString("file.txt\n")
 	}
-	out := ""
-	for _, l := range lines {
-		out += l + "\n"
-	}
+	out := sb.String()
 	r := Filter("ls -la", out)
 	if r.Category != "Files" {
 		t.Errorf("expected Files; got %q", r.Category)
@@ -145,19 +145,23 @@ func TestFilter_LSOutput(t *testing.T) {
 
 func TestFilter_SavingsMetrics(t *testing.T) {
 	// Build a large git log output that will definitely be compressed
-	out := ""
-	for i := 0; i < 100; i++ {
-		out += "commit abc1234def5678901234567890123456789abcdef\n"
-		out += "Author: Alice <alice@example.com>\n"
-		out += "Date:   Mon Jan 1 00:00:00 2024 +0000\n\n"
-		out += "    Add feature\n\n"
+	var sb2 strings.Builder
+	for range 100 {
+		sb2.WriteString("commit abc1234def5678901234567890123456789abcdef\n")
+		sb2.WriteString("Author: Alice <alice@example.com>\n")
+		sb2.WriteString("Date:   Mon Jan 1 00:00:00 2024 +0000\n\n")
+		sb2.WriteString("    Add feature\n\n")
 	}
+	out := sb2.String()
 	r := Filter("git log", out)
 	if r.SavedBytes <= 0 {
 		t.Errorf("expected positive savings; got %d", r.SavedBytes)
 	}
 	if r.SavingsPct <= 0 {
 		t.Errorf("expected positive savings pct; got %.1f", r.SavingsPct)
+	}
+	if r.Handle == "" {
+		t.Error("expected Handle to be set when savings > 0")
 	}
 }
 

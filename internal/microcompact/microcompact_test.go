@@ -539,3 +539,123 @@ func TestApply_ImageElisionIdempotent(t *testing.T) {
 		t.Errorf("second pass: ImagesCleared = %d; want 0 (idempotent)", second.ImagesCleared)
 	}
 }
+
+// buildMsgsWithCache builds a message slice where the first nCached pairs have
+// cache_control set on their user tool_result blocks (simulating a cached prefix),
+// and the remaining pairs are plain live-zone messages.
+func buildMsgsWithCache(nCached, nLive int) []api.Message {
+	ephemeral := &api.CacheControl{Type: "ephemeral"}
+	var out []api.Message
+	total := nCached + nLive
+	for i := 1; i <= total; i++ {
+		id := fmt.Sprintf("toolu_%d", i)
+		out = append(out, api.Message{
+			Role: "assistant",
+			Content: []api.ContentBlock{
+				{Type: "tool_use", ID: id, Name: "Bash"},
+			},
+		})
+		blk := api.ContentBlock{
+			Type:          "tool_result",
+			ToolUseID:     id,
+			ResultContent: strings.Repeat("output line\n", 100),
+		}
+		if i <= nCached {
+			blk.CacheControl = ephemeral
+		}
+		out = append(out, api.Message{
+			Role:    "user",
+			Content: []api.ContentBlock{blk},
+		})
+	}
+	return out
+}
+
+func TestApplyWithOptions_LiveZoneBoundary(t *testing.T) {
+	// messages[0..3] = 2 cached pairs (indices 0,1,2,3 have cache_control on user blocks).
+	// messages[4..N] = 6 live-zone pairs without cache_control.
+	// With keepRecent=2, the 4 oldest live-zone tool_results should be cleared.
+	in := buildMsgsWithCache(2, 6)
+	// Boundary is the index of the first message that carries a cache_control breakpoint.
+	// buildMsgsWithCache sets cache_control on the user (tool_result) block of each cached pair.
+	// Pair 1: indices 0 (assistant) and 1 (user with cache_control) → boundary = 1.
+	// But the first message with CacheControl is at index 1 (the user message).
+	// We want to protect everything before and including that, so boundary = 1.
+	boundary := 2 // protect indices 0 and 1 (the first cached pair's assistant + user messages)
+
+	got := ApplyWithOptions(in, pastTime(), DefaultThreshold, 2,
+		Options{LiveZoneBoundary: boundary})
+
+	if !got.Triggered {
+		t.Fatalf("expected compaction to trigger in live zone; got %+v", got)
+	}
+
+	// Messages before boundary must be byte-identical to input.
+	for i := range boundary {
+		if len(got.Messages[i].Content) != len(in[i].Content) {
+			t.Errorf("msg[%d].Content len changed: got %d want %d", i, len(got.Messages[i].Content), len(in[i].Content))
+			continue
+		}
+		for j, blk := range got.Messages[i].Content {
+			orig := in[i].Content[j]
+			if blk.ResultContent != orig.ResultContent {
+				t.Errorf("msg[%d].Content[%d].ResultContent mutated in protected zone", i, j)
+			}
+			if blk.CacheControl != orig.CacheControl {
+				t.Errorf("msg[%d].Content[%d].CacheControl mutated in protected zone", i, j)
+			}
+		}
+	}
+
+	// At least one live-zone tool_result should have been cleared.
+	liveCleared := 0
+	for i := boundary; i < len(got.Messages); i++ {
+		for _, blk := range got.Messages[i].Content {
+			if blk.Type == "tool_result" && isPlaceholder(blk.ResultContent) {
+				liveCleared++
+			}
+		}
+	}
+	if liveCleared == 0 {
+		t.Error("expected at least one live-zone tool_result to be cleared")
+	}
+}
+
+func TestApplyWithOptions_NoBoundary(t *testing.T) {
+	// LiveZoneBoundary=0 must produce identical results to Apply.
+	in := msgs()
+	wantApply := Apply(in, pastTime(), DefaultThreshold, DefaultKeepRecent)
+	got := ApplyWithOptions(in, pastTime(), DefaultThreshold, DefaultKeepRecent,
+		Options{LiveZoneBoundary: 0})
+
+	if got.Triggered != wantApply.Triggered {
+		t.Errorf("Triggered: got %v want %v", got.Triggered, wantApply.Triggered)
+	}
+	if got.Cleared != wantApply.Cleared {
+		t.Errorf("Cleared: got %d want %d", got.Cleared, wantApply.Cleared)
+	}
+	if len(got.Messages) != len(wantApply.Messages) {
+		t.Fatalf("Messages len: got %d want %d", len(got.Messages), len(wantApply.Messages))
+	}
+	for i, m := range got.Messages {
+		for j, blk := range m.Content {
+			if blk.ResultContent != wantApply.Messages[i].Content[j].ResultContent {
+				t.Errorf("msg[%d].Content[%d].ResultContent differs", i, j)
+			}
+		}
+	}
+}
+
+func TestApplyWithOptions_BoundaryBeyondHistory(t *testing.T) {
+	// LiveZoneBoundary >= len(msgs) means no live zone to compact.
+	in := msgs()
+	got := ApplyWithOptions(in, pastTime(), DefaultThreshold, DefaultKeepRecent,
+		Options{LiveZoneBoundary: len(in)})
+
+	if got.Triggered {
+		t.Errorf("expected Triggered=false when boundary covers entire history; got Triggered=true")
+	}
+	if len(got.Messages) != len(in) {
+		t.Errorf("Messages len changed: got %d want %d", len(got.Messages), len(in))
+	}
+}

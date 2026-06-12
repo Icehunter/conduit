@@ -570,7 +570,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				triggerTokens = lastInputTokens > cw*internalmodel.MicroCompactThresholdPct/100
 			}
 			if triggerTime || triggerTokens {
-				if r := microcompact.Apply(msgs, lastAssistantTime, gap, keep); r.Triggered {
+				// Compute the live-zone boundary from a preliminary breakpoint
+				// application so we don't mutate messages that form the cached
+				// prefix, which would bust the provider's KV cache.
+				prelimBP := countSystemBreakpoints(system, tools)
+				prelimMsgs := applyHistoryBreakpoints(msgs, prelimBP)
+				boundary := liveZoneBoundary(prelimMsgs)
+				if r := microcompact.ApplyWithOptions(msgs, lastAssistantTime, gap, keep,
+					microcompact.Options{LiveZoneBoundary: boundary}); r.Triggered {
 					msgs = r.Messages
 				}
 			}
@@ -648,7 +655,11 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					if seed.IsZero() {
 						seed = time.Now().Add(-time.Hour)
 					}
-					if r := microcompact.Apply(msgs, seed, 0, keep); r.Triggered {
+					// Use reqMsgs (which has breakpoints applied) to determine the
+					// live-zone boundary so we don't bust the cached prefix.
+					boundary := liveZoneBoundary(reqMsgs)
+					if r := microcompact.ApplyWithOptions(msgs, seed, 0, keep,
+						microcompact.Options{LiveZoneBoundary: boundary}); r.Triggered {
 						msgs = r.Messages
 						reqMsgs = applyHistoryBreakpoints(msgs, priorBP)
 						req.Messages = reqMsgs
@@ -869,6 +880,22 @@ func hasToolUse(blocks []api.ContentBlock) bool {
 		}
 	}
 	return false
+}
+
+// liveZoneBoundary returns the index of the oldest message in msgs that
+// carries a cache_control breakpoint on any of its content blocks.
+// Messages before this index form the stable cached prefix; mutating them
+// would bust the provider's KV cache. Returns 0 if no breakpoints exist
+// (entire history is live).
+func liveZoneBoundary(msgs []api.Message) int {
+	for i, m := range msgs {
+		for _, blk := range m.Content {
+			if blk.CacheControl != nil {
+				return i
+			}
+		}
+	}
+	return 0
 }
 
 // firstUserMessageText returns the text content of the first user message in

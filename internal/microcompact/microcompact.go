@@ -70,12 +70,58 @@ type Result struct {
 	Triggered     bool
 }
 
+// Options configures micro-compaction behaviour.
+type Options struct {
+	// LiveZoneBoundary, when > 0, prevents micro-compaction from mutating
+	// messages at index < LiveZoneBoundary so the provider's cached prefix
+	// stays byte-identical. Messages in the live zone (index >= boundary)
+	// are still eligible for compaction.
+	// Zero means no boundary (all messages eligible, original behaviour).
+	LiveZoneBoundary int
+}
+
 // Apply runs time-based microcompact on messages. lastAssistantTime is
 // the timestamp of the most recent assistant message; if zero, Apply is
 // a no-op (no history yet). Returns the original slice unchanged when
 // the gap is below threshold or there's nothing eligible to clear.
 func Apply(messages []api.Message, lastAssistantTime time.Time, threshold time.Duration, keepRecent int) Result {
 	return ApplyWithContext(messages, lastAssistantTime, threshold, keepRecent, 0)
+}
+
+// ApplyWithOptions is like Apply but respects Options. Apply remains unchanged
+// for backward compatibility.
+func ApplyWithOptions(messages []api.Message, lastAssistantTime time.Time, threshold time.Duration, keepRecent int, opts Options) Result {
+	r := ApplyWithContext(messages, lastAssistantTime, threshold, keepRecent, 0)
+	boundary := opts.LiveZoneBoundary
+	if boundary <= 0 || !r.Triggered {
+		return r
+	}
+	if boundary >= len(messages) {
+		// Entire history is the cached prefix; nothing in the live zone to compact.
+		return Result{Messages: messages}
+	}
+	// Restore messages before the boundary to their original (byte-identical) form
+	// so the provider's KV cache prefix stays intact.
+	out := make([]api.Message, len(r.Messages))
+	copy(out, r.Messages)
+	for i := range boundary {
+		out[i] = messages[i]
+	}
+	r.Messages = out
+	// Recheck Triggered: it's possible all compaction happened in the protected
+	// prefix and the live zone was untouched.
+	anyChanged := false
+	for i := boundary; i < len(out); i++ {
+		if messagesEqual(out[i], messages[i]) {
+			continue
+		}
+		anyChanged = true
+		break
+	}
+	if !anyChanged {
+		r.Triggered = false
+	}
+	return r
 }
 
 // ApplyWithContext is Apply with an optional contextWindow for token-budget
@@ -396,6 +442,30 @@ func applyImagePass(messages []api.Message, keepRecent int, base Result) Result 
 		ImagesCleared: imagesCleared,
 		Triggered:     base.Triggered || imagesCleared > 0,
 	}
+}
+
+// messagesEqual reports whether two messages have identical content for the
+// purpose of detecting live-zone compaction changes. It checks only the fields
+// that micro-compaction touches (ResultContent, Type, Text, ToolUseID, ID, Name).
+// It is NOT a general-purpose deep equality check — fields like Thinking,
+// Signature, Input, Source, IsError, and CacheControl are intentionally omitted
+// because the compactor never mutates them.
+func messagesEqual(a, b api.Message) bool {
+	if a.Role != b.Role || len(a.Content) != len(b.Content) {
+		return false
+	}
+	for i := range a.Content {
+		ba, bb := a.Content[i], b.Content[i]
+		if ba.Type != bb.Type ||
+			ba.Text != bb.Text ||
+			ba.ResultContent != bb.ResultContent ||
+			ba.ToolUseID != bb.ToolUseID ||
+			ba.ID != bb.ID ||
+			ba.Name != bb.Name {
+			return false
+		}
+	}
+	return true
 }
 
 // isAlreadyCleared returns true if content has already been replaced by a

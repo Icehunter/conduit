@@ -80,6 +80,7 @@ coming, and what's intentionally out of scope.
 | Proactive health checks | ✅ | Git/deps pre-flight at session start; warnings in system context |
 | Provider failover chains | ✅ | `internal/providerrotation/`; configure `providerChains.role: [key1, key2]` in conduit.json; 429/503/529 rotate to next provider in chain; cooldowns tracked in-process; `EventProviderFailover` emitted on swap |
 | Token-Time Stopping Rules (TTSR) | ✅ | `internal/ttsr/`; regex rules in `.conduit/ttsr/*.md` frontmatter; 4KB sliding tail buffer; per-rule `MaxFires` cap; global 3-fires/turn circuit breaker; `EventTTSR` emitted on fire |
+| Model-per-role sub-agent dispatch | ✅ | `SubAgentSpec.Role`; `LoopConfig.RoleResolver` resolves role→(model, client); `Task(role: "planning")` routes through configured provider; plugin agents declare `role:` in frontmatter; all roles configured via ctrl+m are now honoured by sub-agents |
 
 ---
 

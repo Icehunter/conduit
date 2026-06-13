@@ -34,7 +34,12 @@ type SubAgentResult struct {
 type SubAgentSpec struct {
 	// SystemPrompt is appended as an extra system block when non-empty.
 	SystemPrompt string
-	// Model overrides the child's model when non-empty.
+	// Role names a configured provider role (e.g. "background", "planning",
+	// "implement"). When set and Model is empty, the loop's RoleResolver
+	// determines the model and optionally a separate API client. Falls back
+	// to BackgroundModel() when the role is not configured.
+	Role string
+	// Model overrides the child's model when non-empty. Takes precedence over Role.
 	Model string
 	// Tools is the tool allowlist. Empty/nil means inherit parent registry.
 	// Callers pass the canonical registry-key names (already alias-resolved).
@@ -94,6 +99,8 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	model := l.BackgroundModel()
 	if spec.Model != "" {
 		model = l.resolveModelAlias(spec.Model)
+	} else if spec.Role != "" {
+		model = l.resolveModelAlias(spec.Role)
 	}
 
 	l.mu.RLock()
@@ -101,6 +108,20 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	childClient := l.client
 	parentReg := l.reg
 	l.mu.RUnlock()
+
+	// Role resolution: when spec.Role is set and no explicit model/client
+	// overrides it, ask RoleResolver for the model and (optionally) a
+	// separate API client for that role's provider.
+	if spec.Role != "" && spec.Model == "" && childCfg.RoleResolver != nil {
+		if roleModel, roleClient, ok := childCfg.RoleResolver(spec.Role); ok {
+			if roleModel != "" {
+				model = roleModel
+			}
+			if roleClient != nil {
+				childClient = roleClient
+			}
+		}
+	}
 
 	// Use the caller-supplied client when provided (e.g. council members that
 	// need their own provider account rather than the parent loop's client).

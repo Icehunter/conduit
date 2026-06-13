@@ -66,7 +66,7 @@ func TestAgentTool_SubagentTypeDispatch(t *testing.T) {
 		Tools:         []string{"Read", "Grep"},
 	}}}
 
-	runTyped := func(ctx context.Context, prompt, sysPrompt, model string, tools []string) (string, error) {
+	runTyped := func(ctx context.Context, prompt, sysPrompt, model, role string, tools []string) (string, error) {
 		capturedSystemPrompt = sysPrompt
 		capturedModel = model
 		capturedTools = tools

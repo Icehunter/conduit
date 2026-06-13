@@ -50,6 +50,7 @@ func toAgentDef(d *AgentDef) *agenttool.AgentDef {
 		Description:   d.Description,
 		SystemPrompt:  d.Body,
 		Model:         d.Model,
+		Role:          d.Role,
 		Tools:         d.Tools,
 	}
 }

@@ -41,8 +41,13 @@ type AgentDef struct {
 	QualifiedName string
 	Description   string
 	SystemPrompt  string
-	Model         string
-	Tools         []string // nil/empty = inherit parent registry
+	// Model is a literal model ID or a CC alias ("sonnet", "haiku"). Takes
+	// precedence over Role when both are set.
+	Model string
+	// Role is a named provider role (e.g. "background", "planning"). When set
+	// and Model is empty, the agent loop resolves the model via RoleResolver.
+	Role  string
+	Tools []string // nil/empty = inherit parent registry
 }
 
 // Registry maps subagent_type names to AgentDef. Implemented by plugins.AgentRegistry.
@@ -60,8 +65,9 @@ type Tool struct {
 	// registry provides named sub-agent definitions. May be nil.
 	registry Registry
 	// runTyped spawns a nested loop for a named sub-agent, with optional
-	// system prompt, model, and tool restrictions. May be nil (falls back to runAgent).
-	runTyped func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error)
+	// system prompt, model, role, and tool restrictions. May be nil (falls back to runAgent).
+	// role is a named provider role; model takes precedence when both are non-empty.
+	runTyped func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error)
 }
 
 // New returns an AgentTool.
@@ -71,7 +77,7 @@ type Tool struct {
 func New(
 	runAgent func(ctx context.Context, prompt string) (string, error),
 	registry Registry,
-	runTyped func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error),
+	runTyped func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error),
 ) *Tool {
 	return &Tool{runAgent: runAgent, registry: registry, runTyped: runTyped}
 }
@@ -95,6 +101,10 @@ func (*Tool) InputSchema() json.RawMessage {
 			"subagent_type": {
 				"type": "string",
 				"description": "Optional named sub-agent type from an installed plugin (e.g. \"pr-review-toolkit:code-reviewer\"). When set, the sub-agent uses the named agent's system prompt and tool allowlist."
+			},
+			"role": {
+				"type": "string",
+				"description": "Named provider role for this sub-agent (e.g. \"background\", \"planning\", \"implement\"). Determines the model and provider used. Overrides the default background model. Ignored when subagent_type is set (the plugin agent's role takes precedence)."
 			}
 		},
 		"required": ["prompt"]
@@ -108,6 +118,7 @@ type Input struct {
 	Prompt       string `json:"prompt"`
 	Description  string `json:"description,omitempty"`
 	SubagentType string `json:"subagent_type,omitempty"`
+	Role         string `json:"role,omitempty"`
 }
 
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -129,13 +140,22 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		}
 		if t.runTyped != nil {
 			resolved := resolveToolNames(def.Tools)
-			result, err := t.runTyped(ctx, in.Prompt, def.SystemPrompt, def.Model, resolved)
+			result, err := t.runTyped(ctx, in.Prompt, def.SystemPrompt, def.Model, def.Role, resolved)
 			if err != nil {
 				return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
 			}
 			return tool.TextResult(result), nil
 		}
 		// runTyped unavailable — fall through to unrestricted run.
+	}
+
+	// Plain Task call: use role from input if provided, otherwise unrestricted.
+	if in.Role != "" && t.runTyped != nil {
+		result, err := t.runTyped(ctx, in.Prompt, "", "", in.Role, nil)
+		if err != nil {
+			return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
+		}
+		return tool.TextResult(result), nil
 	}
 
 	result, err := t.runAgent(ctx, in.Prompt)

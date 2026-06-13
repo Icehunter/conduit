@@ -540,6 +540,21 @@ func runREPL(continueMode bool, resumeID string) error {
 		BackgroundModel: func() string {
 			return app.ClaudeRoleModel(cwd, settings.RoleBackground, compact.DefaultModel)
 		},
+		RoleResolver: func(role string) (string, *api.Client, bool) {
+			latest, err := settings.Load(cwd)
+			if err != nil {
+				return "", nil, false
+			}
+			provider, ok := latest.ProviderForRole(role)
+			if !ok || provider == nil || provider.Model == "" {
+				return "", nil, false
+			}
+			client, err := app.NewProviderAPIClient(*provider, secure.NewDefault(), Version)
+			if err != nil {
+				return provider.Model, nil, true
+			}
+			return provider.Model, client, true
+		},
 		OnFileAccess: func(op, path string) {
 			if sess != nil {
 				_ = sess.AppendFileAccess(op, path)
@@ -739,10 +754,11 @@ func runREPL(continueMode bool, resumeID string) error {
 			return r.Text, err
 		},
 		agentRegistry,
-		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
+		func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				SystemPrompt: systemPrompt,
 				Model:        model,
+				Role:         role,
 				Tools:        tools,
 			})
 			return r.Text, err

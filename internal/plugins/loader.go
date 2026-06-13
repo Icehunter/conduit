@@ -79,7 +79,8 @@ type AgentDef struct {
 	Description   string   // from frontmatter
 	Body          string   // markdown body — injected as sub-agent system prompt
 	Tools         []string // from frontmatter `tools:` (allowlist); empty = inherit all
-	Model         string   // from frontmatter `model:` (optional override)
+	Model         string   // from frontmatter `model:` — literal ID or alias; takes precedence over Role
+	Role          string   // from frontmatter `role:` — named provider role (e.g. "planning")
 }
 
 // Plugin is a loaded plugin with its manifest and discovered content.
@@ -447,6 +448,7 @@ func loadAgents(pluginDir, pluginName string) []AgentDef {
 		if fm != nil {
 			ad.Description = fm["description"]
 			ad.Model = fm["model"]
+			ad.Role = fm["role"]
 			if raw, ok := fm["tools"]; ok && raw != "" {
 				ad.Tools = parseAllowedTools(raw)
 			}

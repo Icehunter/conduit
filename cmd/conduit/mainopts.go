@@ -78,10 +78,11 @@ func runPrint(args []string) error {
 			return r.Text, err
 		},
 		agentRegistry,
-		func(ctx context.Context, prompt, systemPrompt, model string, tools []string) (string, error) {
+		func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
 				SystemPrompt: systemPrompt,
 				Model:        model,
+				Role:         role,
 				Tools:        tools,
 			})
 			return r.Text, err

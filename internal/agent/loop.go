@@ -230,6 +230,13 @@ type LoopConfig struct {
 	// BackgroundModel returns the model used for helper calls such as
 	// compaction, memory extraction, and Task sub-agents. Empty means use Model.
 	BackgroundModel func() string
+
+	// RoleResolver resolves a named role (e.g. "planning", "implement") to a
+	// model string and an optional API client. The client may be nil when the
+	// role maps to the same provider as the parent loop — in that case the
+	// parent's client is reused. Returns ok=false when the role is not
+	// configured; the caller falls back to BackgroundModel().
+	RoleResolver func(role string) (model string, client *api.Client, ok bool)
 	// IsOAuthSubscription, when true, enables the dynamic per-request billing
 	// suffix computation (SHA256 of the first user message). Set for Claude.ai
 	// Max subscription accounts only; leave false for Console API key and

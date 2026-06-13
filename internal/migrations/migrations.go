@@ -59,6 +59,10 @@ var modelNormalize = Migration{
 			"claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
 			// Opus 4.7 → Opus 4.8 (4.7 is no longer in the model picker)
 			"claude-opus-4-7": "claude-opus-4-8",
+			// Fable 5 → Opus 4.8 (fable-5 is restricted and can no longer be called)
+			"claude-fable-5":     "claude-opus-4-8",
+			"claude-fable-5[1m]": "claude-opus-4-8",
+			"fable-5":            "claude-opus-4-8",
 			// Opus 3 → Opus 4.8
 			"claude-3-opus-20240229": "claude-opus-4-8",
 			// Haiku 3.5 → Haiku 4.5

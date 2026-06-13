@@ -40,8 +40,12 @@ func SetDefault(name string) {
 	settingsDefault.Store(&name)
 }
 
-// Default is the hardcoded fallback model. Matches Claude Code 2.1.173.
-const Default = "claude-fable-5"
+// Default is the hardcoded fallback model.
+//
+// Conduit intentionally diverges from CC's default (claude-fable-5): that model
+// is restricted by US government policy and cannot be called, so conduit defaults
+// to claude-opus-4-8 (the highest-capability Claude model that remains available).
+const Default = "claude-opus-4-8"
 
 // Fast is the faster/cheaper model used when /fast is active.
 // Mirrors getSmallFastModel() — Sonnet for fast responses.

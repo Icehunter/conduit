@@ -153,6 +153,17 @@ const KNOWN_HEADERS = new Set([
   "x-claude-code-parent-agent-id",
   // Agent-skills beta header (v2.1.153+) — beta for the agent skills plugin feature.
   "anthropic-agent-skills",
+  // Plugin/skill marketplace scope header (v2.1.177+) — names the active skill set
+  // ("anthropic-skills", "core", "engineering", …) for marketplace routing. Not sent
+  // by conduit; managed by CC's plugin marketplace layer.
+  "anthropic-skills",
+  // MCP client capabilities header (v2.1.177+) — base64-encoded init-projection sent
+  // by CC's claudeai-mcp proxy bridge. Conduit's MCP client doesn't use this proxy path.
+  "anthropic-mcp-client-capabilities",
+  // Usage-limit header (v2.1.177+) — set to "extended" only behind the tengu_lantern_spool
+  // LaunchDarkly flag for first-party deep-query tracking. Feature-flagged + conditional,
+  // not part of conduit's baseline request.
+  "anthropic-usage-limit",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

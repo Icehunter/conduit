@@ -6,17 +6,6 @@ package catalog
 func builtinModels() []ModelInfo {
 	return []ModelInfo{
 		{
-			ID:              "claude-fable-5",
-			Name:            "Claude Fable 5",
-			Provider:        "anthropic",
-			ContextWindow:   1_000_000,
-			InputCostPer1M:  15.0,
-			OutputCostPer1M: 75.0,
-			ToolUse:         true,
-			Vision:          true,
-			Thinking:        true,
-		},
-		{
 			ID:              "claude-opus-4-8",
 			Name:            "Claude Opus 4.8",
 			Provider:        "anthropic",

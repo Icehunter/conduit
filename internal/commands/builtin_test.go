@@ -276,7 +276,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if !got.Items[0].Section || got.Items[0].Label != "Anthropic API · api@example.com" {
 		t.Fatalf("first picker item = %#v, want Anthropic API section", got.Items[0])
 	}
-	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-fable-5" {
+	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-opus-4-8" {
 		t.Fatalf("first model value = %q, want provider key", got.Items[1].Value)
 	}
 }

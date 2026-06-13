@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.168` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.177` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.94.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -55,10 +55,21 @@ regression appears.
 | Tool names `mcp`/`mcp__` | Pass-through aliases | `ListMcpResources`/`ReadMcpResource` | Conduit's MCP surface is explicit, not aliased |
 | Auto-updater | npm self-replace | Passive GitHub Release notifier | Conduit ships as a static binary |
 | AskUserQuestion quick-pick | Digit 1-9 immediately selects and submits in single-select | Digit focuses the option; Enter confirms; first key after open is swallowed (focus guard); popup queued if user has unsent draft | Prevent stray keystrokes (popup appearing mid-typing) from auto-submitting |
+| Default model | `claude-fable-5` | `claude-opus-4-8` | `claude-fable-5` is restricted by US government policy and cannot be called; conduit defaults to the highest-capability Claude model that remains available. Removed from catalog/picker/migration; kept in the cost table for historical-usage pricing only. |
 
 ---
 
 ## Wire sync log
+
+### 2.1.168 → 2.1.177 (2026-06-13)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.177` in `cmd/conduit/main.go` |
+| Default model `claude-fable-5` removed | Restricted by US government policy and no longer callable. Removed from builtin catalog, `/models` picker, settings panel, and `model.Default` (now `claude-opus-4-8`). Added migration aliases so existing `claude-fable-5` settings normalize to `claude-opus-4-8`. Cost-table entry retained for historical-usage pricing. |
+| `anthropic-skills` header | Baselined in extractor. Plugin/skill marketplace scope header naming the active skill set; managed by CC's plugin marketplace layer, not sent by conduit. |
+| `anthropic-mcp-client-capabilities` header | Baselined in extractor. Base64 init-projection sent by CC's `claudeai-mcp` proxy bridge; conduit's MCP client doesn't use this proxy path (also noted in the 2.1.168 entry). |
+| `anthropic-usage-limit` header | Baselined in extractor. Set to `"extended"` only behind the `tengu_lantern_spool` LaunchDarkly flag for first-party deep-query tracking; feature-flagged + conditional, not part of conduit's baseline request. |
 
 ### 2.1.167 → 2.1.168 (2026-06-08)
 

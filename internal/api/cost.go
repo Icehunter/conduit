@@ -10,6 +10,8 @@ type perMillionTokenPrice struct {
 
 // modelPrices maps model ID prefixes to per-token pricing. Entries are matched
 // longest-prefix-first so "claude-fable-5" takes precedence over "claude-fable".
+// (fable-5 is retained here for historical-usage pricing only; it is no longer a
+// selectable/default model — see internal/model.Default.)
 // Cache read tokens are priced at 10% of the base input rate; cache write tokens
 // at 125%. Only Claude and direct Anthropic API models carry a known price —
 // OpenAI-compatible providers return 0 since we don't bill those ourselves.

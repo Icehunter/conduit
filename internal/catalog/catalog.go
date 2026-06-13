@@ -31,7 +31,7 @@ type Catalog struct {
 }
 
 // Lookup returns the ModelInfo for the given model ID (exact or fuzzy match).
-// Handles provider-prefixed IDs ("anthropic/claude-fable-5"), picker keys
+// Handles provider-prefixed IDs ("anthropic/claude-opus-4-8"), picker keys
 // ("provider:openai-compatible.work.gpt-5.5"), case differences, and dot/dash
 // variants ("claude-sonnet-4.6" vs "claude-sonnet-4-6").
 // Returns false if not found.

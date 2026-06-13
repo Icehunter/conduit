@@ -101,7 +101,7 @@ type Settings struct {
 	EnabledMcpjsonServers      []string `json:"enabledMcpjsonServers,omitempty"`
 	DisabledMcpjsonServers     []string `json:"disabledMcpjsonServers,omitempty"`
 	EnableAllProjectMcpServers bool     `json:"enableAllProjectMcpServers,omitempty"`
-	// Model is the preferred model name (e.g. "claude-fable-5").
+	// Model is the preferred model name (e.g. "claude-opus-4-8").
 	Model string `json:"model,omitempty"`
 	// Providers is conduit's named provider registry. Roles reference these
 	// keys so main/planning/background/implement can choose independently.

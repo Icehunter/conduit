@@ -37,9 +37,9 @@ func TestResolve_AnthropicModelTakesPrecedence(t *testing.T) {
 	}
 }
 
-func TestDefault_IsFable(t *testing.T) {
-	if Default != "claude-fable-5" {
-		t.Errorf("Default = %q, want claude-fable-5", Default)
+func TestDefault_IsOpus48(t *testing.T) {
+	if Default != "claude-opus-4-8" {
+		t.Errorf("Default = %q, want claude-opus-4-8", Default)
 	}
 }
 

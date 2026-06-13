@@ -46,6 +46,9 @@ func buildRules() []*rule {
 		// ── grep / rg ────────────────────────────────────────────────────────
 		{re: re(`^(?:rg|grep)\s+`), category: "Files", filter: filterGrep},
 
+		// ── ast-grep / sg ────────────────────────────────────────
+		{re: re(`^(?:ast-grep|sg)\s+`), category: "AST", filter: filterAstGrep},
+
 		// ── diff ─────────────────────────────────────────────────────────────
 		{re: re(`^diff\s+`), category: "Files", filter: filterDiff},
 

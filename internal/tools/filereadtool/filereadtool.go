@@ -8,14 +8,16 @@
 package filereadtool
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/icehunter/conduit/internal/hashline"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/truncate"
 )
@@ -55,7 +57,7 @@ func (*Tool) InputSchema() json.RawMessage {
 		"properties": {
 			"file_path": {
 				"type": "string",
-				"description": "The absolute path to the file to read"
+				"description": "The absolute path to the file to read. Also accepts URL schemes: pr://owner/repo/N, issue://owner/repo/N, http://, https://"
 			},
 			"offset": {
 				"type": "number",
@@ -64,6 +66,10 @@ func (*Tool) InputSchema() json.RawMessage {
 			"limit": {
 				"type": "number",
 				"description": "The number of lines to read. Only provide if the file is too large to read at once."
+			},
+			"anchors": {
+				"type": "boolean",
+				"description": "When true, prefix each output line with a 7-character anchor placeholder and a tab before the line number. Enables anchor-based editing in a later pass."
 			}
 		},
 		"required": ["file_path"]
@@ -79,8 +85,9 @@ func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return true }
 // Input is the typed view of the JSON input.
 type Input struct {
 	FilePath string `json:"file_path"`
-	Offset   int    `json:"offset,omitempty"` // 1-indexed line number to start reading from
-	Limit    int    `json:"limit,omitempty"`  // number of lines to read
+	Offset   int    `json:"offset,omitempty"`  // 1-indexed line number to start reading from
+	Limit    int    `json:"limit,omitempty"`   // number of lines to read
+	Anchors  bool   `json:"anchors,omitempty"` // prefix each line with a 7-char anchor placeholder
 }
 
 // Execute reads the file and returns its contents with line numbers.
@@ -99,6 +106,11 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	default:
 	}
 
+	// Scheme dispatch: pr://, issue://, http(s):// — handled before local-file logic.
+	if result, handled := dispatch(ctx, in.FilePath); handled {
+		return result, nil
+	}
+
 	f, err := os.Open(in.FilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -112,10 +124,8 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	sniff := make([]byte, 8192)
 	n, _ := f.Read(sniff)
 	sniff = sniff[:n]
-	for _, b := range sniff {
-		if b == 0x00 {
-			return tool.ErrorResult("file appears to be binary (contains null bytes)"), nil
-		}
+	if slices.Contains(sniff, byte(0x00)) {
+		return tool.ErrorResult("file appears to be binary (contains null bytes)"), nil
 	}
 	if n > 0 && !utf8.Valid(sniff) {
 		return tool.ErrorResult("file appears to be binary (invalid UTF-8)"), nil
@@ -136,14 +146,29 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		limit = MaxLines
 	}
 
-	var sb strings.Builder
-	scanner := bufio.NewScanner(f)
-	// Increase scanner buffer for very long lines.
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	// Read full content once — used for both anchor computation and line iteration.
+	// The file is already capped at MaxReadBytes by the sniff check above.
+	fullContent, err := io.ReadAll(f)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("error reading file: %v", err)), nil
+	}
 
+	// Compute anchors once if requested.
+	var allAnchors []hashline.Anchor
+	if in.Anchors {
+		allAnchors = hashline.Compute(fullContent)
+	}
+
+	rawLines := strings.Split(strings.ReplaceAll(string(fullContent), "\r\n", "\n"), "\n")
+	// Drop trailing empty element from a trailing newline.
+	if len(rawLines) > 0 && rawLines[len(rawLines)-1] == "" {
+		rawLines = rawLines[:len(rawLines)-1]
+	}
+
+	var sb strings.Builder
 	lineNum := 0
 	linesEmitted := 0
-	for scanner.Scan() {
+	for _, line := range rawLines {
 		lineNum++
 		if lineNum < startLine {
 			continue
@@ -151,17 +176,19 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		if linesEmitted >= limit {
 			break
 		}
-		line := scanner.Text()
 		// Truncate very long lines to avoid token blowup on minified files.
 		if len(line) > MaxLineLength {
 			truncated := len(line) - MaxLineLength
 			line = line[:MaxLineLength] + fmt.Sprintf("... [%d chars truncated]", truncated)
 		}
-		fmt.Fprintf(&sb, "%6d\t%s\n", lineNum, line)
+		if in.Anchors && lineNum-1 < len(allAnchors) {
+			fmt.Fprintf(&sb, "%s\t%6d\t%s\n", allAnchors[lineNum-1].Hash, lineNum, line)
+		} else if in.Anchors {
+			fmt.Fprintf(&sb, "-------\t%6d\t%s\n", lineNum, line)
+		} else {
+			fmt.Fprintf(&sb, "%6d\t%s\n", lineNum, line)
+		}
 		linesEmitted++
-	}
-	if err := scanner.Err(); err != nil {
-		return tool.ErrorResult(fmt.Sprintf("error reading file: %v", err)), nil
 	}
 
 	text := strings.TrimRight(sb.String(), "\n")

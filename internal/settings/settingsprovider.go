@@ -120,6 +120,41 @@ func providerKindMatchesAccount(providerKind, accountKind string) bool {
 	}
 }
 
+// ProviderChainForRole returns the ordered list of providers for the given role.
+// If no chain is configured for role, falls back to the single ProviderForRole
+// result. Returns nil, false if no provider is available for the role.
+func (m *Merged) ProviderChainForRole(role string) ([]ActiveProviderSettings, bool) {
+	if m == nil {
+		return nil, false
+	}
+	if role == "" {
+		role = RoleDefault
+	}
+	chain := m.ProviderChains[role]
+	if len(chain) == 0 {
+		// No chain configured — fall back to single-provider behaviour.
+		if p, ok := m.ProviderForRole(role); ok {
+			return []ActiveProviderSettings{*p}, true
+		}
+		return nil, false
+	}
+	result := make([]ActiveProviderSettings, 0, len(chain))
+	for _, key := range chain {
+		p, ok := m.Providers[key]
+		if !ok {
+			continue
+		}
+		if !m.providerAvailable(p) {
+			continue
+		}
+		result = append(result, p)
+	}
+	if len(result) == 0 {
+		return nil, false
+	}
+	return result, true
+}
+
 // SaveActiveProvider persists the active default provider and mirrors it into
 // providers + roles.default.
 func SaveActiveProvider(value ActiveProviderSettings) error {

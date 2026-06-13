@@ -38,10 +38,12 @@ import (
 	"github.com/icehunter/conduit/internal/microcompact"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/providerrotation"
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/ttsr"
 )
 
 // maxConcurrentTools is the worker pool size for parallel tool execution.
@@ -66,16 +68,18 @@ var ErrMaxTurnsExceeded = errors.New("agent: max turns exceeded")
 type EventType int
 
 const (
-	EventText       EventType = iota // a text delta streamed from the model
-	EventToolStart                   // tool_use block started streaming; name known, input pending
-	EventToolUse                     // tool_use block complete; tool is about to run
-	EventToolResult                  // tool execution finished
-	EventRateLimit                   // rate-limit headers received; RateLimitWarning may be non-empty
-	EventAPIRetry                    // API returned 429 and the client is backing off
-	EventPartial                     // stream errored mid-turn; PartialBlocks holds what was received
-	EventUsage                       // per-API-turn usage from SSE (input + output + cache fields)
-	EventCost                        // running cost estimate (emitted on each message_delta with output tokens)
-	EventCompacted                   // auto-compact ran; CompactedInputTokens and CompactedThreshold carry context
+	EventText             EventType = iota // a text delta streamed from the model
+	EventToolStart                         // tool_use block started streaming; name known, input pending
+	EventToolUse                           // tool_use block complete; tool is about to run
+	EventToolResult                        // tool execution finished
+	EventRateLimit                         // rate-limit headers received; RateLimitWarning may be non-empty
+	EventAPIRetry                          // API returned 429 and the client is backing off
+	EventPartial                           // stream errored mid-turn; PartialBlocks holds what was received
+	EventUsage                             // per-API-turn usage from SSE (input + output + cache fields)
+	EventCost                              // running cost estimate (emitted on each message_delta with output tokens)
+	EventCompacted                         // auto-compact ran; CompactedInputTokens and CompactedThreshold carry context
+	EventProviderFailover                  // a provider returned 429/503/529 and the loop switched to the next one
+	EventTTSR                              // a TTSR rule fired; TTSRRule and TTSRCorrection carry details
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -121,6 +125,14 @@ type LoopEvent struct {
 	// EventCompacted
 	CompactedInputTokens int
 	CompactedThreshold   int
+
+	// EventProviderFailover
+	FailoverErr      error
+	FailoverProvider string
+
+	// EventTTSR — fired when a TTSR rule aborts the stream.
+	TTSRRule       string // name of the TTSR rule that fired
+	TTSRCorrection string // correction text injected as a <system-reminder>
 }
 
 // LoopConfig controls the loop's behaviour.
@@ -232,6 +244,12 @@ type LoopConfig struct {
 	BackgroundReviewer interface {
 		OnEndTurn(ctx context.Context)
 	}
+
+	// TTSRRules are mid-stream interruption rules. When a rule's pattern matches
+	// the model's streaming text output, the stream is aborted and the rule's
+	// correction is injected as a user <system-reminder> before the next attempt.
+	// Rules are evaluated per-turn; fire counts reset at the start of each turn.
+	TTSRRules []ttsr.Rule
 }
 
 // Loop drives the agentic query cycle.
@@ -240,6 +258,16 @@ type Loop struct {
 	client *api.Client
 	reg    *tool.Registry
 	cfg    LoopConfig
+	// Provider failover: chainResolver returns the ordered provider chain for a
+	// given role; newClientFor builds a fresh API client from a provider.
+	// Both are nil when failover is not configured (default behaviour unchanged).
+	chainResolver func(role string) []settings.ActiveProviderSettings
+	newClientFor  func(settings.ActiveProviderSettings) (*api.Client, error)
+	// providerRotation tracks per-provider cooldowns for this Loop's lifetime.
+	// Non-nil only when chainResolver is set.
+	providerRotation *providerrotation.State
+	// role is the role used to look up the provider chain.
+	role string
 	// consecutiveCompactFails tracks how many times auto-compact has failed in a
 	// row. Mirrors the MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES circuit breaker in
 	// autoCompact.ts. Stored on the struct so it persists across Run() calls.
@@ -354,6 +382,31 @@ func (l *Loop) SetClient(client *api.Client) {
 	l.client = client
 }
 
+// SetProviderChain configures provider failover for this loop. chainResolver
+// returns the ordered provider list for the given role; newClientFor constructs
+// a fresh API client from a provider settings value. Both must be non-nil.
+// Safe to call before Run().
+func (l *Loop) SetProviderChain(
+	role string,
+	chainResolver func(string) []settings.ActiveProviderSettings,
+	newClientFor func(settings.ActiveProviderSettings) (*api.Client, error),
+) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.role = role
+	l.chainResolver = chainResolver
+	l.newClientFor = newClientFor
+	l.providerRotation = providerrotation.New()
+}
+
+// SetTTSRRules replaces the active mid-stream interruption rules.
+// Safe to call concurrently with Run; the new rules take effect on the next turn.
+func (l *Loop) SetTTSRRules(rules []ttsr.Rule) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cfg.TTSRRules = rules
+}
+
 // SetAskPermission installs the interactive permission callback.
 // Called from the TUI after the Bubble Tea program is created.
 func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)) {
@@ -456,6 +509,75 @@ func isToolUseFlowError(err error) bool {
 		strings.Contains(msg, "tool result")
 }
 
+// isProviderFailover reports whether err signals that a provider is temporarily
+// unavailable and failover to a different provider should be attempted.
+// Matches HTTP 429/503/529 status codes and common rate-limit phrases.
+// Numeric checks use " NNN" / ":NNN" anchors to avoid false positives on
+// error strings that incidentally contain those digits (e.g. byte counts).
+func isProviderFailover(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, " 429") || strings.Contains(s, ":429") ||
+		strings.Contains(s, " 503") || strings.Contains(s, ":503") ||
+		strings.Contains(s, " 529") || strings.Contains(s, ":529") ||
+		strings.Contains(s, "too many requests") ||
+		strings.Contains(s, "rate limit") ||
+		strings.Contains(s, "overloaded") ||
+		strings.Contains(s, "quota")
+}
+
+// failoverState bundles the mutable provider-rotation variables so tryRotate
+// can update them in place without needing to return multiple values.
+type failoverState struct {
+	chain        []settings.ActiveProviderSettings
+	rotation     *providerrotation.State
+	newClientFor func(settings.ActiveProviderSettings) (*api.Client, error)
+	attempts     int
+
+	// Pointers into Run()'s locals — updated on each successful rotation.
+	client        **api.Client
+	providerKey   *string
+	model         *string
+	contextWindow *int
+}
+
+// tryRotate attempts to rotate to the next available provider when err is a
+// rate-limit or overload signal. Returns true if rotation succeeded (caller
+// should continue the loop); false if no rotation is possible or the per-Run
+// cap is exhausted.
+func (fs *failoverState) tryRotate(err error, handler func(LoopEvent)) bool {
+	if !isProviderFailover(err) || fs.rotation == nil || len(fs.chain) <= 1 {
+		return false
+	}
+	if fs.attempts >= len(fs.chain) {
+		return false
+	}
+	next, ok := fs.rotation.NextAvailable(fs.chain, *fs.providerKey, time.Now())
+	if !ok {
+		return false
+	}
+	nc, cerr := fs.newClientFor(next)
+	if cerr != nil {
+		return false
+	}
+	if *fs.providerKey != "" {
+		fs.rotation.Penalize(*fs.providerKey, time.Now().Add(5*time.Minute))
+	}
+	*fs.client = nc
+	*fs.providerKey = settings.ProviderKey(next)
+	fs.attempts++
+	if next.Model != "" {
+		*fs.model = next.Model
+	}
+	if next.ContextWindow > 0 {
+		*fs.contextWindow = next.ContextWindow
+	}
+	handler(LoopEvent{Type: EventProviderFailover, FailoverErr: err, FailoverProvider: *fs.providerKey})
+	return true
+}
+
 func stripTrailingAssistantToolUse(msgs []api.Message) ([]api.Message, bool) {
 	out := make([]api.Message, len(msgs))
 	copy(out, msgs)
@@ -513,7 +635,24 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	thinkingBudget := l.cfg.ThinkingBudget
 	contextWindow := l.cfg.ContextWindow
 	client := l.client
+	role := l.role
+	chainResolver := l.chainResolver
+	newClientFor := l.newClientFor
+	providerRotation := l.providerRotation
+	ttsrRules := l.cfg.TTSRRules
 	l.mu.RUnlock()
+
+	// Build the failover chain once so we don't call chainResolver on every turn.
+	var (
+		failoverChain      []settings.ActiveProviderSettings
+		currentProviderKey string
+	)
+	if chainResolver != nil {
+		failoverChain = chainResolver(role)
+		if len(failoverChain) > 0 {
+			currentProviderKey = settings.ProviderKey(failoverChain[0])
+		}
+	}
 
 	sessionReminderBlock, err := l.sessionStartReminderBlock(ctx)
 	if err != nil {
@@ -537,6 +676,20 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	lastInputTokens := 0 // last reported input token count; 0 means unknown
 	streamFailures := 0
 	toolUseRecoveries := 0
+	fs := &failoverState{
+		chain:         failoverChain,
+		rotation:      providerRotation,
+		newClientFor:  newClientFor,
+		client:        &client,
+		providerKey:   &currentProviderKey,
+		model:         &model,
+		contextWindow: &contextWindow,
+	}
+	// ttsrFires counts total TTSR rule firings for the current user turn.
+	// When it reaches maxTTSRFiresPerTurn the watcher is disabled (set to nil)
+	// so the stream can complete without further interruptions.
+	ttsrFires := 0
+	const maxTTSRFiresPerTurn = 3
 	for {
 		if ctx.Err() != nil {
 			return msgs, ctx.Err()
@@ -690,6 +843,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					continue
 				}
 			}
+			if fs.tryRotate(err, handler) {
+				continue
+			}
 			streamFailures++
 			if streamFailures > 3 {
 				return msgs, fmt.Errorf("agent: stream: %w", err)
@@ -711,13 +867,45 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			})
 		}
 
-		assistantBlocks, _, usage, err := l.drainStream(ctx, stream, handler)
+		// Create a fresh TTSR watcher for this attempt. When the turn-level fire
+		// budget is exhausted (ttsrFires >= maxTTSRFiresPerTurn), pass nil so the
+		// stream is allowed to complete without further TTSR interruption.
+		var ttsrWatcher *ttsr.Watcher
+		if ttsrFires < maxTTSRFiresPerTurn && len(ttsrRules) > 0 {
+			ttsrWatcher = ttsr.NewWatcher(ttsrRules)
+		}
+
+		assistantBlocks, _, usage, err := l.drainStream(ctx, stream, handler, ttsrWatcher)
 		inputTokens := usage.PromptInputTokens()
 		if inputTokens > 0 {
 			lastInputTokens = inputTokens
 		}
 		_ = stream.Close()
 		if err != nil {
+			// TTSR rule fired: discard partial blocks, inject correction as a
+			// <system-reminder> user message, and restart the turn attempt.
+			// This check comes BEFORE context.Canceled because ErrMatch is a
+			// custom error type — errors.Is(context.Canceled) won't match it.
+			if ttsrErr, ok := errors.AsType[*ttsr.ErrMatch](err); ok {
+				ttsrFires++
+				correction := ttsrErr.Rule.Correction
+				msgs = append(msgs, api.Message{
+					Role: "user",
+					Content: []api.ContentBlock{{
+						Type: "text",
+						Text: fmt.Sprintf("<system-reminder>\n%s\n</system-reminder>", correction),
+					}},
+				})
+				handler(LoopEvent{
+					Type:           EventTTSR,
+					TTSRRule:       ttsrErr.Rule.Name,
+					TTSRCorrection: correction,
+				})
+				// When the budget is exhausted (ttsrFires >= maxTTSRFiresPerTurn),
+				// ttsrWatcher will be nil next iteration so the stream completes.
+				continue
+			}
+
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				// Conversation recovery: emit any partial assistant content the
 				// caller can persist to the session JSONL before the error
@@ -733,8 +921,11 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				}
 				return msgs, err
 			}
-			// Non-cancellation drain error — retry up to 3 times before giving up.
-			// Don't persist partial blocks; the next attempt may succeed cleanly.
+			// Non-cancellation drain error — try provider failover first, then
+			// retry up to 3 times before giving up.
+			if fs.tryRotate(err, handler) {
+				continue
+			}
 			streamFailures++
 			if streamFailures > 3 {
 				if len(assistantBlocks) > 0 {

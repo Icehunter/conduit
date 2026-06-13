@@ -314,3 +314,89 @@ Issues: 2
 		{"golangci-lint", "golangci-lint run", lintOut, false},
 	})
 }
+
+func TestFilter_AstGrep(t *testing.T) {
+	// Valid JSON stream output → compressed to file:line: text format.
+	jsonStream := `{"file":"main.go","range":{"start":{"line":4,"column":1},"end":{"line":4,"column":20}},"text":"fmt.Println(\"hello\")","charCount":{"leading":0,"trailing":0}}
+{"file":"util.go","range":{"start":{"line":9,"column":0},"end":{"line":9,"column":25}},"text":"fmt.Println(\"world\")","charCount":{"leading":0,"trailing":0}}
+`
+	// >100 matches to test truncation.
+	var sb strings.Builder
+	for i := range 120 {
+		sb.WriteString(`{"file":"foo.go","range":{"start":{"line":`)
+		sb.WriteString(itoa(i))
+		sb.WriteString(`,"column":0},"end":{"line":`)
+		sb.WriteString(itoa(i))
+		sb.WriteString(`,"column":5}},"text":"match","charCount":{"leading":0,"trailing":0}}`)
+		sb.WriteByte('\n')
+	}
+	longStream := sb.String()
+
+	runFilterCases(t, []filterCase{
+		{"ast-grep run", "ast-grep run --pattern 'fmt.Println($A)' .", jsonStream, true},
+		{"sg run", "sg run --pattern 'foo' .", jsonStream, true},
+		{"ast-grep truncation", "ast-grep run --pattern 'match' .", longStream, true},
+	})
+}
+
+func TestFilterAstGrep_Unit(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantSubstr string
+		wantOmit   bool
+	}{
+		{
+			name:       "valid JSON line",
+			input:      `{"file":"foo.go","range":{"start":{"line":2,"column":0},"end":{"line":2,"column":5}},"text":"hello","charCount":{"leading":0,"trailing":0}}`,
+			wantSubstr: "foo.go:3: hello",
+		},
+		{
+			name:       "invalid JSON passes through",
+			input:      "not json at all",
+			wantSubstr: "not json at all",
+		},
+		{
+			name:       "mixed valid and invalid",
+			input:      "not json\n" + `{"file":"bar.go","range":{"start":{"line":0,"column":0},"end":{"line":0,"column":3}},"text":"baz","charCount":{"leading":0,"trailing":0}}`,
+			wantSubstr: "bar.go:1: baz",
+		},
+		{
+			name:     "empty input",
+			input:    "",
+			wantOmit: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterAstGrep("ast-grep run", tc.input)
+			if tc.wantOmit {
+				if got != "" {
+					t.Errorf("expected empty output; got: %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.wantSubstr) {
+				t.Errorf("filterAstGrep() = %q; want substring %q", got, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+func TestFilterAstGrep_Truncation(t *testing.T) {
+	// Build 150 valid JSON lines.
+	lines := make([]string, 0, 150)
+	for i := range 150 {
+		lines = append(lines, `{"file":"f.go","range":{"start":{"line":`+itoa(i)+`,"column":0},"end":{"line":`+itoa(i)+`,"column":1}},"text":"x","charCount":{"leading":0,"trailing":0}}`)
+	}
+	input := strings.Join(lines, "\n")
+	got := filterAstGrep("ast-grep run --pattern x .", input)
+	if !strings.Contains(got, "more matches omitted by RTK") {
+		t.Errorf("expected truncation notice; got: %s", got)
+	}
+	// Should have exactly 100 result lines + 1 omission line.
+	resultLines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(resultLines) != 101 {
+		t.Errorf("expected 101 lines (100 results + 1 omission); got %d", len(resultLines))
+	}
+}

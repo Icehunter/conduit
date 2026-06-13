@@ -6,6 +6,10 @@
 // assembles the results (text, citations, search hits) into a single text
 // block returned to the main agent.
 //
+// When one or more SearchProviders are configured via NewWithProviders, they
+// are tried in order before falling back to the Anthropic-native path. The
+// first provider that returns a non-empty result set wins.
+//
 // Mirrors src/tools/WebSearchTool/WebSearchTool.ts.
 // max_uses=8 is hardcoded to match the TS implementation.
 package websearchtool
@@ -21,6 +25,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/truncate"
+	"github.com/icehunter/conduit/internal/websearch"
 )
 
 // searchModel is the small fast model used for web search sub-calls.
@@ -33,12 +38,22 @@ const maxSearchUses = 8
 // Tool implements the WebSearch tool.
 type Tool struct {
 	tool.NotDeferrable
-	client *api.Client
+	client    *api.Client
+	providers []websearch.SearchProvider
 }
 
 // New returns a WebSearch tool backed by the given API client.
+// It uses only the Anthropic-native path — equivalent to NewWithProviders
+// called with no providers.
 func New(client *api.Client) *Tool {
 	return &Tool{client: client}
+}
+
+// NewWithProviders returns a WebSearch tool that tries each provider in order
+// before falling back to the Anthropic-native path. If no providers are
+// configured or all fail, the Anthropic native search is used.
+func NewWithProviders(client *api.Client, providers ...websearch.SearchProvider) *Tool {
+	return &Tool{client: client, providers: providers}
 }
 
 func (*Tool) Name() string { return "WebSearch" }
@@ -83,8 +98,9 @@ type Input struct {
 	BlockedDomains []string `json:"blocked_domains,omitempty"`
 }
 
-// Execute runs a web search via Anthropic's native search tool and returns
-// a formatted text block with results and sources.
+// Execute runs a web search. It tries each configured provider in order,
+// returning the first successful result. If all providers fail or none are
+// configured, it falls back to Anthropic's native search tool.
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var in Input
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -92,6 +108,66 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	if strings.TrimSpace(in.Query) == "" {
 		return tool.ErrorResult("`query` is required"), nil
+	}
+
+	// Try each configured provider in order; skip to next on error or no results.
+	for _, p := range t.providers {
+		results, err := p.Search(ctx, websearch.Query{
+			Text:           in.Query,
+			AllowedDomains: in.AllowedDomains,
+			BlockedDomains: in.BlockedDomains,
+			MaxResults:     10,
+		})
+		if err != nil || len(results) == 0 {
+			continue
+		}
+		return t.formatProviderResults(in.Query, p.Name(), results)
+	}
+
+	// All providers failed or none configured — fall through to Anthropic-native.
+	return t.anthropicSearch(ctx, in)
+}
+
+// formatProviderResults formats a slice of search results into a tool.Result.
+// Results are deduplicated by URL before formatting.
+func (t *Tool) formatProviderResults(query, providerName string, results []websearch.Result) (tool.Result, error) {
+	// Deduplicate by URL.
+	seen := make(map[string]bool, len(results))
+	deduped := make([]websearch.Result, 0, len(results))
+	for _, r := range results {
+		if seen[r.URL] {
+			continue
+		}
+		seen[r.URL] = true
+		deduped = append(deduped, r)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Web search results for: %q (via %s)\n\n", query, providerName)
+	for _, r := range deduped {
+		fmt.Fprintf(&sb, "## %s\n%s\n%s\n\n", r.Title, r.URL, r.Snippet)
+		if r.Markdown != "" {
+			sb.WriteString("---\n")
+			sb.WriteString(r.Markdown)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	content := strings.TrimSpace(sb.String())
+	maxLines, maxBytes := truncate.Limits()
+	tr, _ := truncate.Apply(content, truncate.Options{
+		MaxLines:  maxLines,
+		MaxBytes:  maxBytes,
+		Direction: "head",
+		HasTask:   false,
+	})
+	return tool.TextResult(tr.Content), nil
+}
+
+// anthropicSearch performs a web search via Anthropic's native search tool.
+func (t *Tool) anthropicSearch(ctx context.Context, in Input) (tool.Result, error) {
+	if t.client == nil {
+		return tool.ErrorResult("no API client configured for Anthropic-native web search"), nil
 	}
 
 	// Build the native web_search_20250305 tool definition.

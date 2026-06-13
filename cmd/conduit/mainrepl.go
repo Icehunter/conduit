@@ -24,6 +24,7 @@ import (
 	"github.com/icehunter/conduit/internal/globalconfig"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/instructions"
+	"github.com/icehunter/conduit/internal/kernel"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -48,6 +49,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	"github.com/icehunter/conduit/internal/truncate"
+	"github.com/icehunter/conduit/internal/ttsr"
 	"github.com/icehunter/conduit/internal/tui"
 	"github.com/icehunter/conduit/internal/updater"
 )
@@ -375,7 +377,29 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 	claudeMdPrompt := instructions.BuildPrompt(claudeMdFiles)
 
+	// Load TTSR (Token-Time Stopping Rules) from .conduit/ttsr/*.md.
+	ttsrRules, ttsrLoadErr := ttsr.Load(cwd)
+	if ttsrLoadErr != nil {
+		warnf("Could not load TTSR rules: %v", ttsrLoadErr)
+	}
+
 	c := app.NewAPIClient(tok, Version)
+
+	// Kernel manager: one long-lived Python/Node interpreter per (session, lang).
+	// The reaper goroutine closes kernels that have been idle for 10+ minutes.
+	kernelMgr := kernel.NewManager()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case t := <-ticker.C:
+				kernelMgr.Reap(t)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// pending-edits table for the diff-first review gate. The GatedStager
 	// wraps it with a mode check so staging only activates in acceptEdits mode.
@@ -399,8 +423,10 @@ func runREPL(continueMode bool, resumeID string) error {
 			d, _ := os.Getwd()
 			return d
 		}, OriginalCwd: cwd},
-		Stager:     &pendingedits.GatedStager{Table: pendingTable, Gate: gate},
-		SessionEnv: sessionEnv,
+		Stager:        &pendingedits.GatedStager{Table: pendingTable, Gate: gate},
+		SessionEnv:    sessionEnv,
+		KernelManager: kernelMgr,
+		SessionID:     sessionID,
 	}
 
 	reg := app.BuildRegistry(c, mcpManager, lspManager, rOpts, func() *settings.ActiveProviderSettings {
@@ -671,6 +697,35 @@ func runREPL(continueMode bool, resumeID string) error {
 		IsOAuthSubscription: auth.InferAccountKind(tok) == auth.AccountKindClaudeAI,
 	})
 
+	// Install TTSR rules loaded from .conduit/ttsr/*.md.
+	if len(ttsrRules) > 0 {
+		lp.SetTTSRRules(ttsrRules)
+	}
+
+	// Wire provider failover when chains are configured in conduit.json.
+	// The chain is re-resolved on each failover so hotloaded config changes
+	// take effect between providers.
+	if len(s.ProviderChains) > 0 {
+		secureStore := secure.NewDefault()
+		lp.SetProviderChain(
+			settings.RoleDefault,
+			func(role string) []settings.ActiveProviderSettings {
+				// Re-load merged settings so that a conduit.json edit during a
+				// session picks up updated chains without restarting.
+				if latest, err := settings.Load(cwd); err == nil && latest != nil {
+					if chain, ok := latest.ProviderChainForRole(role); ok {
+						return chain
+					}
+				}
+				chain, _ := s.ProviderChainForRole(role)
+				return chain
+			},
+			func(p settings.ActiveProviderSettings) (*api.Client, error) {
+				return app.NewProviderAPIClient(p, secureStore, Version)
+			},
+		)
+	}
+
 	// Register AgentTool and SkillTool now that the loop exists.
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
 	reg.Register(agenttool.New(
@@ -816,6 +871,10 @@ func runREPL(continueMode bool, resumeID string) error {
 		InitialCatalog: initialCatalog,
 		LSPManager:     lspManager,
 	})
+
+	// Dispose kernel processes for this session before exiting.
+	// Best-effort: failure is non-fatal; the OS will clean up.
+	kernelMgr.DisposeSession(sessionID)
 
 	// Fast exit: skip all cleanup drains regardless of how the TUI exited.
 	// Terminal state was already restored by Bubble Tea; session data was

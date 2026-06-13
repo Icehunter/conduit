@@ -159,15 +159,39 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("`url` is required"), nil
 	}
 
-	// Validate URL.
-	parsed, err := url.Parse(in.URL)
+	text, err := t.fetch(ctx, in.URL, in.Prompt)
+	if err != nil {
+		if ctx.Err() != nil {
+			return tool.ErrorResult("request cancelled or timed out"), nil
+		}
+		return tool.ErrorResult(err.Error()), nil
+	}
+	return tool.TextResult(text), nil
+}
+
+// Fetch is an exported helper that creates a default SSRF-safe client and
+// fetches the given URL, returning the processed text content. It is intended
+// for in-process callers (e.g. FileReadTool scheme dispatch) that need HTTP
+// fetching without going through the full tool Execute path.
+//
+// rawURL must be an http or https URL. prompt is optional context that is
+// prepended to the result (may be empty). Returns an error only on hard
+// failures; HTTP 4xx/5xx are returned as an error string.
+func Fetch(ctx context.Context, rawURL, prompt string) (string, error) {
+	t := New()
+	return t.fetch(ctx, rawURL, prompt)
+}
+
+// fetch is the internal implementation shared by Execute and Fetch.
+func (t *Tool) fetch(ctx context.Context, rawURL, prompt string) (string, error) {
+	parsed, err := url.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return tool.ErrorResult(fmt.Sprintf("invalid URL: %s", in.URL)), nil
+		return "", fmt.Errorf("webfetch: invalid URL: %s", rawURL)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, in.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return tool.ErrorResult(fmt.Sprintf("cannot build request: %v", err)), nil
+		return "", fmt.Errorf("webfetch: cannot build request: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8")
@@ -176,25 +200,23 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	resp, err := t.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return tool.ErrorResult("request cancelled or timed out"), nil
+			return "", fmt.Errorf("webfetch: request cancelled or timed out")
 		}
-		return tool.ErrorResult(fmt.Sprintf("fetch failed: %v", err)), nil
+		return "", fmt.Errorf("webfetch: fetch failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return tool.ErrorResult(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status)), nil
+		return "", fmt.Errorf("webfetch: HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	// Read body up to MaxContentBytes.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(MaxContentBytes)+1))
 	if err != nil {
-		return tool.ErrorResult(fmt.Sprintf("cannot read response: %v", err)), nil
+		return "", fmt.Errorf("webfetch: cannot read response: %w", err)
 	}
 	truncated := len(body) > MaxContentBytes
 	if truncated {
 		body = body[:MaxContentBytes]
-		// Trim to valid UTF-8 boundary.
 		for !utf8.Valid(body) {
 			body = body[:len(body)-1]
 		}
@@ -203,7 +225,6 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	elapsed := time.Since(start)
 	contentType := resp.Header.Get("Content-Type")
 
-	// Convert content based on type.
 	var text string
 	if isHTML(contentType) {
 		text = htmlToMarkdown(string(body))
@@ -215,16 +236,14 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		text += fmt.Sprintf("\n\n[Content truncated at %d KB]", MaxContentBytes/1024)
 	}
 
-	// Build result: include the prompt context so the model can use it.
 	var sb strings.Builder
-	if in.Prompt != "" {
-		fmt.Fprintf(&sb, "URL: %s\nPrompt: %s\n\n", in.URL, in.Prompt)
+	if prompt != "" {
+		fmt.Fprintf(&sb, "URL: %s\nPrompt: %s\n\n", rawURL, prompt)
 	}
 	fmt.Fprintf(&sb, "HTTP %d — fetched %d bytes in %dms\n\n",
 		resp.StatusCode, len(body), elapsed.Milliseconds())
 	sb.WriteString(text)
 
-	// Apply truncate-to-disk for large web content.
 	maxLines, maxBytes := truncate.Limits()
 	tr, _ := truncate.Apply(sb.String(), truncate.Options{
 		MaxLines:  maxLines,
@@ -232,7 +251,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		Direction: "head",
 		HasTask:   false,
 	})
-	return tool.TextResult(tr.Content), nil
+	return tr.Content, nil
 }
 
 func isHTML(contentType string) bool {

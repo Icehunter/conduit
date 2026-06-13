@@ -78,24 +78,28 @@ coming, and what's intentionally out of scope.
 | Diff-first review gate | ✅ | Hunk-level Myers diff; per-hunk approve/reject/note; `acceptEditsLive` mid-turn pause |
 | Decision journal | ✅ | Append-only JSONL; `RecordDecision` tool; council auto-records verdicts |
 | Proactive health checks | ✅ | Git/deps pre-flight at session start; warnings in system context |
+| Provider failover chains | ✅ | `internal/providerrotation/`; configure `providerChains.role: [key1, key2]` in conduit.json; 429/503/529 rotate to next provider in chain; cooldowns tracked in-process; `EventProviderFailover` emitted on swap |
+| Token-Time Stopping Rules (TTSR) | ✅ | `internal/ttsr/`; regex rules in `.conduit/ttsr/*.md` frontmatter; 4KB sliding tail buffer; per-rule `MaxFires` cap; global 3-fires/turn circuit breaker; `EventTTSR` emitted on fire |
 
 ---
 
-## Tools (36 built-in)
+## Tools (37 built-in)
 
 | Tool | Status | Notes |
 |------|--------|-------|
 | BashTool | ✅ | RTK filtering; Unix/macOS. Windows: Shell (PowerShell) instead; logs to stderr when raw output exceeds the 120 KB pre-RTK capture cap so silent tail-drops are visible |
-| FileReadTool | ✅ | Line-range support |
+| FileReadTool | ✅ | Line-range support; URL scheme dispatch: `pr://owner/repo/N` and `issue://owner/repo/N` (gh CLI, RTK-filtered), `http(s)://` (webfetchtool); `anchors: true` prefixes each line with a 7-char content-hash anchor via `hashline.Compute` |
 | FileWriteTool | ✅ | |
 | FileEditTool | ✅ | Exact-string replacement |
+| HashEditTool | ✅ | Content-hash-anchored editing; `internal/tools/hashedittool/`; survives line-number drift; multi-op bottom-to-top application; stages through diff gate |
 | GrepTool | ✅ | ripgrep backend |
+| AstGrep | ✅ | `internal/tools/astgreptool/`; structural search/rewrite via installed ast-grep/sg; rewrites stage through diff gate; no auto-download |
 | GlobTool | ✅ | |
 | AgentTool (Task) | ✅ | Sub-agent spawning |
 | WebFetchTool | ✅ | HTML→markdown |
-| WebSearchTool | ✅ | |
+| WebSearchTool | ✅ | Multi-provider: Brave Search (API key via secure storage or `BRAVE_API_KEY`) with Anthropic-native `web_search_20250305` fallback; providers tried in order, first non-empty result wins; `internal/websearch/` + `internal/websearch/brave/` |
 | NotebookEditTool | ✅ | Jupyter cell edit |
-| REPLTool | 🔶 | Functional; no tool-level tests yet |
+| REPLTool | ✅ | persistent kernel per (session, lang); idle reaper; python + node; bash stays subprocess-per-call; `internal/kernel/` |
 | SleepTool | ✅ | |
 | TodoWriteTool | ✅ | |
 | TaskCreate/Get/List/Update/Stop | ✅ | In-process task store |

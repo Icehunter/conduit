@@ -39,6 +39,16 @@ func (s *Stream) Close() error {
 	return err
 }
 
+// NewStreamFromReader constructs a Stream that reads SSE events from r.
+// The reader is adopted; the caller must not use it after this call.
+// Intended for unit tests — production code creates Streams via StreamMessage.
+func NewStreamFromReader(r io.ReadCloser) *Stream {
+	return &Stream{
+		body:   r,
+		parser: sse.NewParser(r),
+	}
+}
+
 // StreamMessage opens an event-stream connection using the configured provider
 // wire dialect. Headers and 401 retry mirror CreateMessage. The caller is
 // responsible for reading until io.EOF and calling Close.

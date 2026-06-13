@@ -150,6 +150,9 @@ type Merged struct {
 	Providers map[string]ActiveProviderSettings
 	// Roles maps role names to provider keys.
 	Roles map[string]string
+	// ProviderChains maps role names to ordered provider-key slices for
+	// automatic failover when a provider returns 429/503/529.
+	ProviderChains map[string][]string
 	// OutputStyle is the active output style name (last layer wins).
 	OutputStyle string
 	// Theme is the active palette name (last layer wins).
@@ -293,6 +296,9 @@ func Load(cwd string) (*Merged, error) {
 		}
 		if len(cfg.CouncilRoles) > 0 {
 			merged.CouncilRoles = maps.Clone(cfg.CouncilRoles)
+		}
+		if len(cfg.ProviderChains) > 0 {
+			merged.ProviderChains = maps.Clone(cfg.ProviderChains)
 		}
 	}
 	applyConduitProjectState(merged, cwd)

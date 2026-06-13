@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/ttsr"
 )
 
 // blockMeta stores the block type and tool metadata per stream block index.
@@ -28,7 +29,11 @@ type blockMeta struct {
 //
 // EventUsage is emitted via handler on each message_stop so the TUI can
 // update token counts incrementally when multiple turns arrive in one stream.
-func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent)) ([]api.ContentBlock, string, api.Usage, error) {
+//
+// watcher is an optional TTSR watcher. When non-nil and a rule fires,
+// drainStream returns early with a *ttsr.ErrMatch error so the caller can
+// inject the correction and restart the turn. Pass nil to disable TTSR.
+func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent), watcher *ttsr.Watcher) ([]api.ContentBlock, string, api.Usage, error) {
 	// blockTexts accumulates text/input_json across deltas per block index.
 	blockTexts := map[int]*strings.Builder{}
 	metas := map[int]blockMeta{}
@@ -119,6 +124,11 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			case "text_delta":
 				sb.WriteString(cbd.Delta.Text)
 				handler(LoopEvent{Type: EventText, Text: cbd.Delta.Text})
+				if watcher != nil {
+					if rule, fired := watcher.Feed(cbd.Delta.Text); fired {
+						return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, &ttsr.ErrMatch{Rule: rule}
+					}
+				}
 			case "thinking_delta":
 				// Accumulate thinking text into the block builder (preserved for
 				// the API round-trip) and surface it to the TUI via EventText

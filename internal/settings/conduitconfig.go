@@ -37,6 +37,7 @@ type ConduitConfig struct {
 	Model                       string                            `json:"model,omitempty"`
 	Providers                   map[string]ActiveProviderSettings `json:"providers,omitempty"`
 	Roles                       map[string]string                 `json:"roles,omitempty"`
+	ProviderChains              map[string][]string               `json:"providerChains,omitempty"`
 	CouncilProviders            []string                          `json:"councilProviders,omitempty"`
 	CouncilMaxRounds            int                               `json:"councilMaxRounds,omitempty"`
 	CouncilMemberTimeoutSec     int                               `json:"councilMemberTimeoutSec,omitempty"`

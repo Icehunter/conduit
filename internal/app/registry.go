@@ -5,13 +5,16 @@ import (
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/kernel"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
+	"github.com/icehunter/conduit/internal/tools/astgreptool"
 	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/bashtool"
 	"github.com/icehunter/conduit/internal/tools/ccrtool"
@@ -22,6 +25,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/filewritetool"
 	"github.com/icehunter/conduit/internal/tools/globtool"
 	"github.com/icehunter/conduit/internal/tools/greptool"
+	"github.com/icehunter/conduit/internal/tools/hashedittool"
 	"github.com/icehunter/conduit/internal/tools/localimplementtool"
 	lsptool "github.com/icehunter/conduit/internal/tools/lsp"
 	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
@@ -40,6 +44,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/websearchtool"
 	"github.com/icehunter/conduit/internal/tools/winshelltool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
+	braveprovider "github.com/icehunter/conduit/internal/websearch/brave"
 )
 
 // BuildAgentEntries converts loaded plugin agents into AgentEntry values for
@@ -111,6 +116,13 @@ type RegistryOpts struct {
 	// environment injection is stored on the Tool instance rather than a
 	// package-level global.
 	SessionEnv map[string]string
+
+	// KernelManager and SessionID enable persistent Python/Node kernels for
+	// the REPL tool. When non-nil, Python and Node executions share a
+	// long-lived interpreter process per (SessionID, lang) pair so that
+	// variables persist across calls. Bash always uses subprocess-per-call.
+	KernelManager *kernel.Manager
+	SessionID     string
 }
 
 // BuildRegistry builds the tool registry, including MCP server tools.
@@ -118,9 +130,13 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg := tool.NewRegistry()
 	var sessionEnv map[string]string
 	var stager pendingedits.Stager
+	var kernelMgr *kernel.Manager
+	var sessionID string
 	if rOpts != nil {
 		sessionEnv = rOpts.SessionEnv
 		stager = rOpts.Stager
+		kernelMgr = rOpts.KernelManager
+		sessionID = rOpts.SessionID
 	}
 	// On Windows, register the PowerShell Shell tool; on Unix/macOS use Bash.
 	if runtime.GOOS == "windows" {
@@ -129,13 +145,19 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		reg.Register(bashtool.New(sessionEnv))
 	}
 	reg.Register(fileedittool.NewWithStager(stager))
+	reg.Register(hashedittool.NewWithStager(stager))
 	reg.Register(filereadtool.New())
+	reg.Register(astgreptool.NewWithStager(stager))
 	reg.Register(filewritetool.NewWithStager(stager))
 	reg.Register(globtool.New())
 	reg.Register(ccrtool.New())
 	reg.Register(greptool.New())
 	reg.Register(notebookedittool.New())
-	reg.Register(repltool.New())
+	if kernelMgr != nil {
+		reg.Register(repltool.NewWithKernelManager(kernelMgr, sessionID))
+	} else {
+		reg.Register(repltool.New())
+	}
 	reg.Register(sleeptool.New())
 	reg.Register(tasktool.NewCreate())
 	reg.Register(tasktool.NewGet())
@@ -147,7 +169,9 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(decisiontool.New())
 	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
-	reg.Register(websearchtool.New(client))
+	reg.Register(websearchtool.NewWithProviders(client,
+		braveprovider.New(secure.NewDefault()),
+	))
 	reg.Register(sessionsearchtool.New())
 	reg.Register(lsptool.New(lspManager))
 	reg.Register(&configtool.ConfigTool{})

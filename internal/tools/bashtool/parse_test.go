@@ -1,82 +1,70 @@
 package bashtool
 
-import (
-	"testing"
-)
+import "testing"
+
+// Shell-safety classification tests live in internal/shellsafe/shellsafe_test.go.
+// This file only tests the thin shims in this package to ensure wiring is correct.
 
 func TestHasShellMetachars(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		cmd  string
 		want bool
 	}{
-		// Benign: no metacharacters
+		// Single commands — not unsafe constructs
 		{"ls -la", false},
 		{"cat foo.txt", false},
 		{"git log --oneline", false},
 		{"git status", false},
 		{"echo hello", false},
-		{"FOO=bar cat file.txt", false},
-		// Protected by single-quotes
+		// Quoted metachars are not constructs
 		{"git log --format='%H %s'", false},
 		{"echo 'foo; bar'", false},
-		{"echo 'foo && bar'", false},
-		{"echo 'foo > bar'", false},
-		// Protected by double-quotes
-		{`echo "foo; bar"`, false},
 		{`echo "foo && bar"`, false},
-		// Backslash escape keeps next char from being a metachar
-		{`echo foo\;bar`, false},
-		{`echo foo\|bar`, false},
+		// Safe discard redirect
+		{"ls 2>/dev/null", false},
+		{"ls 2>&1", false},
 
-		// Dangerous: command separators
+		// Unsafe: chains
 		{"cat foo; rm -rf bar", true},
 		{"cat foo && rm bar", true},
 		{"cat foo || rm bar", true},
 		{"cat foo | rm bar", true},
 		{"cat foo & rm bar", true},
-		{"cat foo\nrm bar", true},
-
-		// Dangerous: command substitution
+		// Unsafe: substitution
 		{"cat $(rm bar)", true},
 		{"cat `rm bar`", true},
-		{"FOO=$(rm evil) cat file", true},
-		{`echo "result: $(rm -rf /tmp/victim)"`, true},
-		{`echo "result: ` + "`rm evil`" + `"`, true},
-
-		// Dangerous: output redirection
-		{"cat foo > /dev/null", true},
-		{"cat foo >> bar.txt", true},
-		{"cat foo 2>&1", true},
-
-		// Dangerous: heredoc
+		{`echo "result: $(rm -rf /)"`, true},
+		// Unsafe: redirect to real file
+		{"echo x > out.txt", true},
+		{"echo x >> bar.txt", true},
+		// Unsafe: heredoc
 		{"cat << EOF", true},
 	}
-
-	for _, tc := range cases {
-		got := hasShellMetachars(tc.cmd)
-		if got != tc.want {
-			t.Errorf("hasShellMetachars(%q) = %v, want %v", tc.cmd, got, tc.want)
-		}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			if got := hasShellMetachars(tt.cmd); got != tt.want {
+				t.Errorf("hasShellMetachars(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
 	}
 }
 
-func TestIsReadOnlyCommandMetachars(t *testing.T) {
-	// These were previously incorrectly reported as read-only.
+func TestIsReadOnlyCommand(t *testing.T) {
 	unsafe := []string{
 		"cat foo; rm -rf bar",
 		"cat foo && rm bar",
 		"cat $(rm bar)",
 		"cat `rm bar`",
-		"FOO=$(rm evil) cat file",
 		"echo hello > /tmp/evil",
+		"git push origin main",
+		"rm -rf /tmp/x",
 	}
 	for _, cmd := range unsafe {
 		if isReadOnlyCommand(cmd) {
-			t.Errorf("isReadOnlyCommand(%q) = true, want false (should NOT auto-approve)", cmd)
+			t.Errorf("isReadOnlyCommand(%q) = true, want false", cmd)
 		}
 	}
 
-	// These should still be considered read-only.
 	safe := []string{
 		"git log --oneline",
 		"git status",
@@ -84,28 +72,25 @@ func TestIsReadOnlyCommandMetachars(t *testing.T) {
 		"ls -la",
 		"grep -r foo .",
 		"git log --format='%H %s'",
+		"ls 2>/dev/null",
+		"ls && pwd",
+		"cd src && ls",
 	}
 	for _, cmd := range safe {
 		if !isReadOnlyCommand(cmd) {
-			t.Errorf("isReadOnlyCommand(%q) = false, want true (should auto-approve)", cmd)
+			t.Errorf("isReadOnlyCommand(%q) = false, want true", cmd)
 		}
 	}
 }
 
 func FuzzHasShellMetachars(f *testing.F) {
-	seeds := []string{
-		"ls -la",
-		"cat foo; rm bar",
-		"echo $(whoami)",
-		"git log --format='%H %s'",
-		`echo "hello; world"`,
-		"cat foo 2>&1",
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
+	f.Add("ls -la")
+	f.Add("cat foo; rm bar")
+	f.Add("echo $(whoami)")
+	f.Add("git log --format='%H %s'")
+	f.Add(`echo "hello; world"`)
+	f.Add("cat foo 2>&1")
 	f.Fuzz(func(t *testing.T, cmd string) {
-		// Must not panic.
 		_ = hasShellMetachars(cmd)
 		_ = isReadOnlyCommand(cmd)
 	})

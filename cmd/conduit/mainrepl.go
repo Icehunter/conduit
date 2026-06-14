@@ -527,7 +527,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		Model:             modelName,
 		MaxTokens:         internalmodel.MaxTokens,
 		System:            systemBlocks,
-		MaxTurns:          50,
+		MaxTurns:          agent.DefaultMainMaxTurns,
 		Gate:              gate,
 		Hooks:             settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust),
 		SessionID:         sessionID,

@@ -409,6 +409,7 @@ type Model struct {
 	diffReview        *diffReviewState         // non-nil when diff-first review gate is open
 	todoStripHidden   bool                     // ctrl+t toggles; strip is shown by default when todos present
 	todoAutoContinues int                      // bounded auto-nudges when a turn ends with unfinished todos
+	unlimitedTurns    bool                     // ctrl+l toggles turn cap off (0 = unlimited) vs DefaultMainMaxTurns
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands

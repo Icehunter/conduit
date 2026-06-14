@@ -51,10 +51,12 @@ import (
 const maxConcurrentTools = 4
 const maxToolUseRecoveries = 2
 
+// DefaultMainMaxTurns is the per-prompt turn cap for the primary interactive
+// loop. Generous enough for complex multi-file tasks; still a runaway backstop.
+const DefaultMainMaxTurns = 200
+
 // DefaultSubAgentMaxTurns is applied to child loops whose MaxTurns was 0
-// (unbounded). The parent loop's own limit (50 in mainrepl.go) is inherited
-// via the copied config, so this only affects loops that never set a cap
-// (e.g. background reviewers, council members, tests).
+// (unbounded). Sub-agents are background workers and are kept tighter.
 const DefaultSubAgentMaxTurns = 50
 
 // ErrMaxTurnsExceeded is returned by Run when the loop exhausts its MaxTurns
@@ -358,6 +360,13 @@ func (l *Loop) BackgroundModel() string {
 		}
 	}
 	return model
+}
+
+// SetMaxTurns updates the per-prompt turn cap. 0 means unlimited.
+func (l *Loop) SetMaxTurns(n int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cfg.MaxTurns = n
 }
 
 // SetThinkingBudget updates the thinking budget for subsequent requests.

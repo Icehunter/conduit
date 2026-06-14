@@ -352,6 +352,17 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.refreshViewport()
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
+	case "ctrl+u":
+		m.unlimitedTurns = !m.unlimitedTurns
+		if m.unlimitedTurns {
+			m.cfg.Loop.SetMaxTurns(0)
+			m.flashMsg = "∞ turn cap off (ctrl+u to restore)"
+		} else {
+			m.cfg.Loop.SetMaxTurns(agent.DefaultMainMaxTurns)
+			m.flashMsg = fmt.Sprintf("turn cap on: %d (ctrl+u to toggle)", agent.DefaultMainMaxTurns)
+		}
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+
 	case "ctrl+t":
 		m.todoStripHidden = !m.todoStripHidden
 		m = m.applyLayout()

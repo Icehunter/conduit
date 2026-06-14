@@ -326,8 +326,15 @@ func (m Model) renderWorkingRow() string {
 		}
 		return styleStatusAccent.Width(m.width).Render("  ● " + noun + " ready — Enter to view")
 	default:
+		suffix := ""
+		if m.unlimitedTurns {
+			suffix = stylePickerDesc.Render("  ∞ no turn cap")
+		}
 		if hint := m.hiddenTasksHint(); hint != "" {
-			return styleStatus.Width(m.width-lipgloss.Width(hint)).Render("") + hint
+			suffix = hint + suffix
+		}
+		if suffix != "" {
+			return styleStatus.Width(m.width-lipgloss.Width(suffix)).Render("") + suffix
 		}
 		return styleStatus.Width(m.width).Render("")
 	}

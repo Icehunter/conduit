@@ -581,7 +581,13 @@ func (m Model) handleCompactDone(msg compactDoneMsg) (Model, tea.Cmd) {
 	m.running = false
 	m.cancelTurn = nil
 	if msg.err != nil {
-		m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Compact failed: %v", msg.err)})
+		content := fmt.Sprintf("Compact failed: %v", msg.err)
+		if strings.Contains(msg.err.Error(), "429") || strings.Contains(msg.err.Error(), "rate_limit") {
+			content = "Compact rate-limited — try again in a moment."
+		} else if errors.Is(msg.err, context.Canceled) {
+			content = "Compact cancelled."
+		}
+		m.messages = append(m.messages, Message{Role: RoleError, Content: content})
 	} else {
 		m.history = msg.newHistory
 		// Rewrite the on-disk session so it reflects the compacted history.

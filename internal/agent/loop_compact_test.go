@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/compact"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/tool"
 )
@@ -387,8 +388,8 @@ func TestLoop_AutoCompact(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("calls = %d; want 2 (main turn + compact call)", calls)
 	}
-	if compactModel != modelName {
-		t.Errorf("compact model = %q, want %q", compactModel, modelName)
+	if compactModel != compact.DefaultModel {
+		t.Errorf("compact model = %q, want %q (compact.DefaultModel)", compactModel, compact.DefaultModel)
 	}
 	if !gotCompacted {
 		t.Error("EventCompacted not fired; want it fired on auto-compact")

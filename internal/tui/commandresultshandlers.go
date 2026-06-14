@@ -196,8 +196,16 @@ func (m Model) applyCompactResult(res commands.Result) (Model, tea.Cmd) {
 	}
 	histCopy := make([]api.Message, len(m.history))
 	copy(histCopy, m.history)
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelTurn = cancel
+	compactCtx := api.WithRetryHandler(ctx, func(ev api.RetryEvent) bool {
+		// Abort immediately if the rate-limit delay exceeds 2 minutes;
+		// mirrors the main agent loop's retry-abort threshold.
+		return ev.Delay <= 2*time.Minute
+	})
 	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
-		result, err := compact.CompactWithModel(context.Background(), client, compactModel, histCopy, customInstructions)
+		defer cancel()
+		result, err := compact.CompactWithModel(compactCtx, client, compactModel, histCopy, customInstructions)
 		if err != nil {
 			return compactDoneMsg{err: err}
 		}

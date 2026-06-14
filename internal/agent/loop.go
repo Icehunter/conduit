@@ -969,7 +969,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					threshold = internalmodel.AutoCompactThresholdForWindow(contextWindow)
 				}
 				if inputTokens > threshold && l.consecutiveCompactFails < internalmodel.MaxConsecutiveCompactFail {
-					if result, err := compact.CompactWithModel(ctx, l.client, model, msgs, ""); err == nil {
+					if result, err := compact.CompactWithModel(ctx, l.client, compact.DefaultModel, msgs, ""); err == nil {
 						msgs = result.NewHistory
 						l.consecutiveCompactFails = 0
 						if l.cfg.OnCompact != nil && result.Summary != "" {

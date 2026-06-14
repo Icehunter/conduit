@@ -263,14 +263,18 @@ func (m Model) compactClientAndModel() (*api.Client, string, error) {
 		}
 		return client, provider.Model, nil
 	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
+		// Use the dedicated compact model (Haiku) rather than the agent's main
+		// model. Compact sends the full conversation as input, so firing it with
+		// Sonnet/Opus immediately after a turn would push the same TPM bucket over
+		// the rate limit. Haiku has its own bucket and is sufficient for summarization.
 		if provider.Account != "" && provider.Account != auth.ActiveEmail() && m.cfg.NewAPIClient != nil {
 			tokens, err := auth.LoadForEmail(secure.NewDefault(), provider.Account)
 			if err != nil {
 				return nil, "", err
 			}
-			return m.cfg.NewAPIClient(tokens), provider.Model, nil
+			return m.cfg.NewAPIClient(tokens), compact.DefaultModel, nil
 		}
-		return m.cfg.APIClient, provider.Model, nil
+		return m.cfg.APIClient, compact.DefaultModel, nil
 	default:
 		return m.cfg.APIClient, m.effectiveAssistantModelName(), nil
 	}

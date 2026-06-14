@@ -140,6 +140,12 @@ func (m Model) rebuildSystemCmd() tea.Cmd {
 				Text: "# Output style: " + outputStyleName + "\n\n" + outputStyle,
 			})
 		}
+		if mode == permissions.ModePlan {
+			base = append(base, api.SystemBlock{
+				Type: "text",
+				Text: agent.PlanModeDirective,
+			})
+		}
 		if mode == permissions.ModeCouncil {
 			base = append(base, api.SystemBlock{
 				Type: "text",

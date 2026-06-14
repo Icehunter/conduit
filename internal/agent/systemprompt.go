@@ -326,6 +326,22 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, agents []Agen
 	return blocks
 }
 
+// PlanModeDirective is appended to the system prompt when the user has
+// switched into plan mode via Shift+Tab. It tells the model it is in a
+// read-only planning state so it does not attempt writes and understands
+// why write tool calls are being rejected.
+const PlanModeDirective = `# Plan Mode Active
+
+You are in PLAN MODE. In this mode:
+- Explore the codebase freely with read-only tools (Read, Grep, Glob, Bash for inspection)
+- Do NOT call any tool that writes, edits, or deletes files
+- Do NOT run commands that modify state
+- Analyze the problem, design an approach, and present a clear plan
+- When you have a complete plan ready, call ExitPlanMode to present it for user approval
+- If the user asks you to "exit plan mode", call ExitPlanMode with your current plan
+
+Write tool calls are blocked in this mode and will be rejected automatically.`
+
 // CouncilModeDirective is appended to the system prompt when council mode is
 // active. It instructs the model to call ExitPlanMode immediately rather than
 // answering directly so the council can debate and refine the response.

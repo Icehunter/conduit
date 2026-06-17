@@ -49,6 +49,7 @@ type ConduitConfig struct {
 	OutputStyle        string                       `json:"outputStyle,omitempty"`
 	Theme              string                       `json:"theme,omitempty"`
 	UsageStatusEnabled bool                         `json:"usageStatusEnabled,omitempty"`
+	AgentTeams         bool                         `json:"agentTeams,omitempty"`
 	ThemeOverrides     map[string]string            `json:"themeOverrides,omitempty"`
 	Themes             map[string]map[string]string `json:"themes,omitempty"`
 

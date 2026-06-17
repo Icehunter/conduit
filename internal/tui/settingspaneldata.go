@@ -133,6 +133,8 @@ func (p *settingsPanelState) rebuildConfigItems() {
 		},
 		{id: "agentPushNotifEnabled", label: "Push when Claude decides", kind: "bool",
 			on: getBool("agentPushNotifEnabled", false)},
+		{id: "agentTeams", label: "Agent teams", kind: "bool",
+			on: getBool("agentTeams", false)},
 		{
 			id:    "outputStyle",
 			label: "Output style",

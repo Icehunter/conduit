@@ -27,6 +27,7 @@ import (
 	"github.com/icehunter/conduit/internal/kernel"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/migrations"
 	internalmodel "github.com/icehunter/conduit/internal/model"
@@ -336,16 +337,19 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Create the LSP manager; servers are started on demand per file extension.
 	// Apply any per-server overrides from conduit.json (cmd, args, env, disabled).
 	var lspOverrides map[string]lsp.ServerOverride
-	if conduitCfg, err := settings.LoadConduitConfig(); err == nil && len(conduitCfg.LSPServers) > 0 {
-		lspOverrides = make(map[string]lsp.ServerOverride, len(conduitCfg.LSPServers))
-		for k, v := range conduitCfg.LSPServers {
-			lspOverrides[k] = lsp.ServerOverride{
-				Cmd:      v.Cmd,
-				Args:     v.Args,
-				Env:      v.Env,
-				Disabled: v.Disabled,
+	if conduitCfg, err := settings.LoadConduitConfig(); err == nil {
+		if len(conduitCfg.LSPServers) > 0 {
+			lspOverrides = make(map[string]lsp.ServerOverride, len(conduitCfg.LSPServers))
+			for k, v := range conduitCfg.LSPServers {
+				lspOverrides[k] = lsp.ServerOverride{
+					Cmd:      v.Cmd,
+					Args:     v.Args,
+					Env:      v.Env,
+					Disabled: v.Disabled,
+				}
 			}
 		}
+		team.SetActive(conduitCfg.AgentTeams)
 	}
 	lspManager := lsp.NewManagerWithOverrides(lspOverrides)
 

@@ -26,7 +26,7 @@ import (
 var AppVersion = "dev"
 
 // Version is the CC wire version sent in User-Agent/X-App headers.
-var Version = "2.1.177"
+var Version = "2.1.179"
 
 // GitCommit and BuildTime are stamped at build time.
 var GitCommit = "unknown"

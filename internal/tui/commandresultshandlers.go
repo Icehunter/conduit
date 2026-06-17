@@ -19,6 +19,7 @@ import (
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
@@ -552,6 +553,12 @@ func (m Model) applySettingsPanel(res commands.Result) (Model, tea.Cmd) {
 			if s, ok := value.(string); ok {
 				theme.Set(s)
 				_ = settings.SaveConduitTheme(s)
+				return
+			}
+		case "agentTeams":
+			if b, ok := value.(bool); ok {
+				team.SetActive(b)
+				_ = settings.SaveConduitRawKey("agentTeams", b)
 				return
 			}
 		}

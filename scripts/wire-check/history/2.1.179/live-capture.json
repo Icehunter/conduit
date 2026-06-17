@@ -1,0 +1,86 @@
+{
+  "captured_at": "2026-06-17T03:33:03Z",
+  "method": "mitmproxy 8888 via HTTPS_PROXY",
+  "binary_version": "2.1.179",
+  "headers_sent": {
+    "Authorization": "(redacted)",
+    "User-Agent": "claude-cli/2.1.179 (external, sdk-cli)",
+    "X-Claude-Code-Session-Id": "070f01ee-2d89-4910-a903-921dd1923a88",
+    "X-Stainless-Arch": "arm64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "MacOS",
+    "X-Stainless-Package-Version": "0.94.0",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v24.3.0",
+    "X-Stainless-Timeout": "600",
+    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
+    "anthropic-dangerous-direct-browser-access": "true",
+    "anthropic-version": "2023-06-01",
+    "x-app": "cli",
+    "x-client-request-id": "2e38c85f-4425-4158-9e0a-d01bb09c13ea"
+  },
+  "billing_header_example": "x-anthropic-billing-header: cc_version=2.1.179.d0f; cc_entrypoint=sdk-cli; cch=60e10;",
+  "billing_notes": {
+    "cc_version": "2.1.179",
+    "cc_version_suffix": "d0f",
+    "cc_version_suffix_note": "SHA256('59cf53e54c78' + firstMsg[4,7,20] + '2.1.179').slice(0,3) — verify conduit's computeBillingSuffix('say the word hello and nothing else') matches 'd0f'",
+    "cch": "60e10 — Bun compile-time macro, static per-build; decoded JS shows '00000' placeholder",
+    "cch_formula": "unknown — not in decoded JS source; baked into Bun binary at build time",
+    "cc_entrypoint": "sdk-cli"
+  },
+  "system_blocks": [
+    {
+      "index": 0,
+      "description": "billing header text",
+      "cache_control": null
+    },
+    {
+      "index": 1,
+      "description": "identity: You are a Claude agent, built on Anthropic's Claude Agent SDK.",
+      "cache_control": null
+    },
+    {
+      "index": 2,
+      "description": "main system prompt (first 80 chars): '\\nYou are an interactive agent that helps users with software engineering tasks. '",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h",
+        "scope": "global"
+      }
+    },
+    {
+      "index": 3,
+      "description": "block 3: '# Text output (does not apply to tool calls)\\nAssume users ca'",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+      }
+    }
+  ],
+  "conduit_diff": {
+    "X-Stainless-Runtime-Version": {
+      "conduit": "(not found)",
+      "upstream": "v24.3.0",
+      "action": "update StainlessRuntimeVersion in internal/api/client.go"
+    },
+    "cch": {
+      "conduit": "adcd5",
+      "upstream": "60e10",
+      "action": "update BillingCch in internal/agent/systemprompt.go"
+    },
+    "betas_added": [
+      "advanced-tool-use-2025-11-20",
+      "advisor-tool-2026-03-01",
+      "cache-diagnosis-2026-04-07",
+      "claude-code-20250219",
+      "context-management-2025-06-27",
+      "effort-2025-11-24",
+      "extended-cache-ttl-2025-04-11",
+      "interleaved-thinking-2025-05-14",
+      "oauth-2025-04-20",
+      "prompt-caching-scope-2026-01-05",
+      "thinking-token-count-2026-05-13"
+    ]
+  }
+}

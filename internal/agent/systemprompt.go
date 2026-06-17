@@ -28,12 +28,12 @@ import (
 //
 // cch=adcd5 is the Bun compile-time macro value for v2.1.133, captured via
 // mitmproxy. CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
-const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.133; cc_entrypoint=sdk-cli; cch=adcd5;\n"
+const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.179; cc_entrypoint=sdk-cli; cch=60e10;\n"
 
 const (
 	billingSalt    = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.133/4720.js)
-	BillingCch     = "adcd5"        // v2.1.133 Bun macro value — update from live capture each release
-	BillingVersion = "2.1.133"      // must match cmd/conduit/main.go var Version
+	BillingCch     = "60e10"        // v2.1.179 Bun macro value — update from live capture each release
+	BillingVersion = "2.1.179"      // must match cmd/conduit/main.go var Version
 )
 
 // computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.133/4720.js:

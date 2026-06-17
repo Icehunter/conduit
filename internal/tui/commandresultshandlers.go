@@ -19,7 +19,6 @@ import (
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/mcp"
-	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
@@ -27,6 +26,7 @@ import (
 	"github.com/icehunter/conduit/internal/ratelimit"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/theme"
 )
 

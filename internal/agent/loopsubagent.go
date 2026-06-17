@@ -96,95 +96,8 @@ func (l *Loop) resolveModelAlias(alias string) string {
 }
 
 func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
-	model := l.BackgroundModel()
-	if spec.Model != "" {
-		model = l.resolveModelAlias(spec.Model)
-	} else if spec.Role != "" {
-		model = l.resolveModelAlias(spec.Role)
-	}
-
-	l.mu.RLock()
-	childCfg := l.cfg
-	childClient := l.client
-	parentReg := l.reg
-	l.mu.RUnlock()
-
-	// Role resolution: when spec.Role is set and no explicit model/client
-	// overrides it, ask RoleResolver for the model and (optionally) a
-	// separate API client for that role's provider.
-	if spec.Role != "" && spec.Model == "" && childCfg.RoleResolver != nil {
-		if roleModel, roleClient, ok := childCfg.RoleResolver(spec.Role); ok {
-			if roleModel != "" {
-				model = roleModel
-			}
-			if roleClient != nil {
-				childClient = roleClient
-			}
-		}
-	}
-
-	// Use the caller-supplied client when provided (e.g. council members that
-	// need their own provider account rather than the parent loop's client).
-	if spec.Client != nil {
-		childClient = spec.Client
-	}
-
-	// Cap subagent iterations at DefaultSubAgentMaxTurns unless the parent
-	// explicitly configured a higher limit. The parent loop's own MaxTurns
-	// (set to 50 in mainrepl.go) is inherited, so this only affects loops that
-	// did not set a limit (e.g. bgreview, council, tests with MaxTurns=0).
-	//
-	// Note: there is no way to request an explicitly unbounded child loop.
-	// MaxTurns=0 in a child LoopConfig is always replaced by DefaultSubAgentMaxTurns.
-	// If an unbounded child is ever needed, introduce a dedicated sentinel value.
-	if childCfg.MaxTurns == 0 {
-		childCfg.MaxTurns = DefaultSubAgentMaxTurns
-	}
-
-	// Strip side-effect callbacks — same as runSubAgentWithModel.
-	childCfg.NotifyOnComplete = false
-	childCfg.OnEndTurn = nil
-	childCfg.OnToolBatchComplete = nil
-	childCfg.OnCompact = nil
-	childCfg.OnFileAccess = nil
-	childCfg.OnSubAgentUsage = nil    // child sub-agents report to their own parent
-	childCfg.BackgroundReviewer = nil // sub-agents must not chain-trigger reviews
-	childCfg.Model = model
-	if spec.MaxTokens > 0 {
-		childCfg.MaxTokens = spec.MaxTokens
-	}
-
-	// Append agent-specific system block when provided.
-	if spec.SystemPrompt != "" {
-		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), api.SystemBlock{
-			Type: "text",
-			Text: spec.SystemPrompt,
-		})
-	}
-
-	// Build the child registry (restricted or full), then overlay ExtraTools.
-	childReg := parentReg
-	if len(spec.Tools) > 0 {
-		childReg = parentReg.Subset(spec.Tools)
-	}
-	if len(spec.ExtraTools) > 0 {
-		childReg = childReg.WithOverrides(spec.ExtraTools...)
-	}
-
-	// Clone the permission gate so child mutations don't affect the parent.
-	var childGate *permissions.Gate
-	if childCfg.Gate != nil {
-		childGate = childCfg.Gate.Clone()
-	} else {
-		childGate = permissions.New("", nil, permissions.ModeDefault, nil, nil, nil)
-	}
-	if spec.Mode != "" {
-		childGate.SetMode(spec.Mode)
-	}
-	childCfg.Gate = childGate
-
-	// Sub-agents must not block on interactive permission prompts.
-	childCfg.AskPermission = nil
+	child, model := l.buildChildLoop(spec)
+	childGate := child.cfg.Gate
 
 	// Register with tracker.
 	childID := fmt.Sprintf("sub-%d", time.Now().UnixNano())
@@ -227,10 +140,8 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 		SetMode: notifyMode,
 	}
 	if !spec.DisableModeTools {
-		childReg = childReg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
+		child.reg = child.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 	}
-
-	child := &Loop{client: childClient, reg: childReg, cfg: childCfg}
 
 	start := time.Now()
 	msgs := []api.Message{

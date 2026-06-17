@@ -284,8 +284,14 @@ type Loop struct {
 	// steerMsg holds an optional user steering message to inject between
 	// tool-call rounds. Written by InjectSteerMessage (TUI goroutine), read
 	// and cleared by Run (loop goroutine) via atomic.Value so no extra lock
-	// is needed.
+	// is needed. Semantics: last-write-wins (earlier messages are superseded).
 	steerMsg atomic.Value // stores string
+	// msgQueue is a per-loop ordered queue for programmatic injection (e.g.
+	// agent team mailbox delivery). All messages are preserved in insertion
+	// order and delivered together at the next turn boundary. Guarded by
+	// msgMu; separate from steerMsg so human-steering semantics are unchanged.
+	msgQueue []string
+	msgMu    sync.Mutex
 	// session-start reminder is computed once per Loop lifetime (not once per
 	// Run call) to avoid re-injecting identical startup context on every user
 	// message.
@@ -317,6 +323,17 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 // (earlier ones were superseded). The loop clears the slot after consuming it.
 func (l *Loop) InjectSteerMessage(text string) {
 	l.steerMsg.Store(text)
+}
+
+// InjectMessage appends text to the per-loop programmatic delivery queue.
+// Unlike InjectSteerMessage (last-write-wins), all injected messages are
+// preserved in insertion order and delivered together at the next turn
+// boundary. Use this for agent-team mailbox delivery — every message must
+// arrive. Safe to call from any goroutine.
+func (l *Loop) InjectMessage(text string) {
+	l.msgMu.Lock()
+	l.msgQueue = append(l.msgQueue, text)
+	l.msgMu.Unlock()
 }
 
 // SetBackgroundReviewer wires a background review scheduler into the loop.
@@ -1057,9 +1074,26 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			}
 		}
 
+		// Drain programmatic message queue (team mailbox delivery).
+		// All messages preserved in insertion order; delivered before human
+		// steering so teammate context arrives before the model's next response.
+		// Per-loop field — no cross-loop contamination (token bleed protection).
+		l.msgMu.Lock()
+		queued := l.msgQueue
+		l.msgQueue = nil
+		l.msgMu.Unlock()
+		for _, text := range queued {
+			msgs = append(msgs, api.Message{
+				Role:    "user",
+				Content: []api.ContentBlock{{Type: "text", Text: text}},
+			})
+			handler(LoopEvent{Type: EventText, Text: ""})
+		}
+
 		// Steering injection: if the user sent a message while tools were
 		// running, append it as a user turn now so the model sees it before
 		// the next API call — without interrupting the current turn.
+		// Last-write-wins: earlier steer messages are superseded by later ones.
 		if v := l.steerMsg.Swap(""); v != nil {
 			if text, _ := v.(string); text != "" {
 				msgs = append(msgs, api.Message{

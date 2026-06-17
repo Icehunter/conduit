@@ -17,7 +17,6 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/subagent"
-	"github.com/icehunter/conduit/internal/team"
 )
 
 // handleKeyBuiltins is the built-in key handler. It never consults the
@@ -44,12 +43,6 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.vp.ScrollUp(1)
 		return m, nil, true
 	case "shift+down":
-		// In team mode, cycle pane focus instead of scrolling.
-		if m.teamActive && len(m.teamPanes) > 0 {
-			total := 1 + len(m.teamPanes)
-			m.teamFocus = (m.teamFocus + 1) % total
-			return m, nil, true
-		}
 		m.vp.ScrollDown(1)
 		return m, nil, true
 	case "shift+pgup", "pgup":
@@ -371,9 +364,8 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "ctrl+t":
-		// In team mode, ctrl+t toggles the task list strip instead.
 		if m.teamActive {
-			m.teamTaskListVisible = !m.teamTaskListVisible
+			m.teammateStripHidden = !m.teammateStripHidden
 			m = m.applyLayout()
 			return m, nil, true
 		}
@@ -428,31 +420,6 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Tick(1500000000, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "enter":
-		// Team mode: when a teammate pane is focused, route the typed message
-		// to that teammate's inbox rather than starting a lead agent turn.
-		if m.teamActive && m.teamFocus > 0 && !m.running {
-			text := strings.TrimSpace(m.input.Value())
-			if text != "" && !strings.HasPrefix(text, "/") {
-				m = m.resetInput()
-				idx := m.teamFocus - 1
-				if idx < len(m.teamPanes) {
-					name := m.teamPanes[idx].name
-					_ = team.Default.Send(team.Message{
-						From: team.ReservedLeadName,
-						To:   name,
-						Text: text,
-						Kind: team.KindMessage,
-					})
-					m.messages = append(m.messages, Message{
-						Role:    RoleUser,
-						Content: fmt.Sprintf("[→ %s] %s", name, text),
-					})
-					m.refreshViewport()
-					m.vp.GotoBottom()
-				}
-				return m, nil, true
-			}
-		}
 		if m.running {
 			text := strings.TrimSpace(m.input.Value())
 			if text != "" && !strings.HasPrefix(text, "/") {

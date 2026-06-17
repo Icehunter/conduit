@@ -142,10 +142,6 @@ type RunOptions struct {
 	// Provided by mainrepl via lp.InjectSteerMessage.
 	SteerMessage func(string)
 
-	// TeammateNotify is wired by Run() after prog starts so that SpawnTeammate
-	// closures can stream live loop events into the TUI's team panes.
-	TeammateNotify *TeammateNotifyHook
-
 	// InitialCatalog is the model capability catalog loaded from disk at startup.
 	// When nil the TUI starts without capability data; /models --refresh populates it.
 	InitialCatalog *catalog.Catalog
@@ -753,16 +749,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 		runOpts.DiffReview.EnqueueFollowup = func(text string) {
 			prog.Send(diffReviewFollowupMsg{text: text})
-		}
-	}
-
-	// Wire teammate live-event streaming so SpawnTeammate closures can push
-	// loop events into the TUI's team panes via prog.Send.
-	if team.IsActive() && runOpts.TeammateNotify != nil {
-		h := runOpts.TeammateNotify
-		p := prog
-		h.Send = func(name string, ev agent.LoopEvent) {
-			p.Send(teammateEventMsg{name: name, event: ev})
 		}
 	}
 

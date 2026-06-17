@@ -67,6 +67,22 @@ var globalStore = &Store{
 // dedicated tools so updates flow through the same entry points.
 func GlobalStore() *Store { return globalStore }
 
+// SetOnCreated sets the callback fired after each task is created.
+// Safe to call from any goroutine; the assignment is made under s.mu.
+func (s *Store) SetOnCreated(fn func(*Task)) {
+	s.mu.Lock()
+	s.OnCreated = fn
+	s.mu.Unlock()
+}
+
+// SetOnCompleted sets the callback fired after a task reaches StatusCompleted.
+// Safe to call from any goroutine; the assignment is made under s.mu.
+func (s *Store) SetOnCompleted(fn func(*Task)) {
+	s.mu.Lock()
+	s.OnCompleted = fn
+	s.mu.Unlock()
+}
+
 // NewStore returns a fresh, empty Store. Use in tests or isolated sessions
 // that should not share state with globalStore.
 func NewStore() *Store {

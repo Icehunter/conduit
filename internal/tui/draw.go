@@ -32,10 +32,9 @@ func makeTeaView(content string) tea.View {
 func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	layout := m.computeLayout(area)
 
-	if m.teamActive && len(layout.teamPaneRects) > 0 {
-		m.drawTeamPanes(scr, layout)
-	} else {
-		drawString(scr, layout.viewport, m.vp.View())
+	drawString(scr, layout.viewport, m.vp.View())
+	if layout.teammateStrip.Dy() > 0 {
+		drawString(scr, layout.teammateStrip, m.renderTeammateStrip())
 	}
 	if layout.todoStrip.Dy() > 0 {
 		drawString(scr, layout.todoStrip, m.renderTodoStrip())

@@ -3,11 +3,19 @@ package sendmessagetool
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/icehunter/conduit/internal/team"
 )
+
+// TestMain enables agent teams for the whole package test run.
+// sendmessagetool.Execute gates on team.IsActive(); tests need it on.
+func TestMain(m *testing.M) {
+	team.SetActive(true)
+	os.Exit(m.Run())
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 

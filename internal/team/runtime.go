@@ -23,7 +23,6 @@ type MessageKind string
 
 const (
 	KindMessage         MessageKind = "message"
-	KindPlan            MessageKind = "plan"
 	KindShutdownRequest MessageKind = "shutdown-request"
 	KindShutdownApprove MessageKind = "shutdown-approve"
 	KindShutdownReject  MessageKind = "shutdown-reject"

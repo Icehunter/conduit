@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
@@ -212,31 +211,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.resumePrompt = &resumePromptState{sessions: msg.sessions, selected: 0}
 		m.refreshViewport()
-		return m, nil
-
-	case teammateRosterRefreshMsg:
-		return m.handleTeammateRosterRefresh()
-
-	case teammateStatusMsg:
-		for i := range m.teamPanes {
-			if m.teamPanes[i].name == msg.name {
-				m.teamPanes[i].status = msg.status
-				break
-			}
-		}
-		return m, nil
-
-	case teammateEventMsg:
-		if msg.event.Type == agent.EventText && msg.event.Text != "" {
-			for i := range m.teamPanes {
-				if m.teamPanes[i].name == msg.name {
-					m.teamPanes[i].stream += msg.event.Text
-					m.teamPanes[i].vp.SetContent(m.teamPanes[i].content + m.teamPanes[i].stream)
-					m.teamPanes[i].vp.GotoBottom()
-					break
-				}
-			}
-		}
 		return m, nil
 
 	case coordTickMsg:

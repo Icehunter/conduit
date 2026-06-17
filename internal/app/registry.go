@@ -184,11 +184,10 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 			return localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider))
 		}))
 	}
-	// Agent Teams: register SendMessage for the lead when teams are active.
+	// Agent Teams: always register SendMessage so the toggle works live.
+	// Execute is gated on team.IsActive() so it's a no-op when teams are off.
 	// Teammates get a per-sender instance injected via SpawnTeammate ExtraTools.
-	if team.IsActive() {
-		reg.Register(sendmessagetool.New(team.Default))
-	}
+	reg.Register(sendmessagetool.New(team.Default))
 	// Interactive tools; callbacks are wired by the TUI after prog.Start().
 	if rOpts != nil && rOpts.EnterWorktree != nil {
 		reg.Register(rOpts.EnterWorktree)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -97,6 +98,11 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	return child, model
 }
 
+// teammateSeq generates unique childIDs for teammate sub-agent tracker entries.
+// An atomic counter avoids collisions when two teammates are spawned within the
+// same nanosecond (possible in tests with fast hardware or stubbed clocks).
+var teammateSeq atomic.Uint64
+
 // runDeliveryPump reads incoming team messages from inbox and injects them into
 // child as programmatic user messages. Exits when inbox is closed or done is closed.
 //
@@ -154,7 +160,7 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 
 	child, _ := l.buildChildLoop(spec)
 
-	childID := fmt.Sprintf("teammate-%x", time.Now().UnixNano()&0xffffff)
+	childID := fmt.Sprintf("teammate-%d", teammateSeq.Add(1))
 	label := name
 	if len(prompt) > 0 {
 		s := strings.ReplaceAll(strings.TrimSpace(prompt), "\n", " ")

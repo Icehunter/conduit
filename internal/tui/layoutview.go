@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,11 +23,12 @@ func (m Model) applyLayout() Model {
 	inputRows := m.input.LineCount()
 	inputRows = max(inputRows, 1)
 	usageRows := m.usageFooterRows()
-	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows - m.todoStripRows()
+	stripRows := m.todoStripRows() + m.teammateStripRows()
+	vpHeight := m.height - chromeHeight(inputRows, m.height) - usageRows - stripRows
 	vpHeight = max(vpHeight, 1)
 	// Match the textarea's visible row count to the available chrome budget
 	// so it doesn't try to render more rows than the layout reserved.
-	visibleRows := m.height - vpHeight - chromeFixed - usageRows - m.todoStripRows()
+	visibleRows := m.height - vpHeight - chromeFixed - usageRows - stripRows
 	visibleRows = max(visibleRows, inputMinRows)
 	visibleRows = min(visibleRows, inputMaxRows)
 	m.input.SetHeight(visibleRows)
@@ -50,11 +50,6 @@ func (m Model) applyLayout() Model {
 		m.vp.SetHeight(vpHeight)
 	}
 
-	// When agent teams are active, override viewport sizes to match the pane grid.
-	if m.teamActive {
-		layout := m.computeLayout(image.Rect(0, 0, m.width, m.height))
-		m = m.applyTeamPaneLayout(layout)
-	}
 	m.input.SetWidth(inputW)
 	// Drop bubbles textarea's Placeholder feature — its internal
 	// placeholderView path emits ANSI sequences (cursor reverse-video,

@@ -71,6 +71,9 @@ type input struct {
 }
 
 func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
+	if !team.IsActive() {
+		return tool.ErrorResult("sendmessage: agent teams are not active"), nil
+	}
 	var in input
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("sendmessage: invalid input: %v", err)), nil

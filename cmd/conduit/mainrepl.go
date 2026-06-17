@@ -353,14 +353,6 @@ func runREPL(continueMode bool, resumeID string) error {
 		team.SetActive(conduitCfg.AgentTeams)
 	}
 
-	// TeammateNotify bridges SpawnTeammate's event handler to the TUI panes.
-	// Run() sets TeammateNotify.Send after prog.Start(); the closure below
-	// reads it at call time (always after prog.Start since it's triggered by
-	// the agent running, which requires the TUI to be up).
-	var teNotify *tui.TeammateNotifyHook
-	if team.IsActive() {
-		teNotify = &tui.TeammateNotifyHook{}
-	}
 	lspManager := lsp.NewManagerWithOverrides(lspOverrides)
 
 	// Load plugins (non-fatal — missing plugins don't block startup).
@@ -778,14 +770,8 @@ func runREPL(continueMode bool, resumeID string) error {
 			return r.Text, err
 		},
 	).WithSpawnTeammate(func(ctx context.Context, name, prompt string) (string, error) {
-		var onEvent func(agent.LoopEvent)
-		if teNotify != nil && teNotify.Send != nil {
-			n := name // capture loop variable
-			onEvent = func(ev agent.LoopEvent) { teNotify.Send(n, ev) }
-		}
 		return lp.SpawnTeammate(ctx, name, prompt, agent.SubAgentSpec{
-			Tools:   team.TeammateTools,
-			OnEvent: onEvent,
+			Tools: team.TeammateTools,
 		}, team.Default)
 	})
 	reg.Register(agentTool)
@@ -835,14 +821,14 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Wire task-lifecycle hooks into the global task store.
 	filteredHooks := settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust)
 	if filteredHooks != nil && len(filteredHooks.TaskCreated) > 0 {
-		tasktool.GlobalStore().OnCreated = func(task *tasktool.Task) {
+		tasktool.GlobalStore().SetOnCreated(func(task *tasktool.Task) {
 			go hooks.RunTaskCreated(ctx, filteredHooks.TaskCreated, sessionID, task.ID)
-		}
+		})
 	}
 	if filteredHooks != nil && len(filteredHooks.TaskCompleted) > 0 {
-		tasktool.GlobalStore().OnCompleted = func(task *tasktool.Task) {
+		tasktool.GlobalStore().SetOnCompleted(func(task *tasktool.Task) {
 			go hooks.RunTaskCompleted(ctx, filteredHooks.TaskCompleted, sessionID, task.ID)
-		}
+		})
 	}
 
 	// Drain the update-check result. Non-blocking: if the goroutine is
@@ -955,7 +941,6 @@ func runREPL(continueMode bool, resumeID string) error {
 		SteerMessage:   lp.InjectSteerMessage,
 		InitialCatalog: initialCatalog,
 		LSPManager:     lspManager,
-		TeammateNotify: teNotify,
 	})
 
 	// Dispose kernel processes for this session before exiting.

@@ -575,11 +575,9 @@ type Model struct {
 	subagentPanel *subagentPanelState
 
 	// Agent Teams — active when team.IsActive() and set via Config.TeamActive.
-	// Pane 0 is always the lead (uses Model.vp); panes 1..N are m.teamPanes[0..N-1].
+	// Running teammates are shown as a compact strip above the todo strip.
 	teamActive          bool
-	teamPanes           []teamPane
-	teamFocus           int  // index of the focused pane; 0 = lead
-	teamTaskListVisible bool // ctrl+t toggles the task list strip
+	teammateStripHidden bool // ctrl+t toggles the teammate strip
 
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.

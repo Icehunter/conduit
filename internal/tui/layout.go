@@ -12,10 +12,8 @@ type uiLayout struct {
 	pickerArea  image.Rectangle
 	panel       image.Rectangle
 
-	// Team pane grid — populated when teamActive.
-	// teamPaneRects[0] = lead pane, teamPaneRects[1..N] = teammate panes.
-	teamPaneRects []image.Rectangle
-	teamTaskList  image.Rectangle // optional strip below pane grid for task list
+	// Teammate strip — sits between viewport and todo strip when teamActive.
+	teammateStrip image.Rectangle
 }
 
 func (m Model) computeLayout(area image.Rectangle) uiLayout {
@@ -48,37 +46,29 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 	todoRows := m.todoStripRows()
 	todoStripTop := max(workingTop-todoRows, area.Min.Y)
 
+	// Teammate strip sits between the todo strip and the chat viewport.
+	// teammateStripRows() returns 0 when team is not active, hidden, or empty.
+	teammateRows := m.teammateStripRows()
+	teammateStripTop := max(todoStripTop-teammateRows, area.Min.Y)
+
 	panel := image.Rect(area.Min.X+6, area.Min.Y+2, area.Max.X-6, area.Max.Y-2)
 	if panel.Dx() < 20 || panel.Dy() < 8 {
 		panel = image.Rect(area.Min.X, area.Min.Y, area.Max.X, area.Max.Y)
 	}
 
 	layout := uiLayout{
-		viewport:    image.Rect(area.Min.X, area.Min.Y, area.Max.X, todoStripTop),
-		todoStrip:   image.Rect(area.Min.X, todoStripTop, area.Max.X, workingTop),
-		workingRow:  image.Rect(area.Min.X, workingTop, area.Max.X, inputTop),
-		input:       image.Rect(area.Min.X, inputTop, area.Max.X, inputBottom),
-		coordinator: image.Rect(area.Min.X, inputBottom, area.Max.X, footerTop),
-		footer:      image.Rect(area.Min.X, footerTop, area.Max.X, area.Max.Y),
-		pickerArea:  image.Rect(area.Min.X, area.Min.Y, area.Max.X, inputTop),
-		panel:       panel,
+		viewport:      image.Rect(area.Min.X, area.Min.Y, area.Max.X, teammateStripTop),
+		teammateStrip: image.Rect(area.Min.X, teammateStripTop, area.Max.X, todoStripTop),
+		todoStrip:     image.Rect(area.Min.X, todoStripTop, area.Max.X, workingTop),
+		workingRow:    image.Rect(area.Min.X, workingTop, area.Max.X, inputTop),
+		input:         image.Rect(area.Min.X, inputTop, area.Max.X, inputBottom),
+		coordinator:   image.Rect(area.Min.X, inputBottom, area.Max.X, footerTop),
+		footer:        image.Rect(area.Min.X, footerTop, area.Max.X, area.Max.Y),
+		pickerArea:    image.Rect(area.Min.X, area.Min.Y, area.Max.X, inputTop),
+		panel:         panel,
 	}
 	if layout.viewport.Dy() < 1 {
 		layout.viewport.Max.Y = layout.viewport.Min.Y
-	}
-
-	// Team pane grid — splits layout.viewport when teamActive.
-	if m.teamActive {
-		vpRect := layout.viewport
-		taskH := m.teamTaskListRows()
-		taskRect := image.Rectangle{}
-		if taskH > 0 && vpRect.Dy() > taskH {
-			taskRect = image.Rect(vpRect.Min.X, vpRect.Max.Y-taskH, vpRect.Max.X, vpRect.Max.Y)
-			vpRect = image.Rect(vpRect.Min.X, vpRect.Min.Y, vpRect.Max.X, vpRect.Max.Y-taskH)
-		}
-		nPanes := 1 + len(m.teamPanes)
-		layout.teamPaneRects = computeTeamPaneGrid(vpRect, nPanes, m.teamFocus)
-		layout.teamTaskList = taskRect
 	}
 
 	return layout

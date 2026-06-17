@@ -84,13 +84,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m = m.updateAtMatches()
 			}
 			// A consumed key (e.g. Backspace, Ctrl+C clearing the input) may have
-			// emptied the textarea. Promote any deferred question immediately so
-			// the dialog surfaces without waiting for the non-consumed code path.
-			if m.pendingQuestion != nil && m.questionAsk == nil && m.input.Value() == "" {
-				m.questionAsk = newQuestionAskState(*m.pendingQuestion)
-				m.pendingQuestion = nil
-				m.refreshViewport()
-				m.vp.GotoBottom()
+			// emptied the textarea. Promote any deferred prompts and drain the
+			// first pending message now so they surface without waiting for the
+			// non-consumed code path.
+			if m.input.Value() == "" {
+				if m.pendingQuestion != nil && m.questionAsk == nil {
+					m.questionAsk = newQuestionAskState(*m.pendingQuestion)
+					m.pendingQuestion = nil
+					m.refreshViewport()
+					m.vp.GotoBottom()
+				}
+				if m.pendingPermission != nil && m.permPrompt == nil {
+					p := m.pendingPermission
+					m.pendingPermission = nil
+					m.permPrompt = &permissionPromptState{
+						toolName:      p.toolName,
+						toolInput:     p.toolInput,
+						reply:         p.reply,
+						selected:      0,
+						guardFirstKey: true,
+					}
+					m.refreshViewport()
+				}
+				if len(m.pendingMessages) > 0 && !m.running {
+					next := m.pendingMessages[0]
+					m.pendingMessages = m.pendingMessages[1:]
+					m.input.SetValue(next)
+					cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
+				}
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -126,6 +147,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case permissionAskMsg:
+		if m.input.Value() != "" {
+			// User is mid-draft. Queue the permission prompt until their input
+			// clears — same deferral pattern as pendingQuestion. The tool
+			// goroutine blocks on <-reply; ctx.Done() unblocks it on cancel.
+			copy := msg
+			m.pendingPermission = &copy
+			m.flashMsg = "permission request waiting — send or clear your draft first"
+			m.refreshViewport()
+			return m, nil
+		}
 		m.permPrompt = &permissionPromptState{
 			toolName:      msg.toolName,
 			toolInput:     msg.toolInput,
@@ -533,24 +564,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.updateAtMatches()
 	}
 
-	// If a question was deferred while the user was typing and the input is
-	// now empty, promote it to the active dialog.
-	if m.pendingQuestion != nil && m.questionAsk == nil && m.input.Value() == "" {
-		m.questionAsk = newQuestionAskState(*m.pendingQuestion)
-		m.pendingQuestion = nil
-		m.refreshViewport()
-		m.vp.GotoBottom()
-	}
-
-	// If pending messages are queued and the input is now empty (and no agent
-	// is running), drain the first one. This fires when the user clears or
-	// submits a draft that was blocking the drain in handleAgentDone, ensuring
-	// typed-while-running messages are not permanently lost.
-	if len(m.pendingMessages) > 0 && !m.running && strings.TrimSpace(m.input.Value()) == "" {
-		next := m.pendingMessages[0]
-		m.pendingMessages = m.pendingMessages[1:]
-		m.input.SetValue(next)
-		cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
+	// If a question or permission prompt was deferred while the user was typing
+	// and the input is now empty, promote it to the active dialog.
+	// Pending-message draining is intentionally NOT done here — it only fires
+	// in the consumed-key path and in handleAgentDone to avoid a race where an
+	// async event (tick, agent status) triggers an auto-submit while the user
+	// is actively working in the input box.
+	if m.input.Value() == "" {
+		if m.pendingQuestion != nil && m.questionAsk == nil {
+			m.questionAsk = newQuestionAskState(*m.pendingQuestion)
+			m.pendingQuestion = nil
+			m.refreshViewport()
+			m.vp.GotoBottom()
+		}
+		if m.pendingPermission != nil && m.permPrompt == nil {
+			p := m.pendingPermission
+			m.pendingPermission = nil
+			m.permPrompt = &permissionPromptState{
+				toolName:      p.toolName,
+				toolInput:     p.toolInput,
+				reply:         p.reply,
+				selected:      0,
+				guardFirstKey: true,
+			}
+			m.refreshViewport()
+		}
 	}
 
 	return m, tea.Batch(cmds...)

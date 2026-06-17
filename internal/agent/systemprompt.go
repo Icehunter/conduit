@@ -340,7 +340,8 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, agents []Agen
 const PlanModeDirective = `# Plan Mode Active
 
 You are in PLAN MODE. In this mode:
-- Explore the codebase freely with read-only tools (Read, Grep, Glob, Bash for inspection)
+- Read files using the Read, Grep, and Glob tools — do NOT use bash to dump file contents (cat/head/tail/less/more are blocked)
+- Bash is available for commands that are not file-content dumping (e.g. find, git log, go list, git status)
 - Do NOT call any tool that writes, edits, or deletes files
 - Do NOT run commands that modify state
 - Analyze the problem, design an approach, and present a clear plan

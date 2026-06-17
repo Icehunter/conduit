@@ -85,14 +85,13 @@ func TestGuardFirstKey_EscPassesThrough(t *testing.T) {
 	}
 }
 
-// TestDigitFocusOnly_SingleSelect verifies that after the guard is cleared a
-// digit keystroke only moves focus and does NOT submit in single-select mode.
-func TestDigitFocusOnly_SingleSelect(t *testing.T) {
+// TestDigitKeys_AreIgnored verifies that digit keys are no longer bound in
+// the question dialog — only arrows navigate, Enter confirms.
+func TestDigitKeys_AreIgnored(t *testing.T) {
 	m, reply := makeQuestionModel(t, []string{"alpha", "beta", "gamma"}, false)
-	// Clear the guard manually so we can test the digit behavior in isolation.
 	m.questionAsk.guardFirstKey = false
 
-	// Press "2" — should move focus to index 1 but not submit.
+	// Press "2" — should be ignored; focus stays at 0.
 	m2, cmd := m.handleQuestionKey(makeKey("2"))
 	if cmd != nil {
 		cmd()
@@ -101,8 +100,8 @@ func TestDigitFocusOnly_SingleSelect(t *testing.T) {
 	if m2.questionAsk == nil {
 		t.Fatal("dialog should still be open after digit key")
 	}
-	if m2.questionAsk.focusedIdx != 1 {
-		t.Errorf("focusedIdx = %d; want 1", m2.questionAsk.focusedIdx)
+	if m2.questionAsk.focusedIdx != 0 {
+		t.Errorf("focusedIdx = %d; want 0 (digits no longer move focus)", m2.questionAsk.focusedIdx)
 	}
 	select {
 	case got := <-reply:
@@ -111,20 +110,24 @@ func TestDigitFocusOnly_SingleSelect(t *testing.T) {
 	}
 }
 
-// TestEnterAfterDigit_SingleSelect verifies that Enter after a digit focus
+// TestArrowThenEnter_SingleSelect verifies that Down moves focus and Enter
 // delivers the focused answer and closes the dialog.
-func TestEnterAfterDigit_SingleSelect(t *testing.T) {
+func TestArrowThenEnter_SingleSelect(t *testing.T) {
 	m, reply := makeQuestionModel(t, []string{"alpha", "beta", "gamma"}, false)
 	m.questionAsk.guardFirstKey = false
 
-	// Focus "beta" (index 1) via digit "2".
-	m2, _ := m.handleQuestionKey(makeKey("2"))
+	// Focus "beta" (index 1) via Down.
+	m2, _ := m.handleQuestionKey(makeKey("down"))
+	if m2.questionAsk.focusedIdx != 1 {
+		t.Errorf("focusedIdx = %d; want 1 after Down", m2.questionAsk.focusedIdx)
+	}
+
 	// Confirm with Enter.
 	m3, cmd := m2.handleQuestionKey(makeKey("enter"))
 	if cmd == nil {
 		t.Fatal("enter should produce a cmd to send the answer")
 	}
-	cmd() // drain into reply channel
+	cmd()
 
 	if m3.questionAsk != nil {
 		t.Fatal("dialog should be closed after Enter")
@@ -139,36 +142,37 @@ func TestEnterAfterDigit_SingleSelect(t *testing.T) {
 	}
 }
 
-// TestMultiSelectDigit_TogglesAndFocuses verifies multi-select digit handling:
-// digit toggles the option and moves focus; Enter on Submit delivers all checked.
-func TestMultiSelectDigit_TogglesAndFocuses(t *testing.T) {
+// TestMultiSelect_SpaceTogglesThenEnterSubmits verifies multi-select via
+// arrows + space to toggle options, Enter on Submit to deliver.
+func TestMultiSelect_SpaceTogglesThenEnterSubmits(t *testing.T) {
 	m, reply := makeQuestionModel(t, []string{"alpha", "beta", "gamma"}, true)
 	m.questionAsk.guardFirstKey = false
 
-	// Toggle "beta" (index 1) via "2".
-	m2, _ := m.handleQuestionKey(makeKey("2"))
-	if m2.questionAsk.focusedIdx != 1 {
-		t.Errorf("focusedIdx = %d; want 1", m2.questionAsk.focusedIdx)
+	// Navigate to "beta" (index 1) via Down, then toggle with Space.
+	m2, _ := m.handleQuestionKey(makeKey("down"))
+	m3, _ := m2.handleQuestionKey(makeKey("space"))
+	if m3.questionAsk.focusedIdx != 1 {
+		t.Errorf("focusedIdx = %d; want 1", m3.questionAsk.focusedIdx)
 	}
-	if !m2.questionAsk.selected[1] {
-		t.Error("option 1 should be selected after digit toggle")
+	if !m3.questionAsk.selected[1] {
+		t.Error("option 1 should be selected after space toggle")
 	}
 
-	// Navigate down to Submit via Down key twice more (focus is at 1, submit at 3).
-	m3, _ := m2.handleQuestionKey(makeKey("down"))
+	// Navigate down to Submit (focus is at 1, submit is at index 3 for 3 opts).
 	m4, _ := m3.handleQuestionKey(makeKey("down"))
-	if m4.questionAsk.focusedIdx != m4.questionAsk.submitIdx() {
-		t.Errorf("focusedIdx = %d; want submitIdx=%d", m4.questionAsk.focusedIdx, m4.questionAsk.submitIdx())
+	m5, _ := m4.handleQuestionKey(makeKey("down"))
+	if m5.questionAsk.focusedIdx != m5.questionAsk.submitIdx() {
+		t.Errorf("focusedIdx = %d; want submitIdx=%d", m5.questionAsk.focusedIdx, m5.questionAsk.submitIdx())
 	}
 
-	// Press Enter on Submit — should deliver "beta".
-	m5, cmd := m4.handleQuestionKey(makeKey("enter"))
+	// Enter on Submit delivers "beta".
+	m6, cmd := m5.handleQuestionKey(makeKey("enter"))
 	if cmd == nil {
 		t.Fatal("enter on Submit should produce a cmd")
 	}
 	cmd()
 
-	if m5.questionAsk != nil {
+	if m6.questionAsk != nil {
 		t.Fatal("dialog should be closed after Submit")
 	}
 	select {

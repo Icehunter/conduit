@@ -158,13 +158,13 @@ func (t *ExitPlanMode) Execute(ctx context.Context, raw json.RawMessage) (tool.R
 					"Do not begin implementation.",
 			), nil
 		}
-		msg := "User rejected the plan."
+		// Clean reject: user dismissed the modal. Stop the turn and wait for
+		// the user to type guidance — do NOT generate a response or revise blindly.
+		msg := "User rejected the plan. Staying in plan mode and waiting for their guidance."
 		if decision.Feedback != "" {
-			msg += " Feedback: " + decision.Feedback + ". Return to plan mode and revise."
-		} else {
-			msg += " Return to plan mode and revise your approach."
+			msg = "User rejected the plan. Feedback: " + decision.Feedback + ". Staying in plan mode and waiting for their guidance."
 		}
-		return tool.ErrorResult(msg), nil
+		return tool.StopTurnResult(msg), nil
 	}
 
 	if t.SetMode != nil {

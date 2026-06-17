@@ -56,6 +56,7 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 		m.questionAsk = nil
 		m.pendingQuestion = nil
 	}
+	m.pendingPermission = nil // goroutine unblocks via ctx.Done()
 	if m.running && m.cancelTurn != nil {
 		m.cancelTurn()
 		m.running = false

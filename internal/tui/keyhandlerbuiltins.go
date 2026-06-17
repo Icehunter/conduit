@@ -225,7 +225,8 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.cancelled = true
 			m.running = false
 			m.cancelTurn = nil
-			m.pendingQuestion = nil // question from the cancelled turn; goroutine unblocks via ctx.Done()
+			m.pendingQuestion = nil   // question from the cancelled turn; goroutine unblocks via ctx.Done()
+			m.pendingPermission = nil // same — permission goroutine unblocks via ctx.Done()
 			// Commit whatever partial response was streamed so the next turn
 			// has context. Keep the user message in history too.
 			if m.streaming != "" {

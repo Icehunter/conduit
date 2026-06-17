@@ -56,19 +56,20 @@ func TestPlanApproval_RenderShowsPlanAndOptions(t *testing.T) {
 	}
 }
 
-func TestPlanApproval_QuickPickReturnsCorrectDecision(t *testing.T) {
+func TestPlanApproval_EnterAndEscBehavior(t *testing.T) {
 	tests := []struct {
 		key      string
 		want     planmodetool.PlanApprovalDecision
 		wantSent bool
 	}{
-		{"1", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeBypassPermissions}, true},
-		{"2", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEdits}, true},
-		{"3", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeAcceptEditsLive}, true},
-		{"4", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}, true},
-		{"5", planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}, true},
-		{"esc", planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}, true},
-		{"6", planmodetool.PlanApprovalDecision{}, false}, // out of range, no send
+		// Enter commits whichever option is currently selected (default = 0 = bypass).
+		{"enter", planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeBypassPermissions}, true},
+		// Esc is a clean reject regardless of selected option.
+		{"esc", planmodetool.PlanApprovalDecision{Approved: false, Discuss: false}, true},
+		// Digit shortcuts are removed — no longer bind to options.
+		{"1", planmodetool.PlanApprovalDecision{}, false},
+		{"2", planmodetool.PlanApprovalDecision{}, false},
+		{"6", planmodetool.PlanApprovalDecision{}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
@@ -79,7 +80,7 @@ func TestPlanApproval_QuickPickReturnsCorrectDecision(t *testing.T) {
 			m2, cmd := m.handlePlanApprovalKey(makeKey(tt.key))
 			if !tt.wantSent {
 				if cmd != nil {
-					t.Errorf("expected no cmd for unbound key %q", tt.key)
+					t.Errorf("expected no cmd for key %q (digit shortcuts removed)", tt.key)
 				}
 				if m2.planApproval == nil {
 					t.Error("modal should still be open after unbound key")
@@ -89,7 +90,6 @@ func TestPlanApproval_QuickPickReturnsCorrectDecision(t *testing.T) {
 			if cmd == nil {
 				t.Fatalf("key %q produced no command", tt.key)
 			}
-			// Run the command to push the decision onto the reply channel.
 			cmd()
 			select {
 			case got := <-reply:
@@ -106,9 +106,9 @@ func TestPlanApproval_QuickPickReturnsCorrectDecision(t *testing.T) {
 	}
 }
 
-// makeKey builds a KeyPressMsg from a short string. Named keys ("esc", "tab",
-// "enter", "up", "down", "home", "end") use Code only (no Text) so that
-// String() returns the canonical name. Printable single chars set both.
+// makeKey builds a KeyPressMsg from a short string. Named keys use Code only
+// (no Text) so that String() returns the canonical name. Printable single chars
+// set both Code and Text.
 func makeKey(s string) tea.KeyPressMsg {
 	switch s {
 	case "esc":
@@ -125,6 +125,8 @@ func makeKey(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyHome}
 	case "end":
 		return tea.KeyPressMsg{Code: tea.KeyEnd}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace}
 	default:
 		if len(s) == 1 {
 			return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
@@ -140,13 +142,22 @@ func TestPlanApproval_ArrowsMoveOptionCursor(t *testing.T) {
 	if m.planApproval.selected != 1 {
 		t.Errorf("Down should advance cursor to 1, got %d", m.planApproval.selected)
 	}
-	m, _ = m.handlePlanApprovalKey(makeKey("end"))
-	if m.planApproval.selected != len(planApprovalOptions)-1 {
-		t.Errorf("End should jump to last option, got %d", m.planApproval.selected)
-	}
-	m, _ = m.handlePlanApprovalKey(makeKey("home"))
+	m, _ = m.handlePlanApprovalKey(makeKey("up"))
 	if m.planApproval.selected != 0 {
-		t.Errorf("Home should jump to first option, got %d", m.planApproval.selected)
+		t.Errorf("Up should move cursor back to 0, got %d", m.planApproval.selected)
+	}
+	// Down to the last option via repeated presses.
+	last := len(planApprovalOptions) - 1
+	for i := 0; i < last; i++ {
+		m, _ = m.handlePlanApprovalKey(makeKey("down"))
+	}
+	if m.planApproval.selected != last {
+		t.Errorf("Repeated Down should reach last option %d, got %d", last, m.planApproval.selected)
+	}
+	// Another Down at the bottom should clamp (no wrap).
+	m, _ = m.handlePlanApprovalKey(makeKey("down"))
+	if m.planApproval.selected != last {
+		t.Errorf("Down past end should clamp to %d, got %d", last, m.planApproval.selected)
 	}
 }
 
@@ -183,7 +194,6 @@ func TestPlanApproval_GuardFirstKey(t *testing.T) {
 	}{
 		{"enter swallowed", "enter", false},
 		{"space swallowed", " ", false},
-		{"1 swallowed", "1", false},
 		{"down swallowed", "down", false},
 		{"esc passes through", "esc", true},
 	}
@@ -199,7 +209,7 @@ func TestPlanApproval_GuardFirstKey(t *testing.T) {
 
 			m2, cmd := m.handlePlanApprovalKey(makeKey(tt.key))
 			if tt.passThru {
-				// Esc should close the modal immediately (Discuss decision).
+				// Esc should close the modal immediately (reject decision).
 				if m2.planApproval != nil {
 					t.Error("esc should bypass the guard and close the modal")
 				}
@@ -217,14 +227,14 @@ func TestPlanApproval_GuardFirstKey(t *testing.T) {
 				if m2.planApproval.guardFirstKey {
 					t.Error("guardFirstKey should be false after first key is swallowed")
 				}
-				// Second identical key must now act normally (e.g. "1" should commit).
-				if tt.key == "1" {
-					m3, cmd2 := m2.handlePlanApprovalKey(makeKey("1"))
+				// After guard clears, Enter commits and Down moves cursor.
+				if tt.key == "down" {
+					m3, cmd2 := m2.handlePlanApprovalKey(makeKey("enter"))
 					if cmd2 == nil {
-						t.Error("second key '1' should produce a command after guard clears")
+						t.Error("enter after guard clears should produce a command")
 					}
 					if m3.planApproval != nil {
-						t.Error("modal should be closed after second key '1'")
+						t.Error("modal should be closed after enter")
 					}
 				}
 			}

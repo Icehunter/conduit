@@ -164,11 +164,11 @@ func TestExitPlanMode_RejectedKeepsPlanMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !res.IsError {
-		t.Error("expected error result when plan rejected")
+	if res.IsError {
+		t.Error("rejected path should use StopTurn, not IsError — model should wait, not generate a response")
 	}
-	if res.StopTurn {
-		t.Error("rejected path should not set StopTurn")
+	if !res.StopTurn {
+		t.Error("rejected path must set StopTurn so the model waits for user guidance instead of looping")
 	}
 	if modeSet {
 		t.Error("SetMode should not be called when plan is rejected")
@@ -186,11 +186,14 @@ func TestExitPlanMode_RejectedWithFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !res.IsError {
-		t.Error("expected error result when plan rejected with feedback")
+	if res.IsError {
+		t.Error("rejected path should use StopTurn, not IsError")
+	}
+	if !res.StopTurn {
+		t.Error("rejected path must set StopTurn")
 	}
 	if len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "please also add tests") {
-		t.Errorf("expected feedback in error message, got: %v", res.Content)
+		t.Errorf("expected feedback in result message, got: %v", res.Content)
 	}
 }
 

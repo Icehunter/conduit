@@ -113,6 +113,31 @@ func IsReadOnly(cmd string) bool {
 	return readOnly
 }
 
+// IsFileDump reports whether cmd's primary purpose is to dump file contents to
+// stdout. Commands in this set (cat, head, tail, less, more, bat) are blocked
+// in plan mode — the model must use the Read tool instead.
+// Compound commands (pipelines, &&, ||) and parse failures return false so only
+// direct, unambiguous file-dump invocations are blocked.
+func IsFileDump(cmd string) bool {
+	f, ok := parse(cmd)
+	if !ok {
+		return false
+	}
+	if len(f.Stmts) != 1 {
+		return false
+	}
+	call, ok := f.Stmts[0].Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return false
+	}
+	bin := filepath.Base(call.Args[0].Lit())
+	switch bin {
+	case "cat", "head", "tail", "less", "more", "bat":
+		return true
+	}
+	return false
+}
+
 // StripLeadingCd removes a leading `cd <dir> &&` (or `cd <dir>;`) prefix and
 // returns the remaining command. ok is false when there is no such prefix.
 // Used to normalize rule matching so a `cd subdir && <cmd>` is matched against

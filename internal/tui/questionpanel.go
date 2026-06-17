@@ -126,12 +126,12 @@ func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "up", "ctrl+p":
+	case "up":
 		if q.focusedIdx > 0 {
 			q.focusedIdx--
 		}
 
-	case "down", "ctrl+n":
+	case "down":
 		if q.focusedIdx < maxIdx {
 			q.focusedIdx++
 		}
@@ -172,22 +172,6 @@ func (m Model) handleQuestionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				answer = o.Label
 			}
 			return sendAnswer([]string{answer})
-		}
-
-	default:
-		// Numeric focus: "1".."9" moves focus (single-select) or toggles+focuses (multi).
-		// In single-select, Enter is required to confirm — digits no longer instant-submit
-		// so a stray digit in flight cannot auto-select.
-		if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
-			n := int(key[0] - '1')
-			if n < numOpts {
-				if q.multi {
-					q.selected[n] = !q.selected[n]
-					q.focusedIdx = n
-				} else {
-					q.focusedIdx = n // focus only; Enter confirms
-				}
-			}
 		}
 	}
 

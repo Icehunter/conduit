@@ -24,6 +24,7 @@ const (
 	planApprovalKindAcceptEditsLive
 	planApprovalKindDefault
 	planApprovalKindChat
+	planApprovalKindReject
 )
 
 type planApprovalOption struct {
@@ -37,6 +38,7 @@ var planApprovalOptions = []planApprovalOption{
 	{"Approve — live review (pause mid-turn to review each hunk)", planApprovalKindAcceptEditsLive},
 	{"Approve — default mode (prompt for each tool call)", planApprovalKindDefault},
 	{"💬 Chat about this — keep planning, share more context", planApprovalKindChat},
+	{"✕ Reject — stay in plan mode, I'll give more guidance", planApprovalKindReject},
 }
 
 // planApprovalPickerState drives the plan-approval take-over modal shown when
@@ -144,8 +146,10 @@ func (o planApprovalOption) decision() planmodetool.PlanApprovalDecision {
 		return planmodetool.PlanApprovalDecision{Approved: true, Mode: permissions.ModeDefault}
 	case planApprovalKindChat:
 		return planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}
+	case planApprovalKindReject:
+		return planmodetool.PlanApprovalDecision{Approved: false, Discuss: false}
 	}
-	return planmodetool.PlanApprovalDecision{Approved: false, Discuss: true}
+	return planmodetool.PlanApprovalDecision{Approved: false, Discuss: false}
 }
 
 // handlePlanApprovalKey handles keyboard input while the plan-approval modal
@@ -179,42 +183,27 @@ func (m Model) handlePlanApprovalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 	}
 
-	key := msg.String()
-	switch key {
+	switch msg.String() {
 	case "esc", "ctrl+c":
-		// Esc collapses to the "chat about this" path: the user wants to
-		// keep talking, not reject. Signal Discuss so the model waits for
-		// the user's next message rather than guessing what to revise.
-		return send(planmodetool.PlanApprovalDecision{Approved: false, Discuss: true})
-	case "1", "2", "3", "4", "5":
-		idx := int(key[0] - '1')
-		if idx >= 0 && idx < len(planApprovalOptions) {
-			return send(planApprovalOptions[idx].decision())
-		}
-	case "enter", "space":
+		// Esc is a clean reject: close the modal, stay in plan mode, return
+		// control to the user. The model stops and waits for the next message.
+		return send(planmodetool.PlanApprovalDecision{Approved: false, Discuss: false})
+	case "enter":
 		if pa.selected >= 0 && pa.selected < len(planApprovalOptions) {
 			return send(planApprovalOptions[pa.selected].decision())
 		}
-	case "up", "ctrl+p", "k":
+	case "up":
 		if pa.selected > 0 {
 			pa.selected--
 		}
-	case "down", "ctrl+n", "j":
+	case "down":
 		if pa.selected < len(planApprovalOptions)-1 {
 			pa.selected++
 		}
-	case "home":
-		pa.selected = 0
-	case "end":
-		pa.selected = len(planApprovalOptions) - 1
 	case "pgup":
 		pa.vp.PageUp()
 	case "pgdown":
 		pa.vp.PageDown()
-	case "g":
-		pa.vp.GotoTop()
-	case "G":
-		pa.vp.GotoBottom()
 	}
 
 	m.planApproval = pa

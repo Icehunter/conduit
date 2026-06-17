@@ -37,15 +37,15 @@ func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 	}
 	switch msg.String() {
-	case "up", "left", "shift+tab":
+	case "up", "left":
 		if p.selected > 0 {
 			p.selected--
 		}
-	case "down", "right", "tab":
+	case "down", "right":
 		if p.selected < len(permissionOptions)-1 {
 			p.selected++
 		}
-	case "enter", "space":
+	case "enter":
 		reply := permissionReply{
 			allow:       p.selected != 2,
 			alwaysAllow: p.selected == 1,
@@ -59,7 +59,6 @@ func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return nil
 		}
 	case "ctrl+c", "esc":
-		// Treat escape as Deny.
 		reply := permissionReply{allow: false}
 		m.permPrompt = nil
 		m.refreshViewport()
@@ -67,23 +66,6 @@ func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			p.reply <- reply
 			return nil
 		}
-	case "1":
-		p.selected = 0
-		reply := permissionReply{allow: true, alwaysAllow: false}
-		m.permPrompt = nil
-		m.refreshViewport()
-		return m, func() tea.Msg { p.reply <- reply; return nil }
-	case "2":
-		p.selected = 1
-		reply := permissionReply{allow: true, alwaysAllow: true}
-		m.permPrompt = nil
-		m.refreshViewport()
-		return m, func() tea.Msg { p.reply <- reply; return nil }
-	case "3":
-		reply := permissionReply{allow: false}
-		m.permPrompt = nil
-		m.refreshViewport()
-		return m, func() tea.Msg { p.reply <- reply; return nil }
 	}
 	m.permPrompt = p
 	return m, nil
@@ -121,7 +103,7 @@ func (m Model) renderPermissionPrompt() string {
 		}
 		sb.WriteString(prefix + rendered + "\n")
 	}
-	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · 1/2/3 quick pick"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter select · Esc deny"))
 
 	return sb.String()
 }

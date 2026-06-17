@@ -56,6 +56,14 @@ regression appears.
 | Auto-updater | npm self-replace | Passive GitHub Release notifier | Conduit ships as a static binary |
 | AskUserQuestion quick-pick | Digit 1-9 immediately selects and submits in single-select | Digit focuses the option; Enter confirms; first key after open is swallowed (focus guard); popup queued if user has unsent draft | Prevent stray keystrokes (popup appearing mid-typing) from auto-submitting |
 | Default model | `claude-fable-5` | `claude-opus-4-8` | `claude-fable-5` is restricted by US government policy and cannot be called; conduit defaults to the highest-capability Claude model that remains available. Removed from catalog/picker/migration; kept in the cost table for historical-usage pricing only. |
+| Agent Teams: teammate process model | Separate OS processes; each teammate is a `claude` subprocess | In-process goroutine `Loop`s sharing the same process; no subprocess or shell involved | Single-process Go architecture; `internal/agent/loopteammate.go` |
+| Agent Teams: display | tmux panes / iTerm2 split views managed by CC | In-process split-pane compositor via `uv.Screen`; `internal/tui/teampanes.go` | Reuses the existing Ultraviolet cell-buffer compositor; no tmux dependency |
+| Agent Teams: `teammateMode` `tmux`/`auto` | `tmux` → real tmux panes; `auto` → detect best | Both map to in-process display; no tmux ever invoked; no error raised | No tmux dependency in conduit |
+| Agent Teams: task list storage | Shared on-disk JSON file; `fcntl` file locking for cross-process safety | In-memory `tasktool.Store` (mutex-guarded); no file I/O during task ops | Single process; no cross-process coordination needed |
+| Agent Teams: teammate message delivery | IPC / OS pipes between subprocesses | `team.Team.Send` (buffered in-process channel, 64-deep); delivery pump goroutine per teammate drains inbox → `child.InjectMessage`; messages land at turn boundaries | Reuses the existing `InjectMessage` queue (`internal/agent/loop.go:msgQueue`) |
+| Agent Teams: `TeamCreate`/`TeamDelete` tools | Existed in CC 2.1.177; removed in 2.1.178 | Not implemented; session-derived naming via `team.SessionName(sessionID)` matches CC 2.1.178+ | Follows CC 2.1.178+ which removed these tools |
+| Agent Teams: plan-approval flow | Lead agent runs in a separate process; plan delivered via IPC | Lead receives `<team-plan from=…>` injected as a user message; approves via `SendMessage` kind `plan-approve/reject` which writes to `member.PlanReply` channel; teammate's `ExitPlanMode.AskApprove` blocks on that channel | Same behavioral result; implemented without IPC using Go channels |
+| Agent Teams: shutdown protocol | CC orchestrates subprocess termination | Lead sends `SendMessage` kind `shutdown-request` → teammate receives `<team-shutdown-request>` injection → replies `shutdown-approve/reject` via its own `ShutdownReply` channel → approve cancels the goroutine context | Goroutine cancellation replaces process kill |
 
 ---
 
@@ -129,7 +137,7 @@ regression appears.
 
 ## Descoped CC features (not a compatibility concern)
 
-Bridge/IDE integration, remote sessions, team swarm messaging, AWS auth,
+Bridge/IDE integration, remote sessions, Agent Teams tmux/OS-process display (conduit uses in-process compositor), AWS auth,
 mTLS, GrowthBook feature flags, Anthropic-internal analytics, voice STT,
 KAIROS assistant mode, and ULTRAPLAN are intentionally excluded. They do not
 affect the wire format for normal Claude Max/Pro subscription usage.

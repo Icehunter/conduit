@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/subagent"
 	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/sendmessagetool"
+	"github.com/icehunter/conduit/internal/tools/tasktool"
 )
 
 // buildChildLoop constructs a child Loop from spec, inheriting the parent's client,
@@ -59,6 +61,7 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	childCfg.OnFileAccess = nil
 	childCfg.OnSubAgentUsage = nil
 	childCfg.BackgroundReviewer = nil
+	childCfg.TaskStore = nil // child loops don't self-claim tasks
 	childCfg.Model = model
 	if spec.MaxTokens > 0 {
 		childCfg.MaxTokens = spec.MaxTokens
@@ -107,7 +110,13 @@ func runDeliveryPump(child *Loop, inbox <-chan team.Message, done <-chan struct{
 			if !ok {
 				return
 			}
-			child.InjectMessage(fmt.Sprintf("<team-message from=%q>%s</team-message>", msg.From, msg.Text))
+			var text string
+			if msg.Kind == team.KindShutdownRequest {
+				text = fmt.Sprintf("<team-shutdown-request from=%q />", msg.From)
+			} else {
+				text = fmt.Sprintf("<team-message from=%q>%s</team-message>", msg.From, msg.Text)
+			}
+			child.InjectMessage(text)
 		case <-done:
 			return
 		}
@@ -134,6 +143,12 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 		return "", fmt.Errorf("spawn teammate %q: %w", name, err)
 	}
 
+	// Teammates always start in plan mode — they must present a plan and get
+	// lead approval before executing side-effecting tools.
+	if spec.Mode == "" {
+		spec.Mode = permissions.ModePlan
+	}
+
 	// Always provide SendMessage so the teammate can send messages back.
 	spec.ExtraTools = append(spec.ExtraTools, sendmessagetool.NewFor(name, tm))
 
@@ -149,9 +164,10 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 		label = s
 	}
 	subagent.Default.Add(subagent.Entry{
-		ID:        childID,
-		Label:     label,
-		StartedAt: time.Now(),
+		ID:          childID,
+		Label:       label,
+		StartedAt:   time.Now(),
+		TeammateFor: name,
 	})
 
 	// Build mode-change tools that update both the child gate and the tracker.
@@ -166,8 +182,30 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 		AskEnter:    nil,
 	}
 	childExitPlan := &planmodetool.ExitPlanMode{
-		SetMode:    notifyMode,
-		AskApprove: nil, // Phase 6: wire plan-approval through team mailbox
+		SetMode: notifyMode,
+		AskApprove: func(ctx context.Context, plan string) planmodetool.PlanApprovalDecision {
+			// Inject plan text into the lead's next turn.
+			l.InjectMessage(fmt.Sprintf("<team-plan from=%q>\n%s\n</team-plan>", name, plan))
+			// Block until the lead sends a decision or the teammate context is cancelled.
+			select {
+			case d := <-member.PlanReply:
+				if d.Approved {
+					return planmodetool.PlanApprovalDecision{
+						Approved: true,
+						Mode:     permissions.ModeAcceptEdits,
+					}
+				}
+				return planmodetool.PlanApprovalDecision{
+					Approved: false,
+					Feedback: d.Feedback,
+				}
+			case <-ctx.Done():
+				return planmodetool.PlanApprovalDecision{
+					Approved: false,
+					Feedback: "plan approval cancelled (teammate context done)",
+				}
+			}
+		},
 	}
 	childEnterAuto := &automodetool.EnterAutoMode{
 		SetMode:     notifyMode,
@@ -181,28 +219,117 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 		child.reg = child.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 	}
 
-	msgs := []api.Message{
+	store := l.cfg.TaskStore
+	if store == nil {
+		store = tasktool.GlobalStore()
+	}
+
+	// Monitor ShutdownReply: react to lead-initiated graceful shutdown requests.
+	go func() {
+		for {
+			select {
+			case approved, ok := <-member.ShutdownReply:
+				if !ok {
+					return
+				}
+				if approved {
+					// Notify lead then cancel the teammate context.
+					_ = tm.Send(team.Message{
+						From: name,
+						To:   team.ReservedLeadName,
+						Kind: team.KindShutdownApprove,
+					})
+					cancel()
+					return
+				}
+				// Rejection: notify lead and keep watching.
+				_ = tm.Send(team.Message{
+					From: name,
+					To:   team.ReservedLeadName,
+					Kind: team.KindShutdownReject,
+				})
+			case <-tmCtx.Done():
+				return
+			}
+		}
+	}()
+
+	initialMsgs := []api.Message{
 		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: prompt}}},
 	}
 
 	go func() {
-		runDone := make(chan struct{})
-		go runDeliveryPump(child, member.Inbox, runDone)
-
 		baseHandler := subAgentEventHandler(childID)
-		history, runErr := child.Run(tmCtx, msgs, func(ev LoopEvent) {
-			baseHandler(ev)
-		})
-		close(runDone)
+		onEvent := spec.OnEvent
+		currentMsgs := initialMsgs
+		var lastHistory []api.Message
+		var lastErr error
+
+	runLoop:
+		for {
+			runDone := make(chan struct{})
+			go runDeliveryPump(child, member.Inbox, runDone)
+
+			history, runErr := child.Run(tmCtx, currentMsgs, func(ev LoopEvent) {
+				baseHandler(ev)
+				if onEvent != nil {
+					onEvent(ev)
+				}
+			})
+			close(runDone) // stop pump before idle select to avoid inbox contention
+
+			lastHistory = history
+			lastErr = runErr
+
+			if runErr != nil {
+				break
+			}
+
+			// Self-claim: pick up next unblocked task assigned to (or open for) this teammate.
+			if task := store.NextClaimable(name); task != nil {
+				if claimErr := store.Claim(task.ID, name); claimErr == nil {
+					taskPrompt := task.Subject
+					if task.Description != "" {
+						taskPrompt += "\n\n" + task.Description
+					}
+					currentMsgs = []api.Message{
+						{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: taskPrompt}}},
+					}
+					continue
+				}
+			}
+
+			// No claimable task: notify lead and park until a message arrives.
+			_ = tm.Send(team.Message{
+				From: name,
+				To:   team.ReservedLeadName,
+				Kind: team.KindIdle,
+			})
+			if l.cfg.Hooks != nil && len(l.cfg.Hooks.TeammateIdle) > 0 {
+				go hooks.RunTeammateIdle(tmCtx, l.cfg.Hooks.TeammateIdle, l.cfg.SessionID, name)
+			}
+
+			select {
+			case msg, ok := <-member.Inbox:
+				if !ok {
+					break runLoop
+				}
+				currentMsgs = []api.Message{
+					{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: fmt.Sprintf("<team-message from=%q>%s</team-message>", msg.From, msg.Text)}}},
+				}
+			case <-tmCtx.Done():
+				break runLoop
+			}
+		}
 
 		// Order matters: Unregister before sending completion so the team roster
 		// is already clean when the lead processes the message.
 		tm.Unregister(name)
 		subagent.Default.Remove(childID)
 
-		completionText := extractLastAssistantText(history)
-		if runErr != nil {
-			completionText = fmt.Sprintf("teammate %q stopped: %v", name, runErr)
+		completionText := extractLastAssistantText(lastHistory)
+		if lastErr != nil {
+			completionText = fmt.Sprintf("teammate %q stopped: %v", name, lastErr)
 		}
 		_ = tm.Send(team.Message{
 			From: name,

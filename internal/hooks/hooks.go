@@ -30,18 +30,23 @@ import (
 type HookEvent string
 
 const (
-	EventPreToolUse   HookEvent = "PreToolUse"
-	EventPostToolUse  HookEvent = "PostToolUse"
-	EventSessionStart HookEvent = "SessionStart"
-	EventStop         HookEvent = "Stop"
+	EventPreToolUse    HookEvent = "PreToolUse"
+	EventPostToolUse   HookEvent = "PostToolUse"
+	EventSessionStart  HookEvent = "SessionStart"
+	EventStop          HookEvent = "Stop"
+	EventTeammateIdle  HookEvent = "TeammateIdle"
+	EventTaskCreated   HookEvent = "TaskCreated"
+	EventTaskCompleted HookEvent = "TaskCompleted"
 )
 
 // HookInput is the JSON payload sent to hook stdin.
 type HookInput struct {
-	SessionID string         `json:"session_id"`
-	ToolName  string         `json:"tool_name,omitempty"`
-	ToolInput map[string]any `json:"tool_input,omitempty"`
-	Output    string         `json:"tool_response,omitempty"`
+	SessionID    string         `json:"session_id"`
+	ToolName     string         `json:"tool_name,omitempty"`
+	ToolInput    map[string]any `json:"tool_input,omitempty"`
+	Output       string         `json:"tool_response,omitempty"`
+	TeammateName string         `json:"teammate_name,omitempty"`
+	TaskID       string         `json:"task_id,omitempty"`
 }
 
 // HookOutput is the optional JSON a hook writes to stdout.
@@ -105,6 +110,24 @@ func RunSessionStart(ctx context.Context, hooks []settings.HookMatcher, sessionI
 // RunStop runs all Stop hooks. Results are advisory — never blocks.
 func RunStop(ctx context.Context, hooks []settings.HookMatcher, sessionID string) {
 	input := HookInput{SessionID: sessionID}
+	runMatching(ctx, hooks, "", input)
+}
+
+// RunTeammateIdle fires all TeammateIdle hooks. Advisory — never blocks.
+func RunTeammateIdle(ctx context.Context, hooks []settings.HookMatcher, sessionID, teammateName string) {
+	input := HookInput{SessionID: sessionID, TeammateName: teammateName}
+	runMatching(ctx, hooks, "", input)
+}
+
+// RunTaskCreated fires all TaskCreated hooks. Advisory — never blocks.
+func RunTaskCreated(ctx context.Context, hooks []settings.HookMatcher, sessionID, taskID string) {
+	input := HookInput{SessionID: sessionID, TaskID: taskID}
+	runMatching(ctx, hooks, "", input)
+}
+
+// RunTaskCompleted fires all TaskCompleted hooks. Advisory — never blocks.
+func RunTaskCompleted(ctx context.Context, hooks []settings.HookMatcher, sessionID, taskID string) {
+	input := HookInput{SessionID: sessionID, TaskID: taskID}
 	runMatching(ctx, hooks, "", input)
 }
 
@@ -186,7 +209,7 @@ func matchesTool(matcher, toolName string) bool {
 	if matcher == "" {
 		return true
 	}
-	for _, part := range strings.Split(matcher, "|") {
+	for part := range strings.SplitSeq(matcher, "|") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

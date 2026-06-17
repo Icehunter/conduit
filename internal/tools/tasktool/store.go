@@ -67,6 +67,15 @@ var globalStore = &Store{
 // dedicated tools so updates flow through the same entry points.
 func GlobalStore() *Store { return globalStore }
 
+// NewStore returns a fresh, empty Store. Use in tests or isolated sessions
+// that should not share state with globalStore.
+func NewStore() *Store {
+	return &Store{
+		tasks:  make(map[string]*Task),
+		nextID: 1,
+	}
+}
+
 func (s *Store) Create(subject, description, activeForm string, metadata map[string]any) *Task {
 	s.mu.Lock()
 	id := fmt.Sprintf("task_%d", s.nextID)

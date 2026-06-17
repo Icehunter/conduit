@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"strings"
@@ -74,18 +75,10 @@ func isNewlineInsertKey(k tea.KeyPressMsg) bool {
 
 func chromeHeight(inputRows, termHeight int) int {
 	cap := int(float64(termHeight) * inputMaxRatio)
-	if cap < inputMinRows {
-		cap = inputMinRows
-	}
-	if cap > inputMaxRows {
-		cap = inputMaxRows
-	}
-	if inputRows < inputMinRows {
-		inputRows = inputMinRows
-	}
-	if inputRows > cap {
-		inputRows = cap
-	}
+	cap = max(cap, inputMinRows)
+	cap = min(cap, inputMaxRows)
+	inputRows = max(inputRows, inputMinRows)
+	inputRows = min(inputRows, cap)
 	return chromeFixed + inputRows
 }
 
@@ -359,6 +352,10 @@ type Config struct {
 	// resume, MCP, or config issues don't disappear silently.
 	StartupWarnings []string
 
+	// TeamActive enables the multi-pane agent-teams layout.
+	// Set from team.IsActive() in cmd/conduit/mainrepl.go.
+	TeamActive bool
+
 	// ClaudeMd is the concatenated CLAUDE.md + MCP server instructions used to
 	// build the initial system blocks. Stored so output-style rebuilds can
 	// include it rather than passing an empty string.
@@ -577,6 +574,13 @@ type Model struct {
 	// subagentPanel shows live tool events for a running sub-agent. Non-nil when open.
 	subagentPanel *subagentPanelState
 
+	// Agent Teams — active when team.IsActive() and set via Config.TeamActive.
+	// Pane 0 is always the lead (uses Model.vp); panes 1..N are m.teamPanes[0..N-1].
+	teamActive          bool
+	teamPanes           []teamPane
+	teamFocus           int  // index of the focused pane; 0 = lead
+	teamTaskListVisible bool // ctrl+t toggles the task list strip
+
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.
 	permissionMode permissions.Mode
@@ -664,6 +668,7 @@ func New(cfg Config) Model {
 		input:              ta,
 		working:            *workinganim.New(14, "Thinking", colorAccent, colorTool, colorDim, colorWindowBg),
 		modelName:          cfg.ModelName,
+		teamActive:         cfg.TeamActive,
 		localMode:          cfg.InitialLocalMode,
 		localModeServer:    cfg.InitialLocalServer,
 		localDirectTool:    cfg.InitialLocalDirectTool,
@@ -775,24 +780,14 @@ func New(cfg Config) Model {
 }
 
 func cloneProviderMap(in map[string]settings.ActiveProviderSettings) map[string]settings.ActiveProviderSettings {
-	if len(in) == 0 {
-		return map[string]settings.ActiveProviderSettings{}
-	}
 	out := make(map[string]settings.ActiveProviderSettings, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return map[string]string{}
-	}
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

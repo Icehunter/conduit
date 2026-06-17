@@ -43,6 +43,7 @@ import (
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/ttsr"
 )
 
@@ -259,6 +260,10 @@ type LoopConfig struct {
 	// correction is injected as a user <system-reminder> before the next attempt.
 	// Rules are evaluated per-turn; fire counts reset at the start of each turn.
 	TTSRRules []ttsr.Rule
+
+	// TaskStore is the task store used by SpawnTeammate for self-claim logic.
+	// nil uses tasktool.GlobalStore(). Set in tests to isolate task state.
+	TaskStore *tasktool.Store
 }
 
 // Loop drives the agentic query cycle.

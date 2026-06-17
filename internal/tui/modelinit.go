@@ -18,6 +18,9 @@ import (
 // coordinator-panel tick that drives the active-task footer.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textarea.Blink, m.working.Start(), coordTick()}
+	if m.teamActive {
+		cmds = append(cmds, teamRosterRefreshTick())
+	}
 	if m.cfg.MCPManager != nil {
 		if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
 			cmds = append(cmds, func() tea.Msg {

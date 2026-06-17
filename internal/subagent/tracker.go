@@ -20,12 +20,13 @@ type ToolEvent struct {
 
 // Entry describes one sub-agent — either currently running or recently completed.
 type Entry struct {
-	ID         string
-	Label      string // short description for the working row
-	Mode       permissions.Mode
-	StartedAt  time.Time
-	DoneAt     time.Time // zero while running; set when Remove is called
-	Background bool      // true for system-initiated agents (memory, hooks); hide from panel
+	ID          string
+	Label       string // short description for the working row
+	Mode        permissions.Mode
+	StartedAt   time.Time
+	DoneAt      time.Time // zero while running; set when Remove is called
+	Background  bool      // true for system-initiated agents (memory, hooks); hide from panel
+	TeammateFor string    // non-empty when this entry is a teammate loop; holds the teammate name
 }
 
 // IsRunning reports whether the sub-agent is still active.

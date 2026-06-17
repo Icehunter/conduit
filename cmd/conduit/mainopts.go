@@ -21,6 +21,7 @@ import (
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 )
@@ -87,7 +88,9 @@ func runPrint(args []string) error {
 			})
 			return r.Text, err
 		},
-	))
+	).WithSpawnTeammate(func(ctx context.Context, name, prompt string) (string, error) {
+		return lp.SpawnTeammate(ctx, name, prompt, agent.SubAgentSpec{}, team.Default)
+	}))
 	reg.Register(skilltool.New(
 		plugins.NewSkillLoader(loadedPlugins, cwd),
 		lp.RunBackgroundAgent,

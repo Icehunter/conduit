@@ -12,6 +12,7 @@ import (
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/astgreptool"
@@ -34,6 +35,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/notebookedittool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/repltool"
+	"github.com/icehunter/conduit/internal/tools/sendmessagetool"
 	"github.com/icehunter/conduit/internal/tools/sessionsearchtool"
 	"github.com/icehunter/conduit/internal/tools/sleeptool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
@@ -181,6 +183,11 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		reg.Register(localimplementtool.NewDynamic(mcpManager, func() (localimplementtool.Config, bool) {
 			return localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider))
 		}))
+	}
+	// Agent Teams: register SendMessage for the lead when teams are active.
+	// Teammates get a per-sender instance injected via SpawnTeammate ExtraTools.
+	if team.IsActive() {
+		reg.Register(sendmessagetool.New(team.Default))
 	}
 	// Interactive tools; callbacks are wired by the TUI after prog.Start().
 	if rOpts != nil && rOpts.EnterWorktree != nil {

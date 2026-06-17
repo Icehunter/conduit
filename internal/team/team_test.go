@@ -513,3 +513,141 @@ func TestReset_OldTeamShutdown(t *testing.T) {
 		t.Error("Reset did not shut down the old team's members")
 	}
 }
+
+// ─── SendPlanDecision ──────────────────────────────────────────────────────────
+
+func TestTeam_SendPlanDecision_Approved(t *testing.T) {
+	tm := New("t")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("alice", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := tm.SendPlanDecision("alice", PlanDecision{Approved: true}); err != nil {
+		t.Fatalf("SendPlanDecision: %v", err)
+	}
+	select {
+	case d := <-m.PlanReply:
+		if !d.Approved {
+			t.Error("Approved should be true")
+		}
+	default:
+		t.Error("no decision in PlanReply")
+	}
+}
+
+func TestTeam_SendPlanDecision_Rejected(t *testing.T) {
+	tm := New("t")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("bob", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := tm.SendPlanDecision("bob", PlanDecision{Approved: false, Feedback: "needs work"}); err != nil {
+		t.Fatalf("SendPlanDecision: %v", err)
+	}
+	select {
+	case d := <-m.PlanReply:
+		if d.Approved {
+			t.Error("Approved should be false")
+		}
+		if d.Feedback != "needs work" {
+			t.Errorf("Feedback = %q, want %q", d.Feedback, "needs work")
+		}
+	default:
+		t.Error("no decision in PlanReply")
+	}
+}
+
+func TestTeam_SendPlanDecision_UnknownMember(t *testing.T) {
+	tm := New("t")
+	if err := tm.SendPlanDecision("ghost", PlanDecision{Approved: true}); err == nil {
+		t.Error("SendPlanDecision to unknown member should return error")
+	}
+}
+
+func TestTeam_SendPlanDecision_BufferFull(t *testing.T) {
+	tm := New("t")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := tm.Register("carol", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// First send fills the buffer.
+	if err := tm.SendPlanDecision("carol", PlanDecision{Approved: true}); err != nil {
+		t.Fatalf("first SendPlanDecision: %v", err)
+	}
+	// Second send must fail (buffer full, not block).
+	if err := tm.SendPlanDecision("carol", PlanDecision{Approved: false}); err == nil {
+		t.Error("second SendPlanDecision should return error when buffer is full")
+	}
+}
+
+// ─── SendShutdownReply ────────────────────────────────────────────────────────
+
+func TestTeam_SendShutdownReply_Approved(t *testing.T) {
+	tm := New("t")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("alice", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := tm.SendShutdownReply("alice", true); err != nil {
+		t.Fatalf("SendShutdownReply: %v", err)
+	}
+	select {
+	case approved := <-m.ShutdownReply:
+		if !approved {
+			t.Error("expected approved=true")
+		}
+	default:
+		t.Error("no value in ShutdownReply")
+	}
+}
+
+func TestTeam_SendShutdownReply_Rejected(t *testing.T) {
+	tm := New("t")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("bob", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := tm.SendShutdownReply("bob", false); err != nil {
+		t.Fatalf("SendShutdownReply: %v", err)
+	}
+	select {
+	case approved := <-m.ShutdownReply:
+		if approved {
+			t.Error("expected approved=false")
+		}
+	default:
+		t.Error("no value in ShutdownReply")
+	}
+}
+
+func TestTeam_SendShutdownReply_UnknownMember(t *testing.T) {
+	tm := New("t")
+	if err := tm.SendShutdownReply("ghost", true); err == nil {
+		t.Error("SendShutdownReply to unknown member should return error")
+	}
+}
+
+func TestTeam_SendShutdownReply_BufferFull(t *testing.T) {
+	tm := New("t")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := tm.Register("carol", cancel); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := tm.SendShutdownReply("carol", true); err != nil {
+		t.Fatalf("first SendShutdownReply: %v", err)
+	}
+	if err := tm.SendShutdownReply("carol", false); err == nil {
+		t.Error("second SendShutdownReply should error when buffer full")
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/decisionlog"
 	"github.com/icehunter/conduit/internal/memdir"
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/undercover"
 )
 
@@ -317,6 +318,12 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, agents []Agen
 	if coordinator.IsActive() {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: coordinator.SystemPrompt()})
 		if ctx := coordinator.UserContext(CoordinatorMCPNames); ctx != "" {
+			blocks = append(blocks, api.SystemBlock{Type: "text", Text: ctx})
+		}
+	}
+	if team.IsActive() {
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: team.LeadSystemPrompt()})
+		if ctx := team.UserContext(); ctx != "" {
 			blocks = append(blocks, api.SystemBlock{Type: "text", Text: ctx})
 		}
 	}

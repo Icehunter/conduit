@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,12 +29,8 @@ func (m Model) applyLayout() Model {
 	// Match the textarea's visible row count to the available chrome budget
 	// so it doesn't try to render more rows than the layout reserved.
 	visibleRows := m.height - vpHeight - chromeFixed - usageRows - m.todoStripRows()
-	if visibleRows < inputMinRows {
-		visibleRows = inputMinRows
-	}
-	if visibleRows > inputMaxRows {
-		visibleRows = inputMaxRows
-	}
+	visibleRows = max(visibleRows, inputMinRows)
+	visibleRows = min(visibleRows, inputMaxRows)
 	m.input.SetHeight(visibleRows)
 	// Input inner width: full width minus left+right border (2) minus left+right padding (2).
 	inputW := m.width - 4
@@ -51,6 +48,12 @@ func (m Model) applyLayout() Model {
 	} else {
 		m.vp.SetWidth(m.width)
 		m.vp.SetHeight(vpHeight)
+	}
+
+	// When agent teams are active, override viewport sizes to match the pane grid.
+	if m.teamActive {
+		layout := m.computeLayout(image.Rect(0, 0, m.width, m.height))
+		m = m.applyTeamPaneLayout(layout)
 	}
 	m.input.SetWidth(inputW)
 	// Drop bubbles textarea's Placeholder feature — its internal
@@ -84,11 +87,7 @@ func (m Model) panelHeight() int {
 	if m.panelH > 0 {
 		return m.panelH
 	}
-	inputRows := m.input.Height()
-	if inputRows < inputMinRows {
-		inputRows = inputMinRows
-	}
-	inputRows += 2
+	inputRows := max(m.input.Height(), inputMinRows) + 2
 	if len(m.pendingImages)+len(m.pendingPDFs) > 0 {
 		inputRows++
 	}
@@ -152,7 +151,7 @@ func (m *Model) refreshViewport() {
 			// Track lines for this tool message
 			msgIndex := toolIndices[i]
 			lineCount := strings.Count(rendered, "\n") + 1
-			for j := 0; j < lineCount; j++ {
+			for j := range lineCount {
 				lineToMsg[currentLine+j] = msgIndex
 			}
 			currentLine += lineCount
@@ -188,7 +187,7 @@ func (m *Model) refreshViewport() {
 
 		// Track lines for this message
 		lineCount := strings.Count(rendered, "\n") + 1
-		for j := 0; j < lineCount; j++ {
+		for j := range lineCount {
 			lineToMsg[currentLine+j] = i
 		}
 		currentLine += lineCount
@@ -375,9 +374,8 @@ func gitBranchName(cwd string) string {
 		return ""
 	}
 	head := strings.TrimSpace(string(raw))
-	const prefix = "ref: refs/heads/"
-	if strings.HasPrefix(head, prefix) {
-		return strings.TrimPrefix(head, prefix)
+	if branch, ok := strings.CutPrefix(head, "ref: refs/heads/"); ok {
+		return branch
 	}
 	if len(head) >= 7 {
 		return head[:7]
@@ -394,9 +392,8 @@ func findGitDir(cwd string) string {
 		raw, err := os.ReadFile(gitPath)
 		if err == nil {
 			text := strings.TrimSpace(string(raw))
-			const prefix = "gitdir: "
-			if strings.HasPrefix(text, prefix) {
-				gitDir := strings.TrimSpace(strings.TrimPrefix(text, prefix))
+			if gitDir, ok := strings.CutPrefix(text, "gitdir: "); ok {
+				gitDir = strings.TrimSpace(gitDir)
 				if !filepath.IsAbs(gitDir) {
 					gitDir = filepath.Join(dir, gitDir)
 				}

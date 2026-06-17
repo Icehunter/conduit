@@ -170,6 +170,43 @@ func (t *Team) namesLocked() []string {
 	return names
 }
 
+// SendPlanDecision delivers a plan-approval verdict to a registered teammate's
+// PlanReply channel. Returns an error if the member is unknown or the channel
+// buffer is already full (buffered 1 — only one in-flight plan per teammate).
+func (t *Team) SendPlanDecision(name string, d PlanDecision) error {
+	t.mu.RLock()
+	m, ok := t.members[name]
+	t.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("team: unknown member %q", name)
+	}
+	select {
+	case m.PlanReply <- d:
+		return nil
+	default:
+		return fmt.Errorf("team: plan-reply buffer full for %q", name)
+	}
+}
+
+// SendShutdownReply delivers a teammate's shutdown-approve/reject decision to
+// its own ShutdownReply channel. The monitoring goroutine in SpawnTeammate reads
+// this and either cancels the teammate context (approved) or notifies the lead
+// of the rejection.
+func (t *Team) SendShutdownReply(senderName string, approved bool) error {
+	t.mu.RLock()
+	m, ok := t.members[senderName]
+	t.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("team: unknown member %q", senderName)
+	}
+	select {
+	case m.ShutdownReply <- approved:
+		return nil
+	default:
+		return fmt.Errorf("team: shutdown-reply buffer full for %q", senderName)
+	}
+}
+
 // Shutdown cancels all member contexts and marks the team as shut down.
 // Subsequent Register and Send calls return errors. Idempotent.
 func (t *Team) Shutdown() {

@@ -11,6 +11,11 @@ type uiLayout struct {
 	footer      image.Rectangle
 	pickerArea  image.Rectangle
 	panel       image.Rectangle
+
+	// Team pane grid — populated when teamActive.
+	// teamPaneRects[0] = lead pane, teamPaneRects[1..N] = teammate panes.
+	teamPaneRects []image.Rectangle
+	teamTaskList  image.Rectangle // optional strip below pane grid for task list
 }
 
 func (m Model) computeLayout(area image.Rectangle) uiLayout {
@@ -19,19 +24,12 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 	width = max(width, 1)
 	height = max(height, 1)
 
-	footerRows := m.footerChromeRows()
-	footerRows = max(footerRows, 1)
-	if footerRows > height {
-		footerRows = height
-	}
+	footerRows := max(m.footerChromeRows(), 1)
+	footerRows = min(footerRows, height)
 
 	inputRows := m.input.Height()
-	if inputRows < inputMinRows {
-		inputRows = inputMinRows
-	}
-	if inputRows > inputMaxRows {
-		inputRows = inputMaxRows
-	}
+	inputRows = max(inputRows, inputMinRows)
+	inputRows = min(inputRows, inputMaxRows)
 	inputRows += 2 // border
 	if len(m.pendingImages)+len(m.pendingPDFs) > 0 {
 		inputRows++
@@ -42,21 +40,13 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 	footerTop := area.Max.Y - footerRows
 	inputBottom := footerTop - coordRows
 	inputTop := inputBottom - inputRows
-	if inputTop < area.Min.Y+1 {
-		inputTop = area.Min.Y + 1
-	}
-	workingTop := inputTop - 1
-	if workingTop < area.Min.Y {
-		workingTop = area.Min.Y
-	}
+	inputTop = max(inputTop, area.Min.Y+1)
+	workingTop := max(inputTop-1, area.Min.Y)
 
 	// Todo strip sits between the working row and the chat viewport.
 	// todoStripRows() returns 0 when hidden or empty — strip collapses.
 	todoRows := m.todoStripRows()
-	todoStripTop := workingTop - todoRows
-	if todoStripTop < area.Min.Y {
-		todoStripTop = area.Min.Y
-	}
+	todoStripTop := max(workingTop-todoRows, area.Min.Y)
 
 	panel := image.Rect(area.Min.X+6, area.Min.Y+2, area.Max.X-6, area.Max.Y-2)
 	if panel.Dx() < 20 || panel.Dy() < 8 {
@@ -76,6 +66,21 @@ func (m Model) computeLayout(area image.Rectangle) uiLayout {
 	if layout.viewport.Dy() < 1 {
 		layout.viewport.Max.Y = layout.viewport.Min.Y
 	}
+
+	// Team pane grid — splits layout.viewport when teamActive.
+	if m.teamActive {
+		vpRect := layout.viewport
+		taskH := m.teamTaskListRows()
+		taskRect := image.Rectangle{}
+		if taskH > 0 && vpRect.Dy() > taskH {
+			taskRect = image.Rect(vpRect.Min.X, vpRect.Max.Y-taskH, vpRect.Max.X, vpRect.Max.Y)
+			vpRect = image.Rect(vpRect.Min.X, vpRect.Min.Y, vpRect.Max.X, vpRect.Max.Y-taskH)
+		}
+		nPanes := 1 + len(m.teamPanes)
+		layout.teamPaneRects = computeTeamPaneGrid(vpRect, nPanes, m.teamFocus)
+		layout.teamTaskList = taskRect
+	}
+
 	return layout
 }
 

@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 
+	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
@@ -68,6 +70,11 @@ type Tool struct {
 	// system prompt, model, role, and tool restrictions. May be nil (falls back to runAgent).
 	// role is a named provider role; model takes precedence when both are non-empty.
 	runTyped func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error)
+	// spawnTeammate spawns an async teammate when team mode is active.
+	// Returns the teammate's ID. nil means fall through to synchronous dispatch.
+	spawnTeammate func(ctx context.Context, name, prompt string) (string, error)
+	// spawnCount generates unique auto-names (teammate-1, teammate-2, …).
+	spawnCount atomic.Uint64
 }
 
 // New returns an AgentTool.
@@ -80,6 +87,13 @@ func New(
 	runTyped func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error),
 ) *Tool {
 	return &Tool{runAgent: runAgent, registry: registry, runTyped: runTyped}
+}
+
+// WithSpawnTeammate sets the function used to spawn an async teammate when
+// team mode is active. Returns the receiver for chaining.
+func (t *Tool) WithSpawnTeammate(fn func(ctx context.Context, name, prompt string) (string, error)) *Tool {
+	t.spawnTeammate = fn
+	return t
 }
 
 func (*Tool) Name() string { return "Task" }
@@ -97,6 +111,10 @@ func (*Tool) InputSchema() json.RawMessage {
 			"description": {
 				"type": "string",
 				"description": "Short description of the task shown while the agent runs"
+			},
+			"name": {
+				"type": "string",
+				"description": "Optional name for this teammate (agent teams mode only). Auto-generated if omitted (teammate-1, teammate-2, …)."
 			},
 			"subagent_type": {
 				"type": "string",
@@ -117,6 +135,7 @@ func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 type Input struct {
 	Prompt       string `json:"prompt"`
 	Description  string `json:"description,omitempty"`
+	Name         string `json:"name,omitempty"`
 	SubagentType string `json:"subagent_type,omitempty"`
 	Role         string `json:"role,omitempty"`
 }
@@ -128,6 +147,19 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	if in.Prompt == "" {
 		return tool.ErrorResult("agenttool: prompt is required"), nil
+	}
+
+	// Agent teams: async spawn when active and wired.
+	if team.IsActive() && t.spawnTeammate != nil {
+		name := in.Name
+		if name == "" {
+			name = fmt.Sprintf("teammate-%d", t.spawnCount.Add(1))
+		}
+		id, err := t.spawnTeammate(ctx, name, in.Prompt)
+		if err != nil {
+			return tool.ErrorResult(fmt.Sprintf("agenttool: spawn %q: %v", name, err)), nil
+		}
+		return tool.TextResult(fmt.Sprintf("Teammate %q launched (id: %s).", name, id)), nil
 	}
 
 	if in.SubagentType != "" && t.registry != nil {

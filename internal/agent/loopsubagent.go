@@ -67,6 +67,10 @@ type SubAgentSpec struct {
 	// Tools allowlist filter, so a tool in ExtraTools is always available
 	// regardless of the allowlist.
 	ExtraTools []tool.Tool
+	// OnEvent is an optional per-event callback invoked from the child loop's
+	// run goroutine. Use for live streaming to UI consumers (e.g. TUI team panes).
+	// Called with the loop's internal mutex released; must be goroutine-safe.
+	OnEvent func(LoopEvent)
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation

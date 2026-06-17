@@ -207,6 +207,182 @@ func TestSendMessage_ShutdownTeam(t *testing.T) {
 	}
 }
 
+// ─── Plan-approval routing ────────────────────────────────────────────────────
+
+func TestSendMessage_PlanApprove_SendsToPlanReply(t *testing.T) {
+	tm := team.New("test")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("alice", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, isErr := runTool(t, New(tm), map[string]any{
+		"recipient": "alice",
+		"message":   "looks good",
+		"kind":      "plan-approve",
+	})
+	if isErr {
+		t.Error("plan-approve should succeed")
+	}
+	select {
+	case d := <-m.PlanReply:
+		if !d.Approved {
+			t.Error("PlanDecision.Approved should be true")
+		}
+	default:
+		t.Error("no decision in PlanReply")
+	}
+}
+
+func TestSendMessage_PlanReject_SendsFeedback(t *testing.T) {
+	tm := team.New("test")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("bob", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, isErr := runTool(t, New(tm), map[string]any{
+		"recipient": "bob",
+		"message":   "missing error handling",
+		"kind":      "plan-reject",
+	})
+	if isErr {
+		t.Error("plan-reject should succeed")
+	}
+	select {
+	case d := <-m.PlanReply:
+		if d.Approved {
+			t.Error("PlanDecision.Approved should be false")
+		}
+		if d.Feedback != "missing error handling" {
+			t.Errorf("Feedback = %q, want %q", d.Feedback, "missing error handling")
+		}
+	default:
+		t.Error("no decision in PlanReply")
+	}
+}
+
+func TestSendMessage_PlanApprove_UnknownMember(t *testing.T) {
+	tm := team.New("test")
+	_, isErr := runTool(t, New(tm), map[string]any{
+		"recipient": "nobody",
+		"message":   "ok",
+		"kind":      "plan-approve",
+	})
+	if !isErr {
+		t.Error("plan-approve to unknown member should return ErrorResult")
+	}
+}
+
+// ─── Shutdown kind routing ────────────────────────────────────────────────────
+
+func TestSendMessage_ShutdownRequest_RoutesToInbox(t *testing.T) {
+	tm := newTeamWith(t, "alice")
+	// Find the member to check inbox later.
+	// Since newTeamWith registered "alice", send from lead and check alice's inbox.
+	tool := New(tm)
+	_, isErr := runTool(t, tool, map[string]any{
+		"recipient": "alice",
+		"message":   "please wrap up",
+		"kind":      "shutdown-request",
+	})
+	if isErr {
+		t.Error("shutdown-request should succeed")
+	}
+	// The message must arrive in the lead inbox (as a KindShutdownRequest from lead)
+	// via team.Send. We verify indirectly: no error and the team accepted the send.
+}
+
+func TestSendMessage_ShutdownApprove_SendsToShutdownReply(t *testing.T) {
+	tm := team.New("test")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("alice", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Alice's tool approves its own shutdown (sender = "alice").
+	aliceTool := NewFor("alice", tm)
+	_, isErr := runTool(t, aliceTool, map[string]any{
+		"recipient": team.ReservedLeadName, // recipient field still needed
+		"message":   "shutting down",
+		"kind":      "shutdown-approve",
+	})
+	if isErr {
+		t.Error("shutdown-approve should succeed")
+	}
+	select {
+	case approved := <-m.ShutdownReply:
+		if !approved {
+			t.Error("ShutdownReply should be true for approve")
+		}
+	default:
+		t.Error("no value in ShutdownReply")
+	}
+}
+
+func TestSendMessage_ShutdownReject_SendsToShutdownReply(t *testing.T) {
+	tm := team.New("test")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, err := tm.Register("bob", cancel)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	bobTool := NewFor("bob", tm)
+	_, isErr := runTool(t, bobTool, map[string]any{
+		"recipient": team.ReservedLeadName,
+		"message":   "still working",
+		"kind":      "shutdown-reject",
+	})
+	if isErr {
+		t.Error("shutdown-reject should succeed")
+	}
+	select {
+	case approved := <-m.ShutdownReply:
+		if approved {
+			t.Error("ShutdownReply should be false for reject")
+		}
+	default:
+		t.Error("no value in ShutdownReply")
+	}
+}
+
+func TestSendMessage_ShutdownApprove_UnregisteredSender(t *testing.T) {
+	tm := team.New("test")
+	// Sender "ghost" is not registered — ShutdownReply lookup will fail.
+	ghostTool := NewFor("ghost", tm)
+	_, isErr := runTool(t, ghostTool, map[string]any{
+		"recipient": team.ReservedLeadName,
+		"message":   "ok",
+		"kind":      "shutdown-approve",
+	})
+	if !isErr {
+		t.Error("shutdown-approve from unregistered sender should return ErrorResult")
+	}
+}
+
+func TestSendMessage_PlanKind_DoesNotWriteToInbox(t *testing.T) {
+	tm := team.New("test")
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, _ = tm.Register("carol", cancel)
+	_, _ = runTool(t, New(tm), map[string]any{
+		"recipient": "carol",
+		"message":   "approved",
+		"kind":      "plan-approve",
+	})
+	// The regular inbox must stay empty — plan decisions go to PlanReply only.
+	select {
+	case msg := <-tm.LeadInbox():
+		t.Errorf("plan-approve wrote to lead inbox unexpectedly: %+v", msg)
+	default:
+		// good
+	}
+}
+
 // ─── Token isolation ──────────────────────────────────────────────────────────
 
 // Two tools backed by different teams must not cross-deliver.

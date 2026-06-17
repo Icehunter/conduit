@@ -75,10 +75,13 @@ func (h HookMatcher) IsProjectLocal(cwd string) bool {
 
 // HooksSettings is the hooks section.
 type HooksSettings struct {
-	PreToolUse   []HookMatcher `json:"PreToolUse"`
-	PostToolUse  []HookMatcher `json:"PostToolUse"`
-	SessionStart []HookMatcher `json:"SessionStart"`
-	Stop         []HookMatcher `json:"Stop"`
+	PreToolUse    []HookMatcher `json:"PreToolUse"`
+	PostToolUse   []HookMatcher `json:"PostToolUse"`
+	SessionStart  []HookMatcher `json:"SessionStart"`
+	Stop          []HookMatcher `json:"Stop"`
+	TeammateIdle  []HookMatcher `json:"TeammateIdle"`
+	TaskCreated   []HookMatcher `json:"TaskCreated"`
+	TaskCompleted []HookMatcher `json:"TaskCompleted"`
 }
 
 // Settings is the parsed content of one settings file.
@@ -344,18 +347,12 @@ func loadPaths(paths []string) *Merged {
 		}
 		merged.AdditionalDirs = append(merged.AdditionalDirs, s.Permissions.AdditionalDirs...)
 		mergeHooks(&merged.Hooks, &s.Hooks)
-		for k, v := range s.Env {
-			merged.Env[k] = v
-		}
+		maps.Copy(merged.Env, s.Env)
 		if s.Model != "" {
 			merged.Model = s.Model
 		}
-		for k, v := range s.Providers {
-			merged.Providers[k] = v
-		}
-		for k, v := range s.Roles {
-			merged.Roles[k] = v
-		}
+		maps.Copy(merged.Providers, s.Providers)
+		maps.Copy(merged.Roles, s.Roles)
 		if s.OutputStyle != "" {
 			merged.OutputStyle = s.OutputStyle
 		}
@@ -369,17 +366,13 @@ func loadPaths(paths []string) *Merged {
 			if merged.ThemeOverrides == nil {
 				merged.ThemeOverrides = map[string]string{}
 			}
-			for k, v := range s.ThemeOverrides {
-				merged.ThemeOverrides[k] = v
-			}
+			maps.Copy(merged.ThemeOverrides, s.ThemeOverrides)
 		}
 		if len(s.Themes) > 0 {
 			if merged.Themes == nil {
 				merged.Themes = map[string]map[string]string{}
 			}
-			for k, v := range s.Themes {
-				merged.Themes[k] = v
-			}
+			maps.Copy(merged.Themes, s.Themes)
 		}
 		if s.OnboardingComplete {
 			merged.OnboardingComplete = true
@@ -432,6 +425,9 @@ func mergeHooks(dst, src *HooksSettings) {
 	dst.PostToolUse = append(dst.PostToolUse, src.PostToolUse...)
 	dst.SessionStart = append(dst.SessionStart, src.SessionStart...)
 	dst.Stop = append(dst.Stop, src.Stop...)
+	dst.TeammateIdle = append(dst.TeammateIdle, src.TeammateIdle...)
+	dst.TaskCreated = append(dst.TaskCreated, src.TaskCreated...)
+	dst.TaskCompleted = append(dst.TaskCompleted, src.TaskCompleted...)
 }
 
 // tagHookSource sets SourceFile on every HookMatcher in h to path.
@@ -446,6 +442,9 @@ func tagHookSource(h *HooksSettings, path string) {
 	h.PostToolUse = tag(h.PostToolUse)
 	h.SessionStart = tag(h.SessionStart)
 	h.Stop = tag(h.Stop)
+	h.TeammateIdle = tag(h.TeammateIdle)
+	h.TaskCreated = tag(h.TaskCreated)
+	h.TaskCompleted = tag(h.TaskCompleted)
 }
 
 // FilterUntrustedHooks returns a copy of h with project-local matchers removed
@@ -466,9 +465,12 @@ func FilterUntrustedHooks(h *HooksSettings, cwd string, trusted bool) *HooksSett
 		return out
 	}
 	return &HooksSettings{
-		PreToolUse:   filter(h.PreToolUse),
-		PostToolUse:  filter(h.PostToolUse),
-		SessionStart: filter(h.SessionStart),
-		Stop:         filter(h.Stop),
+		PreToolUse:    filter(h.PreToolUse),
+		PostToolUse:   filter(h.PostToolUse),
+		SessionStart:  filter(h.SessionStart),
+		Stop:          filter(h.Stop),
+		TeammateIdle:  filter(h.TeammateIdle),
+		TaskCreated:   filter(h.TaskCreated),
+		TaskCompleted: filter(h.TaskCompleted),
 	}
 }

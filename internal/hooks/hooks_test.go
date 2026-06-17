@@ -320,3 +320,96 @@ func TestRunHook_InjectsPluginRoot(t *testing.T) {
 		t.Errorf("CLAUDE_PLUGIN_ROOT = %q; want /plugin/install/dir", got)
 	}
 }
+
+// ─── Phase 5: TeammateIdle / TaskCreated / TaskCompleted ──────────────────────
+
+func TestRunTeammateIdle_NoHooks(t *testing.T) {
+	// Smoke test: nil hooks slice must not panic.
+	RunTeammateIdle(context.Background(), nil, "sess", "worker")
+}
+
+func TestRunTeammateIdle_FiresAndCarriesTeammateName(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "hook_input.json")
+	matchers := []settings.HookMatcher{{
+		Matcher: "",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "cat > '" + filepath.ToSlash(out) + "'",
+		}},
+	}}
+
+	RunTeammateIdle(context.Background(), matchers, "sess-idle", "worker-1")
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("hook did not write output file: %v", err)
+	}
+	var inp HookInput
+	if err := json.Unmarshal(data, &inp); err != nil {
+		t.Fatalf("parse hook stdin: %v", err)
+	}
+	if inp.SessionID != "sess-idle" {
+		t.Errorf("session_id = %q; want sess-idle", inp.SessionID)
+	}
+	if inp.TeammateName != "worker-1" {
+		t.Errorf("teammate_name = %q; want worker-1", inp.TeammateName)
+	}
+}
+
+func TestRunTaskCreated_NoHooks(t *testing.T) {
+	RunTaskCreated(context.Background(), nil, "sess", "task_1")
+}
+
+func TestRunTaskCreated_FiresAndCarriesTaskID(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "hook_input.json")
+	matchers := []settings.HookMatcher{{
+		Matcher: "",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "cat > '" + filepath.ToSlash(out) + "'",
+		}},
+	}}
+
+	RunTaskCreated(context.Background(), matchers, "sess-tc", "task_42")
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("hook did not write output file: %v", err)
+	}
+	var inp HookInput
+	if err := json.Unmarshal(data, &inp); err != nil {
+		t.Fatalf("parse hook stdin: %v", err)
+	}
+	if inp.TaskID != "task_42" {
+		t.Errorf("task_id = %q; want task_42", inp.TaskID)
+	}
+}
+
+func TestRunTaskCompleted_NoHooks(t *testing.T) {
+	RunTaskCompleted(context.Background(), nil, "sess", "task_1")
+}
+
+func TestRunTaskCompleted_FiresAndCarriesTaskID(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "hook_input.json")
+	matchers := []settings.HookMatcher{{
+		Matcher: "",
+		Hooks: []settings.Hook{{
+			Type:    "command",
+			Command: "cat > '" + filepath.ToSlash(out) + "'",
+		}},
+	}}
+
+	RunTaskCompleted(context.Background(), matchers, "sess-tcmp", "task_99")
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("hook did not write output file: %v", err)
+	}
+	var inp HookInput
+	if err := json.Unmarshal(data, &inp); err != nil {
+		t.Fatalf("parse hook stdin: %v", err)
+	}
+	if inp.TaskID != "task_99" {
+		t.Errorf("task_id = %q; want task_99", inp.TaskID)
+	}
+}

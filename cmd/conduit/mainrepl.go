@@ -48,6 +48,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/skillmanagetool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
+	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	"github.com/icehunter/conduit/internal/truncate"
 	"github.com/icehunter/conduit/internal/ttsr"
@@ -350,6 +351,15 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 		}
 		team.SetActive(conduitCfg.AgentTeams)
+	}
+
+	// TeammateNotify bridges SpawnTeammate's event handler to the TUI panes.
+	// Run() sets TeammateNotify.Send after prog.Start(); the closure below
+	// reads it at call time (always after prog.Start since it's triggered by
+	// the agent running, which requires the TUI to be up).
+	var teNotify *tui.TeammateNotifyHook
+	if team.IsActive() {
+		teNotify = &tui.TeammateNotifyHook{}
 	}
 	lspManager := lsp.NewManagerWithOverrides(lspOverrides)
 
@@ -747,7 +757,7 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Register AgentTool and SkillTool now that the loop exists.
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
-	reg.Register(agenttool.New(
+	agentTool := agenttool.New(
 		// Plain Task calls (no subagent_type) use RunSubAgentTyped so they
 		// appear in the sub-agent drill-in panel. RunBackgroundAgent marks
 		// entries as Background:true which hides them from the panel.
@@ -767,7 +777,18 @@ func runREPL(continueMode bool, resumeID string) error {
 			})
 			return r.Text, err
 		},
-	))
+	).WithSpawnTeammate(func(ctx context.Context, name, prompt string) (string, error) {
+		var onEvent func(agent.LoopEvent)
+		if teNotify != nil && teNotify.Send != nil {
+			n := name // capture loop variable
+			onEvent = func(ev agent.LoopEvent) { teNotify.Send(n, ev) }
+		}
+		return lp.SpawnTeammate(ctx, name, prompt, agent.SubAgentSpec{
+			Tools:   team.TeammateTools,
+			OnEvent: onEvent,
+		}, team.Default)
+	})
+	reg.Register(agentTool)
 	skillLoader := plugins.NewSkillLoader(loadedPlugins, cwd)
 	reg.Register(skilltool.New(
 		skillLoader,
@@ -811,6 +832,19 @@ func runREPL(continueMode bool, resumeID string) error {
 	// drainable at shutdown instead of leaking as untracked goroutines.
 	hooks.DefaultAsyncGroup = hooks.NewAsyncGroup(ctx)
 
+	// Wire task-lifecycle hooks into the global task store.
+	filteredHooks := settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust)
+	if filteredHooks != nil && len(filteredHooks.TaskCreated) > 0 {
+		tasktool.GlobalStore().OnCreated = func(task *tasktool.Task) {
+			go hooks.RunTaskCreated(ctx, filteredHooks.TaskCreated, sessionID, task.ID)
+		}
+	}
+	if filteredHooks != nil && len(filteredHooks.TaskCompleted) > 0 {
+		tasktool.GlobalStore().OnCompleted = func(task *tasktool.Task) {
+			go hooks.RunTaskCompleted(ctx, filteredHooks.TaskCompleted, sessionID, task.ID)
+		}
+	}
+
 	// Drain the update-check result. Non-blocking: if the goroutine is
 	// still running we proceed without a notice (it'll surface next launch
 	// from cache).
@@ -822,6 +856,37 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Load the model capability catalog from disk (best-effort; never blocks startup).
 	initialCatalog := catalog.Load(settings.ConduitDir())
+
+	// Lead inbox pump: drain messages sent to "lead" from teammates and inject
+	// them into the lead loop as programmatic user turns.
+	if team.IsActive() {
+		go func() {
+			for {
+				select {
+				case msg, ok := <-team.Default.LeadInbox():
+					if !ok {
+						return
+					}
+					var text string
+					switch msg.Kind {
+					case team.KindCompletion:
+						text = fmt.Sprintf("<team-completion from=%q>\n%s\n</team-completion>", msg.From, msg.Text)
+					case team.KindIdle:
+						text = fmt.Sprintf("<team-idle from=%q />", msg.From)
+					case team.KindShutdownApprove:
+						text = fmt.Sprintf("<team-shutdown-approve from=%q />", msg.From)
+					case team.KindShutdownReject:
+						text = fmt.Sprintf("<team-shutdown-reject from=%q />", msg.From)
+					default:
+						text = fmt.Sprintf("<team-message from=%q>%s</team-message>", msg.From, msg.Text)
+					}
+					lp.InjectMessage(text)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	tuiErr := tui.Run(AppVersion, modelName, lp, c, gate, settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust), tui.RunOptions{
 		AuthErr:                   authErr,
@@ -890,11 +955,15 @@ func runREPL(continueMode bool, resumeID string) error {
 		SteerMessage:   lp.InjectSteerMessage,
 		InitialCatalog: initialCatalog,
 		LSPManager:     lspManager,
+		TeammateNotify: teNotify,
 	})
 
 	// Dispose kernel processes for this session before exiting.
 	// Best-effort: failure is non-fatal; the OS will clean up.
 	kernelMgr.DisposeSession(sessionID)
+
+	// Cancel all active teammate goroutines.
+	team.Default.Shutdown()
 
 	// Fast exit: skip all cleanup drains regardless of how the TUI exited.
 	// Terminal state was already restored by Bubble Tea; session data was

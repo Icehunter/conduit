@@ -32,7 +32,11 @@ func makeTeaView(content string) tea.View {
 func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 	layout := m.computeLayout(area)
 
-	drawString(scr, layout.viewport, m.vp.View())
+	if m.teamActive && len(layout.teamPaneRects) > 0 {
+		m.drawTeamPanes(scr, layout)
+	} else {
+		drawString(scr, layout.viewport, m.vp.View())
+	}
 	if layout.todoStrip.Dy() > 0 {
 		drawString(scr, layout.todoStrip, m.renderTodoStrip())
 	}
@@ -153,14 +157,8 @@ func drawCompanionOverlay(scr uv.Screen, layout uiLayout, rendered string) {
 	if width < 1 || height < 1 {
 		return
 	}
-	x := layout.input.Max.X - width - 2
-	if x < layout.input.Min.X+2 {
-		x = layout.input.Min.X + 2
-	}
-	y := layout.input.Min.Y - height - 1
-	if y < layout.viewport.Min.Y {
-		y = layout.viewport.Min.Y
-	}
+	x := max(layout.input.Max.X-width-2, layout.input.Min.X+2)
+	y := max(layout.input.Min.Y-height-1, layout.viewport.Min.Y)
 	rect := image.Rect(x, y, min(x+width, layout.input.Max.X-1), y+height)
 	drawString(scr, rect, rendered)
 }

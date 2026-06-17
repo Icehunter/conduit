@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-06-06
+Last updated: 2026-06-17
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -74,6 +74,7 @@ coming, and what's intentionally out of scope.
 | Sub-agents (Task tool) | ✅ | `internal/tools/agenttool/`; sub-agent token usage recorded in session JSONL via `OnSubAgentUsage`; child loops capped at 50 turns (`DefaultSubAgentMaxTurns`); cap returns `ErrMaxTurnsExceeded` — TUI shows a soft notice, subagent result carries an incomplete marker so the parent model knows the child was truncated rather than finished |
 | Coordinator mode | ✅ | Claude as orchestrator; task-notification XML |
 | Council mode | ✅ | Parallel multi-model debate, synthesis, convergence detection, roles, voting |
+| Agent Teams (experimental) | ✅ | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` or `conduit.json` `agentTeams: true`; in-process goroutine teammates (divergence: no tmux/OS-process); lead+teammate multi-pane compositor layout; task store with Assignee/Dependencies + Claim/NextClaimable/auto-unblock; plan-approval handshake via PlanReply channel; shutdown-request/approve/reject protocol; lead inbox pump goroutines; live EventText streaming to TUI panes; `internal/team/`, `internal/agent/loopteammate.go` |
 | Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options; "chat about this" (Discuss:true) yields the turn — agent stops and waits for user input |
 | Diff-first review gate | ✅ | Hunk-level Myers diff; per-hunk approve/reject/note; `acceptEditsLive` mid-turn pause |
 | Decision journal | ✅ | Append-only JSONL; `RecordDecision` tool; council auto-records verdicts |
@@ -103,7 +104,8 @@ coming, and what's intentionally out of scope.
 | REPLTool | ✅ | persistent kernel per (session, lang); idle reaper; python + node; bash stays subprocess-per-call; `internal/kernel/` |
 | SleepTool | ✅ | |
 | TodoWriteTool | ✅ | |
-| TaskCreate/Get/List/Update/Stop | ✅ | In-process task store |
+| TaskCreate/Get/List/Update/Stop | ✅ | In-process task store; Assignee + Dependencies fields; Claim/NextClaimable (self-claim); Complete auto-unblocks dependents; OnCreated/OnCompleted hook callbacks |
+| SendMessage | ✅ | `internal/tools/sendmessagetool/`; registered for lead when agent teams active; per-teammate sender identity baked via `NewFor`; kinds: message, plan-approve/reject, shutdown-request/approve/reject |
 | EnterPlanMode / ExitPlanMode | ✅ | |
 | EnterWorktree / ExitWorktree | ✅ | git worktree add/remove |
 | EnterAutoMode / ExitAutoMode | ✅ | Conduit-original; bypassPermissions with user consent |
@@ -210,6 +212,7 @@ coming, and what's intentionally out of scope.
 | Async hooks | ✅ | Non-blocking goroutine |
 | Hook approve / block directives | ✅ | |
 | Desktop notifications | ✅ | macOS osascript / Linux notify-send |
+| TeammateIdle / TaskCreated / TaskCompleted | ✅ | Agent-teams hooks; `internal/hooks/hooks.go`; wired from GlobalStore callbacks and SpawnTeammate idle path |
 
 ---
 
@@ -236,6 +239,7 @@ coming, and what's intentionally out of scope.
 | Claude plan usage footer | ✅ | 5h/7d windows; `/toggle-usage` |
 | Async-dialog keystroke guard | ✅ | Permission prompt, plan approval, diff review, and AskUserQuestion overlays each carry `guardFirstKey`; the first non-Esc key after async open is swallowed, preventing buffered Enter/Space from auto-accepting |
 | Mid-agent draft preservation | ✅ | Queued messages drain to the input box only when it is empty; an arriving `agentDone` event never clobbers an in-progress draft |
+| Agent Teams multi-pane layout | ✅ | `internal/tui/teampanes.go`; horizontal→vertical→fallback grid via compositor; Shift+Down cycles pane focus; Ctrl+T toggles task list strip; Enter routes input to focused teammate; live EventText streaming via TeammateNotifyHook; 500ms roster-refresh tick |
 | `conduit serve` (local server) | 🔲 | C-O4: session/message/event endpoints |
 | `conduit attach` (attach client) | 🔲 | C-O4 |
 | Multi-session switcher panel | 🔲 | C-O5: depends on server spine |
@@ -376,7 +380,7 @@ Corrected above.
 
 - Bridge / IDE JSON-RPC integration (users use the real CC extension)
 - Remote session management and ULTRAPLAN
-- Team swarm messaging (SendMessageTool, teammate mailbox)
+- Agent Teams remote/tmux display mode (conduit uses in-process compositor; tmux accepted without error but maps to in-process)
 - Voice / STT (local whisper.cpp deferred; Anthropic private endpoint unavailable)
 - KAIROS / GrowthBook-gated features
 - Anthropic-internal analytics, telemetry, and billing dialogs

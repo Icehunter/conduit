@@ -4,8 +4,8 @@
 // Anthropic identifies legitimate Claude Code clients (alongside headers
 // and OAuth scopes). A bare `{model, messages, max_tokens}` body is rate-
 // limited as a non-CLI caller even with all the right headers. We replicate
-// the captured shape from real Claude Code 2.1.179 (mitmproxy 2026-06-17,
-// see scripts/wire-check/history/2.1.179/live-capture.json).
+// the captured shape from real Claude Code 2.1.200 (mitmproxy 2026-07-05,
+// see scripts/wire-check/history/2.1.200/wire-fingerprint.json).
 package agent
 
 import (
@@ -27,17 +27,17 @@ import (
 // the cc_version suffix is computed dynamically by DynamicBillingBlock using
 // the first user message — use that instead of this constant.
 //
-// cch=60e10 is the Bun compile-time macro value for v2.1.179, captured via
-// mitmproxy. CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
-const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.179; cc_entrypoint=sdk-cli; cch=60e10;\n"
+// cch=00000 is the value for firstParty (non-bedrock/vertex) in v2.1.200.
+// CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
+const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.200; cc_entrypoint=sdk-cli; cch=00000;\n"
 
 const (
-	billingSalt    = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.179/4720.js)
-	BillingCch     = "60e10"        // v2.1.179 Bun macro value — update from live capture each release
-	BillingVersion = "2.1.179"      // must match cmd/conduit/main.go var Version
+	billingSalt    = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.200/1470.js)
+	BillingCch     = "00000"        // v2.1.200 firstParty value (non-bedrock/vertex) — see decoded-2.1.200/1470.js
+	BillingVersion = "2.1.200"      // must match cmd/conduit/main.go var Version
 )
 
-// computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.179/4720.js:
+// computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.200/1470.js:
 // SHA256(billingSalt + firstMsg[4] + firstMsg[7] + firstMsg[20] + BillingVersion).slice(0,3).
 func computeBillingSuffix(firstUserMsg string) string {
 	k := make([]byte, 3)
@@ -54,7 +54,7 @@ func computeBillingSuffix(firstUserMsg string) string {
 
 // DynamicBillingBlock returns the first system block for Claude.ai OAuth
 // (Max subscription) accounts with the cc_version suffix computed from the
-// first user message. Mirrors the upstream Gd_(H) function in decoded-2.1.179/2147.js.
+// first user message. Mirrors the upstream Gd_(H) function in decoded-2.1.200/1470.js.
 // All other account types use the static BillingHeader constant instead.
 func DynamicBillingBlock(firstUserMsg string) api.SystemBlock {
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {

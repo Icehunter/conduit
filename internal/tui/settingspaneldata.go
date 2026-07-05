@@ -152,8 +152,8 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			label:      "Model",
 			kind:       "enum",
 			value:      modelDisplayName(model),
-			options:    []string{"Opus 4.8 (default)", "Sonnet 4.6", "Haiku 4.5"},
-			optionVals: []string{"claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
+			options:    []string{"Fable 5 (default)", "Opus 4.8", "Sonnet 5", "Sonnet 4.6", "Haiku 4.5"},
+			optionVals: []string{"claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
 		},
 		{
 			id:      "effort",
@@ -224,8 +224,12 @@ func outputStyleDisplay(val string) string {
 
 func modelDisplayName(modelID string) string {
 	switch {
+	case strings.Contains(modelID, "fable"):
+		return "Fable"
 	case strings.Contains(modelID, "opus"):
 		return "Opus"
+	case strings.Contains(modelID, "sonnet"):
+		return "Sonnet"
 	case strings.Contains(modelID, "haiku"):
 		return "Haiku"
 	default:

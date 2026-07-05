@@ -1,17 +1,39 @@
 package catalog
 
 // builtinModels returns a baked-in snapshot of well-known Anthropic models.
-// Pricing is approximate public pricing (USD / 1M tokens) as of 2026-06.
+// Pricing is approximate public pricing (USD / 1M tokens) as of 2026-07.
 // This snapshot is used when the network is unavailable and no cache exists.
 func builtinModels() []ModelInfo {
 	return []ModelInfo{
+		{
+			ID:              "claude-fable-5",
+			Name:            "Claude Fable 5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  10.0,
+			OutputCostPer1M: 50.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
 		{
 			ID:              "claude-opus-4-8",
 			Name:            "Claude Opus 4.8",
 			Provider:        "anthropic",
 			ContextWindow:   1_000_000,
-			InputCostPer1M:  15.0,
-			OutputCostPer1M: 75.0,
+			InputCostPer1M:  5.0,
+			OutputCostPer1M: 25.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
+		{
+			ID:              "claude-sonnet-5",
+			Name:            "Claude Sonnet 5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  3.0,
+			OutputCostPer1M: 15.0,
 			ToolUse:         true,
 			Vision:          true,
 			Thinking:        true,
@@ -32,8 +54,8 @@ func builtinModels() []ModelInfo {
 			Name:            "Claude Haiku 4.5",
 			Provider:        "anthropic",
 			ContextWindow:   200_000,
-			InputCostPer1M:  0.8,
-			OutputCostPer1M: 4.0,
+			InputCostPer1M:  1.0,
+			OutputCostPer1M: 5.0,
 			ToolUse:         true,
 			Vision:          true,
 			Thinking:        false,
@@ -43,8 +65,8 @@ func builtinModels() []ModelInfo {
 			Name:            "Claude Opus 4.5",
 			Provider:        "anthropic",
 			ContextWindow:   200_000,
-			InputCostPer1M:  15.0,
-			OutputCostPer1M: 75.0,
+			InputCostPer1M:  5.0,
+			OutputCostPer1M: 25.0,
 			ToolUse:         true,
 			Vision:          true,
 			Thinking:        true,

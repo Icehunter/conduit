@@ -319,9 +319,9 @@ func TestParseVoteJSON_Invalid(t *testing.T) {
 func TestCostUSDForModel_KnownModel(t *testing.T) {
 	u := api.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}
 	cost := api.CostUSDForModel("claude-opus-4-7", u)
-	// $15 in + $75 out = $90
-	if cost < 89.9 || cost > 90.1 {
-		t.Errorf("cost = %f, want ~90.0", cost)
+	// $5 in + $25 out = $30
+	if cost < 29.9 || cost > 30.1 {
+		t.Errorf("cost = %f, want ~30.0", cost)
 	}
 }
 

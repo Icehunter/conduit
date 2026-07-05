@@ -42,14 +42,14 @@ func SetDefault(name string) {
 
 // Default is the hardcoded fallback model.
 //
-// Conduit intentionally diverges from CC's default (claude-fable-5): that model
-// is restricted by US government policy and cannot be called, so conduit defaults
-// to claude-opus-4-8 (the highest-capability Claude model that remains available).
-const Default = "claude-opus-4-8"
+// Conduit tracks CC's default (claude-fable-5), which is the most capable
+// widely-released model as of CC 2.1.200. Fable 5 was previously restricted
+// by US government policy but has since been re-enabled.
+const Default = "claude-fable-5"
 
 // Fast is the faster/cheaper model used when /fast is active.
-// Mirrors getSmallFastModel() — Sonnet for fast responses.
-const Fast = "claude-sonnet-4-6"
+// Mirrors getSmallFastModel() — Sonnet 5 for fast responses (latest_per_family.sonnet).
+const Fast = "claude-sonnet-5"
 
 // MaxTokens is the default max_tokens value for /v1/messages.
 // Real CC uses 16000 for the main loop; we match that.

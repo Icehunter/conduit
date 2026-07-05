@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.177` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.200` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.94.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -55,7 +55,6 @@ regression appears.
 | Tool names `mcp`/`mcp__` | Pass-through aliases | `ListMcpResources`/`ReadMcpResource` | Conduit's MCP surface is explicit, not aliased |
 | Auto-updater | npm self-replace | Passive GitHub Release notifier | Conduit ships as a static binary |
 | AskUserQuestion quick-pick | Digit 1-9 immediately selects and submits in single-select | Digit focuses the option; Enter confirms; first key after open is swallowed (focus guard); popup queued if user has unsent draft | Prevent stray keystrokes (popup appearing mid-typing) from auto-submitting |
-| Default model | `claude-fable-5` | `claude-opus-4-8` | `claude-fable-5` is restricted by US government policy and cannot be called; conduit defaults to the highest-capability Claude model that remains available. Removed from catalog/picker/migration; kept in the cost table for historical-usage pricing only. |
 | Agent Teams: teammate process model | Separate OS processes; each teammate is a `claude` subprocess | In-process goroutine `Loop`s sharing the same process; no subprocess or shell involved | Single-process Go architecture; `internal/agent/loopteammate.go` |
 | Agent Teams: display | tmux panes / iTerm2 split views managed by CC | In-process split-pane compositor via `uv.Screen`; `internal/tui/teampanes.go` | Reuses the existing Ultraviolet cell-buffer compositor; no tmux dependency |
 | Agent Teams: `teammateMode` `tmux`/`auto` | `tmux` → real tmux panes; `auto` → detect best | Both map to in-process display; no tmux ever invoked; no error raised | No tmux dependency in conduit |
@@ -68,6 +67,16 @@ regression appears.
 ---
 
 ## Wire sync log
+
+### 2.1.177 → 2.1.200 (2026-07-05)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.200` in `cmd/conduit/main.go` |
+| `BillingCch` | Updated to `00000` (v2.1.200 firstParty value; bedrock/vertex remain `00000`; Bun macro is no longer used — inline check in `decoded-2.1.200/1470.js`). |
+| `claude-fable-5` re-enabled | Previously restricted by US government policy; re-enabled as of CC 2.1.200. Added to builtin catalog (`$10/$50 per 1M`), restored as `model.Default` and `model.Fast` fallback; removed fable→opus migration aliases; restored to settings panel and model picker. |
+| `claude-sonnet-5` added | New model (`latest_per_family.sonnet = claude-sonnet-5`). Added to builtin catalog ($3/$15 per 1M, 1M context, thinking=true), cost table, and model picker. `model.Fast` updated to `claude-sonnet-5`. |
+| Pricing corrections | Opus 4.x: $5/$25 (was $15/$75); Haiku 4.x: $1/$5 (was $0.80/$4.00); Fable/Opus 4 pricing per CC 2.1.200 skill reference. |
 
 ### 2.1.168 → 2.1.177 (2026-06-13)
 

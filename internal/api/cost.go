@@ -10,8 +10,6 @@ type perMillionTokenPrice struct {
 
 // modelPrices maps model ID prefixes to per-token pricing. Entries are matched
 // longest-prefix-first so "claude-fable-5" takes precedence over "claude-fable".
-// (fable-5 is retained here for historical-usage pricing only; it is no longer a
-// selectable/default model — see internal/model.Default.)
 // Cache read tokens are priced at 10% of the base input rate; cache write tokens
 // at 125%. Only Claude and direct Anthropic API models carry a known price —
 // OpenAI-compatible providers return 0 since we don't bill those ourselves.
@@ -19,13 +17,14 @@ var modelPrices = []struct {
 	prefix string
 	price  perMillionTokenPrice
 }{
-	{"claude-fable-5", perMillionTokenPrice{15.00, 75.00}},
-	{"claude-fable", perMillionTokenPrice{15.00, 75.00}},
-	{"claude-opus-4", perMillionTokenPrice{15.00, 75.00}},
+	{"claude-fable-5", perMillionTokenPrice{10.00, 50.00}},
+	{"claude-fable", perMillionTokenPrice{10.00, 50.00}},
+	{"claude-opus-4", perMillionTokenPrice{5.00, 25.00}},
+	{"claude-sonnet-5", perMillionTokenPrice{3.00, 15.00}},
 	{"claude-sonnet-4-6", perMillionTokenPrice{3.00, 15.00}},
 	{"claude-sonnet-4", perMillionTokenPrice{3.00, 15.00}},
-	{"claude-haiku-4-5", perMillionTokenPrice{0.80, 4.00}},
-	{"claude-haiku-4", perMillionTokenPrice{0.80, 4.00}},
+	{"claude-haiku-4-5", perMillionTokenPrice{1.00, 5.00}},
+	{"claude-haiku-4", perMillionTokenPrice{1.00, 5.00}},
 	{"claude-3-5-sonnet", perMillionTokenPrice{3.00, 15.00}},
 	{"claude-3-5-haiku", perMillionTokenPrice{0.80, 4.00}},
 	{"claude-3-opus", perMillionTokenPrice{15.00, 75.00}},

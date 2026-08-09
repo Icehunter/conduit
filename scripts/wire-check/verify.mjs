@@ -18,6 +18,18 @@
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import path from "path";
 
+// ── Reviewed betas ───────────────────────────────────────────────────────────
+
+// Betas that appear in the upstream registry and that conduit deliberately does
+// NOT send. Reported as DIVERGED with the reason rather than NEW, so a decision
+// already made doesn't come back as an open question on every run. Only add an
+// entry after tracing how upstream gates the beta — if it turns out to be
+// always-on, it belongs in betaHeaders (internal/app/auth.go) instead.
+const BETAS_DELIBERATELY_NOT_SENT = {
+  "oidc-federation-2026-04-01":
+    "intentional: scoped to the OIDC federation token exchange (grant_type=jwt-bearer with federation_rule_id/organization_id, upstream oidcFederationProvider). Conduit authenticates with the Max/Pro PKCE flow and never calls that path, so sending it on the messages API would be wrong.",
+};
+
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
 
 const isTTY = process.stdout.isTTY;
@@ -223,9 +235,14 @@ export function runVerify(opts) {
 
   // Beta registry: betas in upstream registry vs conduit's sent list.
   if (fp.beta_registry?.length) {
-    const { onlyInA: newUpstream, onlyInB: removedFromRegistry } = setDiff(fp.beta_registry, co.betaHeaders);
+    const { onlyInA: allNewUpstream, onlyInB: removedFromRegistry } = setDiff(fp.beta_registry, co.betaHeaders);
+    const reviewed = allNewUpstream.filter((b) => b in BETAS_DELIBERATELY_NOT_SENT);
+    const newUpstream = allNewUpstream.filter((b) => !(b in BETAS_DELIBERATELY_NOT_SENT));
     if (newUpstream.length) {
       rows.push(makeRow("NEW", "betas in upstream registry (not sent by conduit)", newUpstream, [], "review — some are feature-gated; add always-on ones to betaHeaders in internal/app/auth.go"));
+    }
+    for (const b of reviewed) {
+      rows.push(makeRow("DIVERGED", `beta not adopted: ${b}`, [b], [], BETAS_DELIBERATELY_NOT_SENT[b]));
     }
     if (removedFromRegistry.length) {
       // Conduit intentionally sends more betas than the extractor finds in the

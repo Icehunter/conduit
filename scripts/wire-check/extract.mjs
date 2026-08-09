@@ -164,6 +164,14 @@ const KNOWN_HEADERS = new Set([
   // LaunchDarkly flag for first-party deep-query tracking. Feature-flagged + conditional,
   // not part of conduit's baseline request.
   "anthropic-usage-limit",
+  // Dispatch stream header (v2.1.226+) — CC sets it only on the dispatch streaming
+  // path, and its own error handling retries without it when the connection fails
+  // before the first event. Optional even upstream; conduit has no dispatch path.
+  "anthropic-dispatch-id",
+  // NOT a wire header (v2.1.226+) — false positive from the broad namespace scan.
+  // The literal is an MCP server-kind discriminator in the cli_mcp_login switch
+  // (the "anthropic_hosted_blocked" case), never a request or response header.
+  "anthropic-hosted",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

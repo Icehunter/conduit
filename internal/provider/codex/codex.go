@@ -16,6 +16,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/catalog"
+	"github.com/icehunter/conduit/internal/credlock"
 	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -295,6 +296,23 @@ func (a *Authorizer) EnsureFresh(ctx context.Context) (*providerauth.ProviderCre
 	if cred.RefreshToken == "" {
 		return nil, errors.New("codex: missing refresh token")
 	}
+
+	// Serialize across processes. This endpoint issues a new refresh token on
+	// every exchange and rejects a consumed one, so two conduit instances
+	// refreshing the same account sign each other out. A lock failure is not
+	// fatal — refreshing unlocked beats failing the request.
+	release, _ := credlock.Acquire(ctx, "codex:"+a.credentialName)
+	defer release()
+
+	// Re-read after waiting: whoever held the lock has just written a new
+	// credential, so adopt it rather than presenting a token they consumed.
+	if latest, lerr := settings.LoadStructuredProviderCredential(a.store, a.credentialName); lerr == nil && latest.RefreshToken != "" {
+		if latest.AccessToken != "" && time.Until(latest.Expiry) > 5*time.Minute {
+			return latest, nil
+		}
+		cred = latest
+	}
+
 	tokens, err := RefreshToken(ctx, cred.RefreshToken)
 	if err != nil {
 		return nil, err

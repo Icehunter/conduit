@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // FileStorage persists secrets to a JSON file with mode 0600 in a directory
@@ -24,7 +25,11 @@ type FileStorage struct {
 
 	mu     sync.Mutex
 	loaded bool
-	cache  map[string]string // base64-encoded values
+	// loadedMod/loadedSize fingerprint the file as of the last read, so a write
+	// by another process is picked up instead of being masked by the cache.
+	loadedMod  time.Time
+	loadedSize int64
+	cache      map[string]string // base64-encoded values
 }
 
 // NewFileStorage returns a FileStorage rooted at the given file path.
@@ -49,14 +54,28 @@ func newFileStorage() *FileStorage {
 }
 
 func (s *FileStorage) loadLocked() error {
-	if s.loaded {
+	// The cache is keyed to the file's mtime and size rather than merely to
+	// "have we loaded once". Another conduit process refreshing a token writes
+	// this same file, and a cache pinned for the process lifetime would make
+	// that write permanently invisible — so this process would keep presenting
+	// a refresh token the peer has already consumed and revoke the session.
+	info, statErr := os.Stat(s.path)
+	if statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			s.loaded = true
+			return nil // empty file is fine
+		}
+		return fmt.Errorf("secure: stat %s: %w", s.path, statErr)
+	}
+	if s.loaded && info.ModTime().Equal(s.loadedMod) && info.Size() == s.loadedSize {
 		return nil
 	}
-	s.loaded = true
+
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil // empty file is fine
+			s.loaded = true
+			return nil // raced with a delete; empty is fine
 		}
 		return fmt.Errorf("secure: read %s: %w", s.path, err)
 	}
@@ -79,6 +98,9 @@ func (s *FileStorage) loadLocked() error {
 		cache = map[string]string{}
 	}
 	s.cache = cache
+	s.loaded = true
+	s.loadedMod = info.ModTime()
+	s.loadedSize = info.Size()
 	return nil
 }
 
@@ -98,6 +120,13 @@ func (s *FileStorage) saveLocked() error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("secure: rename: %w", err)
+	}
+	// Re-fingerprint so our own write doesn't look like someone else's and
+	// force a pointless re-read on the next Get.
+	if info, err := os.Stat(s.path); err == nil {
+		s.loaded = true
+		s.loadedMod = info.ModTime()
+		s.loadedSize = info.Size()
 	}
 	return nil
 }

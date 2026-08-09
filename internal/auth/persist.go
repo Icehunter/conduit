@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/icehunter/conduit/internal/credlock"
 	"github.com/icehunter/conduit/internal/secure"
 	"golang.org/x/sync/singleflight"
 )
@@ -94,6 +95,30 @@ func ensureFreshOnce(ctx context.Context, s secure.Storage, c *TokenClient, emai
 	if p.RefreshToken == "" || now.Add(skew).Before(p.ExpiresAt) {
 		return p, nil
 	}
+
+	// Serialize the exchange across processes. The token endpoints rotate the
+	// refresh token every time and reject one they have already consumed, so
+	// two conduit windows refreshing the same account revoke each other.
+	// singleflight above only covers this process.
+	//
+	// A lock failure is not fatal: refreshing unlocked is still better than
+	// failing the request outright, and the re-read below keeps most of the
+	// benefit either way.
+	release, lockErr := credlock.Acquire(ctx, email)
+	defer release()
+	_ = lockErr
+
+	// Re-read after waiting. Whoever held the lock has almost certainly just
+	// written a new credential, and adopting it is both correct and free.
+	if latest, reloadErr := LoadForEmail(s, email); reloadErr == nil && latest.RefreshToken != "" {
+		if now.Add(skew).Before(latest.ExpiresAt) {
+			return latest, nil
+		}
+		// Still expired, but the peer may have rotated the refresh token —
+		// presenting our stale one would be the reuse that revokes the account.
+		p = latest
+	}
+
 	tok, err := c.RefreshOAuthToken(ctx, p.RefreshToken, RefreshOptions{Scopes: p.Scopes})
 	if err != nil {
 		return PersistedTokens{}, fmt.Errorf("auth: refresh tokens: %w", err)

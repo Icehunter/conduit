@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/catalog"
+	"github.com/icehunter/conduit/internal/credlock"
 	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -423,6 +424,23 @@ func (a *Authorizer) Refresh(ctx context.Context) error {
 	if cred.RefreshToken == "" {
 		return fmt.Errorf("copilot: refresh token missing; reconnect GitHub Copilot")
 	}
+
+	// Serialize across processes so two conduit instances don't exchange the
+	// same GitHub token concurrently and clobber each other's write. A lock
+	// failure is not fatal — refreshing unlocked beats failing the request.
+	release, _ := credlock.Acquire(ctx, "copilot:"+a.credentialName)
+	defer release()
+
+	// Re-read after waiting: a peer may already have done this work.
+	if latest, lerr := settings.LoadStructuredProviderCredential(a.store, a.credentialName); lerr == nil {
+		if latest.AccessToken != "" && !latest.Expiry.IsZero() && time.Until(latest.Expiry) > time.Minute {
+			return nil
+		}
+		if latest.RefreshToken != "" {
+			cred = latest
+		}
+	}
+
 	if _, err := a.exchangeGitHubToken(ctx, cred.RefreshToken); err != nil {
 		if errors.Is(err, ErrNotAvailable) {
 			_ = settings.DeleteProviderCredential(a.store, a.credentialName)

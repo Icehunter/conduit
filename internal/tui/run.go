@@ -483,6 +483,15 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			if err := memdir.RunExtract(ctx, cwd, recent, loop.RunBackgroundAgent); err != nil {
 				return "", err
 			}
+			// Install what was just written. Without this the session keeps
+			// running on the blocks it started with and the extraction only
+			// takes effect after a restart. rebuildSystemCmd is reused rather
+			// than rebuilt here so the output-style and mode blocks layered on
+			// top of the base survive; its Cmd applies the change and returns a
+			// nil Msg, so calling it is the whole operation.
+			if cmd := modelPtr.rebuildSystemCmd(); cmd != nil {
+				_ = cmd()
+			}
 			return "Memory extraction complete.", nil
 		},
 	}

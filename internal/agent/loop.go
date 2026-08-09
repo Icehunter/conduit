@@ -143,7 +143,14 @@ type LoopConfig struct {
 	Model     string
 	MaxTokens int
 	System    []api.SystemBlock
-	Metadata  map[string]any
+	// RebuildSystem regenerates System from current on-disk state (memory,
+	// skills, CLAUDE.md). Optional; when nil the blocks never change.
+	//
+	// Run snapshots System once, so without this anything written during a
+	// session — notably memdir.RunExtract — stays invisible to the running
+	// conversation. Called after compaction, and by RefreshSystem.
+	RebuildSystem func() []api.SystemBlock
+	Metadata      map[string]any
 	// MaxTurns caps the number of API calls (tool-use follow-ups each count
 	// as one turn). 0 means no limit (use carefully).
 	MaxTurns int
@@ -413,6 +420,32 @@ func (l *Loop) SetSystem(blocks []api.SystemBlock) {
 	l.cfg.System = blocks
 }
 
+// RefreshSystem rebuilds the system blocks from current on-disk state and
+// installs them, returning the new blocks. Returns nil when no RebuildSystem is
+// configured, leaving the existing blocks untouched.
+//
+// Call it after anything that changes what the system prompt should say: a
+// memory written by memdir.RunExtract, a skill created mid-session, an edited
+// CLAUDE.md. Without it those writes are invisible to the running conversation,
+// because Run snapshots the blocks once and never re-reads them.
+func (l *Loop) RefreshSystem() []api.SystemBlock {
+	l.mu.RLock()
+	rebuild := l.cfg.RebuildSystem
+	l.mu.RUnlock()
+	if rebuild == nil {
+		return nil
+	}
+	// Rebuilt outside the lock: it reads the filesystem and may be slow.
+	blocks := rebuild()
+	if blocks == nil {
+		return nil
+	}
+	l.mu.Lock()
+	l.cfg.System = blocks
+	l.mu.Unlock()
+	return blocks
+}
+
 // SetClient swaps the API client (e.g. after a fresh login reloads credentials).
 func (l *Loop) SetClient(client *api.Client) {
 	l.mu.Lock()
@@ -664,6 +697,13 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
 	msgs = session.FilterUnresolvedToolUses(msgs)
+
+	// Pick up anything written since the last turn — memories extracted by
+	// memdir, skills the agent created, an edited CLAUDE.md. This is what makes
+	// learning apply within a session rather than only after a restart. When
+	// nothing changed the blocks are byte-identical, so the prompt cache is
+	// unaffected.
+	l.RefreshSystem()
 
 	// Snapshot mutable fields under the read lock so that concurrent Set*
 	// calls from the TUI goroutine cannot race with this turn's reads.
@@ -1003,6 +1043,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					if result, err := compact.CompactWithModel(ctx, l.client, compact.DefaultModel, msgs, ""); err == nil {
 						msgs = result.NewHistory
 						l.consecutiveCompactFails = 0
+						// Compaction is the natural refresh point: the cached
+						// prefix is invalidated anyway, so picking up memories
+						// and skills written earlier in this session costs
+						// nothing extra. Without this the blocks snapshotted at
+						// the top of Run persist for the whole session.
+						if refreshed := l.RefreshSystem(); refreshed != nil {
+							system = refreshed
+						}
 						if l.cfg.OnCompact != nil && result.Summary != "" {
 							l.cfg.OnCompact(result.Summary)
 						}

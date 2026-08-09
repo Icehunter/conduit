@@ -60,10 +60,15 @@ func runPrint(args []string) error {
 	gate := permissions.New(cwd, nil, permissions.ModeDefault, nil, nil, nil)
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
-		Model:               modelName,
-		MaxTokens:           internalmodel.MaxTokens,
-		System:              agent.BuildSystemBlocks(mem, claudeMdPrompt, memdir.Path(cwd), agentEntries, skillEntries...),
-		Metadata:            app.BuildMetadata(),
+		Model:     modelName,
+		MaxTokens: internalmodel.MaxTokens,
+		System:    agent.BuildSystemBlocks(mem, claudeMdPrompt, memdir.Path(cwd), agentEntries, skillEntries...),
+		Metadata:  app.BuildMetadata(),
+		// Re-read the memory directory each turn so anything extracted during
+		// this run reaches the model, not just the next process.
+		RebuildSystem: func() []api.SystemBlock {
+			return agent.BuildSystemBlocks(memdir.BuildPrompt(cwd), claudeMdPrompt, memdir.Path(cwd), agentEntries, skillEntries...)
+		},
 		MaxTurns:            50,
 		Gate:                gate,
 		AskPermission:       func(_ context.Context, _, _ string) (bool, bool) { return false, false },

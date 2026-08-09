@@ -530,9 +530,23 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	var lp *agent.Loop
 	lp = agent.NewLoop(c, reg, agent.LoopConfig{
-		Model:             modelName,
-		MaxTokens:         internalmodel.MaxTokens,
-		System:            systemBlocks,
+		Model:     modelName,
+		MaxTokens: internalmodel.MaxTokens,
+		System:    systemBlocks,
+		// Re-read the memory directory each turn so a memory extracted during
+		// this session reaches the model instead of waiting for a restart. The
+		// resumed-session summary is re-appended because it is part of the
+		// complete block set, not an extra layered on top.
+		RebuildSystem: func() []api.SystemBlock {
+			blocks := agent.BuildSystemBlocks(memdir.BuildPrompt(cwd), claudeMdPrompt+mcpInstructionsBuf.String(), projectDir, agentEntries, skillEntries...)
+			if strings.TrimSpace(priorSummary) != "" {
+				blocks = append(blocks, api.SystemBlock{
+					Type: "text",
+					Text: "# Previous session summary (resumed)\n\n" + priorSummary,
+				})
+			}
+			return blocks
+		},
 		MaxTurns:          agent.DefaultMainMaxTurns,
 		Gate:              gate,
 		Hooks:             settings.FilterUntrustedHooks(mergedHooks, cwd, !needsTrust),

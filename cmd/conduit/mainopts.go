@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -95,6 +96,21 @@ func runPrint(args []string) error {
 		},
 	).WithSpawnTeammate(func(ctx context.Context, name, prompt string) (string, error) {
 		return lp.SpawnTeammate(ctx, name, prompt, agent.SubAgentSpec{}, team.Default)
+	}).WithOutputContract(func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string, schema json.RawMessage) (string, error) {
+		r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+			SystemPrompt: systemPrompt,
+			Model:        model,
+			Role:         role,
+			Tools:        tools,
+			OutputSchema: schema,
+		})
+		if err != nil {
+			return "", err
+		}
+		if r.OutputError != "" {
+			return "", fmt.Errorf("sub-agent did not satisfy output_schema after a retry: %s", r.OutputError)
+		}
+		return r.Text, nil
 	}))
 	reg.Register(skilltool.New(
 		plugins.NewSkillLoader(loadedPlugins, cwd),

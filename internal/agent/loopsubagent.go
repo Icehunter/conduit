@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/coordinator"
@@ -26,6 +29,14 @@ type SubAgentResult struct {
 	DurationMs int64
 	// ToolUses is the total number of tool calls made by the child loop.
 	ToolUses int
+	// Output is the validated JSON value when the spec carried an
+	// OutputSchema. Nil when there was no contract.
+	Output json.RawMessage
+	// OutputError explains why the contract could not be met, after the retry
+	// was also rejected. Non-empty means Text is whatever the child last said
+	// and must not be treated as conforming — silently returning it as if it
+	// had passed is how a broken node poisons everything downstream.
+	OutputError string
 }
 
 // SubAgentSpec configures an optionally-specialised sub-agent run.
@@ -34,6 +45,11 @@ type SubAgentResult struct {
 type SubAgentSpec struct {
 	// SystemPrompt is appended as an extra system block when non-empty.
 	SystemPrompt string
+	// OutputSchema, when set, is a JSON Schema the child's final message must
+	// satisfy. It is validated here rather than trusted, and one retry is
+	// allowed. This is what makes a sub-agent a node another step can consume
+	// instead of prose a human has to read.
+	OutputSchema json.RawMessage
 	// Role names a configured provider role (e.g. "background", "planning",
 	// "implement"). When set and Model is empty, the loop's RoleResolver
 	// determines the model and optionally a separate API client. Falls back
@@ -99,7 +115,7 @@ func (l *Loop) resolveModelAlias(alias string) string {
 	}
 }
 
-func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
+func (l *Loop) runSubAgentOnce(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
 	child, model := l.buildChildLoop(spec)
 	childGate := child.cfg.Gate
 
@@ -489,4 +505,76 @@ func countToolUses(history []api.Message) int {
 		}
 	}
 	return n
+}
+
+// RunSubAgentTyped runs a sub-agent and, when spec carries an OutputSchema,
+// holds it to that contract: the schema is compiled before anything is spawned,
+// the child is told what shape to return, and the response is validated rather
+// than trusted. One retry is allowed, carrying the exact validation error.
+//
+// One retry, not a loop. If a second attempt with the specific complaint still
+// fails, the schema or the task is wrong, and more turns only cost money.
+func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
+	sch, err := compileOutputSchema(spec.OutputSchema)
+	if err != nil {
+		// Fail before spawning: a schema that cannot compile could never have
+		// been satisfied, so running the child would only waste tokens.
+		return SubAgentResult{}, fmt.Errorf("agent: %w", err)
+	}
+	if sch == nil {
+		return l.runSubAgentOnce(ctx, prompt, spec)
+	}
+
+	spec.SystemPrompt = strings.TrimSpace(spec.SystemPrompt + "\n\n" + outputContractPrompt(spec.OutputSchema))
+
+	first, err := l.runSubAgentOnce(ctx, prompt, spec)
+	if err != nil {
+		return first, err
+	}
+	if out, verr := acceptContractOutput(sch, first.Text); verr == nil {
+		first.Output = out
+		first.Text = string(out)
+		return first, nil
+	} else {
+		retry, rerr := l.runSubAgentOnce(ctx, prompt+"\n\n"+outputRetryPrompt(verr.Error()), spec)
+		if rerr != nil {
+			// Keep the first attempt rather than losing the work entirely, but
+			// say plainly that it never satisfied the contract.
+			first.OutputError = verr.Error()
+			return first, nil
+		}
+		retry.Usage = addUsage(first.Usage, retry.Usage)
+		retry.ToolUses += first.ToolUses
+		retry.DurationMs += first.DurationMs
+		out2, verr2 := acceptContractOutput(sch, retry.Text)
+		if verr2 != nil {
+			retry.OutputError = verr2.Error()
+			return retry, nil
+		}
+		retry.Output = out2
+		retry.Text = string(out2)
+		return retry, nil
+	}
+}
+
+// acceptContractOutput recovers the JSON value from a final message and checks
+// it against the schema.
+func acceptContractOutput(sch *jsonschema.Schema, text string) (json.RawMessage, error) {
+	raw, ok := extractOutputJSON(text)
+	if !ok {
+		return nil, fmt.Errorf("response contained no JSON value")
+	}
+	if err := validateOutput(sch, raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func addUsage(a, b api.Usage) api.Usage {
+	return api.Usage{
+		InputTokens:              a.InputTokens + b.InputTokens,
+		OutputTokens:             a.OutputTokens + b.OutputTokens,
+		CacheCreationInputTokens: a.CacheCreationInputTokens + b.CacheCreationInputTokens,
+		CacheReadInputTokens:     a.CacheReadInputTokens + b.CacheReadInputTokens,
+	}
 }

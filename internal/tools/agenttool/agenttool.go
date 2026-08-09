@@ -70,6 +70,9 @@ type Tool struct {
 	// system prompt, model, role, and tool restrictions. May be nil (falls back to runAgent).
 	// role is a named provider role; model takes precedence when both are non-empty.
 	runTyped func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string) (string, error)
+
+	// runContract is runTyped plus an output schema the child must satisfy.
+	runContract func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string, schema json.RawMessage) (string, error)
 	// spawnTeammate spawns an async teammate when team mode is active.
 	// Returns the teammate's ID. nil means fall through to synchronous dispatch.
 	spawnTeammate func(ctx context.Context, name, prompt string) (string, error)
@@ -91,6 +94,14 @@ func New(
 
 // WithSpawnTeammate sets the function used to spawn an async teammate when
 // team mode is active. Returns the receiver for chaining.
+// WithOutputContract supplies a runner that can hold the sub-agent to a JSON
+// Schema. Optional: without it an output_schema request is ignored rather than
+// silently pretended to, which would be worse.
+func (t *Tool) WithOutputContract(fn func(ctx context.Context, prompt, systemPrompt, model, role string, tools []string, schema json.RawMessage) (string, error)) *Tool {
+	t.runContract = fn
+	return t
+}
+
 func (t *Tool) WithSpawnTeammate(fn func(ctx context.Context, name, prompt string) (string, error)) *Tool {
 	t.spawnTeammate = fn
 	return t
@@ -123,6 +134,10 @@ func (*Tool) InputSchema() json.RawMessage {
 			"role": {
 				"type": "string",
 				"description": "Named provider role for this sub-agent (e.g. \"background\", \"planning\", \"implement\"). Determines the model and provider used. Overrides the default background model. Ignored when subagent_type is set (the plugin agent's role takes precedence)."
+			},
+			"output_schema": {
+				"type": "object",
+				"description": "Optional JSON Schema the sub-agent's final message must satisfy. The result is validated against it and one retry is allowed, so you get structured data you can act on instead of prose you have to re-parse. Use it whenever you will consume the result programmatically or compare several sub-agents' answers."
 			}
 		},
 		"required": ["prompt"]
@@ -133,11 +148,12 @@ func (*Tool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 
 type Input struct {
-	Prompt       string `json:"prompt"`
-	Description  string `json:"description,omitempty"`
-	Name         string `json:"name,omitempty"`
-	SubagentType string `json:"subagent_type,omitempty"`
-	Role         string `json:"role,omitempty"`
+	Prompt       string          `json:"prompt"`
+	Description  string          `json:"description,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	SubagentType string          `json:"subagent_type,omitempty"`
+	Role         string          `json:"role,omitempty"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 }
 
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -160,6 +176,30 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			return tool.ErrorResult(fmt.Sprintf("agenttool: spawn %q: %v", name, err)), nil
 		}
 		return tool.TextResult(fmt.Sprintf("Teammate %q launched (id: %s).", name, id)), nil
+	}
+
+	// An output contract takes precedence over the plain runners: the caller
+	// asked for validated structure, and quietly returning prose instead would
+	// hand them something that only looks like data.
+	if len(in.OutputSchema) > 0 {
+		if t.runContract == nil {
+			return tool.ErrorResult("agenttool: output_schema was requested but this session has no contract-capable runner; re-issue without output_schema"), nil
+		}
+		systemPrompt, model, role, tools := "", "", in.Role, []string(nil)
+		if in.SubagentType != "" && t.registry != nil {
+			def := t.registry.FindAgent(in.SubagentType)
+			if def == nil {
+				return tool.ErrorResult(fmt.Sprintf(
+					"agenttool: unknown subagent_type %q; available: %s", in.SubagentType, listNames(t.registry.ListAgents()),
+				)), nil
+			}
+			systemPrompt, model, role, tools = def.SystemPrompt, def.Model, def.Role, resolveToolNames(def.Tools)
+		}
+		result, err := t.runContract(ctx, in.Prompt, systemPrompt, model, role, tools, in.OutputSchema)
+		if err != nil {
+			return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
+		}
+		return tool.TextResult(result), nil
 	}
 
 	if in.SubagentType != "" && t.registry != nil {

@@ -351,10 +351,23 @@ Hook types: `command` (shell), `http` (POST JSON to URL), `prompt` (inject resul
     "playwright": {
       "command": "npx",
       "args": ["@playwright/mcp@latest"]
+    },
+    "gbr": {
+      "command": "node",
+      "args": ["GrokBuildRemote-Agents/mcp/gbr-mcp/bin/gbr-mcp.js"]
     }
   }
 }
 ```
+
+**Build Remote Agent** (optional phone spectator): install
+https://grokbuildremote.com/ (`gbr-agent` **v0.6.0+**), run `gbr-agent pair`
+then `gbr-agent run`, clone
+https://github.com/LinespottingOrg/GrokBuildRemote-Agents and `npm install`
+in `mcp/gbr-mcp`, then point the `gbr` args at `bin/gbr-mcp.js`. Attach is
+only `http://127.0.0.1:8788` or that stdio MCP — not a second pair protocol.
+Independent product. Not affiliated with xAI or SpaceX. Never put mailbox
+keys in `mcp.json`.
 
 ---
 

@@ -21,6 +21,11 @@ type ModelInfo struct {
 	Vision          bool      `json:"vision"`
 	Thinking        bool      `json:"thinking"`
 	FetchedAt       time.Time `json:"fetchedAt"`
+	// Origin marks where this entry came from: "live" for a model fetched
+	// directly from the provider's own model-listing API (e.g. Anthropic's
+	// GET /v1/models), empty for OpenRouter or the builtin snapshot. Old
+	// cached files without this field just zero-value it — backward-compatible.
+	Origin string `json:"origin,omitempty"`
 }
 
 // Catalog is a snapshot of available models.
@@ -127,6 +132,44 @@ func (c *Catalog) IsStale(ttl time.Duration) bool {
 		return true
 	}
 	return time.Since(c.FetchedAt) > ttl
+}
+
+// Merge combines base (typically an OpenRouter-sourced or builtin catalog)
+// with live, a freshly-fetched model list from a provider's own listing API
+// (e.g. Anthropic's GET /v1/models). live's models are the authoritative set
+// for whatever provider they belong to — base's own entries for that same
+// provider are dropped (OpenRouter's "anthropic/claude-opus-4.7"-style IDs
+// use different formatting than the provider's native IDs anyway, so keeping
+// both would just create duplicates); every other provider's entries in base
+// pass through untouched. Callers are expected to have already filled in
+// pricing (and any other fields the live source doesn't provide) on live
+// before calling Merge — this function only does the set combination, it
+// does not know about pricing. FetchedAt on the result is time.Now().
+func Merge(base *Catalog, live []ModelInfo) *Catalog {
+	var liveProviders map[string]bool
+	if len(live) > 0 {
+		liveProviders = make(map[string]bool, 1)
+		for _, m := range live {
+			liveProviders[strings.ToLower(m.Provider)] = true
+		}
+	}
+
+	models := make([]ModelInfo, 0, len(live))
+	if base != nil {
+		for _, m := range base.Models {
+			if liveProviders[strings.ToLower(m.Provider)] {
+				continue
+			}
+			models = append(models, m)
+		}
+	}
+	models = append(models, live...)
+
+	source := "merged"
+	if base != nil && base.Source != "" {
+		source = base.Source + "+live"
+	}
+	return &Catalog{Models: models, FetchedAt: time.Now(), Source: source}
 }
 
 // Builtin returns the baked-in catalog snapshot. Never fails.

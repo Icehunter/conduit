@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/catalog"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
@@ -148,14 +149,17 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			options:    []string{"Default", "Explanatory", "Learning"},
 			optionVals: []string{"default", "Explanatory", "Learning"},
 		},
-		{
-			id:         "model",
-			label:      "Model",
-			kind:       "enum",
-			value:      modelDisplayName(model),
-			options:    []string{"Fable 5.1 (default)", "Fable 5", "Opus 5", "Opus 4.8", "Sonnet 5", "Sonnet 4.6", "Haiku 4.5"},
-			optionVals: []string{"claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
-		},
+		func() settingItem {
+			opts, vals := p.modelPickerOptions()
+			return settingItem{
+				id:         "model",
+				label:      "Model",
+				kind:       "enum",
+				value:      modelDisplayName(model),
+				options:    opts,
+				optionVals: vals,
+			}
+		}(),
 		{
 			id:      "effort",
 			label:   "Thinking effort",
@@ -164,6 +168,35 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			options: []string{"low", "normal", "high", "max"},
 		},
 	}
+}
+
+// modelPickerOptions builds the settings panel's "Model" enum options from
+// the live/cached catalog (see catalog.Merge and the auto-refresh in
+// modelinit.go's Init) instead of a hardcoded list — a new Claude model
+// shows up here as soon as the catalog picks it up, no code change needed.
+// Falls back to internal/catalog's builtin snapshot if no catalog has been
+// loaded yet (e.g. very first frame before Init's fetch completes, or a test
+// that never wires getCatalog).
+func (p *settingsPanelState) modelPickerOptions() (options, vals []string) {
+	var cat *catalog.Catalog
+	if p.getCatalog != nil {
+		cat = p.getCatalog()
+	}
+	models := cat.ForProvider("anthropic")
+	if len(models) == 0 {
+		models = catalog.Builtin().ForProvider("anthropic")
+	}
+	options = make([]string, 0, len(models))
+	vals = make([]string, 0, len(models))
+	for _, m := range models {
+		label := shortModelName(m.ID)
+		if m.ID == internalmodel.Default {
+			label += " (default)"
+		}
+		options = append(options, label)
+		vals = append(vals, m.ID)
+	}
+	return options, vals
 }
 
 func permModeDisplay(val string) string {

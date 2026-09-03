@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -40,7 +41,32 @@ func (m Model) Init() tea.Cmd {
 			cmds = append(cmds, planUsageTick())
 		}
 	}
+	// Auto-refresh the model catalog in the background when the on-disk cache
+	// is stale (or absent) — the same fetch /model --refresh triggers
+	// manually, just fired unprompted so a new model shows up in the picker
+	// without the user having to know --refresh exists. Never blocks
+	// startup: the TUI renders immediately with whatever InitialCatalog
+	// already had (cache or builtin), and catalogRefreshedMsg swaps in the
+	// live-fetched result a moment later, same as a manual refresh would.
+	if catalogNeedsRefresh(m.catalogData) {
+		client := m.cfg.APIClient
+		conduitDir := settings.ConduitDir()
+		cmds = append(cmds, func() tea.Msg {
+			cat, err := catalogFetch(client, conduitDir)
+			return catalogRefreshedMsg{cat: cat, err: err}
+		})
+	}
 	return tea.Batch(cmds...)
+}
+
+// catalogNeedsRefresh reports whether the model catalog should be
+// auto-refreshed at startup. Source == "builtin" is checked explicitly, not
+// just IsStale: Builtin() stamps FetchedAt as time.Now() on every call (it's
+// a static snapshot pretending to be freshly fetched), so IsStale is never
+// true for it — exactly the "no cache at all" case that most needs a
+// refresh, since it's what a first run or a deleted cache file falls back to.
+func catalogNeedsRefresh(cat *catalog.Catalog) bool {
+	return cat == nil || cat.Source == "builtin" || cat.IsStale(catalog.DefaultTTL)
 }
 
 const planUsageRefreshInterval = 60 * time.Second

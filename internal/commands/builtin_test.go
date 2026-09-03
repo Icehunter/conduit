@@ -235,7 +235,7 @@ func TestRegisterModelCommand_ClaudeSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-4-8" {
+	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-5" {
 		t.Fatalf("provider = %#v, want Claude Opus provider", result.Provider)
 	}
 }
@@ -261,7 +261,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-4-8" || result.Provider.Account != "api@example.com" {
+	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-5" || result.Provider.Account != "api@example.com" {
 		t.Fatalf("provider = %#v, want Anthropic API Opus provider", result.Provider)
 	}
 
@@ -276,7 +276,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if !got.Items[0].Section || got.Items[0].Label != "Anthropic API · api@example.com" {
 		t.Fatalf("first picker item = %#v, want Anthropic API section", got.Items[0])
 	}
-	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-opus-4-8" {
+	if got.Items[1].Value != "provider:anthropic-api.api@example.com.claude-fable-5-1" {
 		t.Fatalf("first model value = %q, want provider key", got.Items[1].Value)
 	}
 }
@@ -358,6 +358,73 @@ func TestRegisterModelCommand_ModelsShowsMultipleClaudeAccounts(t *testing.T) {
 	}
 	if !foundWork || !foundPersonal {
 		t.Fatalf("picker sections work=%v personal=%v items=%#v", foundWork, foundPersonal, got.Items)
+	}
+}
+
+// TestResolveModelName is a regression test: resolveModelName used to map
+// BOTH "opus" and "fable" shorthand to claude-opus-4-8 — "/model fable" gave
+// you Opus, not Fable, and neither reached the current flagship of its own
+// family. Bare family names now resolve to that family's current flagship;
+// explicit version shorthand still names that exact model.
+func TestResolveModelName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"opus", "claude-opus-5"},
+		{"OPUS", "claude-opus-5"},
+		{"opus5", "claude-opus-5"},
+		{"opus-5", "claude-opus-5"},
+		{"opus4.8", "claude-opus-4-8"},
+		{"opus-4.8", "claude-opus-4-8"},
+		{"fable", "claude-fable-5-1"},
+		{"fable5.1", "claude-fable-5-1"},
+		{"fable-5.1", "claude-fable-5-1"},
+		{"fable5", "claude-fable-5"},
+		{"fable-5", "claude-fable-5"},
+		{"sonnet", "claude-sonnet-5"},
+		{"sonnet5", "claude-sonnet-5"},
+		{"sonnet-5", "claude-sonnet-5"},
+		{"sonnet4.6", "claude-sonnet-4-6"},
+		{"haiku", "claude-haiku-4-5-20251001"},
+		{"haiku4.5", "claude-haiku-4-5-20251001"},
+		{"claude-opus-5", "claude-opus-5"}, // already-full ID passes through unchanged
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := resolveModelName(tt.in); got != tt.want {
+				t.Errorf("resolveModelName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAccountProviderByKey_RecognizesEveryBuiltinModel is a regression test:
+// accountProviderByKey used to iterate accountModelNames() (the picker's
+// 3-item curated shortlist), so any model not in that shortlist — including
+// ones still fully valid and selectable, like claude-opus-4-8 once it was no
+// longer the curated "most capable" pick — silently failed to resolve when
+// referenced by an explicit provider key (e.g. from a saved council-provider
+// list or a persisted role assignment). It must recognize every model in the
+// builtin catalog, not just the curated few.
+func TestAccountProviderByKey_RecognizesEveryBuiltinModel(t *testing.T) {
+	providers := []settings.ActiveProviderSettings{
+		{Kind: settings.ProviderKindClaudeSubscription, Account: "personal@example.com"},
+	}
+	for _, m := range catalog.Builtin().ForProvider("anthropic") {
+		key := settings.ProviderKey(settings.ActiveProviderSettings{
+			Kind:    settings.ProviderKindClaudeSubscription,
+			Account: "personal@example.com",
+			Model:   m.ID,
+		})
+		got, ok := accountProviderByKey(providers, key, nil)
+		if !ok {
+			t.Errorf("accountProviderByKey did not resolve key for catalog model %q", m.ID)
+			continue
+		}
+		if got.Model != m.ID {
+			t.Errorf("resolved model = %q, want %q", got.Model, m.ID)
+		}
 	}
 }
 
@@ -679,7 +746,7 @@ func TestRegisterModelCommand_RoleSelection(t *testing.T) {
 	if result.Role != settings.RolePlanning {
 		t.Fatalf("role = %q, want planning", result.Role)
 	}
-	if result.Provider == nil || result.Provider.Model != "claude-opus-4-8" {
+	if result.Provider == nil || result.Provider.Model != "claude-opus-5" {
 		t.Fatalf("provider = %#v, want opus provider", result.Provider)
 	}
 	if called {

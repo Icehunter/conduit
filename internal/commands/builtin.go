@@ -148,7 +148,7 @@ func RegisterModelCommand(
 					Provider: &selected,
 				}
 			}
-			if selected, ok := accountProviderByKey(accountProviders, key); ok {
+			if selected, ok := accountProviderByKey(accountProviders, key, modelCatalog); ok {
 				if role == settings.RoleDefault {
 					setModel(selected.Model)
 					internalmodel.SetOverride(selected.Model)
@@ -227,9 +227,14 @@ func firstAccountProvider(providers []settings.ActiveProviderSettings) settings.
 	return providers[0]
 }
 
-func accountProviderByKey(providers []settings.ActiveProviderSettings, key string) (settings.ActiveProviderSettings, bool) {
+// accountProviderByKey resolves an explicit "provider:kind.account.model-id"
+// key (e.g. from a saved council-provider list, or a role assignment
+// persisted in conduit.json) against every known Claude model, not just the
+// picker's 3-item curated shortlist (accountModelNames) — a key referencing
+// any valid model, old or new, curated-shortlist or not, must still resolve.
+func accountProviderByKey(providers []settings.ActiveProviderSettings, key string, modelCatalog *catalog.Catalog) (settings.ActiveProviderSettings, bool) {
 	for _, provider := range providers {
-		for _, model := range accountModelNames() {
+		for _, model := range allAnthropicModelIDs(modelCatalog) {
 			candidate := provider
 			candidate.Model = model
 			if settings.ProviderKey(candidate) == key {
@@ -238,6 +243,34 @@ func accountProviderByKey(providers []settings.ActiveProviderSettings, key strin
 		}
 	}
 	return settings.ActiveProviderSettings{}, false
+}
+
+// allAnthropicModelIDs returns every Claude model ID conduit currently knows
+// about — the recognition set for parsing an explicit provider key. Distinct
+// from accountModelNames, which is a curated 3-item shortlist for picker
+// display. Unions the passed-in (live-fetched/cached, when available)
+// catalog with the builtin snapshot rather than picking one: the builtin
+// list still carries retired models (claude-3-opus-20240229 and similar)
+// that a live model-listing API no longer returns but an old persisted
+// provider key might still reference — that recognition must not regress
+// just because the live list superseded the picker display.
+func allAnthropicModelIDs(modelCatalog *catalog.Catalog) []string {
+	seen := make(map[string]bool)
+	var ids []string
+	add := func(models []catalog.ModelInfo) {
+		for _, m := range models {
+			if seen[m.ID] {
+				continue
+			}
+			seen[m.ID] = true
+			ids = append(ids, m.ID)
+		}
+	}
+	if modelCatalog != nil {
+		add(modelCatalog.ForProvider("anthropic"))
+	}
+	add(catalog.Builtin().ForProvider("anthropic"))
+	return ids
 }
 
 func configuredProviderByKey(providers map[string]settings.ActiveProviderSettings, key string, modelCatalog *catalog.Catalog) (settings.ActiveProviderSettings, bool) {
@@ -269,14 +302,20 @@ func accountModelPickerItems(provider settings.ActiveProviderSettings) []PickerO
 	models := accountModelNames()
 	return []PickerOption{
 		{Label: section, Section: true},
-		{Value: providerPickerValue(provider, models[0]), Label: "Opus 4.8   — most capable (default)"},
-		{Value: providerPickerValue(provider, models[1]), Label: "Sonnet 4.6 — balanced"},
-		{Value: providerPickerValue(provider, models[2]), Label: "Haiku 4.5  — fastest, cheapest"},
+		{Value: providerPickerValue(provider, models[0]), Label: "Fable 5.1  — most capable (default)"},
+		{Value: providerPickerValue(provider, models[1]), Label: "Opus 5     — deep reasoning"},
+		{Value: providerPickerValue(provider, models[2]), Label: "Sonnet 5   — balanced"},
+		{Value: providerPickerValue(provider, models[3]), Label: "Haiku 4.5  — fastest, cheapest"},
 	}
 }
 
+// accountModelNames is a curated 4-tier shortlist (most capable / deep
+// reasoning / balanced / fastest), not the full catalog —
+// internal/catalog/builtin.go has the rest. models[0] must stay in sync with
+// internalmodel.Default: its label above literally says "(default)", so a
+// mismatch here makes that label a lie.
 func accountModelNames() []string {
-	return []string{"claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"}
+	return []string{internalmodel.Default, "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"}
 }
 
 func customModelPickerItems(providers map[string]settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
@@ -612,11 +651,34 @@ func RegisterCoordinatorCommand(r *Registry) {
 func resolveModelName(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	switch s {
-	case "opus4.8", "opus-4.8", "opus", "opus4", "opus-4", "fable", "fable5", "fable-5":
+	// Bare family name resolves to that family's current flagship — was
+	// wrongly mapping both "opus" and "fable" to claude-opus-4-8 (Fable
+	// wasn't reachable via its own shorthand at all).
+	case "opus":
+		return "claude-opus-5"
+	case "fable":
+		return "claude-fable-5-1"
+	case "sonnet":
+		return "claude-sonnet-5"
+	case "haiku":
+		return "claude-haiku-4-5-20251001"
+	// Explicit version shorthand still names that exact model, not whatever
+	// is currently the flagship.
+	case "opus5", "opus-5":
+		return "claude-opus-5"
+	case "opus4.8", "opus-4.8":
 		return "claude-opus-4-8"
-	case "sonnet", "sonnet4", "sonnet-4", "sonnet4.6", "sonnet-4.6":
+	case "opus4", "opus-4":
+		return "claude-opus-4-8"
+	case "fable5.1", "fable-5.1":
+		return "claude-fable-5-1"
+	case "fable5", "fable-5":
+		return "claude-fable-5"
+	case "sonnet5", "sonnet-5":
+		return "claude-sonnet-5"
+	case "sonnet4", "sonnet-4", "sonnet4.6", "sonnet-4.6":
 		return "claude-sonnet-4-6"
-	case "haiku", "haiku4", "haiku-4", "haiku4.5", "haiku-4.5":
+	case "haiku4", "haiku-4", "haiku4.5", "haiku-4.5":
 		return "claude-haiku-4-5-20251001"
 	}
 	return s

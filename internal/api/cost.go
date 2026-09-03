@@ -34,6 +34,21 @@ var modelPrices = []struct {
 	{"claude-3-haiku", perMillionTokenPrice{0.25, 1.25}},
 }
 
+// PricePer1M returns the known per-1M-token input/output price for model, if
+// any. Same prefix table CostUSDForModel uses — the one place Claude pricing
+// is hand-maintained, since the Anthropic Models API doesn't return price.
+// ok is false for a model this table has no entry for (e.g. one that just
+// appeared via a live catalog fetch before anyone added a price row here).
+func PricePer1M(model string) (input, output float64, ok bool) {
+	lc := strings.ToLower(model)
+	for _, entry := range modelPrices {
+		if strings.HasPrefix(lc, entry.prefix) {
+			return entry.price.input, entry.price.output, true
+		}
+	}
+	return 0, 0, false
+}
+
 // CostUSDForModel computes the approximate cost in USD for the given usage
 // against the named model. Returns 0 for unknown or OpenAI-compatible models.
 func CostUSDForModel(model string, u Usage) float64 {

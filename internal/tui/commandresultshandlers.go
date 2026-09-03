@@ -566,6 +566,7 @@ func (m Model) applySettingsPanel(res commands.Result) (Model, tea.Cmd) {
 	}
 	panel, statsCmd := newSettingsPanel(
 		defaultTab, getStatus, getMCPInfo,
+		func() *catalog.Catalog { return m.catalogData },
 		saveConfigFn,
 		m.cfg.Gate, m.cfg.MCPManager, sessPath, rlInfo, cwd,
 	)
@@ -772,9 +773,38 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// catalogFetch fetches and caches the model catalog. Called from a tea.Cmd goroutine.
-func catalogFetch(conduitDir string) (*catalog.Catalog, error) {
-	return catalog.FetchAndCache(context.Background(), conduitDir)
+// catalogFetch fetches and caches the model catalog. Called from a tea.Cmd
+// goroutine. Fetches the OpenRouter-sourced catalog (all providers) and, when
+// client is non-nil, also calls the real Anthropic GET /v1/models endpoint
+// and merges its result in as the authoritative Claude model list — pricing
+// (which that endpoint doesn't return) filled in from api.PricePer1M. A
+// failure in the live-Anthropic half (no account configured, network error,
+// ...) is not fatal to the whole refresh: it just leaves the Claude slice at
+// whatever OpenRouter/builtin already had, same as before this existed.
+func catalogFetch(client *api.Client, conduitDir string) (*catalog.Catalog, error) {
+	ctx := context.Background()
+	base, err := catalog.Fetch(ctx)
+	// err from Fetch is non-fatal — base is already the builtin fallback in
+	// that case (same contract catalog.Fetch has always had); keep going so a
+	// working live-Anthropic fetch can still improve on it.
+
+	if client != nil {
+		if live, liveErr := client.ListModels(ctx); liveErr == nil && len(live) > 0 {
+			for i := range live {
+				live[i].Origin = "live"
+				if in, out, ok := api.PricePer1M(live[i].ID); ok {
+					live[i].InputCostPer1M = in
+					live[i].OutputCostPer1M = out
+				}
+			}
+			base = catalog.Merge(base, live)
+		}
+	}
+
+	if saveErr := catalog.SaveCache(conduitDir, base); saveErr != nil && err == nil {
+		err = fmt.Errorf("catalog: save cache: %w", saveErr)
+	}
+	return base, err
 }
 
 // applyCatalogRefresh kicks off an async catalog fetch and shows a flash.
@@ -782,8 +812,9 @@ func (m Model) applyCatalogRefresh() (Model, tea.Cmd) {
 	m.flashMsg = "Refreshing model catalog…"
 	m.refreshViewport()
 	conduitDir := settings.ConduitDir()
+	client := m.cfg.APIClient
 	return m, func() tea.Msg {
-		cat, err := catalogFetch(conduitDir)
+		cat, err := catalogFetch(client, conduitDir)
 		return catalogRefreshedMsg{cat: cat, err: err}
 	}
 }

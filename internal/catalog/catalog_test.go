@@ -405,6 +405,79 @@ func TestFetch_localFile(t *testing.T) {
 	}
 }
 
+// TestMerge_LiveModelsSupersedeSameProvider verifies base's own entries for
+// a provider that also appears in live are dropped (OpenRouter's
+// "anthropic/claude-opus-4.7"-style IDs use different formatting than the
+// native ones live carries, so keeping both would just duplicate), every
+// other provider passes through untouched, and live entries carry
+// Origin: "live" through unchanged (Merge doesn't touch fields it didn't
+// set — pricing is the caller's job, not Merge's).
+func TestMerge_LiveModelsSupersedeSameProvider(t *testing.T) {
+	base := &Catalog{
+		Source: "openrouter",
+		Models: []ModelInfo{
+			{ID: "anthropic/claude-opus-4.7", Provider: "anthropic", Name: "stale openrouter entry"},
+			{ID: "openai/gpt-5.5", Provider: "openai", Name: "gpt-5.5"},
+		},
+	}
+	live := []ModelInfo{
+		{ID: "claude-opus-5", Provider: "anthropic", Name: "Claude Opus 5", Origin: "live", InputCostPer1M: 5, OutputCostPer1M: 25},
+	}
+
+	merged := Merge(base, live)
+
+	if len(merged.Models) != 2 {
+		t.Fatalf("got %d models, want 2 (1 openai passthrough + 1 live anthropic)", len(merged.Models))
+	}
+
+	var gotOpenAI, gotAnthropic bool
+	for _, m := range merged.Models {
+		switch m.ID {
+		case "openai/gpt-5.5":
+			gotOpenAI = true
+		case "claude-opus-5":
+			gotAnthropic = true
+			if m.Origin != "live" {
+				t.Errorf("live entry Origin = %q, want live", m.Origin)
+			}
+			if m.InputCostPer1M != 5 || m.OutputCostPer1M != 25 {
+				t.Errorf("live entry pricing = %v/%v, want 5/25 (Merge must not clobber caller-set pricing)", m.InputCostPer1M, m.OutputCostPer1M)
+			}
+		case "anthropic/claude-opus-4.7":
+			t.Error("stale openrouter anthropic entry should have been dropped, not kept alongside the live one")
+		}
+	}
+	if !gotOpenAI {
+		t.Error("openai/gpt-5.5 (a different provider) should have passed through untouched")
+	}
+	if !gotAnthropic {
+		t.Error("claude-opus-5 (the live entry) should be present")
+	}
+}
+
+// TestMerge_NilBase verifies Merge is safe with a nil base (e.g. the very
+// first run, before any OpenRouter fetch has ever succeeded).
+func TestMerge_NilBase(t *testing.T) {
+	live := []ModelInfo{{ID: "claude-opus-5", Provider: "anthropic"}}
+	merged := Merge(nil, live)
+	if len(merged.Models) != 1 || merged.Models[0].ID != "claude-opus-5" {
+		t.Fatalf("Merge(nil, live) = %+v, want just the live model", merged.Models)
+	}
+}
+
+// TestMerge_EmptyLiveKeepsBaseUnchanged verifies an empty/failed live fetch
+// doesn't wipe out an already-good base catalog.
+func TestMerge_EmptyLiveKeepsBaseUnchanged(t *testing.T) {
+	base := &Catalog{
+		Source: "openrouter",
+		Models: []ModelInfo{{ID: "anthropic/claude-opus-4.7", Provider: "anthropic"}},
+	}
+	merged := Merge(base, nil)
+	if len(merged.Models) != 1 || merged.Models[0].ID != "anthropic/claude-opus-4.7" {
+		t.Fatalf("Merge(base, nil) = %+v, want base's models unchanged", merged.Models)
+	}
+}
+
 func TestFetch_localFile_badJSON(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "catalog*.json")
 	if err != nil {

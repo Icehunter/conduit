@@ -17,6 +17,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/ratelimit"
@@ -106,6 +107,7 @@ type settingsPanelState struct {
 
 	getStatus  func() statusSnapshot
 	getMCPInfo func() []mcpInfoRow
+	getCatalog func() *catalog.Catalog
 	saveConfig func(id string, value interface{})
 	gate       *permissions.Gate
 	mcpManager *mcp.Manager
@@ -155,6 +157,7 @@ func newSettingsPanel(
 	defaultTab settingsPanelTab,
 	getStatus func() statusSnapshot,
 	getMCPInfo func() []mcpInfoRow,
+	getCatalog func() *catalog.Catalog,
 	saveConfig func(id string, value interface{}),
 	gate *permissions.Gate,
 	mcpManager *mcp.Manager,
@@ -167,6 +170,7 @@ func newSettingsPanel(
 		cfgFocus:      configFocusHeader,
 		getStatus:     getStatus,
 		getMCPInfo:    getMCPInfo,
+		getCatalog:    getCatalog,
 		saveConfig:    saveConfig,
 		gate:          gate,
 		mcpManager:    mcpManager,

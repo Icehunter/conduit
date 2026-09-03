@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/theme"
 )
@@ -57,7 +58,7 @@ func (p *settingsPanelState) rebuildConfigItems() {
 	}
 	model := snap.model
 	if model == "" {
-		model = "claude-opus-4-8"
+		model = internalmodel.Default
 	}
 
 	// Resolve display name for permission mode.
@@ -152,8 +153,8 @@ func (p *settingsPanelState) rebuildConfigItems() {
 			label:      "Model",
 			kind:       "enum",
 			value:      modelDisplayName(model),
-			options:    []string{"Fable 5 (default)", "Opus 4.8", "Sonnet 5", "Sonnet 4.6", "Haiku 4.5"},
-			optionVals: []string{"claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
+			options:    []string{"Fable 5.1 (default)", "Fable 5", "Opus 5", "Opus 4.8", "Sonnet 5", "Sonnet 4.6", "Haiku 4.5"},
+			optionVals: []string{"claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
 		},
 		{
 			id:      "effort",
@@ -172,6 +173,10 @@ func permModeDisplay(val string) string {
 	case "acceptEdits":
 		return "Accept Edits"
 	case "auto":
+		// Not written anymore (see permModeStoredVal) — kept so a
+		// settings.json that already has this literal string persisted
+		// from before the fix still displays sensibly instead of falling
+		// through to "Default".
 		return "Auto Mode"
 	case "bypassPermissions":
 		return "Don't Ask"
@@ -182,15 +187,23 @@ func permModeDisplay(val string) string {
 
 // permModeStoredVal converts a display name back to the stored value.
 // Called from model.go's saveConfigFn.
+//
+// "Auto Mode" and "Don't Ask" both map to permissions.ModeBypassPermissions
+// — the only real Mode constant either one could mean. They used to diverge
+// ("Auto Mode" stored a literal "auto" string with no permissions.Mode case
+// at all, so picking it silently did nothing — cmd/conduit/mainrepl.go casts
+// this value straight to permissions.Mode(s.DefaultMode) with no
+// translation). Fixed so the option actually does what its label says;
+// picking either now genuinely activates bypass mode, same as the
+// EnterAutoMode tool and the status bar's own "auto" label for that mode
+// already mean elsewhere in this codebase.
 func permModeStoredVal(display string) string {
 	switch display {
 	case "Plan Mode":
 		return "plan"
 	case "Accept Edits":
 		return "acceptEdits"
-	case "Auto Mode":
-		return "auto"
-	case "Don't Ask":
+	case "Auto Mode", "Don't Ask":
 		return "bypassPermissions"
 	default:
 		return "default"

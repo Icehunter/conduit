@@ -42,10 +42,11 @@ func SetDefault(name string) {
 
 // Default is the hardcoded fallback model.
 //
-// Conduit tracks CC's default (claude-fable-5), which is the most capable
-// widely-released model as of CC 2.1.200. Fable 5 was previously restricted
-// by US government policy but has since been re-enabled.
-const Default = "claude-fable-5"
+// Conduit tracks CC's default (claude-fable-5-1), the most capable
+// widely-released model as of CC 2.1.259. Fable 5 (the prior point release)
+// was previously restricted by US government policy but has since been
+// re-enabled, and remains in the catalog as a selectable model.
+const Default = "claude-fable-5-1"
 
 // Fast is the faster/cheaper model used when /fast is active.
 // Mirrors getSmallFastModel() — Sonnet 5 for fast responses (latest_per_family.sonnet).

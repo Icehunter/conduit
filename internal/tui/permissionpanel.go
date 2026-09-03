@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,7 +12,11 @@ type permissionPromptState struct {
 	toolName  string
 	toolInput string
 	reply     chan<- permissionReply
-	selected  int // 0=Allow once, 1=Always allow, 2=Deny
+	// subAgentLabel is non-empty when this prompt was bubbled up from a
+	// sub-agent rather than a direct tool call of the root loop — changes
+	// the option list (see permissionOptionsFor) and header text.
+	subAgentLabel string
+	selected      int // see permissionOptionsFor for what each index means
 
 	// guardFirstKey swallows the first key after the dialog opens so a
 	// keystroke already in flight (user was typing when the prompt appeared)
@@ -19,7 +24,17 @@ type permissionPromptState struct {
 	guardFirstKey bool
 }
 
-var permissionOptions = []string{"Allow once", "Always allow", "Deny"}
+// permissionOptionsFor returns the option list for the modal. A direct
+// (root-loop) prompt offers Allow once / Always allow / Deny; a prompt
+// bubbled up from a sub-agent instead offers Allow once / Switch subagent to
+// auto mode / Deny — "always allow" (a persisted rule) doesn't fit a one-off
+// sub-agent run the way a session-scoped mode switch does.
+func permissionOptionsFor(subAgentLabel string) []string {
+	if subAgentLabel != "" {
+		return []string{"Allow once", "Switch subagent to auto mode", "Deny"}
+	}
+	return []string{"Allow once", "Always allow", "Deny"}
+}
 
 // handlePermissionKey routes keys to the permission modal.
 func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -36,19 +51,21 @@ func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	options := permissionOptionsFor(p.subAgentLabel)
 	switch msg.String() {
 	case "up", "left":
 		if p.selected > 0 {
 			p.selected--
 		}
 	case "down", "right":
-		if p.selected < len(permissionOptions)-1 {
+		if p.selected < len(options)-1 {
 			p.selected++
 		}
 	case "enter":
 		reply := permissionReply{
-			allow:       p.selected != 2,
-			alwaysAllow: p.selected == 1,
+			allow:        p.selected != 2,
+			alwaysAllow:  p.subAgentLabel == "" && p.selected == 1,
+			switchToAuto: p.subAgentLabel != "" && p.selected == 1,
 		}
 		m.permPrompt = nil
 		m.refreshViewport()
@@ -79,7 +96,11 @@ func (m Model) renderPermissionPrompt() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(styleStatusAccent.Render("Permission required") + "\n\n")
+	header := "Permission required"
+	if p.subAgentLabel != "" {
+		header = fmt.Sprintf("Subagent %q wants to…", p.subAgentLabel)
+	}
+	sb.WriteString(styleStatusAccent.Render(header) + "\n\n")
 
 	// Tool + input.
 	label := p.toolName
@@ -93,7 +114,7 @@ func (m Model) renderPermissionPrompt() string {
 	}
 	sb.WriteString(stylePickerItem.Render(label) + "\n\n")
 
-	for i, opt := range permissionOptions {
+	for i, opt := range permissionOptionsFor(p.subAgentLabel) {
 		prefix := "  "
 		var rendered string
 		if i == p.selected {

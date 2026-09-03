@@ -138,6 +138,22 @@ type LoopEvent struct {
 	TTSRCorrection string // correction text injected as a <system-reminder>
 }
 
+// SubAgentPermVerdict is the outcome of one permission decision bubbled up
+// from a sub-agent via AskSubAgentPermission.
+type SubAgentPermVerdict int
+
+const (
+	// SubAgentPermDeny denies this one tool call.
+	SubAgentPermDeny SubAgentPermVerdict = iota
+	// SubAgentPermAllowOnce allows this one tool call only.
+	SubAgentPermAllowOnce
+	// SubAgentPermSwitchToAuto allows this call and switches the asking
+	// sub-agent's own gate to bypassPermissions for the rest of its run,
+	// subject to the same escalation ceiling permissions.Gate.SetMode always
+	// enforces on a cloned gate.
+	SubAgentPermSwitchToAuto
+)
+
 // LoopConfig controls the loop's behaviour.
 type LoopConfig struct {
 	Model     string
@@ -188,8 +204,19 @@ type LoopConfig struct {
 
 	// AskPermission is called when a tool needs interactive approval.
 	// It blocks until the user responds. Returns (allow, alwaysAllow).
-	// nil means DecisionAsk → allow through silently.
+	// nil (always true for sub-agents — see runSubAgentWithModel) falls back
+	// to AskSubAgentPermission if set, then to silent-allow (except Plan mode,
+	// which denies writes) if not.
 	AskPermission func(ctx context.Context, toolName, toolInput string) (allow, alwaysAllow bool)
+
+	// AskSubAgentPermission bubbles a permission decision from a sub-agent —
+	// which never has its own AskPermission — up to whichever ancestor loop
+	// does have an interactive session attached. label identifies which
+	// sub-agent is asking (see Loop.subAgentLabel). Inherited unchanged by
+	// child LoopConfigs, so it chains through nested sub-agents automatically.
+	// nil means no ancestor can answer (e.g. headless/print mode): falls back
+	// to the pre-existing silent-allow-except-plan-mode behavior.
+	AskSubAgentPermission func(ctx context.Context, label, toolName, toolInput string) SubAgentPermVerdict
 
 	// OnFileAccess is called after each file tool execution with the operation
 	// ("read" or "write") and the file path. Used to populate /files output.
@@ -279,6 +306,13 @@ type Loop struct {
 	client *api.Client
 	reg    *tool.Registry
 	cfg    LoopConfig
+	// subAgentLabel identifies this loop when it is itself a sub-agent — set
+	// by every child-construction site (runSubAgentWithModel,
+	// runSubAgentOnce, SpawnTeammate), each right after building the child
+	// via a *Loop literal or buildChildLoop. Used when bubbling one of this
+	// loop's own children's Ask decisions via cfg.AskSubAgentPermission.
+	// Empty for the root loop.
+	subAgentLabel string
 	// Provider failover: chainResolver returns the ordered provider chain for a
 	// given role; newClientFor builds a fresh API client from a provider.
 	// Both are nil when failover is not configured (default behaviour unchanged).
@@ -484,6 +518,16 @@ func (l *Loop) SetAskPermission(fn func(ctx context.Context, toolName, toolInput
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.cfg.AskPermission = fn
+}
+
+// SetAskSubAgentPermission installs the callback used to bubble a sub-agent's
+// permission decisions up to an interactive session. Only meaningful on the
+// root loop — child loops inherit it via LoopConfig copying in
+// runSubAgentWithModel.
+func (l *Loop) SetAskSubAgentPermission(fn func(ctx context.Context, label, toolName, toolInput string) SubAgentPermVerdict) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cfg.AskSubAgentPermission = fn
 }
 
 // SetSessionID updates the active session identifier. When it changes, reset
@@ -1048,9 +1092,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 						// and skills written earlier in this session costs
 						// nothing extra. Without this the blocks snapshotted at
 						// the top of Run persist for the whole session.
-						if refreshed := l.RefreshSystem(); refreshed != nil {
-							system = refreshed
-						}
+						//
+						// RefreshSystem's return value isn't used here — this
+						// branch returns right after (end_turn), so `system`
+						// (a local snapshot) is never read again this call.
+						// What matters is its side effect: it writes the
+						// refreshed blocks onto l.cfg.System, which the *next*
+						// Run() call snapshots fresh at the top of the function.
+						l.RefreshSystem()
 						if l.cfg.OnCompact != nil && result.Summary != "" {
 							l.cfg.OnCompact(result.Summary)
 						}

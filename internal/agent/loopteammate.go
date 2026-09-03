@@ -159,6 +159,11 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 	spec.ExtraTools = append(spec.ExtraTools, sendmessagetool.NewFor(name, tm))
 
 	child, _ := l.buildChildLoop(spec)
+	// name (the teammate's persistent identity), not a one-off prompt
+	// excerpt — a teammate is long-lived and makes many tool calls over its
+	// lifetime, so a bubbled ask should say which teammate is asking, not a
+	// stale snippet of whatever it was first spawned with.
+	child.subAgentLabel = name
 
 	childID := fmt.Sprintf("teammate-%d", teammateSeq.Add(1))
 	label := name

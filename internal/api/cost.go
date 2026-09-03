@@ -17,10 +17,12 @@ var modelPrices = []struct {
 	prefix string
 	price  perMillionTokenPrice
 }{
+	{"claude-fable-5-1", perMillionTokenPrice{10.00, 50.00}},
 	{"claude-fable-5", perMillionTokenPrice{10.00, 50.00}},
 	{"claude-fable", perMillionTokenPrice{10.00, 50.00}},
+	{"claude-opus-5", perMillionTokenPrice{5.00, 25.00}},
 	{"claude-opus-4", perMillionTokenPrice{5.00, 25.00}},
-	{"claude-sonnet-5", perMillionTokenPrice{3.00, 15.00}},
+	{"claude-sonnet-5", perMillionTokenPrice{2.00, 10.00}},
 	{"claude-sonnet-4-6", perMillionTokenPrice{3.00, 15.00}},
 	{"claude-sonnet-4", perMillionTokenPrice{3.00, 15.00}},
 	{"claude-haiku-4-5", perMillionTokenPrice{1.00, 5.00}},

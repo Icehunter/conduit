@@ -102,12 +102,47 @@ export async function runDecode(opts) {
 
   // Run the 6-step pipeline.
   spawnStep("extract", "node", ["src/extract.mjs", claudeBin, "extracted/"], bunDemincerDir);
-  spawnStep(
-    "resplit",
-    "node",
-    ["src/resplit.mjs", "extracted/src/entrypoints/cli.js", "resplit/"],
-    bunDemincerDir,
+
+  // The entry module's on-disk path mirrors its bundler module name (minus the
+  // "/$bunfs/root/" prefix) — extract.mjs derives it that way, and that name
+  // has moved before (e.g. "src/entrypoints/cli.js" -> bare "cli"). Resolve it
+  // from the manifest instead of hardcoding a path that upstream can rename.
+  const manifest = JSON.parse(
+    readFileSync(path.join(bunDemincerDir, "extracted", "manifest.json"), "utf8"),
   );
+  const entryRelPath = manifest.entryPoint
+    ?.replace(/^\/\$bunfs\/root\//, "")
+    .replace(/^\$bunfs\/root\//, "");
+  if (!entryRelPath) {
+    throw new Error("[decode] could not resolve entryPoint from extracted/manifest.json");
+  }
+  const entryPath = path.join("extracted", entryRelPath);
+  if (!existsSync(path.join(bunDemincerDir, entryPath))) {
+    throw new Error(`[decode] resolved entry point does not exist on disk: ${entryPath}`);
+  }
+
+  // Bun has shipped two very different bundle shapes for the Claude Code CLI:
+  //   - monolithic: one file with thousands of inlined y()/h() CJS wrappers
+  //     (what resplit.mjs parses).
+  //   - code-split ESM (>= 2.1.259): the entry is a thin bootstrap and the
+  //     app is hundreds/thousands of separate real ES modules (chunk-*.js),
+  //     each with genuine import/export statements (what resplit-esm.mjs
+  //     parses, using the manifest's loader/format fields to pick them out).
+  // A code-split build has hundreds of loader=js/format=esm modules; a
+  // monolithic build has just a handful (the wrapper + a few small chunks).
+  const esmModuleCount = (manifest.modules ?? []).filter(
+    (m) => m.loader === 1 && m.format === 1,
+  ).length;
+  const isCodeSplitEsm = esmModuleCount > 10;
+  process.stderr.write(
+    `[decode] bundle format: ${isCodeSplitEsm ? "code-split ESM" : "monolithic"} (${esmModuleCount} esm modules in manifest)\n`,
+  );
+
+  if (isCodeSplitEsm) {
+    spawnStep("resplit-esm", "node", ["src/resplit-esm.mjs", "extracted/", "resplit/"], bunDemincerDir);
+  } else {
+    spawnStep("resplit", "node", ["src/resplit.mjs", entryPath, "resplit/"], bunDemincerDir);
+  }
   spawnStep(
     "match-vendors",
     "node",

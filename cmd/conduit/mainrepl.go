@@ -230,7 +230,18 @@ func runREPL(continueMode bool, resumeID string) error {
 	// trusted directories never prompt. Best-effort: ignore errors.
 	trustedRoots, _ := globalconfig.TrustedAncestors(cwd)
 
-	gate := permissions.New(cwd, trustedRoots, permissions.Mode(s.DefaultMode), s.Allow, s.Deny, s.Ask)
+	// "auto" is a legacy value from a settings-panel bug (fixed in
+	// internal/tui/settingspaneldata.go's permModeStoredVal): the "Auto Mode"
+	// option used to store this literal string, which permissions.Mode has no
+	// case for, so it silently behaved like an unrecognized mode rather than
+	// the bypass mode its label promised. New saves no longer write it, but
+	// an already-persisted settings.json can still have it — normalize here
+	// so a stale value gets the bypass behavior it always should have meant.
+	defaultMode := permissions.Mode(s.DefaultMode)
+	if defaultMode == "auto" {
+		defaultMode = permissions.ModeBypassPermissions
+	}
+	gate := permissions.New(cwd, trustedRoots, defaultMode, s.Allow, s.Deny, s.Ask)
 
 	importLegacySessions := func() {
 		go func() {

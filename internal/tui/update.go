@@ -100,6 +100,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.permPrompt = &permissionPromptState{
 						toolName:      p.toolName,
 						toolInput:     p.toolInput,
+						subAgentLabel: p.subAgentLabel,
 						reply:         p.reply,
 						selected:      0,
 						guardFirstKey: true,
@@ -160,6 +161,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.permPrompt = &permissionPromptState{
 			toolName:      msg.toolName,
 			toolInput:     msg.toolInput,
+			subAgentLabel: msg.subAgentLabel,
 			reply:         msg.reply,
 			selected:      0,
 			guardFirstKey: true,
@@ -583,6 +585,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.permPrompt = &permissionPromptState{
 				toolName:      p.toolName,
 				toolInput:     p.toolInput,
+				subAgentLabel: p.subAgentLabel,
 				reply:         p.reply,
 				selected:      0,
 				guardFirstKey: true,

@@ -27,14 +27,22 @@ import (
 // the cc_version suffix is computed dynamically by DynamicBillingBlock using
 // the first user message — use that instead of this constant.
 //
-// cch=00000 is the value for firstParty (non-bedrock/vertex) in v2.1.200.
+// cch=00000 is the value for firstParty (non-bedrock/vertex); unchanged since
+// v2.1.200 as of the v2.1.259 wire sync (2026-09-03) — the extractor can't
+// read it statically (it's computed by a bun macro at build time) so this
+// stays a carried-forward assumption until a live mitmproxy capture says
+// otherwise, not a re-verified value.
 // CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
-const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.200; cc_entrypoint=sdk-cli; cch=00000;\n"
+const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.259; cc_entrypoint=sdk-cli; cch=00000;\n"
 
 const (
-	billingSalt    = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.200/1470.js)
-	BillingCch     = "00000"        // v2.1.200 firstParty value (non-bedrock/vertex) — see decoded-2.1.200/1470.js
-	BillingVersion = "2.1.200"      // must match cmd/conduit/main.go var Version
+	billingSalt = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.200/1470.js)
+	BillingCch  = "00000"        // firstParty value (non-bedrock/vertex); see BillingHeader comment
+	// BillingVersion must match cmd/conduit/main.go's Version — the server
+	// validates the two are consistent and 400s the request if they drift
+	// (confirmed live 2026-09-03: this constant was missed in an earlier
+	// Version bump this session and broke every request until caught here).
+	BillingVersion = "2.1.259"
 )
 
 // computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.200/1470.js:

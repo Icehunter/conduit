@@ -99,6 +99,12 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 		return
 	}
 
+	// Bound the connect+initialize+list-tools sequence below so one wedged
+	// server (spawns but never responds) can't hang the whole ConnectAll
+	// fan-out — see ConnectTimeout.
+	ctx, cancel := context.WithTimeout(ctx, ConnectTimeout)
+	defer cancel()
+
 	var client Client
 	var err error
 
@@ -464,6 +470,14 @@ func (m *Manager) ReadResource(ctx context.Context, serverName, uri string) ([]R
 	}
 	return srv.client.ReadResource(ctx, uri)
 }
+
+// ConnectTimeout is the maximum time to wait for one MCP server to spawn/dial,
+// complete its initialize handshake, and list tools. Without this, a server
+// that hangs on startup (e.g. a stdio command that never writes a response)
+// would block ConnectAll's WaitGroup forever, since the ctx it's called with
+// has no deadline of its own — hanging conduit's whole startup before the TUI
+// ever appears.
+const ConnectTimeout = 15 * time.Second
 
 // CloseTimeout is the maximum time to wait for MCP servers to shut down.
 const CloseTimeout = 5 * time.Second

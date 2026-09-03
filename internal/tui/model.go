@@ -182,15 +182,20 @@ type (
 
 	// permissionAskMsg is sent by the agent goroutine when a tool needs
 	// interactive permission. The goroutine blocks on reply until the user
-	// chooses Allow once / Always allow / Deny.
+	// chooses Allow once / Always allow / Deny — or, when subAgentLabel is
+	// non-empty (a decision bubbled up from a sub-agent rather than a direct
+	// tool call of the root loop's own), Allow once / Switch subagent to
+	// auto mode / Deny.
 	permissionAskMsg struct {
-		toolName  string
-		toolInput string
-		reply     chan<- permissionReply
+		toolName      string
+		toolInput     string
+		subAgentLabel string // empty for a direct (root-loop) prompt
+		reply         chan<- permissionReply
 	}
 	permissionReply struct {
-		allow       bool
-		alwaysAllow bool // add to session allow list
+		allow        bool
+		alwaysAllow  bool // add to session allow list
+		switchToAuto bool // subagent relay only: switch that subagent to auto mode
 	}
 
 	// questionAskMsg is sent when AskUserQuestion needs a real answer from

@@ -128,6 +128,7 @@ func (l *Loop) runSubAgentOnce(ctx context.Context, prompt string, spec SubAgent
 			label = label[:30]
 		}
 	}
+	child.subAgentLabel = label
 	subagent.Default.Add(subagent.Entry{
 		ID:         childID,
 		Label:      label,
@@ -372,7 +373,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	}
 	childReg := l.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 
-	child := &Loop{client: childClient, reg: childReg, cfg: childCfg}
+	child := &Loop{client: childClient, reg: childReg, cfg: childCfg, subAgentLabel: label}
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}
@@ -531,30 +532,31 @@ func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgen
 	if err != nil {
 		return first, err
 	}
-	if out, verr := acceptContractOutput(sch, first.Text); verr == nil {
+	out, verr := acceptContractOutput(sch, first.Text)
+	if verr == nil {
 		first.Output = out
 		first.Text = string(out)
 		return first, nil
-	} else {
-		retry, rerr := l.runSubAgentOnce(ctx, prompt+"\n\n"+outputRetryPrompt(verr.Error()), spec)
-		if rerr != nil {
-			// Keep the first attempt rather than losing the work entirely, but
-			// say plainly that it never satisfied the contract.
-			first.OutputError = verr.Error()
-			return first, nil
-		}
-		retry.Usage = addUsage(first.Usage, retry.Usage)
-		retry.ToolUses += first.ToolUses
-		retry.DurationMs += first.DurationMs
-		out2, verr2 := acceptContractOutput(sch, retry.Text)
-		if verr2 != nil {
-			retry.OutputError = verr2.Error()
-			return retry, nil
-		}
-		retry.Output = out2
-		retry.Text = string(out2)
+	}
+
+	retry, rerr := l.runSubAgentOnce(ctx, prompt+"\n\n"+outputRetryPrompt(verr.Error()), spec)
+	if rerr != nil {
+		// Keep the first attempt rather than losing the work entirely, but
+		// say plainly that it never satisfied the contract.
+		first.OutputError = verr.Error()
+		return first, nil
+	}
+	retry.Usage = addUsage(first.Usage, retry.Usage)
+	retry.ToolUses += first.ToolUses
+	retry.DurationMs += first.DurationMs
+	out2, verr2 := acceptContractOutput(sch, retry.Text)
+	if verr2 != nil {
+		retry.OutputError = verr2.Error()
 		return retry, nil
 	}
+	retry.Output = out2
+	retry.Text = string(out2)
+	return retry, nil
 }
 
 // acceptContractOutput recovers the JSON value from a final message and checks

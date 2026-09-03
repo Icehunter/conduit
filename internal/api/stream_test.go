@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/icehunter/conduit/internal/sse"
 )
@@ -119,6 +120,93 @@ func TestStreamMessage_ContextCancelStops(t *testing.T) {
 		}
 	}
 	t.Fatal("Next did not stop after cancel")
+}
+
+// TestStreamMessage_IdleTimeout verifies a connection that stays open but
+// goes completely silent is torn down within the idle window, with a clear
+// "idle timeout" error rather than a bare context-cancelled one.
+func TestStreamMessage_IdleTimeout(t *testing.T) {
+	oldTimeout := streamIdleTimeout
+	streamIdleTimeout = 50 * time.Millisecond
+	defer func() { streamIdleTimeout = oldTimeout }()
+
+	block := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("event: ping\ndata: {\"type\": \"ping\"}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Go silent — never write again, never close, until the test is done.
+		<-block
+	})
+	srv := httptest.NewServer(mux)
+	defer func() { close(block); srv.Close() }()
+
+	c := NewClient(Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{Model: "m", MaxTokens: 1, Stream: true})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	// First Next() reads the ping and is skipped internally by the parser,
+	// so it blocks until the idle timer fires on the silence that follows.
+	_, err = stream.Next()
+	if err == nil {
+		t.Fatal("expected idle timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "idle timeout") {
+		t.Errorf("err = %v, want it to mention idle timeout", err)
+	}
+}
+
+// TestStreamMessage_IdleTimeout_PingsResetClock verifies periodic bytes
+// (SSE pings) keep resetting the idle clock, so a stream that never goes
+// silent for a full window — even though it runs longer than one window in
+// total — does not spuriously time out.
+func TestStreamMessage_IdleTimeout_PingsResetClock(t *testing.T) {
+	oldTimeout := streamIdleTimeout
+	streamIdleTimeout = 80 * time.Millisecond
+	defer func() { streamIdleTimeout = oldTimeout }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		// Write pings well inside the (shortened) idle window, for longer
+		// than one full window's worth of elapsed time in total.
+		for range 5 {
+			_, _ = w.Write([]byte("event: ping\ndata: {\"type\": \"ping\"}\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{Model: "m", MaxTokens: 1, Stream: true})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	ev, err := stream.Next()
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if ev.Type != "message_stop" {
+		t.Fatalf("Type = %q, want message_stop (pings should have been skipped, not timed out)", ev.Type)
+	}
 }
 
 // TestStreamMessage_APIError on non-2xx returns the same error envelope as

@@ -67,6 +67,18 @@ Each run archives the extracted fingerprint to `history/<version>/wire-fingerpri
 
 These files are committed to the repo so version-to-version drift is visible in `git log --all -- scripts/wire-check/history/`.
 
+## Bun bundle format
+
+Claude Code's Bun build has changed shape mid-release: through 2.1.226 it was one monolithic
+file with thousands of inlined CommonJS module wrappers; starting at 2.1.259 it's code-split
+into ~1600 separate real ES modules (the entry is a thin bootstrap that `import`s the rest).
+`decode.mjs` detects which shape the installed binary uses (from the module `loader`/`format`
+fields in `extracted/manifest.json`) and picks the matching bun-demincer splitter —
+`resplit.mjs` for the old monolithic shape, `resplit-esm.mjs` for the new code-split one. Both
+produce the same `resplit/` directory shape, so nothing downstream (vendor classification,
+deobfuscation) needs to know which one ran. See bun-demincer's README ("Module splitting") for
+details if a future Bun/Claude Code release changes shape again.
+
 ## Adding a new anchor
 
 Open `anchors.json` and add an entry:

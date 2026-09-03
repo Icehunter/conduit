@@ -168,30 +168,40 @@ func (openAIChatTransport) StreamMessage(ctx context.Context, c *Client, req *Me
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal openai-compatible stream request: %w", err)
 	}
-	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
-		return c.doOpenAI(ctx, body)
+
+	// See anthropicMessagesTransport.StreamMessage for why streamCtx (not ctx)
+	// is what the request must be built with.
+	streamCtx, cancel := context.WithCancel(ctx)
+
+	resp, err := c.doWithRetryAndAuth(streamCtx, func() (*http.Response, error) {
+		return c.doOpenAI(streamCtx, body)
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		err := c.decodeOpenAIError(resp)
 		_ = resp.Body.Close()
+		cancel()
 		return nil, err
 	}
 	if !strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
+		cancel()
 		return nil, fmt.Errorf("api: openai-compatible stream: server returned non-SSE Content-Type=%q body=%s",
 			resp.Header.Get("Content-Type"), strings.TrimSpace(string(raw)))
 	}
 
+	idle := newIdleTimeoutReadCloser(resp.Body, streamIdleTimeout, cancel)
 	reader, writer := io.Pipe()
-	go convertOpenAIStream(resp.Body, writer, req.Model)
+	go convertOpenAIStream(idle, writer, req.Model)
 	return &Stream{
 		body:           reader,
 		parser:         sse.NewParser(reader),
 		ResponseHeader: resp.Header,
+		idle:           idle,
 	}, nil
 }
 

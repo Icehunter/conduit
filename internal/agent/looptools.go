@@ -120,21 +120,13 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			case permissions.DecisionAsk:
 				l.mu.RLock()
 				askPermission := l.cfg.AskPermission
+				askSubAgent := l.cfg.AskSubAgentPermission
 				l.mu.RUnlock()
 				if !hookApproved {
-					if askPermission == nil {
-						// No interactive prompt available (e.g. sub-agent). In plan
-						// mode writes must not proceed silently — deny so the model
-						// reports it cannot write rather than bypassing user intent.
-						if l.cfg.Gate.Mode() == permissions.ModePlan {
-							task.denied = true
-							task.denyMsg = fmt.Sprintf("%s denied: writes are not permitted in plan mode", block.Name)
-							tasks = append(tasks, task)
-							continue
-						}
-						// Other modes allow writes without prompting when there is no
-						// interactive session (background sub-agents).
-					} else {
+					switch {
+					case askPermission != nil:
+						// This loop has its own direct interactive prompt (the
+						// root loop, or anything else explicitly wired).
 						allow, alwaysAllow := askPermission(ctx, block.Name, permInput)
 						if !allow {
 							task.denied = true
@@ -149,6 +141,39 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 								_ = permissions.PersistAllow(rule, l.cfg.Cwd)
 							}
 						}
+					case askSubAgent != nil:
+						// No direct prompt of our own (we're a sub-agent), but an
+						// ancestor has one — bubble the decision instead of
+						// silently allowing it.
+						switch askSubAgent(ctx, l.subAgentLabel, block.Name, permInput) {
+						case SubAgentPermDeny:
+							task.denied = true
+							task.denyMsg = fmt.Sprintf("%s denied by user", block.Name)
+							tasks = append(tasks, task)
+							continue
+						case SubAgentPermSwitchToAuto:
+							// Clamped by the gate's own escalation ceiling — see
+							// permissions.Gate.SetMode / Clone. Allows this call
+							// and every subsequent one for the rest of this
+							// sub-agent's run (Check short-circuits once in
+							// bypassPermissions mode).
+							l.cfg.Gate.SetMode(permissions.ModeBypassPermissions)
+						case SubAgentPermAllowOnce:
+							// Allow just this call.
+						}
+					case l.cfg.Gate.Mode() == permissions.ModePlan:
+						// No interactive prompt anywhere in the ancestor chain.
+						// In plan mode writes must not proceed silently — deny
+						// so the model reports it cannot write rather than
+						// bypassing user intent.
+						task.denied = true
+						task.denyMsg = fmt.Sprintf("%s denied: writes are not permitted in plan mode", block.Name)
+						tasks = append(tasks, task)
+						continue
+					default:
+						// No interactive session anywhere (e.g. headless/print
+						// mode, or a background reviewer). Allow writes without
+						// prompting — unchanged pre-existing behavior.
 					}
 				}
 			}

@@ -610,6 +610,33 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				return false, false
 			}
 		})
+
+		// Same modal, reused for permission decisions bubbled up from a
+		// sub-agent (which never has a direct prompt of its own — see
+		// runSubAgentWithModel) — subAgentLabel non-empty is what switches
+		// the modal to its 3-option sub-agent variant.
+		loop.SetAskSubAgentPermission(func(ctx context.Context, label, toolName, toolInput string) agent.SubAgentPermVerdict {
+			reply := make(chan permissionReply, 1)
+			prog.Send(permissionAskMsg{
+				toolName:      toolName,
+				toolInput:     toolInput,
+				subAgentLabel: label,
+				reply:         reply,
+			})
+			select {
+			case r := <-reply:
+				switch {
+				case r.switchToAuto:
+					return agent.SubAgentPermSwitchToAuto
+				case r.allow:
+					return agent.SubAgentPermAllowOnce
+				default:
+					return agent.SubAgentPermDeny
+				}
+			case <-ctx.Done():
+				return agent.SubAgentPermDeny
+			}
+		})
 	}
 
 	// Wire EnterPlanMode — asks user consent via the permission prompt machinery.

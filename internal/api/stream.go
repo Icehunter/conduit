@@ -21,12 +21,20 @@ type Stream struct {
 	// ResponseHeader holds the HTTP response headers from the initial connection.
 	// Use this to read rate-limit headers (anthropic-ratelimit-*).
 	ResponseHeader http.Header
+	// idle is non-nil for streams built from a live HTTP response; nil for
+	// streams built via NewStreamFromReader (test fixtures), which have no
+	// idle-timeout behavior.
+	idle *idleTimeoutReadCloser
 }
 
 // Next returns the next non-skipped event, or io.EOF when the stream ends.
 // Sentinel: a *sse.Error means the API surfaced an error event mid-stream.
 func (s *Stream) Next() (sse.Event, error) {
-	return s.parser.Next()
+	ev, err := s.parser.Next()
+	if err != nil && s.idle != nil && s.idle.TimedOut() {
+		return sse.Event{}, fmt.Errorf("api: stream: idle timeout — no data received for %s: %w", streamIdleTimeout, err)
+	}
+	return ev, err
 }
 
 // Close releases the underlying HTTP connection. Safe to call multiple times.
@@ -73,18 +81,26 @@ func (anthropicMessagesTransport) StreamMessage(ctx context.Context, c *Client, 
 		return nil, fmt.Errorf("api: marshal stream request: %w", err)
 	}
 
+	// streamCtx (not ctx) is what the HTTP request is built with below, so the
+	// idle-timeout wrapper's cancel can actually interrupt an in-flight read —
+	// Go's transport only tears down the connection for the exact context the
+	// request was created with.
+	streamCtx, cancel := context.WithCancel(ctx)
+
 	// Pass req.Model (original, pre-sanitize) so filterBetasForModel can see any
 	// conduit-internal suffixes (e.g. "[1m]") and gate beta headers correctly.
-	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
-		return c.doStream(ctx, body, req.Model)
+	resp, err := c.doWithRetryAndAuth(streamCtx, func() (*http.Response, error) {
+		return c.doStream(streamCtx, body, req.Model)
 	})
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		err := c.decodeError(resp)
 		_ = resp.Body.Close()
+		cancel()
 		return nil, err
 	}
 
@@ -93,14 +109,17 @@ func (anthropicMessagesTransport) StreamMessage(ctx context.Context, c *Client, 
 		// silently swallowing JSON as SSE garbage.
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
+		cancel()
 		return nil, fmt.Errorf("api: stream: server returned non-SSE Content-Type=%q body=%s",
 			resp.Header.Get("Content-Type"), strings.TrimSpace(string(raw)))
 	}
 
+	idle := newIdleTimeoutReadCloser(resp.Body, streamIdleTimeout, cancel)
 	return &Stream{
-		body:           resp.Body,
-		parser:         sse.NewParser(resp.Body),
+		body:           idle,
+		parser:         sse.NewParser(idle),
 		ResponseHeader: resp.Header,
+		idle:           idle,
 	}, nil
 }
 

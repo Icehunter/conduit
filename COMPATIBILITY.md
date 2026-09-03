@@ -23,12 +23,12 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.200` |
-| `SDKPackageVersion` | `internal/api/client.go` | `0.94.0` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.259` |
+| `SDKPackageVersion` | `internal/api/client.go` | `0.112.1` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
 | Token URL | `internal/auth/flow.go` | see source |
-| OAuth beta header | `internal/app/auth.go` | `oidc-federation-2026-04-01` |
+| OAuth beta header | `internal/app/auth.go` | `oauth-2025-04-20` |
 
 Run `make verify-wire` to check these against the current upstream fingerprint.
 
@@ -63,10 +63,48 @@ regression appears.
 | Agent Teams: `TeamCreate`/`TeamDelete` tools | Existed in CC 2.1.177; removed in 2.1.178 | Not implemented; session-derived naming via `team.SessionName(sessionID)` matches CC 2.1.178+ | Follows CC 2.1.178+ which removed these tools |
 | Agent Teams: plan-approval flow | Lead agent runs in a separate process; plan delivered via IPC | Lead receives `<team-plan from=…>` injected as a user message; approves via `SendMessage` kind `plan-approve/reject` which writes to `member.PlanReply` channel; teammate's `ExitPlanMode.AskApprove` blocks on that channel | Same behavioral result; implemented without IPC using Go channels |
 | Agent Teams: shutdown protocol | CC orchestrates subprocess termination | Lead sends `SendMessage` kind `shutdown-request` → teammate receives `<team-shutdown-request>` injection → replies `shutdown-approve/reject` via its own `ShutdownReply` channel → approve cancels the goroutine context | Goroutine cancellation replaces process kill |
+| Beta `ccr-byoc-2025-07-29` | Sent (bring-your-own-cloud gate for Bedrock/Vertex customer-hosted deployments) | Not sent | Gates enterprise BYOC deployments; conduit only authenticates via Max/Pro OAuth and never exercises that path — same reasoning as `oidc-federation-2026-04-01` above |
 
 ---
 
 ## Wire sync log
+
+### Tooling: Claude Code's Bun bundle format changed (2026-09-03)
+
+`make wire-all` stopped working because Anthropic changed how the `claude` binary is built.
+Through 2.1.226 it was one monolithic file with thousands of inlined CommonJS module wrappers;
+starting at 2.1.259 it's code-split into ~1600 separate real ES modules. `bun-demincer`'s
+`resplit.mjs` only understood the old shape, so decode silently produced almost nothing and
+every wire anchor came back empty.
+
+Fixed: `scripts/wire-check/decode.mjs` now resolves the bundler entry point from
+`extracted/manifest.json` instead of a hardcoded path, and detects the bundle shape to pick
+between `resplit.mjs` (monolithic) and the new `bun-demincer/src/resplit-esm.mjs` (code-split
+ESM). See `scripts/wire-check/README.md` ("Bun bundle format") for detail.
+
+With extraction working again, `make wire-all` surfaced real drift against upstream 2.1.259,
+applied below.
+
+### 2.1.226 → 2.1.259 (2026-09-03)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.259` in `cmd/conduit/main.go` |
+| `SDKPackageVersion` | Bumped to `0.112.1` in `internal/api/client.go` |
+| Beta `ccr-byoc-2025-07-29` | Not added — bring-your-own-cloud gate for Bedrock/Vertex customer-hosted deployments; conduit only authenticates via Max/Pro OAuth. Recorded as an intentional divergence above (same reasoning as `oidc-federation-2026-04-01`). |
+| New headers (v2.1.259) | `anthropic-mcp-discover-protocol-version`, `anthropic-mcp-registry`, `anthropic-oauth-token`, `anthropic-organization-id`, `anthropic-user-profile-id`, `anthropic-telemetry`, `x-claude-code-signature`, `x-claude-gateway-user-email`, `x-claude-gateway-user-id` added to `KNOWN_HEADERS` in `extract.mjs` — all account/gateway/registry metadata or bridge-only signing, not part of conduit's request shape. |
+| `claude-opus-5` / `claude-fable-5-1` added | New model generation. Added to builtin catalog ($5/$25 and $10/$50 per 1M respectively, both 1M context, thinking=true — pricing confirmed against `platform.claude.com/docs/en/about-claude/pricing`, not the decoded bundle, which no longer carries static pricing/context data — that's fetched from a runtime config at call time as of this version). `model.Default` moved to `claude-fable-5-1`. No migration aliases: `claude-fable-5`, `claude-opus-4-8`, and `claude-opus-4-5` are still current, non-retired, selectable models per Anthropic's own pricing table, not superseded IDs — `migrations.go`'s alias map is only for IDs actually removed from the picker (its own existing precedent: `claude-opus-4-7` → `claude-opus-4-8`, because 4-7 isn't in the catalog at all). |
+| `claude-sonnet-5` pricing corrected | Was `$3.00/$15.00` (a pre-launch estimate carried over from the 2.1.200 sync); Anthropic's pricing page confirms the `$2/$10` introductory rate became the permanent price (the scheduled Sept 2026 increase to $3/$15 was cancelled). Corrected in `builtin.go` and `cost.go`. |
+| `claude-mythos-5` / `claude-mythos-5-1` — not added | Real, priced models (same tier as Fable: $10/$50/MTok) but explicitly limited-availability/early-access per Anthropic's docs, not generally available. |
+| MCP startup hang fix | `internal/mcp/manager.go` `connectWithCwd` had no per-server connect timeout — one wedged stdio MCP server could hang conduit's entire startup indefinitely before the TUI ever appeared. Added a bounded timeout per server (unrelated to wire compat directly, but found and fixed alongside this sync; see `STATUS.md`). |
+| **`BillingVersion` missed in the `Version` bump — broke every request, caught by live testing** | `internal/agent/systemprompt.go`'s `BillingVersion` const (used in the `cc_version=` billing header sent on every request) was a *separate* hardcoded `"2.1.200"` that this sync's `Version` bump didn't touch, despite an existing `// must match cmd/conduit/main.go var Version` comment on it. Anthropic's API validates the two are consistent and returned `400 Bad Request: ... version 2.1.251 or newer is required` for every single request — not caught by `make verify` (no test asserts wire-format consistency at this level) or by `scripts/wire-check` (no anchor tracks `cc_version` specifically inside the billing header — see follow-up below). Found only by actually running the built binary. Fixed: bumped to `2.1.259`, added a matching cross-reference comment on `main.go`'s `Version` so the next sync can't miss it as easily, and noted `BillingCch`'s doc comment now explicitly says it's a carried-forward assumption (not re-verified this sync) rather than implying it was checked. **Follow-up worth doing**: add a `scripts/wire-check` anchor for the billing header's `cc_version=` field so this class of drift is caught by the tool next time, not by a live 400. |
+
+`cch` (billing header) still requires a live mitmproxy capture — the extractor has never been
+able to read it statically (`<<bun-macro>>`, unchanged since 2.1.226); not a regression from
+the tooling fix above. `NEW tools`/`NEW headers` rows from the raw diff are large and include
+known noise from the tool-name heuristic (see `scripts/wire-check/README.md` — "Treat the tool
+diff as informational, not authoritative"); not reproduced here beyond the headers actually
+triaged.
 
 ### 2.1.177 → 2.1.200 (2026-07-05)
 

@@ -172,6 +172,32 @@ const KNOWN_HEADERS = new Set([
   // The literal is an MCP server-kind discriminator in the cli_mcp_login switch
   // (the "anthropic_hosted_blocked" case), never a request or response header.
   "anthropic-hosted",
+  // MCP discovery/registry headers (v2.1.259+) — sent by CC's hosted MCP registry
+  // and discovery-protocol integration. Conduit's MCP client talks to configured
+  // servers directly and doesn't go through CC's registry/discovery layer.
+  "anthropic-mcp-discover-protocol-version",
+  "anthropic-mcp-registry",
+  // OAuth token forwarding header (v2.1.259+) — used on CC's internal bridge/proxy
+  // paths that relay a session's OAuth token to another service. Conduit talks to
+  // the Anthropic API directly; no such bridge exists to forward through.
+  "anthropic-oauth-token",
+  // Org/user account-identity headers (v2.1.259+) — same family as the already-
+  // suppressed anthropic-workspace-id; scoping metadata for enterprise/org
+  // accounts. Not part of conduit's request shape.
+  "anthropic-organization-id",
+  "anthropic-user-profile-id",
+  // Telemetry opt header (v2.1.259+) — CC's own first-party telemetry pipeline.
+  // Conduit has no equivalent telemetry channel to gate with this header.
+  "anthropic-telemetry",
+  // Request integrity signature (v2.1.259+) — computed over the official CC
+  // binary's own signing material; not reproducible (or required — it's
+  // supplementary to OAuth, not an acceptance gate) outside that binary.
+  "x-claude-code-signature",
+  // Claude Gateway (enterprise self-hosted proxy) user-identity headers
+  // (v2.1.259+) — only relevant when routed through that product; conduit talks
+  // to the Anthropic API directly.
+  "x-claude-gateway-user-email",
+  "x-claude-gateway-user-id",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

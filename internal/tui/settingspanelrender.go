@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/lsp"
+	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 )
@@ -112,7 +113,7 @@ func (m Model) renderSettingsStatus(sb *strings.Builder, p *settingsPanelState, 
 
 	modelName := snap.model
 	if modelName == "" {
-		modelName = "claude-opus-4-8"
+		modelName = internalmodel.Default
 	}
 	row("Model", modelName+" · "+dim.Render(modelDescription(modelName)))
 

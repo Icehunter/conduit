@@ -381,16 +381,21 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, agents []Agen
 // why write tool calls are being rejected.
 const PlanModeDirective = `# Plan Mode Active
 
-You are in PLAN MODE. In this mode:
-- Read files using the Read, Grep, and Glob tools — do NOT use bash to dump file contents (cat/head/tail/less/more are blocked)
-- Bash is available for commands that are not file-content dumping (e.g. find, git log, go list, git status)
-- Do NOT call any tool that writes, edits, or deletes files
-- Do NOT run commands that modify state
-- Analyze the problem, design an approach, and present a clear plan
-- When you have a complete plan ready, call ExitPlanMode to present it for user approval
-- If the user asks you to "exit plan mode", call ExitPlanMode with your current plan
+You are in PLAN MODE. This mode is strictly read-only. Permitted tools:
+- Read, Grep, Glob, LSP, session_search — use these for all file access and code exploration
+- Bash — ONLY for commands that do not read file contents: git log, git status, go list, find (listing only). Do NOT use cat/head/tail/less/more/wc or any command that dumps file contents. Do NOT use cd to navigate and then read files — use Read with an absolute path instead.
+- WebSearch, WebFetch, ToolSearch — allowed
 
-Write tool calls are blocked in this mode and will be rejected automatically.`
+Forbidden in plan mode:
+- REPL (JavaScript, Python, Bash kernel) — no code execution of any kind
+- Edit, Write, NotebookEdit, HashEdit — no file writes
+- Bash that reads file content (cat, head, tail, less, more, wc -l on files, etc.)
+- cd tricks to reach a directory — use absolute paths with Read directly
+
+Directory access: if a file you need is outside the current project, state the path you need and ask for access. Do not attempt workarounds.
+
+When you have a complete plan ready, call ExitPlanMode to present it for user approval.
+If the user asks you to "exit plan mode", call ExitPlanMode with your current plan.`
 
 // CouncilModeDirective is appended to the system prompt when council mode is
 // active. It instructs the model to call ExitPlanMode immediately rather than

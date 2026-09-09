@@ -40,8 +40,8 @@ type Kernel struct {
 	stdin   io.WriteCloser
 	stdout  *bufio.Reader
 	mu      sync.Mutex
-	dirty   bool   // true if last Execute timed out; state may be corrupt
-	nonce   string // random hex suffix to form the per-kernel sentinel
+	dirty   bool            // true if last Execute timed out; state may be corrupt
+	nonce   string          // random hex suffix to form the per-kernel sentinel
 	pending chan readResult // non-nil while a prior Execute's reader goroutine
 	// is still in flight (interrupt didn't land before the drain deadline);
 	// must be reconciled before anything else touches k.stdout.
@@ -74,8 +74,12 @@ func New(lang string) (*Kernel, error) {
 // A default timeout of 30 s applies; callers may pass a shorter-deadline context.
 // On timeout SIGINT is sent to the process group (not SIGKILL) so the
 // interpreter survives; k.dirty is set to true.
-// If the process has died it is respawned; the error from the crash is returned
-// so the model can see that state was lost.
+// If the process has died — either mid-call, or because a prior timeout's
+// recovery couldn't be completed — it is respawned and this call continues
+// on the fresh process. A crash mid-call still returns the error from that
+// specific call so the model can see that call's output was lost; state
+// lost to an earlier timeout's respawn is not surfaced beyond dirty-recovery
+// silently succeeding on the new process.
 func (k *Kernel) Execute(ctx context.Context, code string) (string, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -90,11 +94,18 @@ func (k *Kernel) Execute(ctx context.Context, code string) (string, error) {
 	// If the kernel is dirty from a previous timeout, attempt recovery.
 	if k.dirty {
 		if err := k.recoverDirty(); err != nil {
-			// Process died during recovery — respawn and return crash error.
-			_ = k.respawn()
-			return "", fmt.Errorf("kernel: process crashed during dirty recovery: %w", err)
+			// Recovery failed — either the process genuinely crashed, or a
+			// prior timed-out execution is still running and its reader
+			// goroutine can't be safely joined. Either way k.stdout can't
+			// be trusted, so respawn and continue below on the fresh
+			// process rather than surfacing a spurious error: the caller
+			// only asked to run code, and a clean process can do that.
+			if respawnErr := k.respawn(); respawnErr != nil {
+				return "", fmt.Errorf("kernel: respawn after dirty recovery failed (%w): %w", err, respawnErr)
+			}
+		} else {
+			k.dirty = false
 		}
-		k.dirty = false
 	}
 
 	sentinel := k.sentinel()

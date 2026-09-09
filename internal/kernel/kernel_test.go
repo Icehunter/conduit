@@ -111,6 +111,38 @@ func TestKernel_TimeoutDoesNotKillKernel(t *testing.T) {
 	}
 }
 
+// TestKernel_DirtyRecoveryRespawnsWhenPendingStuck simulates the scenario
+// that broke on Windows CI: a prior timeout's reader goroutine never
+// resolved (interrupt landed too late, or never — e.g. sendInterrupt is a
+// no-op on Windows). recoverDirty must not read k.stdout concurrently with
+// that goroutine, and the caller's Execute must still succeed by respawning
+// and continuing on the fresh process rather than erroring out.
+func TestKernel_DirtyRecoveryRespawnsWhenPendingStuck(t *testing.T) {
+	if !pythonAvailable() {
+		t.Skip("python3 not available")
+	}
+	k, err := New("python")
+	if err != nil {
+		t.Fatalf("New(python): %v", err)
+	}
+	defer k.Close()
+
+	k.mu.Lock()
+	k.dirty = true
+	k.pending = make(chan readResult) // never sent to — simulates a stuck reader
+	k.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := k.Execute(ctx, "print('alive-after-respawn')")
+	if err != nil {
+		t.Fatalf("Execute with stuck pending: %v", err)
+	}
+	if !strings.Contains(out, "alive-after-respawn") {
+		t.Errorf("expected output after respawn, got %q", out)
+	}
+}
+
 func TestKernel_RespawnAfterCrash(t *testing.T) {
 	if !pythonAvailable() {
 		t.Skip("python3 not available")

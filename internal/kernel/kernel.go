@@ -24,18 +24,27 @@ import (
 	"time"
 )
 
+// readResult is the outcome of a background stdout-drain goroutine.
+type readResult struct {
+	out string
+	err error
+}
+
 // Kernel is a single long-lived interpreter process.
 // Goroutine-safe: concurrent Execute calls are serialized via mu.
 type Kernel struct {
-	lang   string
-	cmd    string
-	args   []string
-	proc   *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	mu     sync.Mutex
-	dirty  bool   // true if last Execute timed out; state may be corrupt
-	nonce  string // random hex suffix to form the per-kernel sentinel
+	lang    string
+	cmd     string
+	args    []string
+	proc    *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  *bufio.Reader
+	mu      sync.Mutex
+	dirty   bool   // true if last Execute timed out; state may be corrupt
+	nonce   string // random hex suffix to form the per-kernel sentinel
+	pending chan readResult // non-nil while a prior Execute's reader goroutine
+	// is still in flight (interrupt didn't land before the drain deadline);
+	// must be reconciled before anything else touches k.stdout.
 }
 
 // New spawns a Kernel for lang ("python" or "node").
@@ -104,10 +113,6 @@ func (k *Kernel) Execute(ctx context.Context, code string) (string, error) {
 		return "", fmt.Errorf("kernel: write to stdin: %w", err)
 	}
 
-	type readResult struct {
-		out string
-		err error
-	}
 	doneCh := make(chan readResult, 1)
 	go func() {
 		var out strings.Builder
@@ -140,6 +145,12 @@ func (k *Kernel) Execute(ctx context.Context, code string) (string, error) {
 		case res := <-doneCh:
 			partial = res.out
 		case <-drainCtx.Done():
+			// The reader goroutine is still blocked on k.stdout (the
+			// interrupt didn't land in time, e.g. sendInterrupt is a
+			// no-op on Windows). Hand it off as k.pending instead of
+			// abandoning it, so the next call reconciles it before
+			// anyone else touches k.stdout — never read concurrently.
+			k.pending = doneCh
 		}
 		return partial, fmt.Errorf("kernel: execute timed out: %w", ctx.Err())
 
@@ -191,6 +202,7 @@ func (k *Kernel) start() error {
 }
 
 func (k *Kernel) kill() {
+	k.pending = nil
 	if k.proc == nil || k.proc.Process == nil {
 		return
 	}
@@ -206,9 +218,25 @@ func (k *Kernel) respawn() error {
 	return k.start()
 }
 
-// recoverDirty sends an empty code block to flush the bootstrap loop and
-// drains stdout for up to 300 ms, looking for the sentinel.
+// recoverDirty reconciles any outstanding reader goroutine from a prior
+// timed-out Execute (k.pending), then flushes the bootstrap loop with an
+// empty code block and drains stdout for up to 300 ms looking for the
+// sentinel. k.stdout must never be read from two goroutines at once, so if
+// a pending read hasn't resolved within its own budget this returns an
+// error and the caller respawns the process instead of racing it.
 func (k *Kernel) recoverDirty() error {
+	if k.pending != nil {
+		select {
+		case res := <-k.pending:
+			k.pending = nil
+			if res.err != nil {
+				return fmt.Errorf("kernel: pending read: %w", res.err)
+			}
+		case <-time.After(300 * time.Millisecond):
+			return fmt.Errorf("kernel: previous execution still in flight")
+		}
+	}
+
 	sentinel := k.sentinel()
 	// Send an empty code block. The bootstrap will exec("") and print the sentinel.
 	payload := sentinel + "\n"

@@ -10,6 +10,8 @@ import (
 	"github.com/icehunter/conduit/internal/mcp"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/provider/codex"
+	"github.com/icehunter/conduit/internal/provider/copilot"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -457,10 +459,18 @@ func customModelPickerSection(provider settings.ActiveProviderSettings) (string,
 	switch provider.Kind {
 	case settings.ProviderKindOpenAICompatible:
 		if strings.HasPrefix(provider.Credential, "github-copilot") || strings.Contains(strings.ToLower(provider.BaseURL), "api.githubcopilot.com") {
-			return "GitHub Copilot", true
+			label := "GitHub Copilot"
+			if provider.Credential != "" && provider.Credential != copilot.ProviderID {
+				label += " · " + provider.Credential
+			}
+			return label, true
 		}
 		if strings.HasPrefix(provider.Credential, "chatgpt-codex") || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
-			return "ChatGPT / Codex", true
+			label := "ChatGPT / Codex"
+			if provider.Credential != "" && provider.Credential != codex.ProviderID {
+				label += " · " + provider.Credential
+			}
+			return label, true
 		}
 		label := "OpenAI-compatible"
 		if provider.Credential != "" {

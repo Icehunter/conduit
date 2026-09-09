@@ -499,6 +499,48 @@ func TestRegisterModelCommand_ModelsShowsOpenAICompatibleProviders(t *testing.T)
 	}
 }
 
+func TestRegisterModelCommand_ModelsDistinguishesMultipleChatGPTAccounts(t *testing.T) {
+	r := New()
+	first := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "chatgpt-codex",
+		BaseURL:    "https://chatgpt.com/backend-api/codex/",
+		Model:      "gpt-5.5",
+	}
+	second := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "chatgpt-codex-2",
+		BaseURL:    "https://chatgpt.com/backend-api/codex/",
+		Model:      "gpt-5.5",
+	}
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(first):  first,
+		settings.ProviderKey(second): second,
+	}
+	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
+
+	picker, ok := r.Dispatch("/models")
+	if !ok {
+		t.Fatal("expected /models to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+	sections := map[string]bool{}
+	for _, item := range got.Items {
+		if item.Section {
+			sections[item.Label] = true
+		}
+	}
+	if !sections["ChatGPT / Codex"] {
+		t.Fatalf("expected the default account to keep the bare section label, got %#v", sections)
+	}
+	if !sections["ChatGPT / Codex · chatgpt-codex-2"] {
+		t.Fatalf("expected the second account section to carry its credential nickname, got %#v", sections)
+	}
+}
+
 func TestRegisterModelCommand_ModelsExpandsGeminiCatalogModels(t *testing.T) {
 	r := New()
 	provider := settings.ActiveProviderSettings{

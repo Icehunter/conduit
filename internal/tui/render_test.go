@@ -91,6 +91,15 @@ func TestModelPickerProviderLabelOpenAICompatible(t *testing.T) {
 	}
 }
 
+func TestModelPickerProviderLabelDistinguishesChatGPTAndCopilot(t *testing.T) {
+	if got := plainText(modelPickerProviderLabel("provider:openai-compatible.chatgpt-codex-2.gpt-5.5")); got != "ChatGPT" {
+		t.Fatalf("provider label = %q, want ChatGPT", got)
+	}
+	if got := plainText(modelPickerProviderLabel("provider:openai-compatible.github-copilot.gpt-4.1")); got != "Copilot" {
+		t.Fatalf("provider label = %q, want Copilot", got)
+	}
+}
+
 func TestActiveModelDisplayNameOpenAICompatible(t *testing.T) {
 	m := Model{
 		cfg: Config{Version: "test"},

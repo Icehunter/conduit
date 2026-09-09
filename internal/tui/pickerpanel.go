@@ -688,8 +688,15 @@ func modelPickerProviderText(value string) string {
 	if strings.HasPrefix(value, "provider:anthropic-api.") {
 		return "Anthropic API"
 	}
-	if strings.HasPrefix(value, "provider:openai-compatible.") {
-		return "OpenAI"
+	if rest, ok := strings.CutPrefix(value, "provider:openai-compatible."); ok {
+		switch {
+		case strings.HasPrefix(rest, "github-copilot"):
+			return "Copilot"
+		case strings.HasPrefix(rest, "chatgpt-codex"):
+			return "ChatGPT"
+		default:
+			return "OpenAI"
+		}
 	}
 	if strings.HasPrefix(value, "provider:claude-subscription.") {
 		return "Claude"

@@ -34,7 +34,7 @@ coming, and what's intentionally out of scope.
 | Provider auth interface (C-O3) | ✅ | `internal/providerauth/` — `Method`, `Config`, `Authorizer`, `APIKeyAuthorizer` |
 | Provider entries reference accounts (C-O3) | ✅ | Provider entries store a credential alias that resolves through secure providerauth storage; known providers reuse `openai`, `gemini`, and `openrouter` credentials |
 | GitHub Copilot auth | 🔶 | Experimental: device-code login, Copilot token exchange, model discovery, `/chat/completions`, `/responses`, and Claude `/v1/messages` routing; gracefully reports entitlement/discovery failures |
-| OpenAI ChatGPT Plus/Pro OAuth | 🔶 | Experimental: browser PKCE login, secure refresh-token storage, ChatGPT/Codex model rows, and Codex Responses routing through `https://chatgpt.com/backend-api/codex/responses`; manual verification still required |
+| OpenAI ChatGPT Plus/Pro OAuth | 🔶 | Experimental: browser PKCE login, secure refresh-token storage, Codex Responses routing through `https://chatgpt.com/backend-api/codex/responses`; manual verification still required. Model list is now catalog-sourced (live OpenRouter `openai/*` entries filtered to the gpt-5.x/gpt-6.x chat lineage via `codexCatalogModelIDs`) with the static 6-model list as fallback only when no catalog data is available — OpenAI exposes no per-account/plan-tier discovery endpoint, so Plus/Pro/Team all see the same published set |
 | Provider-account wire checks | ✅ | `PROVIDER_COMPATIBILITY.md` plus `make wire` cover Copilot and ChatGPT/Codex drift guards; Claude remains under `make wire-claude` |
 
 ---

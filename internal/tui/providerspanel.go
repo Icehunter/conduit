@@ -139,7 +139,7 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 				f.oauthStarting = true
 				f.err = ""
 				if f.oauthKind == "codex" {
-					return doneWithCmd(codexStartOAuthCmd(f.credential))
+					return doneWithCmd(codexStartOAuthCmd(f.credential, m.catalogData))
 				}
 				return doneWithCmd(copilotStartOAuthCmd(f.credential))
 			} else if f.oauthProvider && f.step == providerFormStepCredential && f.editKey != "" {
@@ -725,7 +725,52 @@ func copilotModelIDs(models []catalog.ModelInfo) []string {
 	return modelIDs
 }
 
-func codexStartOAuthCmd(credential string) tea.Cmd {
+// codexCatalogModelIDs filters the live OpenRouter-sourced catalog down to
+// the OpenAI models actually reachable through the ChatGPT-OAuth Codex
+// backend: the gpt-5.x/gpt-6.x chat lineage, excluding batch, audio, image,
+// gpt-oss, and the ambiguous "chat-latest" alias (o-series reasoning models
+// and legacy gpt-3.5/gpt-4 are dropped implicitly — they don't match the
+// gpt-5/gpt-6 prefix). Returns nil if cat is nil or nothing matches, so
+// callers can fall back to codex.FallbackModelIDs().
+func codexCatalogModelIDs(cat *catalog.Catalog) []string {
+	if cat == nil {
+		return nil
+	}
+	excluded := []string{"batch", "image", "audio", "oss", "chat-latest"}
+	modelIDs := make([]string, 0, len(cat.Models))
+	seen := map[string]bool{}
+	for _, model := range cat.Models {
+		if model.Provider != "openai" {
+			continue
+		}
+		id := strings.TrimPrefix(strings.TrimSpace(model.ID), "openai/")
+		if id == "" || seen[id] {
+			continue
+		}
+		if !strings.HasPrefix(id, "gpt-5") && !strings.HasPrefix(id, "gpt-6") {
+			continue
+		}
+		skip := false
+		for _, bad := range excluded {
+			if strings.Contains(id, bad) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		seen[id] = true
+		modelIDs = append(modelIDs, id)
+	}
+	sort.Strings(modelIDs)
+	if len(modelIDs) == 0 {
+		return nil
+	}
+	return modelIDs
+}
+
+func codexStartOAuthCmd(credential string, cat *catalog.Catalog) tea.Cmd {
 	return func() tea.Msg {
 		auth := codex.NewAuthorizerForCredential(secure.NewDefault(), credential)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -733,7 +778,11 @@ func codexStartOAuthCmd(credential string) tea.Cmd {
 		if _, err := auth.AuthorizeBrowser(ctx); err != nil {
 			return codexOAuthCompletedMsg{err: err}
 		}
-		return codexOAuthCompletedMsg{models: codex.FallbackModelIDs()}
+		models := codexCatalogModelIDs(cat)
+		if len(models) == 0 {
+			models = codex.FallbackModelIDs()
+		}
+		return codexOAuthCompletedMsg{models: models}
 	}
 }
 

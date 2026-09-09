@@ -74,18 +74,21 @@ function extractScopes(files) {
   return [...scopes].sort();
 }
 
-function extractTools(files) {
-  // Extract tool names from files that look like tool definitions: must have both
-  // userFacingName AND input_schema (the API shape field), ensuring we only pick up
-  // real tool objects, not any object with a `name` key.
-  //
-  // The `name` property value is the API tool name sent in the request.
+function extractTools(files, decodedDir) {
+  const manifestPath = path.join(decodedDir, "manifest.json");
+  if (existsSync(manifestPath)) return extractToolsESM(files, manifestPath);
+  return extractToolsMonolithic(files);
+}
+
+// Monolithic bundle (<= 2.1.226): one module per file, so a file that has both
+// userFacingName and input_schema is a tool definition and every `name: "X"`
+// in it is a tool name.
+function extractToolsMonolithic(files) {
   const tools = new Set();
   const nameRe = /\bname:\s*"([A-Za-z][A-Za-z0-9_]+)"/g;
 
   for (const file of files) {
     const content = readFileSync(file, "utf8");
-    // Require both markers to be present in the file — filters out non-tool files.
     if (!content.includes("userFacingName") || (!content.includes("input_schema") && !content.includes("inputSchema")))
       continue;
     let m;
@@ -93,6 +96,124 @@ function extractTools(files) {
     while ((m = nameRe.exec(content)) !== null) {
       tools.add(m[1]);
     }
+  }
+  return [...tools].sort();
+}
+
+// Code-split ESM bundle (>= 2.1.259): most tool definitions share one huge
+// module, so the file-level gate above matches everything (protobuf enums,
+// X.509 field names, …). Instead gate per object — `name:` must be followed
+// within the same object by userFacingName and inputSchema — and resolve the
+// name, which is now usually an identifier (`name: Ft`) declared either in the
+// same file (`var Ft = "Edit"` or a `, Ft = "Edit"` continuation) or imported
+// from another chunk, which manifest.json maps back to its decoded file.
+function extractToolsESM(files, manifestPath) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const chunkToFile = new Map();
+  for (const [chunk, mod] of Object.entries(manifest.modules ?? {})) {
+    if (mod?.file) chunkToFile.set(chunk, mod.file);
+  }
+
+  const contents = new Map(files.map((f) => [path.basename(f), readFileSync(f, "utf8")]));
+
+  // Per-file string-constant declarations. Walk each `var/let/const` statement
+  // and take every `IDENT = "lit"` declarator in it, so multi-declarator lists
+  // (`var a = 1,\n  Pd = "memory_read",`) resolve without also matching
+  // comma-expression reassignments elsewhere.
+  const stmtRe = /\b(?:var|let|const)\s+([^;]*?);/gs;
+  const declRe = /(?:^|,)\s*([A-Za-z_$][\w$]*)\s*=\s*"([A-Za-z][A-Za-z0-9_]*)"\s*(?=,|$)/g;
+  const localConsts = new Map();
+  for (const [name, content] of contents) {
+    const m = new Map();
+    let s;
+    stmtRe.lastIndex = 0;
+    while ((s = stmtRe.exec(content)) !== null) {
+      let d;
+      declRe.lastIndex = 0;
+      while ((d = declRe.exec(s[1])) !== null) {
+        if (!m.has(d[1])) m.set(d[1], d[2]);
+      }
+    }
+    localConsts.set(name, m);
+  }
+
+  // Per-file import bindings: ident → decoded file that exports it.
+  const importRe = /^import\s*\{([^}]*)\}\s*from\s*"[^"]*\/(chunk-[A-Za-z0-9]+)\.js";/gm;
+  const importsOf = (content) => {
+    const out = new Map();
+    let m;
+    importRe.lastIndex = 0;
+    while ((m = importRe.exec(content)) !== null) {
+      const file = chunkToFile.get(m[2]);
+      if (!file) continue;
+      for (const raw of m[1].split(",")) {
+        const ident = raw.trim().split(/\s+as\s+/).pop();
+        if (ident && !out.has(ident)) out.set(ident, file);
+      }
+    }
+    return out;
+  };
+
+  const tools = new Set();
+  const unresolved = new Set();
+  const dynamic = new Set();
+
+  // The decoded output is prettier-formatted, so object literals can be read
+  // structurally: a line ending in `({` or `= {` opens an object whose own
+  // keys share the indent of the first line after it (2 deeper normally, 4
+  // inside a `var a = …,` continuation), until the closing line at the
+  // opening indent. A tool definition is any such object whose own keys
+  // include `name`, `inputSchema`, and `call` or `userFacingName` (Skill
+  // omits the latter; MCP tool arrays and destructured params have neither).
+  const openRe = /^(\s*)\S.*(?:\(|=\s*)\{\s*$/;
+  const keyRe = /^\s*(?:async\s+|get\s+)?([A-Za-z_$][\w$]*)\s*[:(]/;
+  const nameRe = /^\s*name:\s*(?:"([A-Za-z][A-Za-z0-9_]+)"|([A-Za-z_$][\w$]*))\s*,\s*$/;
+
+  for (const [name, content] of contents) {
+    const imports = importsOf(content);
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const open = openRe.exec(lines[i]);
+      if (!open || i + 1 >= lines.length) continue;
+      const indent = /^\s*/.exec(lines[i + 1])[0];
+      if (indent.length <= open[1].length) continue;
+      const keys = new Map();
+      for (let j = i + 1; j < lines.length; j++) {
+        const l = lines[j];
+        if (l.startsWith(open[1] + "}")) break;
+        if (!l.startsWith(indent) || l.startsWith(indent + " ")) continue;
+        const k = keyRe.exec(l);
+        if (k && !keys.has(k[1])) keys.set(k[1], l);
+      }
+      if (!keys.has("name")) continue;
+      if (!keys.has("inputSchema") && !keys.has("input_schema")) continue;
+      if (!keys.has("call") && !keys.has("userFacingName")) continue;
+
+      const nm = nameRe.exec(keys.get("name"));
+      if (!nm) {
+        // Template literal or member expression — the name is computed at
+        // runtime (e.g. per-registered eval tool), not a static tool name.
+        dynamic.add(keys.get("name").trim());
+        continue;
+      }
+      if (nm[1]) {
+        tools.add(nm[1]);
+        continue;
+      }
+      // Imported bindings can't be redeclared at module top level, so they
+      // take precedence over any same-named local (minifiers reuse short
+      // names freely inside function bodies).
+      const ident = nm[2];
+      const lit = localConsts.get(imports.get(ident))?.get(ident) ?? localConsts.get(name)?.get(ident);
+      if (lit) tools.add(lit);
+      else unresolved.add(`${ident} (${name}:${i + 1})`);
+    }
+  }
+  if (unresolved.size) {
+    process.stderr.write(`[extract] WARN: unresolved tool-name identifiers: ${[...unresolved].join(", ")}\n`);
+  }
+  if (dynamic.size) {
+    process.stderr.write(`[extract] note: ${dynamic.size} tool object(s) with computed names skipped: ${[...dynamic].join(", ")}\n`);
   }
   return [...tools].sort();
 }
@@ -198,6 +319,12 @@ const KNOWN_HEADERS = new Set([
   // to the Anthropic API directly.
   "x-claude-gateway-user-email",
   "x-claude-gateway-user-id",
+  // Strict prefix-lock RESPONSE header (v2.1.266+) — not a request header. The
+  // API sets it on a 400 when a replayed thinking block's signature is bound to
+  // a different conversation: `block=messages.N.content.M;kind=<word>`. Conduit
+  // parses it in internal/api (ThinkingMismatch) and heals in the agent loop by
+  // stripping thinking blocks from that point, mirroring CC's own recovery.
+  "anthropic-thinking-prefix-mismatch",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.
@@ -312,14 +439,17 @@ export function runExtract(opts) {
   fingerprint.stainless_runtime_version = extractStainlessRuntime(files);
   fingerprint.beta_registry = extractBetaRegistry(files);
   fingerprint.oauth_scopes = extractScopes(files);
-  fingerprint.tools = extractTools(files);
+  fingerprint.tools = extractTools(files, decodedDir);
   fingerprint.discovered_headers = discoverHeaders(files);
 
-  // cch is a Bun compile-time macro: decoded JS shows "00000" as placeholder.
-  // The real per-build value can only be obtained from a live mitmproxy capture.
-  // Extractor marks it so verify.mjs knows to skip the diff for this field.
+  // cch: decoded JS shows "00000" as the source literal (it's the value sent
+  // for Vertex accounts). The real CLI substitutes it natively at runtime with
+  // a per-request value whose inputs are not visible in the JS bundle; live
+  // captures on 2.1.266 showed a different 5-hex string on every request.
+  // It is not reproducible. The API accepts "00000" from conduit (has done
+  // since 2.1.200), so we mark it as <<bun-macro>> to suppress verify drift.
   if (fingerprint.cch === "00000") {
-    fingerprint.cch_note = "Bun compile-time macro placeholder — actual value requires live mitmproxy capture";
+    fingerprint.cch_note = "Per-request native substitution — not reproducible from the decoded bundle; source literal is 00000 (Vertex value). API accepts 00000 from conduit (see COMPATIBILITY.md).";
     fingerprint.cch = "<<bun-macro>>";
   }
 

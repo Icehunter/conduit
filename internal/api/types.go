@@ -1,6 +1,11 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"regexp"
+	"strconv"
+	"strings"
+)
 
 // Wire types for /v1/messages.
 //
@@ -189,7 +194,12 @@ func (cb ContentBlock) MarshalJSON() ([]byte, error) {
 	if cb.Text != "" && cb.Type != "tool_result" {
 		m["text"] = cb.Text
 	}
-	if cb.Thinking != "" {
+	// The API requires `thinking` on every thinking block. A model can emit a
+	// signed thinking block with no visible reasoning text (Fable does this),
+	// and omitempty would drop the key entirely — the API then rejects the
+	// whole conversation with
+	// `messages.N.content.M.thinking.thinking: Field required`.
+	if cb.Type == "thinking" || cb.Thinking != "" {
 		m["thinking"] = cb.Thinking
 	}
 	if cb.Signature != "" {
@@ -314,4 +324,86 @@ type APIErrorEnvelope struct {
 type APIError struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+// ThinkingMismatch is the parsed `anthropic-thinking-prefix-mismatch` response
+// header. The API sets it on a 400 when a replayed thinking block's signature
+// is bound to a different conversation, pointing at the first offending block
+// so the client can strip from there rather than discarding all thinking.
+type ThinkingMismatch struct {
+	// MessageIndex/BlockIndex locate the failing block in the request's
+	// messages array. HasBlock is false when the header only carried a kind.
+	MessageIndex int
+	BlockIndex   int
+	HasBlock     bool
+	// Kind is the server's mismatch classification, when present.
+	Kind string
+}
+
+// APIStatusError is a non-2xx response decoded into a Go error. Error()
+// keeps the same flattened string as before so existing substring checks
+// (isToolUseFlowError, isProviderFailover, …) keep working; callers that need
+// structure use errors.As.
+type APIStatusError struct {
+	Status  int
+	Type    string
+	Message string
+	// ThinkingMismatch is non-nil when the response carried a parseable
+	// anthropic-thinking-prefix-mismatch header.
+	ThinkingMismatch *ThinkingMismatch
+
+	text string
+}
+
+func (e *APIStatusError) Error() string { return e.text }
+
+// IsPrefixLockRejection reports whether the error is the strict prefix-lock
+// 400 — a replayed thinking block whose signature belongs to another
+// conversation. Message phrases mirror CC 2.1.266's detector.
+func (e *APIStatusError) IsPrefixLockRejection() bool {
+	if e == nil || e.Status != 400 {
+		return false
+	}
+	m := strings.ToLower(e.Message)
+	return strings.Contains(m, "not created in this conversation") ||
+		strings.Contains(m, "bound to a different conversation")
+}
+
+var thinkingMismatchBlockRe = regexp.MustCompile(`^messages\.(\d{1,6})\.content\.(\d{1,6})$`)
+var thinkingMismatchKindRe = regexp.MustCompile(`^[a-z_]{1,40}$`)
+
+// ParseThinkingMismatch parses the anthropic-thinking-prefix-mismatch header
+// value (`block=messages.N.content.M;kind=word`). Returns nil when the value
+// is empty, oversized, or carries neither a well-formed block nor a kind —
+// the same acceptance rules CC applies. Only the first occurrence of a key
+// is honoured.
+func ParseThinkingMismatch(v string) *ThinkingMismatch {
+	if v == "" || len(v) > 2048 {
+		return nil
+	}
+	fields := map[string]string{}
+	for part := range strings.SplitSeq(v, ";") {
+		eq := strings.IndexByte(part, '=')
+		if eq <= 0 {
+			continue
+		}
+		k := strings.TrimSpace(part[:eq])
+		if _, dup := fields[k]; !dup {
+			fields[k] = strings.TrimSpace(part[eq+1:])
+		}
+	}
+	out := &ThinkingMismatch{}
+	if m := thinkingMismatchBlockRe.FindStringSubmatch(fields["block"]); m != nil {
+		// Bounded to 6 digits by the regexp, so Atoi cannot fail.
+		out.MessageIndex, _ = strconv.Atoi(m[1])
+		out.BlockIndex, _ = strconv.Atoi(m[2])
+		out.HasBlock = true
+	}
+	if k := fields["kind"]; thinkingMismatchKindRe.MatchString(k) {
+		out.Kind = k
+	}
+	if !out.HasBlock && out.Kind == "" {
+		return nil
+	}
+	return out
 }

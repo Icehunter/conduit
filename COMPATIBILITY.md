@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.259` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.266` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.112.1` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -84,6 +84,28 @@ ESM). See `scripts/wire-check/README.md` ("Bun bundle format") for detail.
 
 With extraction working again, `make wire-all` surfaced real drift against upstream 2.1.259,
 applied below.
+
+### 2.1.259 → 2.1.266 (2026-09-09)
+
+| Item | Action |
+|------|--------|
+| `Version` | Bumped to `2.1.266` in `cmd/conduit/main.go` |
+| `BillingVersion` / `BillingHeader` | Bumped to `2.1.266` in `internal/agent/systemprompt.go`. `verify.mjs` now checks `BillingVersion` and the `BillingHeader` literal against the fingerprint version (the follow-up from the 2.1.259 entry below), so this class of drift is caught by `make wire-claude-fast` instead of a live 400. |
+| `SDKPackageVersion` | Unchanged at `0.112.1` |
+| `X-Stainless-Runtime-Version` | `v24.3.0` → `v26.3.0` (live capture). Now a named constant `StainlessRuntimeVersion` in `internal/api/client.go`. |
+| `billing_salt`, client ID, OAuth URLs, beta registry, model IDs | Unchanged — no new model literals in the decoded bundle. `computeBillingSuffix` re-verified against the live capture (`"say the word hello and nothing else"` → `0f4`), pinned by `TestComputeBillingSuffix_MatchesLiveCapture`. |
+| **`cch` is per-request, not per-build** | Live mitmproxy capture (`scripts/wire-check/history/2.1.266/live-capture.json` + repeated probes): `cch` differed on *every* request — `2642f`, `67f7c`, `6afbe`, `1c474`, `396d2`, `92a39` — including four identical prompts on the same model. The decoded JS only ever contains the `cch=00000` literal (`1647_b8t.js` `b8t()`), so the substitution is native and its input isn't visible; no hash (md5/sha1/sha256/sha512/blake2b/sha3) over any permutation of prompt-id / session-id / client-request-id / device-id / account-uuid / salt / version / header prefix reproduces it. **Not reproducible.** The same source sends `cch=00000` verbatim for Vertex accounts, and the API has accepted `00000` from conduit since 2.1.200, so conduit keeps sending it. Every prior note that called it "static per-build" (`capture.py`, `systemprompt.go`, the 2.1.179/2.1.200 entries) was wrong and is corrected. |
+| `cc_prompt_id`, `cc_prev_req`, `cc_is_subagent` (billing header) | New fields from `b8t()`, adopted. `DynamicBillingBlock` now takes a `BillingContext`: `cc_prompt_id` is a fresh UUID per root `Run()` (one user prompt, tool turns included) that child loops inherit via `parentPromptID`; `cc_prev_req` is the previous response's `request-id` header (validated `^req_[A-Za-z0-9_-]{1,36}$`); `cc_is_subagent=true` on child loops. Field order matches CC: `cch; cc_is_subagent; cc_prev_req; cc_prompt_id`. `cc_workload` not adopted (CC-internal workload tagging). |
+| `anthropic-thinking-prefix-mismatch` (new header) | **Response** header, not a request header. Baselined in `KNOWN_HEADERS`. CC 2.1.266 introduces a *strict prefix lock*: thinking-block signatures are bound to the conversation they were produced in, and replaying one elsewhere (after compaction, `--resume`, a model swap) returns `400` with `"not created in this conversation"` / `"bound to a different conversation"` plus this header naming the first offending block (`block=messages.N.content.M;kind=<word>`). Adopted CC's heal: `internal/api` now returns a typed `*APIStatusError` (same `Error()` text as before) carrying the parsed header; `internal/agent/loop_prefixlock.go` strips thinking from the named block onward for the first two attempts, then all thinking, then surfaces the error — mirroring CC's `Afs=2` budget, `pAt` per-message strip, and `[Thinking removed]` placeholder. |
+| Live-only deltas not adopted | `effort-2025-11-24` absent from the capture because Haiku 4.5 doesn't support effort (`uy(model)` gate) — conduit's per-model beta denylist already covers this. `thinking.display: "omitted"` is set only for non-interactive sessions. `diagnostics.previous_message_id` is behind three feature flags. |
+| Tool extraction rewritten for the ESM bundle | The old file-level `userFacingName`+`input_schema` gate matched everything in the one giant ESM module (433 "tools": protobuf enums, X.509 names…). `extractToolsESM` now parses prettier-formatted object literals structurally (own keys at the inferred indent; requires `name` + `inputSchema` + `call`/`userFacingName`) and resolves identifier names through same-file `var` declarator lists and manifest-mapped cross-chunk imports. Yields the real 62-tool list. `verify.mjs` now reads conduit's tool names from `Name()` literals/consts instead of directory names, maps aliases (`Agent`→`Task`, `Skill`→`SkillTool`, `PowerShell`→`Shell`, MCP resource tools), and carries `TOOLS_DELIBERATELY_NOT_PORTED` with reasons (claude.ai Design/Projects/Artifacts, Cron, self-hosted runners, cloud memory, onboarding/feedback UI). `ccr-byoc-2025-07-29` added to `BETAS_DELIBERATELY_NOT_SENT`. `make wire-claude-fast` exits 0 again. |
+
+### Thinking-block round-trip fix (2026-09-06)
+
+| Item | Action |
+|------|--------|
+| **Empty thinking blocks dropped their required `thinking` field — 400 on every follow-up turn** | `ContentBlock.MarshalJSON` in `internal/api/types.go` emitted `thinking` under `if cb.Thinking != ""`. Fable 5.1 returns *signed* thinking blocks with no visible reasoning text, so the block serialized as `{"type":"thinking","signature":"…"}` and the API rejected the whole conversation with `400 invalid_request_error: messages.1.content.0.thinking.thinking: Field required` on the turn after the first tool call. The same omission also stripped the field from persisted session JSONL, so `--resume` reproduced it. Fixed by always emitting `thinking` when `Type == "thinking"`. |
+| Unsigned thinking blocks stripped before the wire | The API also requires `signature` on replayed thinking blocks. A stream cut before its `signature_delta` left an unsigned block in history that would 400 the next turn. `dropUnsignedThinkingBlocks` (called from `sanitizeAnthropicRequest`, so both the streaming and non-streaming paths get it) removes them, dropping any message left with no content. `buildContentBlocks` additionally stops persisting thinking blocks that have neither text nor signature. |
 
 ### 2.1.226 → 2.1.259 (2026-09-03)
 

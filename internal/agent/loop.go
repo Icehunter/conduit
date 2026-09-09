@@ -313,6 +313,14 @@ type Loop struct {
 	// loop's own children's Ask decisions via cfg.AskSubAgentPermission.
 	// Empty for the root loop.
 	subAgentLabel string
+	// promptID is the cc_prompt_id for the user prompt currently being
+	// served: a fresh UUID per Run() on a root loop, or the parent's at spawn
+	// time for a child (parentPromptID). lastRequestID is the `request-id`
+	// response header from the most recent successful stream, sent back as
+	// cc_prev_req. Both live in the billing system block for OAuth accounts.
+	promptID       string
+	parentPromptID string
+	lastRequestID  string
 	// Provider failover: chainResolver returns the ordered provider chain for a
 	// given role; newClientFor builds a fresh API client from a provider.
 	// Both are nil when failover is not configured (default behaviour unchanged).
@@ -751,7 +759,18 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 	// Snapshot mutable fields under the read lock so that concurrent Set*
 	// calls from the TUI goroutine cannot race with this turn's reads.
-	l.mu.RLock()
+	l.mu.Lock()
+	// A root loop's Run is one user prompt; a child serves its parent's.
+	if l.parentPromptID != "" {
+		l.promptID = l.parentPromptID
+	} else {
+		l.promptID = api.NewUUID()
+	}
+	billingCtx := BillingContext{
+		PromptID:      l.promptID,
+		PrevRequestID: l.lastRequestID,
+		IsSubAgent:    l.subAgentLabel != "",
+	}
 	model := l.cfg.Model
 	system := l.cfg.System
 	thinkingBudget := l.cfg.ThinkingBudget
@@ -762,7 +781,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	newClientFor := l.newClientFor
 	providerRotation := l.providerRotation
 	ttsrRules := l.cfg.TTSRRules
-	l.mu.RUnlock()
+	l.mu.Unlock()
 
 	// Build the failover chain once so we don't call chainResolver on every turn.
 	var (
@@ -798,6 +817,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	lastInputTokens := 0 // last reported input token count; 0 means unknown
 	streamFailures := 0
 	toolUseRecoveries := 0
+	prefixLockRecoveries := 0
 	fs := &failoverState{
 		chain:         failoverChain,
 		rotation:      providerRotation,
@@ -869,7 +889,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		if l.cfg.IsOAuthSubscription && len(reqSystem) > 0 {
 			if firstMsg := firstUserMessageText(msgs); firstMsg != "" {
 				updated := append([]api.SystemBlock(nil), reqSystem...)
-				updated[0] = DynamicBillingBlock(firstMsg)
+				updated[0] = DynamicBillingBlock(firstMsg, billingCtx)
 				reqSystem = updated
 			}
 		}
@@ -965,6 +985,22 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					continue
 				}
 			}
+			// Strict prefix lock: a replayed thinking signature is bound to
+			// another conversation (compaction, resume, model swap). Strip from
+			// the block the server named and retry; fall back to stripping all
+			// thinking. Nothing to strip means the error is surfaced as-is.
+			if se := prefixLockRejection(err); se != nil && prefixLockRecoveries < maxPrefixLockRecoveries {
+				prefixLockRecoveries++
+				if healed, scope, ok := healPrefixLock(msgs, se.ThinkingMismatch, prefixLockRecoveries); ok {
+					msgs = healed
+					handler(LoopEvent{
+						Type:         EventAPIRetry,
+						RetryAttempt: prefixLockRecoveries,
+						RetryErr:     fmt.Errorf("agent: prefix-lock rejection: stripped thinking (%s), retrying: %w", scope, err),
+					})
+					continue
+				}
+			}
 			if fs.tryRotate(err, handler) {
 				continue
 			}
@@ -979,6 +1015,16 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 		streamFailures = 0
 		toolUseRecoveries = 0
+		prefixLockRecoveries = 0
+
+		// Remember this response's request-id so the next request in the
+		// conversation can reference it as cc_prev_req.
+		if rid := stream.ResponseHeader.Get("request-id"); rid != "" {
+			billingCtx.PrevRequestID = rid
+			l.mu.Lock()
+			l.lastRequestID = rid
+			l.mu.Unlock()
+		}
 
 		// Emit rate-limit info from response headers before draining.
 		if rlInfo := ratelimit.Parse(stream.ResponseHeader); rlInfo.HasData() {

@@ -94,8 +94,19 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	childCfg.Gate = childGate
 	childCfg.AskPermission = nil
 
-	child = &Loop{client: childClient, reg: childReg, cfg: childCfg}
+	child = &Loop{client: childClient, reg: childReg, cfg: childCfg, parentPromptID: l.currentPromptID()}
 	return child, model
+}
+
+// currentPromptID returns the prompt this loop is serving (its own, or the
+// parent's if it is a child) so a spawned child can bill under it.
+func (l *Loop) currentPromptID() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.promptID != "" {
+		return l.promptID
+	}
+	return l.parentPromptID
 }
 
 // teammateSeq generates unique childIDs for teammate sub-agent tracker entries.

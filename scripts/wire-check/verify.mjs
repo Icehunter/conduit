@@ -28,6 +28,48 @@ import path from "path";
 const BETAS_DELIBERATELY_NOT_SENT = {
   "oidc-federation-2026-04-01":
     "intentional: scoped to the OIDC federation token exchange (grant_type=jwt-bearer with federation_rule_id/organization_id, upstream oidcFederationProvider). Conduit authenticates with the Max/Pro PKCE flow and never calls that path, so sending it on the messages API would be wrong.",
+  "ccr-byoc-2025-07-29":
+    "intentional: bring-your-own-cloud gate for Bedrock/Vertex customer-hosted deployments. Conduit only authenticates via Max/Pro OAuth and never exercises that path (COMPATIBILITY.md, 2.1.259 sync).",
+};
+
+// Upstream tools conduit deliberately does not port. Reported as DIVERGED with
+// the reason rather than NEW. Conduit's scope is the agent loop, tools,
+// permissions, hooks, MCP, skills and plugins — Claude-product integrations
+// (claude.ai Design/Projects/Artifacts, Cron, self-hosted runners, cloud
+// memory, onboarding/feedback UI) are out of scope. Only add an entry after
+// reading the upstream definition; a genuinely new coding tool belongs in
+// internal/tools/ instead.
+const TOOLS_DELIBERATELY_NOT_PORTED = {
+  Artifact: "claude.ai Artifacts add-on (ARTIFACT_ADDON_TOOLS) — product integration",
+  ClaudeDesign: "claude.ai/design project integration — product integration",
+  DesignSync: "claude.ai/design sync — product integration",
+  Projects: "claude.ai Projects — product integration",
+  CronDelete: "remote scheduled-task (cron) management — Claude cloud feature",
+  CronList: "remote scheduled-task (cron) management — Claude cloud feature",
+  ScheduleWakeup: "remote scheduled-task wakeup — Claude cloud feature",
+  Workflow: "remote workflow orchestration — Claude cloud feature",
+  Monitor: "WebSocket monitor task for remote devices — Claude cloud feature",
+  EndConversation: "remote/Claude-app conversation termination — not applicable to a local TUI",
+  ListAgents: "remote agent registry listing — conduit uses in-process Task/team dispatch",
+  PushNotification: "Claude mobile push — product integration",
+  SendFile: "Claude app file transfer — product integration",
+  SendUserFile: "Claude app file transfer — product integration",
+  SendUserMessage: "Claude app cross-device messaging — product integration",
+  SendFeedback: "in-product feedback submission — product integration",
+  ShowOnboardingRolePicker: "CC onboarding UI — product integration",
+  SuggestPluginInstall: "CC marketplace plugin suggestion UI — conduit's plugin flow is /plugins",
+  SearchPlugins: "CC marketplace plugin search — conduit's plugin flow is /plugins",
+  ReportFindings: "ultrareview/auto-mode findings reporter — Claude cloud feature",
+  TestingPermission: "CC internal permission-system test fixture — not a real tool",
+  RefreshMcpTools: "MCP tool-list refresh — conduit refreshes on reconnect via /mcp",
+  WaitForMcpServers: "MCP startup wait — conduit bounds MCP connect at startup instead",
+  ReadMcpResourceDirTool: "MCP resource directory listing — covered by ListMcpResources",
+  memory_list: "Anthropic cloud memory store — conduit uses local memdir",
+  memory_read: "Anthropic cloud memory store — conduit uses local memdir",
+  memory_write: "Anthropic cloud memory store — conduit uses local memdir",
+  self_hosted_runner_read_health: "SELF_HOSTED_RUNNER_TOOLS — enterprise runner ops",
+  self_hosted_runner_read_metrics: "SELF_HOSTED_RUNNER_TOOLS — enterprise runner ops",
+  self_hosted_runner_tail_log: "SELF_HOSTED_RUNNER_TOOLS — enterprise runner ops",
 };
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
@@ -62,6 +104,8 @@ function extractConduitConstants(conduitDir) {
 
   const billingHeader = systemPromptGo.match(/const\s+BillingHeader\s*=\s*"([^"]+)"/)?.[1] ?? null;
   const cch = billingHeader?.match(/cch=([0-9a-f]+)/)?.[1] ?? null;
+  const billingHeaderVersion = billingHeader?.match(/cc_version=([\d.]+)/)?.[1] ?? null;
+  const billingVersion = systemPromptGo.match(/BillingVersion\s*=\s*"([^"]+)"/)?.[1] ?? null;
 
   const betaBlockM = authGo.match(/betaHeaders\s*:=\s*\[\]string\{([^}]+)\}/s);
   const betaHeaders = betaBlockM
@@ -88,23 +132,50 @@ function extractConduitConstants(conduitDir) {
     ? [...extraHeadersM[1].matchAll(/"([^"]+)"\s*:/g)].map((m) => m[1])
     : [];
 
-  // Tool dirs under internal/tools/ (each subdir is a tool package).
+  // Tool names as sent on the wire: every `Name() string` method under
+  // internal/tools/ that returns a string literal or a package-level const.
   const registeredTools = [];
   const toolsDir = path.join(conduitDir, "internal/tools");
   if (existsSync(toolsDir)) {
-    for (const entry of readdirSync(toolsDir)) {
-      if (statSync(path.join(toolsDir, entry)).isDirectory()) {
-        // Normalize: "bashtool" → "BashTool", "filereadtool" → "FileReadTool"
-        const name = entry.replace(/tool$/, "Tool");
-        registeredTools.push(name.charAt(0).toUpperCase() + name.slice(1));
+    const goFiles = [];
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir)) {
+        const full = path.join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (entry.endsWith(".go") && !entry.endsWith("_test.go")) goFiles.push(full);
+      }
+    };
+    walk(toolsDir);
+    const byPkg = new Map();
+    for (const f of goFiles) {
+      const pkg = path.dirname(f);
+      if (!byPkg.has(pkg)) byPkg.set(pkg, []);
+      byPkg.get(pkg).push(readFileSync(f, "utf8"));
+    }
+    const nameM = /func\s+\([^)]*\)\s+Name\(\)\s+string\s*\{\s*return\s+(?:"([^"]+)"|([A-Za-z_]\w*))\s*\}/g;
+    for (const sources of byPkg.values()) {
+      const consts = new Map();
+      for (const src of sources) {
+        for (const m of src.matchAll(/^\s*(?:const\s+)?([A-Za-z_]\w*)\s*=\s*"([^"]+)"\s*(?:\/\/.*)?$/gm)) {
+          if (!consts.has(m[1])) consts.set(m[1], m[2]);
+        }
+      }
+      for (const src of sources) {
+        for (const m of src.matchAll(nameM)) {
+          const n = m[1] ?? consts.get(m[2]);
+          if (n && !registeredTools.includes(n)) registeredTools.push(n);
+        }
       }
     }
+    registeredTools.sort();
   }
 
   return {
     version,
     cch,
     billingHeader,
+    billingHeaderVersion,
+    billingVersion,
     betaHeaders,
     sdkVersion,
     anthropicVersion,
@@ -163,9 +234,20 @@ export function runVerify(opts) {
       : makeRow("CHANGED", "version", fp.version, co.version, "update var Version in cmd/conduit/main.go"),
   );
 
-  // cch (billing block) — Bun compile-time macro; can't extract from decoded JS.
+  // Billing-header cc_version. The API validates it against the User-Agent
+  // version and 400s every request on drift — the 2.1.259 sync bumped Version
+  // but missed this constant and broke all requests until live-tested.
+  rows.push(
+    fp.version === co.billingVersion && co.billingHeaderVersion === co.billingVersion
+      ? makeRow("OK", "billing cc_version", fp.version, co.billingVersion)
+      : makeRow("CHANGED", "billing cc_version", fp.version, `BillingVersion=${co.billingVersion} BillingHeader=${co.billingHeaderVersion}`, "update BillingVersion and the BillingHeader literal in internal/agent/systemprompt.go"),
+  );
+
+  // cch (billing block): not reproducible — the real CLI substitutes the
+  // source literal "00000" natively with a per-request value whose inputs
+  // aren't visible in the decoded JS. API accepts "00000" from conduit.
   if (fp.cch === "<<bun-macro>>") {
-    rows.push(makeRow("DIVERGED", "cch (billing header)", "<<bun-macro: requires live capture>>", co.cch, "run via mitmproxy to get real value; see billing_note in wire-fingerprint.json"));
+    rows.push(makeRow("DIVERGED", "cch (billing header)", "<<not reproducible — per-request native substitution>>", co.cch, "run via mitmproxy to observe real values; see COMPATIBILITY.md 2.1.266 entry"));
   } else {
     rows.push(
       fp.cch === co.cch
@@ -264,27 +346,34 @@ export function runVerify(opts) {
     if (!newScopes.length && !removed.length) rows.push(makeRow("OK", "oauth_scopes", fp.oauth_scopes, co.scopesAll));
   }
 
-  // Tool registry.
-  // Upstream tool API names don't map 1:1 to conduit's directory-derived names.
-  // Tools listed here are already handled by conduit under a different name/dir.
-  const KNOWN_TOOL_ALIASES = new Set([
-    "ReadMcpResourceTool", // → internal/tools/mcpresourcetool/ (M-H, ✅)
-    "mcp",                 // upstream MCP pass-through alias → internal/tools/mcptool/
-    "mcp__",               // upstream MCP server-scoped alias → internal/tools/mcptool/
-    "web_search",          // Anthropic-hosted server tool (agent_toolset_20260401); runs in Anthropic's container infra — not a conduit client tool
-  ]);
+  // Tool registry. Upstream API names vs conduit's Name() literals.
+  // KNOWN_TOOL_ALIASES maps upstream names that conduit implements under a
+  // different wire name.
+  const KNOWN_TOOL_ALIASES = {
+    Agent: "Task",                       // internal/tools/agenttool/ — conduit kept the pre-2.1.x name
+    Skill: "SkillTool",                  // internal/tools/skilltool/
+    PowerShell: "Shell",                 // Windows shell tool; registered instead of Bash on windows
+    ListMcpResourcesTool: "ListMcpResources", // internal/tools/mcpresourcetool/
+    ReadMcpResourceTool: "ReadMcpResource",   // internal/tools/mcpresourcetool/
+    mcp: "(mcp__<server>__<tool> dynamic registration)", // upstream MCP pass-through alias → internal/mcp
+  };
   if (fp.tools?.length && co.registeredTools.length) {
+    const conduitSet = new Set(co.registeredTools);
     const { onlyInA: newTools } = setDiff(fp.tools, co.registeredTools);
-    const genuinelyNew = newTools.filter((t) => !KNOWN_TOOL_ALIASES.has(t));
-    const aliased = newTools.filter((t) => KNOWN_TOOL_ALIASES.has(t));
+    const aliased = newTools.filter((t) => t in KNOWN_TOOL_ALIASES && (KNOWN_TOOL_ALIASES[t].startsWith("(") || conduitSet.has(KNOWN_TOOL_ALIASES[t])));
+    const notPorted = newTools.filter((t) => !aliased.includes(t) && t in TOOLS_DELIBERATELY_NOT_PORTED);
+    const genuinelyNew = newTools.filter((t) => !aliased.includes(t) && !notPorted.includes(t));
     if (aliased.length) {
-      rows.push(makeRow("DIVERGED", "tools handled under different conduit names", aliased, [], "implemented in conduit under a different directory name — see PARITY.md"));
+      rows.push(makeRow("DIVERGED", "tools handled under different conduit names", aliased, aliased.map((t) => KNOWN_TOOL_ALIASES[t]), "implemented in conduit under a different wire name — see KNOWN_TOOL_ALIASES"));
+    }
+    for (const t of notPorted) {
+      rows.push(makeRow("DIVERGED", `tool not ported: ${t}`, [t], [], TOOLS_DELIBERATELY_NOT_PORTED[t]));
     }
     if (genuinelyNew.length) {
-      rows.push(makeRow("NEW", "tools (upstream only)", genuinelyNew, [], "new tools detected upstream — check bun-demincer/decoded for impl details"));
+      rows.push(makeRow("NEW", "tools (upstream only)", genuinelyNew, [], "new tools detected upstream — read the definition in bun-demincer/decoded; port it or add to TOOLS_DELIBERATELY_NOT_PORTED with a reason"));
     }
-    if (!genuinelyNew.length && !aliased.length) {
-      rows.push(makeRow("OK", "tool_registry", `${fp.tools.length} upstream`, `${co.registeredTools.length} in conduit`));
+    if (!genuinelyNew.length) {
+      rows.push(makeRow("OK", "tool_registry", `${fp.tools.length} upstream`, `${co.registeredTools.length} in conduit; ${aliased.length} aliased, ${notPorted.length} not ported`));
     }
   }
 

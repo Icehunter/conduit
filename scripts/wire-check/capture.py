@@ -274,7 +274,7 @@ def request(flow):
                 "— verify conduit's computeBillingSuffix('say the word hello and nothing else') "
                 f"matches '{billing_suffix}'"
             ),
-            "cch": f"{billing_cch} — Bun compile-time macro, static per-build; decoded JS shows '00000' placeholder",
+            "cch": f"{billing_cch} — per-request native substitution (not static per-build); decoded JS source literal is '00000'; see COMPATIBILITY.md 2.1.266 entry",
             "cch_formula": "unknown — not in decoded JS source; baked into Bun binary at build time",
             "cc_entrypoint": billing_entrypoint,
         },

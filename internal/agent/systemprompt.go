@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -27,26 +28,31 @@ import (
 // the cc_version suffix is computed dynamically by DynamicBillingBlock using
 // the first user message — use that instead of this constant.
 //
-// cch=00000 is the value for firstParty (non-bedrock/vertex); unchanged since
-// v2.1.200 as of the v2.1.259 wire sync (2026-09-03) — the extractor can't
-// read it statically (it's computed by a bun macro at build time) so this
-// stays a carried-forward assumption until a live mitmproxy capture says
-// otherwise, not a re-verified value.
+// cch: the real CLI substitutes the `cch=00000` literal in its source with a
+// per-request 5-hex value at runtime, natively (outside the JS bundle) — live
+// captures on 2.1.266 (2026-09-09) showed a different value on every request,
+// even for identical prompts, and no hash of the visible request fields
+// reproduces it. It cannot be replicated. `00000` is what the source sends
+// verbatim for Vertex accounts, and the API has accepted it from conduit
+// since 2.1.200, so that is what we send.
 // CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
-const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.259; cc_entrypoint=sdk-cli; cch=00000;\n"
+const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.266; cc_entrypoint=sdk-cli; cch=00000;\n"
 
 const (
 	billingSalt = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.200/1470.js)
-	BillingCch  = "00000"        // firstParty value (non-bedrock/vertex); see BillingHeader comment
+	BillingCch  = "00000"        // Vertex literal; see BillingHeader comment
 	// BillingVersion must match cmd/conduit/main.go's Version — the server
 	// validates the two are consistent and 400s the request if they drift
 	// (confirmed live 2026-09-03: this constant was missed in an earlier
 	// Version bump this session and broke every request until caught here).
-	BillingVersion = "2.1.259"
+	// scripts/wire-check/verify.mjs now checks the two together.
+	BillingVersion = "2.1.266"
 )
 
 // computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.200/1470.js:
 // SHA256(billingSalt + firstMsg[4] + firstMsg[7] + firstMsg[20] + BillingVersion).slice(0,3).
+// Re-verified against the 2.1.266 live capture: "say the word hello and
+// nothing else" → "0f4".
 func computeBillingSuffix(firstUserMsg string) string {
 	k := make([]byte, 3)
 	for i, idx := range [3]int{4, 7, 20} {
@@ -60,11 +66,28 @@ func computeBillingSuffix(firstUserMsg string) string {
 	return fmt.Sprintf("%x", h[:])[:3]
 }
 
+// BillingContext carries the per-request fields the real CLI appends to the
+// billing header for Claude.ai OAuth accounts (decoded-2.1.266/1647_b8t.js).
+type BillingContext struct {
+	// PromptID is the UUID of the user prompt this request serves. Every
+	// request in the same prompt (tool-result turns included) shares it;
+	// sub-agents inherit their parent's.
+	PromptID string
+	// PrevRequestID is the `request-id` response header from the previous
+	// assistant turn in this conversation, if any.
+	PrevRequestID string
+	// IsSubAgent marks requests issued by a sub-agent loop.
+	IsSubAgent bool
+}
+
+var billingPrevReqRe = regexp.MustCompile(`^req_[A-Za-z0-9_-]{1,36}$`)
+
 // DynamicBillingBlock returns the first system block for Claude.ai OAuth
 // (Max subscription) accounts with the cc_version suffix computed from the
-// first user message. Mirrors the upstream Gd_(H) function in decoded-2.1.200/1470.js.
-// All other account types use the static BillingHeader constant instead.
-func DynamicBillingBlock(firstUserMsg string) api.SystemBlock {
+// first user message, plus the per-request context fields. Mirrors the
+// upstream b8t() function in decoded-2.1.266/1647_b8t.js. All other account
+// types use the static BillingHeader constant instead.
+func DynamicBillingBlock(firstUserMsg string, bc BillingContext) api.SystemBlock {
 	if v := os.Getenv("CLAUDE_GO_BILLING_HEADER"); v != "" {
 		return api.SystemBlock{Type: "text", Text: v}
 	}
@@ -72,14 +95,25 @@ func DynamicBillingBlock(firstUserMsg string) api.SystemBlock {
 	if entrypoint == "" {
 		entrypoint = "sdk-cli"
 	}
-	return api.SystemBlock{
-		Type: "text",
-		Text: fmt.Sprintf(
-			"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=%s;\n",
-			BillingVersion, computeBillingSuffix(firstUserMsg), entrypoint, BillingCch,
-		),
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=%s;",
+		BillingVersion, computeBillingSuffix(firstUserMsg), entrypoint, BillingCch)
+	if bc.IsSubAgent {
+		sb.WriteString(" cc_is_subagent=true;")
 	}
+	if billingPrevReqRe.MatchString(bc.PrevRequestID) {
+		fmt.Fprintf(&sb, " cc_prev_req=%s;", bc.PrevRequestID)
+	}
+	if isCanonicalUUID(bc.PromptID) {
+		fmt.Fprintf(&sb, " cc_prompt_id=%s;", bc.PromptID)
+	}
+	sb.WriteByte('\n')
+	return api.SystemBlock{Type: "text", Text: sb.String()}
 }
+
+var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func isCanonicalUUID(s string) bool { return uuidRe.MatchString(strings.ToLower(s)) }
 
 // MinimalIdentitySystem is the second system block: the agent identity
 // declaration. Empirically required to keep the request shape "CC-shaped".

@@ -28,7 +28,7 @@ var AppVersion = "dev"
 // Version is the CC wire version sent in User-Agent/X-App headers. Must
 // match internal/agent.BillingVersion — the server validates the two are
 // consistent and 400s the request if they drift, so bump both together.
-var Version = "2.1.259"
+var Version = "2.1.266"
 
 // GitCommit and BuildTime are stamped at build time.
 var GitCommit = "unknown"

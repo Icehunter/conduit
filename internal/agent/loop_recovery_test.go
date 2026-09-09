@@ -118,3 +118,31 @@ func bld(s string) *strings.Builder {
 	b.WriteString(s)
 	return b
 }
+
+// TestBuildContentBlocks_ThinkingBlocks — a signed thinking block is preserved
+// even with no text (Fable emits these), while a block with neither text nor
+// signature is dropped: it carries nothing the API can replay.
+func TestBuildContentBlocks_ThinkingBlocks(t *testing.T) {
+	metas := map[int]blockMeta{
+		0: {blockType: "thinking"},
+		1: {blockType: "thinking"},
+		2: {blockType: "text"},
+	}
+	texts := map[int]*strings.Builder{
+		0: bld(""),
+		1: bld(""),
+		2: bld("answer"),
+	}
+	sigs := map[int]string{0: "CAQSkBUKEAgR"}
+
+	got := buildContentBlocks(metas, texts, sigs)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 blocks (unsigned empty thinking dropped); got %d: %+v", len(got), got)
+	}
+	if got[0].Type != "thinking" || got[0].Signature != "CAQSkBUKEAgR" || got[0].Thinking != "" {
+		t.Errorf("blocks[0] = %+v; want empty signed thinking block", got[0])
+	}
+	if got[1].Type != "text" {
+		t.Errorf("blocks[1] = %+v; want text", got[1])
+	}
+}

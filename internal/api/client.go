@@ -22,10 +22,28 @@ import (
 const AnthropicVersion = "2023-06-01"
 
 // SDKPackageVersion is the @anthropic-ai/sdk version we identify as. The
-// real CLI bundles SDK 0.112.1 (wire-fingerprint 2.1.259); since Anthropic's
+// real CLI bundles SDK 0.112.1 (wire-fingerprint 2.1.266); since Anthropic's
 // API rate-limits clients whose Stainless headers don't look like the official
 // CLI's, we report the same string.
 const SDKPackageVersion = "0.112.1"
+
+// StainlessRuntimeVersion is the Node version the real CLI's Bun runtime
+// reports in X-Stainless-Runtime-Version (live-captured 2026-09-09 from
+// CC 2.1.266; see scripts/wire-check/history/2.1.266/live-capture.json).
+const StainlessRuntimeVersion = "v26.3.0"
+
+// NewUUID returns a random RFC 4122 v4 UUID in canonical lowercase form.
+func NewUUID() string {
+	var b [16]byte
+	_, _ = crand.Read(b[:]) // crypto/rand never fails on supported platforms
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return hex.EncodeToString(b[:4]) + "-" +
+		hex.EncodeToString(b[4:6]) + "-" +
+		hex.EncodeToString(b[6:8]) + "-" +
+		hex.EncodeToString(b[8:10]) + "-" +
+		hex.EncodeToString(b[10:])
+}
 
 const (
 	ProviderKindOpenAICompatible = "openai-compatible"
@@ -138,10 +156,14 @@ func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
 	// reaches the wire. These suffixes control context-window and beta-header
 	// behaviour internally but are not valid Anthropic API model identifiers.
 	hasSuffix := strings.HasSuffix(strings.ToLower(req.Model), "[1m]")
-	if !cfg.StripCacheControlScope && !hasSuffix {
+	msgs, msgsChanged := dropUnsignedThinkingBlocks(req.Messages)
+	if !cfg.StripCacheControlScope && !hasSuffix && !msgsChanged {
 		return req
 	}
 	out := *req
+	if msgsChanged {
+		out.Messages = msgs
+	}
 	if hasSuffix {
 		out.Model = req.Model[:len(req.Model)-4]
 	}
@@ -157,6 +179,49 @@ func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
 		}
 	}
 	return &out
+}
+
+// dropUnsignedThinkingBlocks removes thinking blocks that carry no signature.
+// The API requires `signature` on every thinking block replayed in history;
+// an unsigned one only arises when a stream was cut before its
+// signature_delta arrived, and replaying it 400s the entire conversation
+// rather than just that turn. Messages left with no content are dropped —
+// a thinking-only assistant message holds no tool_use, so nothing is orphaned.
+//
+// The input is returned untouched (changed=false) when every thinking block is
+// signed, which is the common case.
+func dropUnsignedThinkingBlocks(msgs []Message) ([]Message, bool) {
+	needsWork := false
+	for _, m := range msgs {
+		for _, cb := range m.Content {
+			if cb.Type == "thinking" && cb.Signature == "" {
+				needsWork = true
+				break
+			}
+		}
+		if needsWork {
+			break
+		}
+	}
+	if !needsWork {
+		return msgs, false
+	}
+	out := make([]Message, 0, len(msgs))
+	for _, m := range msgs {
+		blocks := make([]ContentBlock, 0, len(m.Content))
+		for _, cb := range m.Content {
+			if cb.Type == "thinking" && cb.Signature == "" {
+				continue
+			}
+			blocks = append(blocks, cb)
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		m.Content = blocks
+		out = append(out, m)
+	}
+	return out, true
 }
 
 // CreateMessage performs a non-streaming message request using the configured
@@ -300,19 +365,10 @@ func (c *Client) applyHeaders(h http.Header, model string) {
 	h.Set("X-Stainless-OS", stainlessOS())
 	h.Set("X-Stainless-Arch", stainlessArch())
 	h.Set("X-Stainless-Runtime", "node")
-	h.Set("X-Stainless-Runtime-Version", "v24.3.0") // matches Bun's reported node compatibility (v133)
+	h.Set("X-Stainless-Runtime-Version", StainlessRuntimeVersion)
 
 	// Per-request correlation ID — new in v133 (CLIENT_REQUEST_ID_HEADER).
-	var reqID [16]byte
-	_, _ = crand.Read(reqID[:])
-	reqID[6] = (reqID[6] & 0x0f) | 0x40
-	reqID[8] = (reqID[8] & 0x3f) | 0x80
-	h.Set("x-client-request-id",
-		hex.EncodeToString(reqID[:4])+"-"+
-			hex.EncodeToString(reqID[4:6])+"-"+
-			hex.EncodeToString(reqID[6:8])+"-"+
-			hex.EncodeToString(reqID[8:10])+"-"+
-			hex.EncodeToString(reqID[10:]))
+	h.Set("x-client-request-id", NewUUID())
 
 	if tok != "" {
 		h.Set("Authorization", "Bearer "+tok)
@@ -385,33 +441,54 @@ func stainlessArch() string {
 // before the Client is available (e.g. inside withRetry).
 func decodeErrorFromResp(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	var rl string
-	if resp.StatusCode == http.StatusTooManyRequests {
-		var bits []string
-		if v := resp.Header.Get("retry-after"); v != "" {
-			bits = append(bits, "retry-after="+v+"s")
+	return newStatusError(resp, raw, rateLimitSuffix(resp, []string{
+		"anthropic-ratelimit-unified-status",
+		"anthropic-ratelimit-requests-remaining",
+		"anthropic-ratelimit-input-tokens-remaining",
+	}))
+}
+
+// rateLimitSuffix renders retry-after plus the listed rate-limit headers as a
+// " [k=v …]" suffix on 429 responses, or "" otherwise. Headers are documented
+// at https://docs.anthropic.com/en/api/rate-limits.
+func rateLimitSuffix(resp *http.Response, headers []string) string {
+	if resp.StatusCode != http.StatusTooManyRequests {
+		return ""
+	}
+	var bits []string
+	if v := resp.Header.Get("retry-after"); v != "" {
+		bits = append(bits, "retry-after="+v+"s")
+	}
+	for _, h := range headers {
+		if v := resp.Header.Get(h); v != "" {
+			bits = append(bits, strings.TrimPrefix(h, "anthropic-ratelimit-")+"="+v)
 		}
-		for _, h := range []string{
-			"anthropic-ratelimit-unified-status",
-			"anthropic-ratelimit-requests-remaining",
-			"anthropic-ratelimit-input-tokens-remaining",
-		} {
-			if v := resp.Header.Get(h); v != "" {
-				bits = append(bits, strings.TrimPrefix(h, "anthropic-ratelimit-")+"="+v)
-			}
-		}
-		if len(bits) > 0 {
-			rl = " [" + strings.Join(bits, " ") + "]"
-		}
+	}
+	if len(bits) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(bits, " ") + "]"
+}
+
+// newStatusError builds the APIStatusError for a non-2xx response. The
+// flattened text matches the historical fmt.Errorf output byte-for-byte.
+func newStatusError(resp *http.Response, raw []byte, rl string) *APIStatusError {
+	e := &APIStatusError{
+		Status:           resp.StatusCode,
+		ThinkingMismatch: ParseThinkingMismatch(resp.Header.Get("anthropic-thinking-prefix-mismatch")),
 	}
 	var env APIErrorEnvelope
 	if err := json.Unmarshal(raw, &env); err == nil && env.Error.Type != "" {
-		return fmt.Errorf("api: %d %s: %s: %s%s",
-			resp.StatusCode, http.StatusText(resp.StatusCode),
-			env.Error.Type, env.Error.Message, rl)
+		e.Type = env.Error.Type
+		e.Message = env.Error.Message
+		e.text = fmt.Sprintf("api: %d %s: %s: %s%s",
+			resp.StatusCode, http.StatusText(resp.StatusCode), env.Error.Type, env.Error.Message, rl)
+		return e
 	}
-	return fmt.Errorf("api: %d %s: %s%s",
-		resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(raw)), rl)
+	e.Message = strings.TrimSpace(string(raw))
+	e.text = fmt.Sprintf("api: %d %s: %s%s",
+		resp.StatusCode, http.StatusText(resp.StatusCode), e.Message, rl)
+	return e
 }
 
 // isCredentialHeader returns true for any header whose value should be
@@ -466,39 +543,16 @@ func (c *Client) decodeError(resp *http.Response) error {
 	}
 
 	// Surface rate-limit context when the API tells us we're throttled.
-	// Headers are documented at https://docs.anthropic.com/en/api/rate-limits.
-	var rl string
-	if resp.StatusCode == http.StatusTooManyRequests {
-		var bits []string
-		if v := resp.Header.Get("retry-after"); v != "" {
-			bits = append(bits, "retry-after="+v+"s")
-		}
-		for _, h := range []string{
-			"anthropic-ratelimit-unified-status",
-			"anthropic-ratelimit-unified-reset",
-			"anthropic-ratelimit-unified-fallback-percentage",
-			"anthropic-ratelimit-requests-remaining",
-			"anthropic-ratelimit-requests-reset",
-			"anthropic-ratelimit-input-tokens-remaining",
-			"anthropic-ratelimit-input-tokens-reset",
-			"anthropic-ratelimit-output-tokens-remaining",
-			"anthropic-ratelimit-output-tokens-reset",
-		} {
-			if v := resp.Header.Get(h); v != "" {
-				bits = append(bits, strings.TrimPrefix(h, "anthropic-ratelimit-")+"="+v)
-			}
-		}
-		if len(bits) > 0 {
-			rl = " [" + strings.Join(bits, " ") + "]"
-		}
-	}
-
-	var env APIErrorEnvelope
-	if err := json.Unmarshal(raw, &env); err == nil && env.Error.Type != "" {
-		return fmt.Errorf("api: %d %s: %s: %s%s",
-			resp.StatusCode, http.StatusText(resp.StatusCode),
-			env.Error.Type, env.Error.Message, rl)
-	}
-	return fmt.Errorf("api: %d %s: %s%s",
-		resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(raw)), rl)
+	rl := rateLimitSuffix(resp, []string{
+		"anthropic-ratelimit-unified-status",
+		"anthropic-ratelimit-unified-reset",
+		"anthropic-ratelimit-unified-fallback-percentage",
+		"anthropic-ratelimit-requests-remaining",
+		"anthropic-ratelimit-requests-reset",
+		"anthropic-ratelimit-input-tokens-remaining",
+		"anthropic-ratelimit-input-tokens-reset",
+		"anthropic-ratelimit-output-tokens-remaining",
+		"anthropic-ratelimit-output-tokens-reset",
+	})
+	return newStatusError(resp, raw, rl)
 }

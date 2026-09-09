@@ -373,7 +373,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	}
 	childReg := l.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 
-	child := &Loop{client: childClient, reg: childReg, cfg: childCfg, subAgentLabel: label}
+	child := &Loop{client: childClient, reg: childReg, cfg: childCfg, subAgentLabel: label, parentPromptID: l.currentPromptID()}
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}

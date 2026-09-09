@@ -252,6 +252,11 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 			if sb != nil {
 				thinkingText = sb.String()
 			}
+			// A block with neither text nor signature carries nothing the API
+			// can replay — keeping it only guarantees a 400 on the next turn.
+			if thinkingText == "" && blockSignatures[i] == "" {
+				continue
+			}
 			blocks = append(blocks, api.ContentBlock{
 				Type:      "thinking",
 				Thinking:  thinkingText,

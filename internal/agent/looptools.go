@@ -91,13 +91,12 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		}
 
 		// --- Plan-mode file-dump block ---
-		// In plan mode, bash commands that merely dump file contents (cat/head/
-		// tail/less/more/bat) are blocked and steered toward the Read tool.
-		// The model must use Read/Grep/Glob for inspection — never bare bash
-		// file readers. Compound commands (pipelines, &&) pass through because
-		// they may be doing something useful beyond dumping.
+		// In plan mode, bash commands that dump file contents (cat/head/tail/
+		// less/more/bat) are blocked and steered toward the Read tool — even
+		// when chained behind cd/&&/; so `cd dir && cat file` cannot bypass
+		// the Read-tool-only policy the way a bare `cat file` would be caught.
 		if block.Name == "Bash" && l.cfg.Gate != nil && l.cfg.Gate.Mode() == permissions.ModePlan {
-			if shellsafe.IsFileDump(permInput) {
+			if shellsafe.ContainsFileDump(permInput) {
 				task.denied = true
 				task.denyMsg = "In plan mode, use the Read tool to read file contents instead of bash (cat/head/tail/less/more). Use Grep or Glob for searching."
 				tasks = append(tasks, task)

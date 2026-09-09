@@ -130,8 +130,40 @@ func IsFileDump(cmd string) bool {
 	if !ok || len(call.Args) == 0 {
 		return false
 	}
-	bin := filepath.Base(call.Args[0].Lit())
-	switch bin {
+	return isFileDumpBinary(call.Args[0].Lit())
+}
+
+// ContainsFileDump reports whether cmd invokes a file-dump binary (cat, head,
+// tail, less, more, bat) anywhere in its structure, including inside chains
+// (&&, ||, ;) and pipelines. Unlike IsFileDump, this walks the whole AST so a
+// `cd dir && cat file` cannot slip a file-content read past plan mode's
+// Read-tool-only policy just by prefixing it with another command. A parse
+// failure returns false (conservative — falls back to other checks).
+func ContainsFileDump(cmd string) bool {
+	f, ok := parse(cmd)
+	if !ok {
+		return false
+	}
+	found := false
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if found {
+			return false
+		}
+		if call, isCall := n.(*syntax.CallExpr); isCall && len(call.Args) > 0 {
+			if isFileDumpBinary(call.Args[0].Lit()) {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// isFileDumpBinary reports whether bin (a command's argv[0]) is a binary whose
+// purpose is dumping file contents to stdout.
+func isFileDumpBinary(arg string) bool {
+	switch filepath.Base(arg) {
 	case "cat", "head", "tail", "less", "more", "bat":
 		return true
 	}

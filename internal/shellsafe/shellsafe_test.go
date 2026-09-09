@@ -110,6 +110,59 @@ func TestHasUnsafeConstructs(t *testing.T) {
 	}
 }
 
+func TestIsFileDump(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"bare cat", "cat file.txt", true},
+		{"bare head", "head -20 file.txt", true},
+		{"bare tail", "tail -f log.txt", true},
+		{"bare less", "less file.txt", true},
+		{"bare more", "more file.txt", true},
+		{"bare bat", "bat file.txt", true},
+		{"bare ls not a dump", "ls -la", false},
+		{"chained cd and cat not caught by bare check", "cd src && cat file.txt", false},
+		{"pipe not caught by bare check", "cat file.txt | grep foo", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsFileDump(tt.cmd); got != tt.want {
+				t.Errorf("IsFileDump(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContainsFileDump(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"bare cat", "cat file.txt", true},
+		{"cd then cat", "cd web/src/tabs && cat file.go", true},
+		{"cd then cat semicolon", "cd src; cat file.go", true},
+		{"cat piped through grep", "cat file.txt | grep foo", true},
+		{"deep chain with tail at the end", "cd src && ls && tail -20 file.go", true},
+		{"or fallback into cat", "cd nope || cat fallback.txt", true},
+		{"ls only, no dump", "cd src && ls", false},
+		{"git status only", "git status", false},
+		{"unrelated compound", "git status && go vet ./...", false},
+		{"empty", "", false},
+		{"cat as substring of another binary is not matched", "concatenate file.txt", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ContainsFileDump(tt.cmd); got != tt.want {
+				t.Errorf("ContainsFileDump(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStripLeadingCd(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -152,5 +205,7 @@ func FuzzIsReadOnly(f *testing.F) {
 		}
 		_ = HasUnsafeConstructs(cmd)
 		_, _ = StripLeadingCd(cmd)
+		_ = IsFileDump(cmd)
+		_ = ContainsFileDump(cmd)
 	})
 }

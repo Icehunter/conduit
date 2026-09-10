@@ -206,6 +206,25 @@ func (t *Team) SendShutdownReply(senderName string, approved bool) error {
 	}
 }
 
+// Cancel cancels a single member's context without shutting down the rest of
+// the team. The member's own run goroutine observes ctx.Done(), unregisters
+// itself, removes its subagent-tracker entry, and notifies the lead — this
+// method only signals the cancellation. Returns an error if the member is
+// unknown. Idempotent: cancelling an already-cancelled or already-finished
+// member is a safe no-op.
+func (t *Team) Cancel(name string) error {
+	t.mu.RLock()
+	m, ok := t.members[name]
+	t.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("team: unknown member %q", name)
+	}
+	if m.CancelFn != nil {
+		m.CancelFn()
+	}
+	return nil
+}
+
 // Shutdown cancels all member contexts and marks the team as shut down.
 // Subsequent Register and Send calls return errors. Idempotent.
 func (t *Team) Shutdown() {

@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/icehunter/conduit/internal/subagent"
+	"github.com/icehunter/conduit/internal/team"
 )
 
 // subagentPanelState holds the state for the two-level sub-agent drill-in panel.
@@ -101,6 +102,9 @@ func (m Model) handleSubagentListKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "enter":
 		p.scroll = 0
 		p.view = "detail"
+	case "x", "ctrl+x":
+		m.subagentPanel = p
+		return m.killSelectedSubagent()
 	}
 	m.subagentPanel = p
 	return m, tickSubagentPanel()
@@ -140,9 +144,46 @@ func (m Model) handleSubagentDetailKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		maxScroll := len(evs) - subagentPanelMaxVisible
 		maxScroll = max(maxScroll, 0)
 		p.scroll = maxScroll
+	case "x", "ctrl+x":
+		m.subagentPanel = p
+		return m.killSelectedSubagent()
 	}
 	m.subagentPanel = p
 	return m, tickSubagentPanel()
+}
+
+// killSelectedSubagent cancels the teammate corresponding to the currently
+// selected entry, if it is a running teammate. Plain Task-tool sub-agents
+// (TeammateFor == "") have no independent cancellation handle — they run
+// synchronously inside their parent tool call — so the action is a no-op for
+// those, surfaced via flashMsg rather than silently doing nothing.
+func (m Model) killSelectedSubagent() (Model, tea.Cmd) {
+	p := m.subagentPanel
+	if p == nil || p.selected >= len(p.entryIDs) {
+		return m, tickSubagentPanel()
+	}
+	id := p.entryIDs[p.selected]
+	var target subagent.Entry
+	found := false
+	for _, e := range subagent.Default.SnapshotAll() {
+		if e.ID == id {
+			target, found = e, true
+			break
+		}
+	}
+	switch {
+	case !found || !target.IsRunning():
+		m.flashMsg = "agent is not running"
+	case target.TeammateFor == "":
+		m.flashMsg = "only teammates can be killed"
+	default:
+		if err := team.Default.Cancel(target.TeammateFor); err != nil {
+			m.flashMsg = fmt.Sprintf("kill failed: %v", err)
+		} else {
+			m.flashMsg = fmt.Sprintf("killed %s", target.TeammateFor)
+		}
+	}
+	return m, tea.Batch(tickSubagentPanel(), tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }))
 }
 
 // renderSubagentList renders the compact list picker (floated above input).
@@ -200,7 +241,7 @@ func (m Model) renderSubagentList() string {
 	}
 
 	// Footer hint.
-	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter open log · Esc close"))
+	sb.WriteString("\n" + stylePickerDesc.Render("↑/↓ navigate · Enter open log · x kill · Esc close"))
 	return sb.String()
 }
 
@@ -272,7 +313,7 @@ func (m Model) renderSubagentDetail() string {
 	}
 
 	// Footer hint (1 blank line above per design).
-	hint := "B back · ↑↓ scroll · Esc close"
+	hint := "B back · ↑↓ scroll · x kill · Esc close"
 	if isKnown && e.IsRunning() {
 		hint = "live · " + hint
 	}

@@ -362,6 +362,75 @@ func TestTeam_ShutdownCancelsAllMembers(t *testing.T) {
 	}
 }
 
+func TestTeam_CancelCancelsOnlyOneMember(t *testing.T) {
+	tm := New("t")
+	const n = 3
+	ctxs := make([]context.Context, n)
+	cancels := make([]context.CancelFunc, n)
+	for i := range ctxs {
+		ctxs[i], cancels[i] = context.WithCancel(context.Background())
+	}
+	for i := range n {
+		if _, err := tm.Register(fmt.Sprintf("m%d", i), cancels[i]); err != nil {
+			t.Fatalf("Register m%d: %v", i, err)
+		}
+	}
+
+	if err := tm.Cancel("m1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	select {
+	case <-ctxs[1].Done():
+		// good — targeted member was cancelled
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Cancel did not cancel context for m1")
+	}
+
+	for i, ctx := range ctxs {
+		if i == 1 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			t.Errorf("Cancel(m1) unexpectedly cancelled m%d", i)
+		default:
+			// good — other members untouched
+		}
+	}
+
+	// Team itself is still usable.
+	if err := tm.Send(Message{To: ReservedLeadName, Text: "still alive"}); err != nil {
+		t.Errorf("Send after Cancel(m1) should still work: %v", err)
+	}
+}
+
+func TestTeam_CancelUnknownMember(t *testing.T) {
+	tm := New("t")
+	if err := tm.Cancel("nope"); err == nil {
+		t.Error("Cancel of unknown member should return error")
+	}
+}
+
+func TestTeam_CancelIdempotent(t *testing.T) {
+	tm := New("t")
+	ctx, cancel := context.WithCancel(context.Background())
+	if _, err := tm.Register("m0", cancel); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := tm.Cancel("m0"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := tm.Cancel("m0"); err != nil {
+		t.Fatalf("second Cancel should not error: %v", err)
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Error("expected ctx to be done after Cancel")
+	}
+}
+
 func TestTeam_SendAfterShutdown(t *testing.T) {
 	tm := New("t")
 	tm.Shutdown()

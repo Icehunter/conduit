@@ -41,6 +41,13 @@ type toolResult struct {
 //  3. Tool execution.
 //  4. PostToolUse hooks (if configured).
 func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, bool, error) { //nolint:unparam
+	// Tools resolve relative paths and run shell commands under the loop's
+	// working directory so a sub-agent in a worktree stays in its worktree.
+	l.mu.RLock()
+	if l.cfg.Cwd != "" {
+		ctx = tool.WithCwd(ctx, l.cfg.Cwd)
+	}
+	l.mu.RUnlock()
 	// Phase 1: collect tool_use blocks and run interactive checks serially
 	// (hooks + permission gate may prompt the user — must be sequential).
 	// server_tool_use blocks are intentionally skipped — they are executed

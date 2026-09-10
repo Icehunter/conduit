@@ -93,7 +93,7 @@ type notebookCell struct {
 }
 
 // Execute edits a Jupyter notebook cell.
-func (*Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
+func (*Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var in Input
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("invalid input: %v", err)), nil
@@ -102,6 +102,7 @@ func (*Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error
 	if strings.TrimSpace(in.NotebookPath) == "" {
 		return tool.ErrorResult("`notebook_path` is required"), nil
 	}
+	in.NotebookPath = tool.ResolvePath(ctx, in.NotebookPath)
 	if !filepath.IsAbs(in.NotebookPath) {
 		return tool.ErrorResult("`notebook_path` must be absolute"), nil
 	}

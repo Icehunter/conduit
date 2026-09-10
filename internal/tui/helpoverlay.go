@@ -30,6 +30,7 @@ var helpSections = []helpSection{
 			{"Tab", "Autocomplete slash command"},
 			{"Esc", "Clear attachments / cancel"},
 			{"/? (command)", "Show keyboard shortcuts"},
+			{"/workflows", "Watch, kill or save workflow runs"},
 			{"ctrl+o", "Toggle verbose tool output"},
 			{"ctrl+t", "Toggle todo task strip"},
 			{"ctrl+g", "Toggle agent strip (team mode)"},

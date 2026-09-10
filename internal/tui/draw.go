@@ -13,6 +13,7 @@ import (
 	"github.com/icehunter/conduit/internal/subagent"
 	"github.com/icehunter/conduit/internal/theme"
 	"github.com/icehunter/conduit/internal/tools/todowritetool"
+	"github.com/icehunter/conduit/internal/workflow"
 )
 
 func makeTeaView(content string) tea.View {
@@ -54,7 +55,7 @@ func (m Model) Draw(scr uv.Screen, area image.Rectangle) {
 
 	// Sub-agent detail view uses tighter margins to maximise visible log content.
 	panelRect := layout.panel
-	if m.subagentPanel != nil && m.subagentPanel.view == "detail" {
+	if (m.subagentPanel != nil && m.subagentPanel.view == "detail") || (m.workflowPanel != nil && m.workflowPanel.view == "detail") {
 		panelRect = image.Rect(area.Min.X+3, area.Min.Y+1, area.Max.X-3, area.Max.Y-1)
 	}
 	panelModel := m
@@ -232,6 +233,8 @@ func (m Model) renderActivePanel() string {
 		return m.renderOnboarding()
 	case m.subagentPanel != nil && m.subagentPanel.view == "detail":
 		return m.renderSubagentDetail()
+	case m.workflowPanel != nil && m.workflowPanel.view == "detail":
+		return m.renderWorkflowDetail()
 	}
 	return ""
 }
@@ -246,6 +249,8 @@ func (m Model) renderActivePicker(area image.Rectangle) string {
 	switch {
 	case m.subagentPanel != nil && m.subagentPanel.view == "list":
 		return m.renderSubagentList()
+	case m.workflowPanel != nil && m.workflowPanel.view == "list":
+		return m.renderWorkflowList()
 	case m.loginPrompt != nil:
 		return m.renderLoginPicker()
 	case m.resumePrompt != nil:
@@ -285,14 +290,21 @@ func (m Model) renderWorkingRow() string {
 		m.working.SetLabel("Thinking")
 		entries := subagent.Default.Snapshot()
 		tasksHint := m.hiddenTasksHint()
+		wfLines := workflowWorkingLines()
 		if len(entries) == 0 {
+			var main string
 			if tasksHint == "" {
-				return styleStatus.Width(m.width).Render(m.working.Render())
+				main = styleStatus.Width(m.width).Render(m.working.Render())
+			} else {
+				hintW := lipgloss.Width(tasksHint)
+				spinnerW := m.width - hintW
+				spinnerW = max(spinnerW, 10)
+				main = styleStatus.Width(spinnerW).Render(m.working.Render()) + tasksHint
 			}
-			hintW := lipgloss.Width(tasksHint)
-			spinnerW := m.width - hintW
-			spinnerW = max(spinnerW, 10)
-			return styleStatus.Width(spinnerW).Render(m.working.Render()) + tasksHint
+			if len(wfLines) == 0 {
+				return main
+			}
+			return main + "\n" + strings.Join(wfLines, "\n")
 		}
 		// Right-align the hint so spinner width never clips it.
 		hint := stylePickerDesc.Render("  Enter ↵ to view log")
@@ -312,7 +324,12 @@ func (m Model) renderWorkingRow() string {
 			}
 			fmt.Fprintf(&sb, "\n  %s  %s", stylePickerDesc.Render("↳ "+label), modeBadge(e.Mode))
 		}
+		for _, l := range wfLines {
+			sb.WriteString("\n" + l)
+		}
 		return sb.String()
+	case !m.running && workflow.Default.Running() > 0:
+		return strings.Join(workflowWorkingLines(), "\n")
 	case !m.running && len(subagent.Default.SnapshotAll()) > 0:
 		n := len(subagent.Default.SnapshotAll())
 		noun := "agent log"

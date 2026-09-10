@@ -78,6 +78,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m2, cmd, consumed := m.handleSettingsPanelKey(msg)
 		return m2, cmd, consumed
 	}
+	if m.workflowPanel != nil {
+		m2, cmd := m.handleWorkflowPanelKey(msg)
+		return m2, cmd, true
+	}
 	// Sub-agent drill-in panel intercepts all keys when active.
 	if m.subagentPanel != nil {
 		m2, cmd := m.handleSubagentPanelKey(msg)

@@ -391,6 +391,9 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		return m, nil
 	case "plugin-panel":
 		return m.applyPluginPanel(res)
+	case "workflow-panel":
+		m = m.openWorkflowPanel()
+		return m, tickWorkflowPanel()
 	case "settings-panel":
 		return m.applySettingsPanel(res)
 	case "picker":

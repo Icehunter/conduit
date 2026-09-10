@@ -510,6 +510,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case workflowPanelRefreshMsg:
+		if m.workflowPanel == nil {
+			return m, nil
+		}
+		return m, tickWorkflowPanel()
+
 	case subagentPanelRefreshMsg:
 		if m.subagentPanel == nil {
 			return m, nil

@@ -104,10 +104,10 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("`pattern` is required and cannot be empty"), nil
 	}
 
-	baseDir := in.Path
+	baseDir := tool.ResolvePath(ctx, in.Path)
 	if baseDir == "" {
 		var err error
-		baseDir, err = os.Getwd()
+		baseDir, err = tool.Cwd(ctx)
 		if err != nil {
 			return tool.ErrorResult(fmt.Sprintf("cannot get working directory: %v", err)), nil
 		}

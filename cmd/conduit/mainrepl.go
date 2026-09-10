@@ -50,11 +50,13 @@ import (
 	"github.com/icehunter/conduit/internal/tools/skilltool"
 	"github.com/icehunter/conduit/internal/tools/syntheticoutputtool"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
+	"github.com/icehunter/conduit/internal/tools/workflowtool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	"github.com/icehunter/conduit/internal/truncate"
 	"github.com/icehunter/conduit/internal/ttsr"
 	"github.com/icehunter/conduit/internal/tui"
 	"github.com/icehunter/conduit/internal/updater"
+	"github.com/icehunter/conduit/internal/workflow"
 )
 
 // runREPL launches the full-screen Bubble Tea TUI.
@@ -817,6 +819,17 @@ func runREPL(continueMode bool, resumeID string) error {
 		return r.Text, nil
 	})
 	reg.Register(agentTool)
+	// Workflow tool: JS-scripted multi-agent orchestration. Runs live in the
+	// background and report back through InjectMessage as task-notifications.
+	workflowTool := workflowtool.New(workflowtool.Config{
+		Host:      &workflowtool.LoopHost{Loop: lp, Agents: agentRegistry, Cwd: func() string { return cwd }},
+		Notify:    lp.InjectMessage,
+		Cwd:       func() string { return cwd },
+		RunsDir:   filepath.Join(projectDir, "workflows"),
+		Ultracode: workflow.Ultracode.Load,
+	})
+	reg.Register(workflowTool)
+	defer workflow.Default.KillAll()
 	skillLoader := plugins.NewSkillLoader(loadedPlugins, cwd)
 	reg.Register(skilltool.New(
 		skillLoader,

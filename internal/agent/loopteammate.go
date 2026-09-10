@@ -73,6 +73,14 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 			Text: spec.SystemPrompt,
 		})
 	}
+	if spec.Cwd != "" {
+		childCfg.Cwd = spec.Cwd
+		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), api.SystemBlock{
+			Type: "text",
+			Text: "Your working directory is an isolated git worktree at " + spec.Cwd +
+				". Every relative path and shell command resolves there. Edit files inside it only; the main checkout is not yours to touch.",
+		})
+	}
 
 	childReg := parentReg
 	if len(spec.Tools) > 0 {

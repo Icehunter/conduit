@@ -109,6 +109,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if strings.TrimSpace(in.FilePath) == "" {
 		return tool.ErrorResult("`file_path` is required"), nil
 	}
+	in.FilePath = tool.ResolvePath(ctx, in.FilePath)
 	if len(in.Edits) == 0 {
 		return tool.ErrorResult("`edits` must not be empty"), nil
 	}

@@ -580,6 +580,8 @@ type Model struct {
 
 	// subagentPanel shows live tool events for a running sub-agent. Non-nil when open.
 	subagentPanel *subagentPanelState
+	// workflowPanel is the /workflows overlay. Non-nil when open.
+	workflowPanel *workflowPanelState
 
 	// Agent Teams — active when team.IsActive() and set via Config.TeamActive.
 	// Running teammates are shown as a compact strip above the todo strip.

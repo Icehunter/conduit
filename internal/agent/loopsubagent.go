@@ -87,6 +87,10 @@ type SubAgentSpec struct {
 	// run goroutine. Use for live streaming to UI consumers (e.g. TUI team panes).
 	// Called with the loop's internal mutex released; must be goroutine-safe.
 	OnEvent func(LoopEvent)
+	// Cwd, when set, is the child's working directory: tools resolve relative
+	// paths and run shell commands there, and the child is told about it in
+	// its system prompt. Used for worktree-isolated workflow agents.
+	Cwd string
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation

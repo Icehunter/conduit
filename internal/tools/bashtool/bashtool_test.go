@@ -3,10 +3,13 @@ package bashtool
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 func TestBash_StdoutCapture(t *testing.T) {
@@ -171,3 +174,20 @@ func TestBash_StaticMetadata(t *testing.T) {
 
 // Compile-time check: Tool implements the interface.
 var _ = func() time.Time { return time.Time{} }
+
+func TestBash_RunsInContextCwd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
+	dir := t.TempDir()
+	ctx := tool.WithCwd(context.Background(), dir)
+	res, err := New(nil).Execute(ctx, json.RawMessage(`{"command":"pwd"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got := strings.TrimSpace(res.Content[0].Text)
+	want, _ := filepath.EvalSymlinks(dir)
+	if gotReal, _ := filepath.EvalSymlinks(got); gotReal != want {
+		t.Errorf("pwd = %q, want %q", got, want)
+	}
+}

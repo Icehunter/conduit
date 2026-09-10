@@ -86,10 +86,17 @@ coming, and what's intentionally out of scope.
 | Provider failover chains | ✅ | `internal/providerrotation/`; configure `providerChains.role: [key1, key2]` in conduit.json; 429/503/529 rotate to next provider in chain; cooldowns tracked in-process; `EventProviderFailover` emitted on swap |
 | Token-Time Stopping Rules (TTSR) | ✅ | `internal/ttsr/`; regex rules in `.conduit/ttsr/*.md` frontmatter; 4KB sliding tail buffer; per-rule `MaxFires` cap; global 3-fires/turn circuit breaker; `EventTTSR` emitted on fire |
 | Model-per-role sub-agent dispatch | ✅ | `SubAgentSpec.Role`; `LoopConfig.RoleResolver` resolves role→(model, client); `Task(role: "planning")` routes through configured provider; plugin agents declare `role:` in frontmatter; all roles configured via ctrl+m are now honoured by sub-agents |
+| Workflows — JS-scripted multi-agent orchestration | ✅ | `internal/workflow/`: goja runtime (one goroutine owns the VM; host calls resolve promises back onto it) exposing CC's script API verbatim — `agent(prompt,{label,phase,schema,model,effort,isolation,agentType})`, `parallel`, `pipeline` (per-item chain, null/throw short-circuit), `phase`, `log`, `args`, `budget{total,spent(),remaining()}`, `workflow()` (one nesting level); `meta` extracted statically from the AST and rejected unless a pure literal; `Date.now`/`Math.random`/argless `new Date()` rejected statically and shimmed at runtime; caps: `min(16,CPUs-2)` concurrent, 1000 agents/run, 4096 items/call; all five graph-eng workflows run end-to-end in tests |
+| Workflow journal + resume | ✅ | `journal.jsonl` per run under `<project>/workflows/<runId>/`; `Workflow({scriptPath, resumeFromRunId})` replays identical `agent()` calls. **Divergence**: keys are content-based (`sha256(prompt‖canonical(opts))` + occurrence), not CC's order-chained keys — replay itself reorders pipeline continuations, so chained keys miss everything after the first reorder; script text is deliberately not in the key so edit-and-resume works |
+| Workflow worktree isolation | ✅ | `agent(…, {isolation:'worktree'})` → `git worktree add --detach` under `<repo>/.conduit/worktrees/`, child loop `Cwd` set; Bash (`cmd.Dir`), Read/Write/Edit/HashEdit/NotebookEdit/Glob/Grep/AstGrep/LSP resolve relative paths via `tool.CwdFromContext`; worktree auto-removed when clean, kept + logged when dirty |
+| Workflow tool (background + task-notification) | ✅ | `internal/tools/workflowtool/`; `{script\|scriptPath\|name, args, budgetTokens, resumeFromRunId}` starts a run and returns `runId` immediately; result injected as `<task-notification>` via `Loop.InjectMessage`; `op: status\|kill\|result` for polling; inline scripts persisted to `<run>/script.js`; `RunsDir` per project; killed on session exit |
+| Workflow discovery + slash commands | ✅ | `~/.conduit/workflows` → `~/.claude/workflows` → `<cwd>/.claude/workflows` (`*.js`, symlink-aware, later wins); each saved workflow registers `/<name> <args>` which prompts the model to call `Workflow({name,args})` (CC behaviour — model stays in the loop to present the result); `/workflows` panel |
+| Ultracode opt-in gate | ✅ | Tool description carries CC's opt-in rule; the `ultracode` keyword in a user message appends a system-reminder block for that turn; `/ultracode [on\|off]` flips a session flag that swaps the tool description to "author by default" and adds the reminder to every turn |
+| `/workflows` panel | ✅ | `internal/tui/workflowpanel.go`; list view floated above input (status, agents settled/total, tokens, elapsed, current phase); detail view with phase tree, running nodes, narrator log tail, `x` kill, `s` save run script to `~/.conduit/workflows/<name>.js` and register the slash command live; working row shows `⟳ workflow <name> · <phase> n/m` while a run is live |
 
 ---
 
-## Tools (37 built-in)
+## Tools (38 built-in)
 
 | Tool | Status | Notes |
 |------|--------|-------|
@@ -102,6 +109,7 @@ coming, and what's intentionally out of scope.
 | AstGrep | ✅ | `internal/tools/astgreptool/`; structural search/rewrite via installed ast-grep/sg; rewrites stage through diff gate; no auto-download |
 | GlobTool | ✅ | |
 | AgentTool (Task) | ✅ | Sub-agent spawning |
+| Workflow | ✅ | JS-scripted multi-agent orchestration; background run + task-notification; see Agent Runtime rows |
 | WebFetchTool | ✅ | HTML→markdown |
 | WebSearchTool | ✅ | Multi-provider: Brave Search (API key via secure storage or `BRAVE_API_KEY`) with Anthropic-native `web_search_20250305` fallback; providers tried in order, first non-empty result wins; `internal/websearch/` + `internal/websearch/brave/` |
 | NotebookEditTool | ✅ | Jupyter cell edit |
@@ -245,7 +253,7 @@ coming, and what's intentionally out of scope.
 | Claude plan usage footer | ✅ | 5h/7d windows; `/toggle-usage` |
 | Async-dialog keystroke guard | ✅ | Permission prompt, plan approval, diff review, and AskUserQuestion overlays each carry `guardFirstKey`; the first non-Esc key after async open is swallowed, preventing buffered Enter/Space from auto-accepting |
 | Mid-agent draft preservation | ✅ | Queued messages drain to the input box only when it is empty; an arriving `agentDone` event never clobbers an in-progress draft |
-| Agent Teams multi-pane layout | ✅ | `internal/tui/teampanes.go`; horizontal→vertical→fallback grid via compositor; Shift+Down cycles pane focus; Ctrl+T toggles task list strip; Enter routes input to focused teammate; live EventText streaming via TeammateNotifyHook; 500ms roster-refresh tick |
+| Agent Teams strip + agent log panel | ✅ | `internal/tui/teampanes.go` (flat status strip, Ctrl+G toggle) + `internal/tui/subagentpanel.go` (Enter drills into per-agent log); `x` kills the selected running teammate via `team.Team.Cancel` without shutting down the rest of the team |
 | `conduit serve` (local server) | 🔲 | C-O4: session/message/event endpoints |
 | `conduit attach` (attach client) | 🔲 | C-O4 |
 | Multi-session switcher panel | 🔲 | C-O5: depends on server spine |

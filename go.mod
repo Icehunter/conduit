@@ -80,7 +80,8 @@ require (
 	github.com/dave/dst v0.27.3 // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
-	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
+	github.com/dop251/goja v0.0.0-20260906210903-70ad66ec7ce4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
@@ -90,6 +91,7 @@ require (
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/ghostiam/protogetter v0.3.21 // indirect
 	github.com/go-critic/go-critic v0.14.4 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
 	github.com/go-toolsmith/astcopy v1.1.0 // indirect
 	github.com/go-toolsmith/astequal v1.2.0 // indirect
@@ -117,6 +119,7 @@ require (
 	github.com/golangci/swaggoswag v0.0.0-20250504205917-77f2aca3143e // indirect
 	github.com/golangci/unconvert v0.0.0-20250410112200-a129a6e6413e // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gordonklaus/ineffassign v0.2.0 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect

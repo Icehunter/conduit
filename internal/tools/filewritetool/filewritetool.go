@@ -82,6 +82,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if strings.TrimSpace(in.FilePath) == "" {
 		return tool.ErrorResult("`file_path` is required and cannot be empty"), nil
 	}
+	in.FilePath = tool.ResolvePath(ctx, in.FilePath)
 	if !filepath.IsAbs(in.FilePath) {
 		return tool.ErrorResult(fmt.Sprintf("`file_path` must be absolute, got: %s", in.FilePath)), nil
 	}

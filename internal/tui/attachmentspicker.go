@@ -13,6 +13,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/commands"
+	"github.com/icehunter/conduit/internal/workflow"
 )
 
 // expandPastePlaceholders replaces "[Pasted text #N +X lines]" tokens in s
@@ -77,6 +78,14 @@ func (m Model) takeUserContent(text string) (Model, []api.ContentBlock, int) {
 	m.pendingImages = nil
 	m.pendingPDFs = nil
 	content = append(content, m.userTextContent(apiText)...)
+	// The Workflow tool is gated on explicit opt-in; the reminder is how the
+	// model learns the gate is open for this turn (or the whole session).
+	switch {
+	case commands.HasUltracode(apiText):
+		content = append(content, api.ContentBlock{Type: "text", Text: commands.UltracodeReminder})
+	case workflow.Ultracode.Load():
+		content = append(content, api.ContentBlock{Type: "text", Text: commands.UltracodeSessionReminder})
+	}
 	return m, content, attachments
 }
 

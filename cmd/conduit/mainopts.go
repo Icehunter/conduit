@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,9 +23,13 @@ import (
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/session"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tools/agenttool"
 	"github.com/icehunter/conduit/internal/tools/skilltool"
+	"github.com/icehunter/conduit/internal/tools/workflowtool"
+	"github.com/icehunter/conduit/internal/workflow"
 )
 
 // runPrint executes a one-shot non-interactive agent run, streaming the
@@ -113,6 +118,14 @@ func runPrint(args []string) error {
 		}
 		return r.Text, nil
 	}))
+	reg.Register(workflowtool.New(workflowtool.Config{
+		Host:      &workflowtool.LoopHost{Loop: lp, Agents: agentRegistry, Cwd: func() string { return cwd }},
+		Notify:    lp.InjectMessage,
+		Cwd:       func() string { return cwd },
+		RunsDir:   filepath.Join(session.ProjectDirInConfig(cwd, settings.ConduitDir()), "workflows"),
+		Ultracode: workflow.Ultracode.Load,
+	}))
+	defer workflow.Default.KillAll()
 	reg.Register(skilltool.New(
 		plugins.NewSkillLoader(loadedPlugins, cwd),
 		lp.RunBackgroundAgent,

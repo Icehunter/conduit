@@ -98,7 +98,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 
 	// Resolve file to an absolute path.
-	absFile, err := filepath.Abs(in.File)
+	absFile, err := filepath.Abs(tool.ResolvePath(ctx, in.File))
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot resolve path %q: %v", in.File, err)), nil
 	}

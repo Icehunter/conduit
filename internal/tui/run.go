@@ -33,6 +33,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/askusertool"
 	"github.com/icehunter/conduit/internal/tools/automodetool"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
+	"github.com/icehunter/conduit/internal/workflow"
 )
 
 // altScreenExit/clearScreen are ANSI sequences for terminal cleanup.
@@ -243,6 +244,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPluginSkillCommands(reg, loadedPlugins)
 	commands.RegisterBundledSkillCommands(reg)
 	commands.RegisterFSSkillCommands(reg, cwd)
+	commands.RegisterWorkflowCommands(reg, cwd)
+	commands.RegisterUltracodeCommand(reg, workflow.Ultracode.Load, workflow.Ultracode.Store)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
 	commands.RegisterRecordingCommand(reg)

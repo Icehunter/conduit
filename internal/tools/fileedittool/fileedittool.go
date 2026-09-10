@@ -97,6 +97,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if strings.TrimSpace(in.FilePath) == "" {
 		return tool.ErrorResult("`file_path` is required"), nil
 	}
+	in.FilePath = tool.ResolvePath(ctx, in.FilePath)
 	if in.OldString == in.NewString {
 		return tool.ErrorResult("No changes to make: old_string and new_string are exactly the same."), nil
 	}

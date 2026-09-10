@@ -45,6 +45,7 @@ var lookAstGrepFunc = func() (string, error) {
 // stdout/stderr, returning the output bytes and any exec error.
 var runCmdFunc = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = tool.CwdFromContext(ctx)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -272,7 +273,7 @@ func (t *Tool) rewriteApply(ctx context.Context, bin string, in *Input, affected
 	// Read original content of each affected file before running --update-all.
 	origContents := make(map[string][]byte, len(affected))
 	for _, f := range affected {
-		b, err := os.ReadFile(f)
+		b, err := os.ReadFile(tool.ResolvePath(ctx, f))
 		if err != nil {
 			return tool.ErrorResult(fmt.Sprintf("cannot read %s before rewrite: %v", f, err)), nil
 		}
@@ -298,7 +299,7 @@ func (t *Tool) rewriteApply(ctx context.Context, bin string, in *Input, affected
 	// Stage or report each changed file.
 	var staged, direct, unchanged []string
 	for _, f := range affected {
-		newContent, err := os.ReadFile(f)
+		newContent, err := os.ReadFile(tool.ResolvePath(ctx, f))
 		if err != nil {
 			return tool.ErrorResult(fmt.Sprintf("cannot read %s after rewrite: %v", f, err)), nil
 		}

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/icehunter/conduit/internal/tool"
 )
 
 // helper: write a temp file, return its path.
@@ -266,5 +268,20 @@ func TestFileRead_LongLineTruncated(t *testing.T) {
 	// The truncated line should not contain the full length
 	if strings.Contains(got, strings.Repeat("x", MaxLineLength+100)) {
 		t.Error("long line was not truncated")
+	}
+}
+
+func TestFileRead_RelativePathResolvesAgainstContextCwd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rel.txt"), []byte("from cwd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := tool.WithCwd(context.Background(), dir)
+	res, err := New().Execute(ctx, input(t, map[string]any{"file_path": "rel.txt"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || !strings.Contains(res.Content[0].Text, "from cwd") {
+		t.Errorf("result = %+v", res)
 	}
 }

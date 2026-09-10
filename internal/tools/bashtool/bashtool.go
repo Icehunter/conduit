@@ -154,6 +154,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// Use exec.CommandContext so cancel-after-timeout sends SIGKILL.
 	// `bash -c` matches the real tool's shell-out behavior.
 	cmd := exec.CommandContext(cctx, "bash", "-c", in.Command)
+	cmd.Dir = tool.CwdFromContext(ctx)
 	// Inherit process env + any session-level env injected from settings.
 	if len(t.env) > 0 {
 		base := os.Environ()

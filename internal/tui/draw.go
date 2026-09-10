@@ -120,9 +120,7 @@ func drawString(scr uv.Screen, rect image.Rectangle, rendered string) {
 func withSurfaceAfterReset(rendered string) string {
 	bgEsc := theme.AnsiBG(windowBgHex)
 	fgEsc := theme.AnsiFG(theme.Active().Primary)
-	const fullReset = "\x1b[0m"
-	const softReset = "\x1b[22;23;39m"
-	rendered = strings.ReplaceAll(rendered, fullReset, softReset+bgEsc+fgEsc)
+	rendered = withSurfaceReset(rendered, bgEsc, fgEsc)
 	rendered = strings.ReplaceAll(rendered, " ", bgEsc+" ")
 	return bgEsc + fgEsc + rendered
 }
@@ -385,12 +383,10 @@ func (m Model) renderInputBox() string {
 		innerW = max(innerW, 1)
 		bgEsc := theme.AnsiBG(windowBgHex)
 		fgEsc := theme.AnsiFG(theme.Active().Primary)
-		const fullReset = "\x1b[0m"
-		const softReset = "\x1b[22;23;39m"
 		innerLines := strings.Split(innerView, "\n")
 		fixed := make([]string, 0, len(innerLines))
 		for _, line := range innerLines {
-			line = strings.ReplaceAll(line, fullReset, softReset+bgEsc+fgEsc)
+			line = withSurfaceReset(line, bgEsc, fgEsc)
 			w := lipgloss.Width(line)
 			if w < innerW {
 				line += surfaceSpaces(innerW - w)

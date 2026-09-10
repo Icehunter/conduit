@@ -117,6 +117,36 @@ func RegisterBundledSkillCommands(r *Registry) {
 	}
 }
 
+// RegisterFSSkillCommands registers slash commands for personal skills
+// discovered on disk (~/.conduit/skills, ~/.claude/skills, <cwd>/.claude/skills),
+// so they appear in the "/" command picker and can be invoked directly by the
+// user, not just by the model via SkillTool. Plugin and bundled commands
+// registered earlier take priority on name collision (call this first).
+func RegisterFSSkillCommands(r *Registry, cwd string) {
+	for _, cmd := range skills.LoadFS(cwd) {
+		name := cmd.QualifiedName
+		desc := cmd.Description
+		body := cmd.Body
+		if desc == "" {
+			desc = name
+		}
+		if _, exists := r.cmds[name]; exists {
+			continue
+		}
+		r.Register(Command{
+			Name:        name,
+			Description: desc,
+			Handler: func(args string) Result {
+				text := body
+				if args != "" {
+					text = text + "\n\nArguments: " + args
+				}
+				return Result{Type: "prompt", Text: text}
+			},
+		})
+	}
+}
+
 // RegisterPluginBrowserCommand registers /plugin and its subcommands.
 func RegisterPluginBrowserCommand(r *Registry, ps []*plugins.Plugin) {
 	r.Register(Command{

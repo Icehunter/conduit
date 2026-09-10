@@ -107,6 +107,36 @@ func TestDiscoverFS_BasicDiscovery(t *testing.T) {
 	}
 }
 
+func TestDiscoverFS_SymlinkedSkillDir(t *testing.T) {
+	// Skills installed via `ln -s` (e.g. graph-eng's install.sh) must still be
+	// discovered: os.ReadDir's DirEntry.IsDir() reports false for a symlink
+	// even when it points at a directory.
+	real := t.TempDir()
+	realSkillDir := filepath.Join(real, "graph-engineering")
+	writeFile(t, filepath.Join(realSkillDir, "SKILL.md"),
+		"---\nname: graph-engineering\ndescription: Graph engineering doctrine\n---\n\nFan out, reduce, verify, synthesize.\n")
+
+	cwd := t.TempDir()
+	linkPath := filepath.Join(cwd, ".claude", "skills", "graph-engineering")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realSkillDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONDUIT_CONFIG_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+
+	skills := DiscoverFS(cwd)
+	if len(skills) != 1 {
+		t.Fatalf("DiscoverFS returned %d skills; want 1", len(skills))
+	}
+	if skills[0].Name != "graph-engineering" {
+		t.Errorf("Name = %q; want %q", skills[0].Name, "graph-engineering")
+	}
+}
+
 func TestDiscoverFS_LaterDirOverrides(t *testing.T) {
 	conduitDir := t.TempDir()
 	cwd := t.TempDir()

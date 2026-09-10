@@ -43,17 +43,24 @@ func DiscoverFS(cwd string) []FSSkill {
 			continue
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
+			// e.IsDir() reports the entry's own type, which is false for a
+			// symlink even when it points at a directory (Go's DirEntry does
+			// not follow links). Stat the resolved target instead so that
+			// skills installed via symlink (e.g. graph-eng's install.sh) are
+			// still discovered.
+			entryPath := filepath.Join(base, e.Name())
+			info, err := os.Stat(entryPath)
+			if err != nil || !info.IsDir() {
 				continue
 			}
-			skillFile := filepath.Join(base, e.Name(), "SKILL.md")
+			skillFile := filepath.Join(entryPath, "SKILL.md")
 			content, err := os.ReadFile(skillFile) //nolint:gosec // skill files are user-owned
 			if err != nil {
 				continue
 			}
 			sk := parseFSSkill(e.Name(), string(content), skillFile)
 			// Append references/ markdown files if present.
-			sk.Body = appendReferences(filepath.Join(base, e.Name()), sk.Body)
+			sk.Body = appendReferences(entryPath, sk.Body)
 
 			if _, exists := byName[sk.Name]; !exists {
 				order = append(order, sk.Name)

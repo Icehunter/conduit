@@ -241,6 +241,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterPluginCommands(reg, loadedPlugins)
 	commands.RegisterPluginSkillCommands(reg, loadedPlugins)
 	commands.RegisterBundledSkillCommands(reg)
+	commands.RegisterFSSkillCommands(reg, cwd)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
 	commands.RegisterRecordingCommand(reg)

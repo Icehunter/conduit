@@ -194,6 +194,7 @@ coming, and what's intentionally out of scope.
 | Plugin skills (SKILL.md) | ✅ | Frontmatter + tool allowlist enforced |
 | Plugin hooks (hooks.json) | ✅ | Merged into session hook list |
 | Plugin agents (agents/*.md) | ✅ | Task `subagent_type` dispatch |
+| Personal agents (~/.claude/agents/*.md, not plugin-bundled) | ✅ | `plugins.DiscoverFSAgents` + `AgentRegistry.AddFS`; mirrors `internal/skills/fsloader.go` discovery order (`~/.conduit/agents` → `~/.claude/agents` → `<cwd>/.claude/agents`, symlink-aware); registered bare-name (no plugin prefix) |
 | Plugin MCP server sync | ✅ | |
 | Plugin output styles | ✅ | |
 | Bundled skills (`/simplify`, `/remember`) | ✅ | |

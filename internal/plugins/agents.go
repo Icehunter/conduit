@@ -22,6 +22,15 @@ func NewAgentRegistry(ps []*Plugin) *AgentRegistry {
 	return &AgentRegistry{agents: agents}
 }
 
+// AddFS merges personal (non-plugin) agents discovered under
+// ~/.conduit/agents, ~/.claude/agents, and <cwd>/.claude/agents into the
+// registry. Plugin agents already present keep their qualified names and
+// are unaffected; a bare name collision is resolved by DiscoverFSAgents'
+// own directory-precedence order before it ever reaches here.
+func (r *AgentRegistry) AddFS(cwd string) {
+	r.agents = append(r.agents, DiscoverFSAgents(cwd)...)
+}
+
 // FindAgent implements agenttool.Registry. Accepts:
 //   - "pluginName:name" (qualified)
 //   - "name" (bare — first match wins)

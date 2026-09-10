@@ -775,6 +775,7 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Register AgentTool and SkillTool now that the loop exists.
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
+	agentRegistry.AddFS(cwd)
 	agentTool := agenttool.New(
 		// Plain Task calls (no subagent_type) use RunSubAgentTyped so they
 		// appear in the sub-agent drill-in panel. RunBackgroundAgent marks

@@ -77,6 +77,7 @@ func runPrint(args []string) error {
 		IsOAuthSubscription: auth.InferAccountKind(p) == auth.AccountKindClaudeAI,
 	})
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
+	agentRegistry.AddFS(cwd)
 	reg.Register(agenttool.New(
 		func(ctx context.Context, prompt string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{

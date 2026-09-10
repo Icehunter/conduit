@@ -243,10 +243,9 @@ func TestLoop_SteerVsInject_Independence(t *testing.T) {
 	lp.InjectMessage("inject-3")
 
 	// Drain steer: only last wins.
-	v := lp.steerMsg.Swap("")
-	steer, _ := v.(string)
-	if steer != "steer-C" {
-		t.Errorf("steerMsg = %q; want last-write-wins %q", steer, "steer-C")
+	p := lp.steerMsg.Swap(nil)
+	if p == nil || len(*p) != 1 || (*p)[0].Text != "steer-C" {
+		t.Errorf("steerMsg = %+v; want last-write-wins text %q", p, "steer-C")
 	}
 
 	// Drain inject queue: all three must be present.

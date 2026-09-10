@@ -136,11 +136,12 @@ type RunOptions struct {
 	// from OnEndTurn when PendingEdits.Len() > 0.
 	DiffReview *DiffReviewHook
 
-	// SteerMessage, when non-nil, is called with the user's text to inject it
-	// as a steering turn between tool-call batches in the running agent loop.
-	// This lets the user steer the conversation without interrupting the agent.
-	// Provided by mainrepl via lp.InjectSteerMessage.
-	SteerMessage func(string)
+	// SteerContent, when non-nil, is called with the user's message content
+	// (text plus any attached images/documents) to inject it as a steering
+	// turn between tool-call batches in the running agent loop. This lets the
+	// user steer the conversation without interrupting the agent.
+	// Provided by mainrepl via lp.InjectSteerContent.
+	SteerContent func([]api.ContentBlock)
 
 	// InitialCatalog is the model capability catalog loaded from disk at startup.
 	// When nil the TUI starts without capability data; /models --refresh populates it.
@@ -532,7 +533,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		ClaudeMd:                  runOpts.ClaudeMd,
 		Skills:                    runOpts.Skills,
 		Agents:                    runOpts.Agents,
-		SteerMessage:              runOpts.SteerMessage,
+		SteerContent:              runOpts.SteerContent,
 		BackgroundModel: func() string {
 			if loop != nil {
 				return loop.BackgroundModel()

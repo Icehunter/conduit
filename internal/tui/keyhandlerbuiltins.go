@@ -437,15 +437,23 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			text := strings.TrimSpace(m.input.Value())
 			if text != "" && !strings.HasPrefix(text, "/") {
 				m = m.resetInput()
-				if m.cfg.SteerMessage != nil {
+				if m.cfg.SteerContent != nil {
 					// Inject mid-turn: the loop will append this as a user message
 					// between the current tool batch and the next API call, so the
 					// model steers without the current turn being interrupted.
-					m.cfg.SteerMessage(text)
+					// Attachments ride along — otherwise they'd sit in the pending
+					// queue and silently attach to the next unrelated message.
+					var content []api.ContentBlock
+					var attachments int
+					m, content, attachments = m.takeUserContent(text)
+					m.cfg.SteerContent(content)
 					m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 					m.refreshViewport()
 					m.vp.GotoBottom()
 					m.flashMsg = "[steering → next tool round]"
+					if attachments > 0 {
+						m.flashMsg = fmt.Sprintf("[steering → next tool round · %d attachment(s)]", attachments)
+					}
 				} else {
 					// Fallback: queue for delivery after the turn ends.
 					m.pendingMessages = append(m.pendingMessages, text)
@@ -611,39 +619,11 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				return runLocalCall(ctx, manager, call, input, turnID, true)
 			}), true
 		}
-		// Expand paste placeholders before sending to the API.
-		// The textarea holds "[Pasted text #N +X lines]" tokens; the agent
-		// receives the raw pasted content. After expansion, clear the map.
-		apiText := m.expandPastePlaceholders(text)
-		m.pastedBlocks = nil
-
-		// Build user message content. Prepend any queued images/PDFs so Claude
-		// sees attachments alongside the text. Accumulate on ctrl+v, send all on Enter.
-		userContent := make([]api.ContentBlock, 0, len(m.pendingImages)+len(m.pendingPDFs)+1)
-		for _, img := range m.pendingImages {
-			userContent = append(userContent, api.ContentBlock{
-				Type: "image",
-				Source: &api.ImageSource{
-					Type:      "base64",
-					MediaType: img.MediaType,
-					Data:      img.Data,
-				},
-			})
-		}
-		m.pendingImages = nil
-		for _, pdf := range m.pendingPDFs {
-			userContent = append(userContent, api.ContentBlock{
-				Type: "document",
-				Source: &api.ImageSource{
-					Type:      "base64",
-					MediaType: pdf.MediaType,
-					Data:      pdf.Data,
-				},
-			})
-		}
-		m.pendingPDFs = nil
-		userContent = append(userContent, m.atMentionContent(apiText)...)
-		userContent = append(userContent, api.ContentBlock{Type: "text", Text: apiText})
+		// Build the user message: paste placeholders expanded, queued
+		// images/PDFs prepended (accumulated on ctrl+v, sent on Enter), and
+		// @-mentions resolved.
+		var userContent []api.ContentBlock
+		m, userContent, _ = m.takeUserContent(text)
 		m.history = append(m.history, api.Message{
 			Role:    "user",
 			Content: userContent,

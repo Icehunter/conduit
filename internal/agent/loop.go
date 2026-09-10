@@ -336,10 +336,10 @@ type Loop struct {
 	// autoCompact.ts. Stored on the struct so it persists across Run() calls.
 	consecutiveCompactFails int
 	// steerMsg holds an optional user steering message to inject between
-	// tool-call rounds. Written by InjectSteerMessage (TUI goroutine), read
-	// and cleared by Run (loop goroutine) via atomic.Value so no extra lock
+	// tool-call rounds. Written by InjectSteerContent (TUI goroutine), read
+	// and cleared by Run (loop goroutine) via atomic.Pointer so no extra lock
 	// is needed. Semantics: last-write-wins (earlier messages are superseded).
-	steerMsg atomic.Value // stores string
+	steerMsg atomic.Pointer[[]api.ContentBlock]
 	// msgQueue is a per-loop ordered queue for programmatic injection (e.g.
 	// agent team mailbox delivery). All messages are preserved in insertion
 	// order and delivered together at the next turn boundary. Guarded by
@@ -370,13 +370,23 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 	return l
 }
 
-// InjectSteerMessage queues a user steering message to be injected into the
-// conversation between the current tool-call batch and the next API request.
-// Safe to call from any goroutine. Only the most recent call takes effect per
-// batch — if the user types multiple messages quickly, the last one wins
-// (earlier ones were superseded). The loop clears the slot after consuming it.
+// InjectSteerMessage queues a text-only user steering message. See
+// InjectSteerContent.
 func (l *Loop) InjectSteerMessage(text string) {
-	l.steerMsg.Store(text)
+	l.InjectSteerContent([]api.ContentBlock{{Type: "text", Text: text}})
+}
+
+// InjectSteerContent queues a user steering message to be injected into the
+// conversation between the current tool-call batch and the next API request.
+// Content may carry images and documents alongside text. Safe to call from
+// any goroutine. Only the most recent call takes effect per batch — if the
+// user sends multiple messages quickly, the last one wins (earlier ones were
+// superseded). The loop clears the slot after consuming it.
+func (l *Loop) InjectSteerContent(content []api.ContentBlock) {
+	if len(content) == 0 {
+		return
+	}
+	l.steerMsg.Store(&content)
 }
 
 // InjectMessage appends text to the per-loop programmatic delivery queue.
@@ -1242,14 +1252,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		// running, append it as a user turn now so the model sees it before
 		// the next API call — without interrupting the current turn.
 		// Last-write-wins: earlier steer messages are superseded by later ones.
-		if v := l.steerMsg.Swap(""); v != nil {
-			if text, _ := v.(string); text != "" {
-				msgs = append(msgs, api.Message{
-					Role:    "user",
-					Content: []api.ContentBlock{{Type: "text", Text: text}},
-				})
-				handler(LoopEvent{Type: EventText, Text: ""}) // wake TUI to reflect history update
-			}
+		if p := l.steerMsg.Swap(nil); p != nil && len(*p) > 0 {
+			msgs = append(msgs, api.Message{Role: "user", Content: *p})
+			handler(LoopEvent{Type: EventText, Text: ""}) // wake TUI to reflect history update
 		}
 
 	}

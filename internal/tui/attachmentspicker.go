@@ -44,6 +44,42 @@ func (m Model) userTextContent(text string) []api.ContentBlock {
 	return content
 }
 
+// takeUserContent builds the API content blocks for an outgoing user message
+// and consumes the pending attachment state: paste placeholders are expanded,
+// queued images/PDFs are prepended, and @-mentions are resolved. It returns
+// the number of attachments included so callers can surface it.
+func (m Model) takeUserContent(text string) (Model, []api.ContentBlock, int) {
+	apiText := m.expandPastePlaceholders(text)
+	m.pastedBlocks = nil
+
+	content := make([]api.ContentBlock, 0, len(m.pendingImages)+len(m.pendingPDFs)+1)
+	for _, img := range m.pendingImages {
+		content = append(content, api.ContentBlock{
+			Type: "image",
+			Source: &api.ImageSource{
+				Type:      "base64",
+				MediaType: img.MediaType,
+				Data:      img.Data,
+			},
+		})
+	}
+	for _, pdf := range m.pendingPDFs {
+		content = append(content, api.ContentBlock{
+			Type: "document",
+			Source: &api.ImageSource{
+				Type:      "base64",
+				MediaType: pdf.MediaType,
+				Data:      pdf.Data,
+			},
+		})
+	}
+	attachments := len(content)
+	m.pendingImages = nil
+	m.pendingPDFs = nil
+	content = append(content, m.userTextContent(apiText)...)
+	return m, content, attachments
+}
+
 func (m Model) atMentionContent(text string) []api.ContentBlock {
 	cwd, err := os.Getwd()
 	if err != nil {

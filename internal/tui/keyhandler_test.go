@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/attach"
 )
 
 // keyPress constructs a KeyPressMsg from common key names.
@@ -187,9 +191,9 @@ func TestHandleKey_EnterShrinksMultilineInputAfterSteeringSend(t *testing.T) {
 	m := idleModel()
 	m, _ = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m.running = true
-	var steered string
-	m.cfg.SteerMessage = func(text string) {
-		steered = text
+	var steered []api.ContentBlock
+	m.cfg.SteerContent = func(content []api.ContentBlock) {
+		steered = content
 	}
 	m.input.SetValue("steer line one\nsteer line two")
 	m = m.applyLayout()
@@ -201,14 +205,56 @@ func TestHandleKey_EnterShrinksMultilineInputAfterSteeringSend(t *testing.T) {
 	if !consumed {
 		t.Fatal("enter should be consumed")
 	}
-	if steered != "steer line one\nsteer line two" {
-		t.Fatalf("steered text = %q", steered)
+	if len(steered) != 1 || steered[0].Type != "text" || steered[0].Text != "steer line one\nsteer line two" {
+		t.Fatalf("steered content = %+v", steered)
 	}
 	if got := m2.input.Value(); got != "" {
 		t.Fatalf("input value after steering send = %q, want empty", got)
 	}
 	if got := m2.input.Height(); got != inputMinRows {
 		t.Fatalf("input height after steering send = %d, want %d", got, inputMinRows)
+	}
+}
+
+// TestHandleKey_SteeringSendCarriesAttachments guards against a regression
+// where a message sent mid-turn dropped queued images/PDFs and paste
+// expansions: the text was steered alone, and the attachments silently
+// rode along on the next unrelated message instead.
+func TestHandleKey_SteeringSendCarriesAttachments(t *testing.T) {
+	m := idleModel()
+	m, _ = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m.running = true
+	m.pendingImages = []*attach.Image{{Data: "aW1n", MediaType: "image/png"}}
+	m.pendingPDFs = []*attach.PDF{{Data: "cGRm", MediaType: "application/pdf"}}
+	m.pastedBlocks = map[int]string{1: "raw pasted body"}
+	var steered []api.ContentBlock
+	m.cfg.SteerContent = func(content []api.ContentBlock) {
+		steered = content
+	}
+	m.input.SetValue("look at [Pasted text #1 +3 lines]")
+
+	m2, _, consumed := m.handleKeyBuiltins(keyPress("enter"))
+	if !consumed {
+		t.Fatal("enter should be consumed")
+	}
+	if len(steered) != 3 {
+		t.Fatalf("steered %d blocks, want 3 (image, document, text): %+v", len(steered), steered)
+	}
+	if steered[0].Type != "image" || steered[0].Source == nil || steered[0].Source.Data != "aW1n" {
+		t.Errorf("block 0 = %+v, want image", steered[0])
+	}
+	if steered[1].Type != "document" || steered[1].Source == nil || steered[1].Source.Data != "cGRm" {
+		t.Errorf("block 1 = %+v, want document", steered[1])
+	}
+	if steered[2].Type != "text" || steered[2].Text != "look at raw pasted body" {
+		t.Errorf("block 2 = %+v, want expanded paste text", steered[2])
+	}
+	if len(m2.pendingImages) != 0 || len(m2.pendingPDFs) != 0 || len(m2.pastedBlocks) != 0 {
+		t.Errorf("pending state not cleared: images=%d pdfs=%d pastes=%d",
+			len(m2.pendingImages), len(m2.pendingPDFs), len(m2.pastedBlocks))
+	}
+	if !strings.Contains(m2.flashMsg, "2 attachment(s)") {
+		t.Errorf("flashMsg = %q, want attachment count", m2.flashMsg)
 	}
 }
 

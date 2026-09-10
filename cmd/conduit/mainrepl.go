@@ -980,7 +980,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 		PendingEdits:   pendingTable,
 		DiffReview:     diffReviewHook,
-		SteerMessage:   lp.InjectSteerMessage,
+		SteerContent:   lp.InjectSteerContent,
 		InitialCatalog: initialCatalog,
 		LSPManager:     lspManager,
 	})

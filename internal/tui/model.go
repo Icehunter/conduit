@@ -371,9 +371,10 @@ type Config struct {
 	// Agents is the agent types listing injected into the initial system blocks.
 	Agents []agent.AgentEntry
 
-	// SteerMessage, when non-nil, injects a user message into the running agent
-	// loop between tool-call batches instead of cancelling the current turn.
-	SteerMessage func(string)
+	// SteerContent, when non-nil, injects a user message (text plus any
+	// attached images/documents) into the running agent loop between
+	// tool-call batches instead of cancelling the current turn.
+	SteerContent func([]api.ContentBlock)
 }
 
 // Model is the Bubble Tea model.

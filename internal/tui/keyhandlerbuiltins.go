@@ -365,17 +365,29 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 
 	case "ctrl+t":
-		if m.teamActive {
-			m.teammateStripHidden = !m.teammateStripHidden
-			m = m.applyLayout()
-			return m, nil, true
-		}
+		// Always the todo strip. Team mode has its own key (ctrl+g) so
+		// starting a team session doesn't silently steal this binding —
+		// it used to, which left the todo strip stuck whenever team mode
+		// was active because there was no other way to toggle it back.
 		m.todoStripHidden = !m.todoStripHidden
 		m = m.applyLayout()
 		if m.todoStripHidden {
 			m.flashMsg = "todo strip hidden (ctrl+t to show)"
 		} else {
 			m.flashMsg = "todo strip visible (ctrl+t to hide)"
+		}
+		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+
+	case "ctrl+g":
+		if !m.teamActive {
+			return m, nil, true
+		}
+		m.teammateStripHidden = !m.teammateStripHidden
+		m = m.applyLayout()
+		if m.teammateStripHidden {
+			m.flashMsg = "agent strip hidden (ctrl+g to show)"
+		} else {
+			m.flashMsg = "agent strip visible (ctrl+g to hide)"
 		}
 		return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 

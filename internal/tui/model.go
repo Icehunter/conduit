@@ -583,7 +583,7 @@ type Model struct {
 	// Agent Teams — active when team.IsActive() and set via Config.TeamActive.
 	// Running teammates are shown as a compact strip above the todo strip.
 	teamActive          bool
-	teammateStripHidden bool // ctrl+t toggles the teammate strip
+	teammateStripHidden bool // ctrl+g toggles the teammate strip
 
 	// permissionMode tracks the active permission mode for Shift+Tab cycling.
 	// Mirrors getNextPermissionMode.ts cycle: default → acceptEdits → plan → default.

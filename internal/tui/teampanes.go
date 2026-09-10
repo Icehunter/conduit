@@ -50,7 +50,7 @@ func (m Model) renderTeammateStrip() string {
 	// Header line.
 	summary := fmt.Sprintf("[▶ %d  ✓ %d]", running, done)
 	title := styleStatusAccent.Render("◆ Agents")
-	hint := stylePickerDesc.Render("enter view  ctrl+t hide")
+	hint := stylePickerDesc.Render("enter view  ctrl+g hide")
 	hintW := lipgloss.Width(hint)
 	titleW := lipgloss.Width(title)
 	summaryW := lipgloss.Width(summary)

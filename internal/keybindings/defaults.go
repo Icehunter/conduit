@@ -20,6 +20,7 @@ func DefaultBlocks() []Block {
 				"ctrl+d": "app:exit",
 				"ctrl+l": "app:redraw",
 				"ctrl+t": "app:toggleTodos",
+				"ctrl+g": "app:toggleTeamStrip",
 				"ctrl+o": "app:toggleTranscript",
 				"ctrl+r": "history:search",
 			},

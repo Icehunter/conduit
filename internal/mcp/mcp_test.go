@@ -628,3 +628,115 @@ func TestLoadConfigsSkipsPluginMCPWhenUntrusted(t *testing.T) {
 		t.Fatal("plugin MCP server should load when trusted=true")
 	}
 }
+
+// TestConnectWithCwdKeepsStdioServerAliveAfterHandshake is a regression test
+// for a bug where connectWithCwd's 15s ConnectTimeout context was reused as
+// the stdio subprocess's exec.CommandContext lifetime. Since that context's
+// deferred cancel() fires the instant connectWithCwd returns (right after a
+// successful handshake, well before the 15s deadline), the freshly-spawned
+// server process was killed moments after connecting — every later tool
+// call then failed with "write: broken pipe" even though the server was
+// marked Connected. The subprocess must survive past connectWithCwd
+// returning; only the handshake RPCs should be bound by ConnectTimeout.
+func TestConnectWithCwdKeepsStdioServerAliveAfterHandshake(t *testing.T) {
+	serverSrc := `package main
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+func respond(id interface{}, result interface{}) {
+	b, _ := json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": id, "result": result})
+	fmt.Fprintln(os.Stdout, string(b))
+}
+
+func main() {
+	sc := bufio.NewScanner(os.Stdin)
+	for sc.Scan() {
+		var req map[string]interface{}
+		if err := json.Unmarshal(sc.Bytes(), &req); err != nil {
+			continue
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			respond(id, map[string]interface{}{"protocolVersion": "2024-11-05", "capabilities": map[string]interface{}{}})
+		case "notifications/initialized":
+			// no response
+		case "tools/list":
+			respond(id, map[string]interface{}{"tools": []map[string]interface{}{
+				{"name": "ping", "description": "ping"},
+			}})
+		case "tools/call":
+			respond(id, map[string]interface{}{"content": []map[string]interface{}{
+				{"type": "text", "text": "pong"},
+			}})
+		}
+	}
+}
+`
+	dir := t.TempDir()
+	srcFile := filepath.Join(dir, "server.go")
+	if err := os.WriteFile(srcFile, []byte(serverSrc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binFile := filepath.Join(dir, "server")
+	if runtime.GOOS == "windows" {
+		binFile += ".exe"
+	}
+	if out, err := exec.Command("go", "build", "-o", binFile, srcFile).CombinedOutput(); err != nil {
+		t.Fatalf("build stub server: %v\n%s", err, out)
+	}
+
+	m := NewManager()
+	cfg := ServerConfig{Type: "stdio", Command: binFile}
+	m.connectWithCwd(context.Background(), "regress-server", cfg, t.TempDir())
+
+	servers := m.Servers()
+	if len(servers) != 1 || servers[0].Status != StatusConnected {
+		t.Fatalf("server not connected: %+v", servers)
+	}
+
+	// The bug killed the subprocess as soon as connectWithCwd returned, so
+	// calling the tool right after — no sleep needed — reproduces it.
+	result, err := m.CallTool(context.Background(), "mcp__regress_server__ping", nil)
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("CallTool returned error result: %+v", result)
+	}
+	if len(result.Content) != 1 || result.Content[0].Text != "pong" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+// TestConnectWithCwdReportsMissingEnvVars covers the reporting path: an
+// unresolved ${VAR} must name itself in srv.Error rather than expanding to ""
+// and failing with an opaque exec error.
+func TestConnectWithCwdReportsMissingEnvVars(t *testing.T) {
+	m := NewManager()
+	cfg := ServerConfig{
+		Type:    "stdio",
+		Command: "/nonexistent/${CONDUIT_TEST_MISSING_TOKEN}/server",
+		Args:    []string{"--key=${CONDUIT_TEST_MISSING_KEY}"},
+	}
+	m.connectWithCwd(context.Background(), "missing-vars", cfg, t.TempDir())
+
+	servers := m.Servers()
+	if len(servers) != 1 {
+		t.Fatalf("want 1 server, got %d", len(servers))
+	}
+	srv := servers[0]
+	if srv.Status != StatusFailed {
+		t.Fatalf("status = %q, want %q", srv.Status, StatusFailed)
+	}
+	for _, want := range []string{"CONDUIT_TEST_MISSING_TOKEN", "CONDUIT_TEST_MISSING_KEY"} {
+		if !strings.Contains(srv.Error, want) {
+			t.Errorf("error %q does not name %q", srv.Error, want)
+		}
+	}
+}

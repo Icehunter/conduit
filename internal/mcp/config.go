@@ -302,14 +302,113 @@ func loadPluginMcpFile(path string) (map[string]ServerConfig, error) {
 	return flat, nil
 }
 
-// expandEnv replaces ${VAR} and $VAR in the string with environment values.
+// expandEnv replaces ${VAR}, ${VAR:-default}, and $VAR with environment
+// values, discarding the missing-variable report. See expandEnvVars.
 func expandEnv(s string) string {
-	return os.Expand(s, func(key string) string {
-		if v, ok := os.LookupEnv(key); ok {
-			return v
+	expanded, _ := expandEnvVars(s)
+	return expanded
+}
+
+// expandEnvVars replaces ${VAR}, ${VAR:-default}, and $VAR in the string with
+// environment values and reports the names of references that resolved to
+// nothing: unset, with no default supplied.
+//
+// A reference that resolves to nothing is left in the string verbatim rather
+// than replaced with "". This follows CC's env expansion
+// (src/services/mcp/envExpansion.ts), and it matters because the expanded
+// string becomes an argv entry, a URL or an Authorization header: a typo'd
+// ${GITHUB_TOKN} surfaces as a literal "${GITHUB_TOKN}" the user can see in
+// /mcp, where "" would surface as an opaque exec or 401 failure.
+//
+// Two deliberate divergences from the TS:
+//
+//   - The TS splits on ":-" with JS's two-arg split, which truncates rather
+//     than rejoining, so ${VAR:-a:-b} defaults to "a" there. Everything after
+//     the first ":-" is the default here, matching POSIX.
+//   - The TS only recognizes the ${...} form. Bare $VAR is also expanded here
+//     because conduit has always accepted it.
+//
+// A variable that is set but empty wins over its default, as in the TS and in
+// POSIX's ${VAR-default}; note that POSIX ${VAR:-default} would use the
+// default in that case.
+func expandEnvVars(s string) (string, []string) {
+	var (
+		b       strings.Builder
+		missing []string
+	)
+	// resolve reports the replacement for a reference and whether it resolved.
+	resolve := func(content string) (string, bool) {
+		varName, defaultValue, hasDefault := content, "", false
+		if idx := strings.Index(content, ":-"); idx >= 0 {
+			varName, defaultValue, hasDefault = content[:idx], content[idx+2:], true
 		}
-		return ""
-	})
+		if v, ok := os.LookupEnv(varName); ok {
+			return v, true
+		}
+		if hasDefault {
+			return defaultValue, true
+		}
+		missing = append(missing, varName)
+		return "", false
+	}
+
+	for i := 0; i < len(s); {
+		if s[i] != '$' || i+1 == len(s) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+
+		if s[i+1] == '{' {
+			end := strings.IndexByte(s[i+2:], '}')
+			if end < 0 {
+				// Unterminated "${": no reference to expand.
+				b.WriteString(s[i:])
+				break
+			}
+			raw := s[i : i+3+end]
+			if content := s[i+2 : i+2+end]; content == "" {
+				b.WriteString(raw)
+			} else if v, ok := resolve(content); ok {
+				b.WriteString(v)
+			} else {
+				b.WriteString(raw)
+			}
+			i += 3 + end
+			continue
+		}
+
+		name := leadingVarName(s[i+1:])
+		if name == "" {
+			// "$" followed by punctuation, or "$$": not a reference.
+			b.WriteByte('$')
+			i++
+			continue
+		}
+		if v, ok := resolve(name); ok {
+			b.WriteString(v)
+		} else {
+			b.WriteString(s[i : i+1+len(name)])
+		}
+		i += 1 + len(name)
+	}
+
+	return b.String(), missing
+}
+
+// leadingVarName returns the longest prefix of s that is a valid unbraced
+// shell variable name, or "" if s does not start with one.
+func leadingVarName(s string) string {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isAlpha := c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		isDigit := c >= '0' && c <= '9'
+		if isAlpha || (i > 0 && isDigit) {
+			continue
+		}
+		return s[:i]
+	}
+	return s
 }
 
 // isMcpjsonApproved checks the project-scope MCP approval state from the

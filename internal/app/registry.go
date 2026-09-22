@@ -27,6 +27,7 @@ import (
 	"github.com/icehunter/conduit/internal/tools/globtool"
 	"github.com/icehunter/conduit/internal/tools/greptool"
 	"github.com/icehunter/conduit/internal/tools/hashedittool"
+	"github.com/icehunter/conduit/internal/tools/localhelpertool"
 	"github.com/icehunter/conduit/internal/tools/localimplementtool"
 	lsptool "github.com/icehunter/conduit/internal/tools/lsp"
 	"github.com/icehunter/conduit/internal/tools/mcpauthtool"
@@ -182,6 +183,11 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	if _, ok := localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider)); ok {
 		reg.Register(localimplementtool.NewDynamic(mcpManager, func() (localimplementtool.Config, bool) {
 			return localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider))
+		}))
+	}
+	if _, ok := localhelpertool.ResolveConfig(mcpManager); ok {
+		reg.Register(localhelpertool.NewDynamic(mcpManager, func() (localhelpertool.Config, bool) {
+			return localhelpertool.ResolveConfig(mcpManager)
 		}))
 	}
 	// Agent Teams: always register SendMessage so the toggle works live.

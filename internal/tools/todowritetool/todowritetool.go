@@ -52,9 +52,15 @@ func New() *Tool { return &Tool{} }
 func (*Tool) Name() string { return "TodoWrite" }
 
 func (*Tool) Description() string {
-	return "Create and manage a structured task list for the current session. " +
-		"Use this tool to track multi-step tasks, mark progress, and ensure nothing is forgotten. " +
-		"Send the complete updated todo list each call (not just changes)."
+	return `Create and manage a structured task list for the current session. Track multi-step tasks, mark progress, and ensure nothing is forgotten. Send the complete updated todo list each call (not just changes).
+
+Use proactively when:
+- A task requires 3 or more distinct steps
+- The user provides a list of things to be done
+- After receiving new instructions — capture requirements as tasks immediately
+- When starting work on a task — mark it in_progress BEFORE beginning
+
+Do NOT use for single trivial tasks or purely conversational exchanges. Example: "how do I print in Python" needs no todo list — just answer it. Example: "add auth, rate limiting, and audit logging" does — three distinct features, create the list before starting.`
 }
 
 func (*Tool) InputSchema() json.RawMessage {

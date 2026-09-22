@@ -31,6 +31,18 @@ func NewManager() *Manager {
 	return &Manager{servers: make(map[string]*ConnectedServer)}
 }
 
+// NewManagerWithServers returns a Manager pre-populated with the given
+// connected servers, keyed by name. Used by tests that exercise
+// server-selection logic (e.g. picking among multiple local MCP tool
+// providers) without spinning up real MCP connections.
+func NewManagerWithServers(servers map[string]*ConnectedServer) *Manager {
+	m := NewManager()
+	for name, srv := range servers {
+		m.servers[name] = srv
+	}
+	return m
+}
+
 // SetSecureStore wires a secure.Storage so the manager can load persisted
 // OAuth bearer tokens for HTTP/SSE/WS servers. Callers that don't need
 // MCP OAuth can leave this unset.
@@ -99,11 +111,38 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 		return
 	}
 
-	// Bound the connect+initialize+list-tools sequence below so one wedged
-	// server (spawns but never responds) can't hang the whole ConnectAll
-	// fan-out — see ConnectTimeout.
-	ctx, cancel := context.WithTimeout(ctx, ConnectTimeout)
+	// Bounds the handshake below so one wedged server (spawns but never
+	// responds) can't hang the whole ConnectAll fan-out — see ConnectTimeout.
+	// Not the stdio subprocess's lifetime: exec.CommandContext kills the child
+	// when its context is Done, and this deferred cancel() fires as soon as
+	// connectWithCwd returns. The subprocess gets the long-lived parent ctx.
+	handshakeCtx, cancel := context.WithTimeout(ctx, ConnectTimeout)
 	defer cancel()
+
+	// Config values can reference environment variables. Track any that don't
+	// resolve so an unset ${TOKEN} is reported as such instead of surfacing as
+	// an opaque exec failure or 401 — see expandEnvVars.
+	var missingVars []string
+	seenMissing := map[string]bool{}
+	expand := func(s string) string {
+		expanded, missing := expandEnvVars(s)
+		for _, name := range missing {
+			if !seenMissing[name] {
+				seenMissing[name] = true
+				missingVars = append(missingVars, name)
+			}
+		}
+		return expanded
+	}
+	// fail decorates a failure message with the unresolved variables, which
+	// are the likeliest cause of it.
+	fail := func(format string, a ...any) string {
+		msg := fmt.Sprintf(format, a...)
+		if len(missingVars) > 0 {
+			msg += " — " + missingVarsNote(missingVars)
+		}
+		return msg
+	}
 
 	var client Client
 	var err error
@@ -116,34 +155,34 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 	t := strings.ToLower(cfg.Type)
 	switch t {
 	case "", "stdio":
-		cmd := expandEnv(cfg.Command)
+		cmd := expand(cfg.Command)
 		args := make([]string, len(cfg.Args))
 		for i, a := range cfg.Args {
-			args[i] = expandEnv(a)
+			args[i] = expand(a)
 		}
 		envMap := make(map[string]string, len(cfg.Env))
 		for k, v := range cfg.Env {
-			envMap[k] = expandEnv(v)
+			envMap[k] = expand(v)
 		}
 		client, err = NewStdioClient(ctx, cmd, args, envMap)
 	case "sse", "http":
 		hdrs := make(map[string]string, len(cfg.Headers))
 		for k, v := range cfg.Headers {
-			hdrs[k] = expandEnv(v)
+			hdrs[k] = expand(v)
 		}
 		if bearer != "" {
 			hdrs["Authorization"] = "Bearer " + bearer
 		}
-		client = NewHTTPClient(expandEnv(cfg.URL), hdrs)
+		client = NewHTTPClient(expand(cfg.URL), hdrs)
 	case "ws", "websocket":
 		hdrs := make(map[string]string, len(cfg.Headers))
 		for k, v := range cfg.Headers {
-			hdrs[k] = expandEnv(v)
+			hdrs[k] = expand(v)
 		}
 		if bearer != "" {
 			hdrs["Authorization"] = "Bearer " + bearer
 		}
-		client = NewWebSocketClient(expandEnv(cfg.URL), hdrs)
+		client = NewWebSocketClient(expand(cfg.URL), hdrs)
 	default:
 		srv.Status = StatusFailed
 		srv.Error = fmt.Sprintf("unsupported transport type %q", cfg.Type)
@@ -153,12 +192,12 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 
 	if err != nil {
 		srv.Status = StatusFailed
-		srv.Error = err.Error()
+		srv.Error = fail("%v", err)
 		m.store(name, srv)
 		return
 	}
 
-	instructions, err := client.Initialize(ctx)
+	instructions, err := client.Initialize(handshakeCtx)
 	if err != nil {
 		if errors.Is(err, ErrUnauthorized) && (t == "http" || t == "sse" || t == "ws" || t == "websocket") {
 			srv.Status = StatusNeedsAuth
@@ -168,14 +207,14 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 			return
 		}
 		srv.Status = StatusFailed
-		srv.Error = fmt.Sprintf("initialize: %v", err)
+		srv.Error = fail("initialize: %v", err)
 		_ = client.Close()
 		m.store(name, srv)
 		return
 	}
 	srv.Instructions = instructions
 
-	tools, err := client.ListTools(ctx)
+	tools, err := client.ListTools(handshakeCtx)
 	if err != nil {
 		if errors.Is(err, ErrUnauthorized) && (t == "http" || t == "sse" || t == "ws" || t == "websocket") {
 			srv.Status = StatusNeedsAuth
@@ -185,7 +224,7 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 			return
 		}
 		srv.Status = StatusFailed
-		srv.Error = fmt.Sprintf("tools/list: %v", err)
+		srv.Error = fail("tools/list: %v", err)
 		_ = client.Close()
 		m.store(name, srv)
 		return
@@ -194,7 +233,17 @@ func (m *Manager) connectWithCwd(ctx context.Context, name string, cfg ServerCon
 	srv.Status = StatusConnected
 	srv.Tools = tools
 	srv.client = client
+	if len(missingVars) > 0 {
+		// Connected, but something in the config didn't resolve: the server
+		// may still misbehave (empty arg, unauthenticated header), so say so.
+		srv.Error = missingVarsNote(missingVars)
+	}
 	m.store(name, srv)
+}
+
+// missingVarsNote renders unresolved config variable names for display.
+func missingVarsNote(names []string) string {
+	return "missing environment variables: " + strings.Join(names, ", ")
 }
 
 func (m *Manager) store(name string, srv *ConnectedServer) {

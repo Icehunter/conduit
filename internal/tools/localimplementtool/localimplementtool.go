@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/mcp"
@@ -17,6 +18,7 @@ const (
 	toolName             = "LocalImplement"
 	defaultServer        = "local-router"
 	defaultImplementTool = "local_implement"
+	coderTier            = "coder"
 )
 
 // Caller is the MCP call surface used by Tool. *mcp.Manager satisfies it.
@@ -29,6 +31,10 @@ type Config struct {
 	Server        string
 	ImplementTool string
 	Model         string
+	// SupportsFiles is true when the target tool's published input schema
+	// declares "files" and "root" properties, meaning the MCP server reads
+	// files itself instead of requiring the caller to inline their content.
+	SupportsFiles bool
 }
 
 // ConfigResolver returns the current local implementation target.
@@ -70,12 +76,19 @@ func (t *Tool) Description() string {
 			target = cfg.Model + " on " + cfg.Server
 		}
 	}
-	return "Offload a small, bounded implementation draft to the configured local/private model (" + target + "). " +
-		"Use this when a local model can draft a focused diff or code change from explicit requirements and supplied context. " +
-		"Read any required files first and include the relevant context in the prompt. " +
-		"Ask for a unified diff when changing existing files, include non-goals, and keep the request narrow. " +
+	desc := "Offload a small, bounded implementation draft to the configured local/private model (" + target + "). " +
+		"Use this when a local model can draft a focused diff or code change from explicit requirements and supplied context. "
+	if ok && cfg.SupportsFiles {
+		desc += "This target reads files itself: pass repository-relative paths in \"files\" and it will read them " +
+			"without you pre-reading them into your own context. Only inline excerpts in \"context\" for content that " +
+			"doesn't live in a file (e.g. a paste, an error message). "
+	} else {
+		desc += "Read any required files first and include the relevant context in the prompt. "
+	}
+	desc += "Ask for a unified diff when changing existing files, include non-goals, and keep the request narrow. " +
 		"The tool returns a draft diff or implementation text only; review it before applying changes. " +
 		"Do not use it for broad architecture, ambiguous product decisions, or work that requires hidden conversation context."
+	return desc
 }
 
 func (*Tool) InputSchema() json.RawMessage {
@@ -88,11 +101,11 @@ func (*Tool) InputSchema() json.RawMessage {
 			},
 			"context": {
 				"type": "string",
-				"description": "Relevant file excerpts, helper APIs, constraints, or repository facts the local model needs."
+				"description": "Relevant excerpts, helper APIs, constraints, or repository facts the local model needs that don't live in a file."
 			},
 			"files": {
 				"type": "array",
-				"description": "Repository paths the request concerns. Include excerpts in context when needed.",
+				"description": "Repository paths the request concerns. When the target supports file reads, these are read by the local server itself; otherwise include their content in context.",
 				"items": {"type": "string"}
 			}
 		},
@@ -125,11 +138,20 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("LocalImplement unavailable: no connected MCP server exposes local_implement."), nil
 	}
 
-	prompt := buildPrompt(in)
 	args := map[string]any{
-		"prompt":                  prompt,
 		"output_format":           "diff",
 		"include_review_reminder": false,
+	}
+	if cfg.SupportsFiles && len(in.Files) > 0 {
+		root, err := tool.Cwd(ctx)
+		if err != nil {
+			return tool.ErrorResult(fmt.Sprintf("could not resolve working directory: %v", err)), nil
+		}
+		args["prompt"] = buildPrompt(input{Prompt: in.Prompt, Context: in.Context})
+		args["files"] = in.Files
+		args["root"] = root
+	} else {
+		args["prompt"] = buildPrompt(in)
 	}
 	payload, err := json.Marshal(args)
 	if err != nil {
@@ -229,58 +251,97 @@ func ResolveConfig(manager *mcp.Manager, provider *settings.ActiveProviderSettin
 		if cfg.ImplementTool == "" {
 			cfg.ImplementTool = defaultImplementTool
 		}
-		if hasTool(manager, cfg.Server, cfg.ImplementTool) {
+		if srv, ok := findServer(manager, cfg.Server, cfg.ImplementTool); ok {
 			if cfg.Model == "" {
-				cfg.Model = modelName(manager, cfg.Server)
+				cfg.Model = srv.Config.Env["LOCAL_LLM_MODEL"]
 			}
+			cfg.SupportsFiles = toolSupportsFiles(srv, cfg.ImplementTool)
 			return cfg, true
 		}
 	}
 
-	for _, preferred := range []string{defaultServer, ""} {
-		for _, srv := range manager.Servers() {
-			if srv == nil || srv.Status != mcp.StatusConnected {
-				continue
-			}
-			if preferred != "" && srv.Name != preferred {
-				continue
-			}
-			if serverHasTool(srv, defaultImplementTool) {
-				return Config{
-					Server:        srv.Name,
-					ImplementTool: defaultImplementTool,
-					Model:         srv.Config.Env["LOCAL_LLM_MODEL"],
-				}, true
-			}
-		}
+	if srv, ok := bestImplementServer(manager); ok {
+		return Config{
+			Server:        srv.Name,
+			ImplementTool: defaultImplementTool,
+			Model:         srv.Config.Env["LOCAL_LLM_MODEL"],
+			SupportsFiles: toolSupportsFiles(srv, defaultImplementTool),
+		}, true
 	}
 	return Config{}, false
 }
 
-func hasTool(manager *mcp.Manager, server, name string) bool {
+// bestImplementServer picks the connected server exposing local_implement
+// deterministically: a server tagged LOCAL_LLM_TIER=coder wins first (the
+// coder tier is the only one meant to serve implement/fix), then the
+// conventional "local-router" name, then the alphabetically-first candidate.
+// manager.Servers() iterates an internal map, so without this ordering the
+// pick is effectively random across restarts — including landing on a CPU
+// helper instance for code-writing work.
+func bestImplementServer(manager *mcp.Manager) (*mcp.ConnectedServer, bool) {
+	var candidates []*mcp.ConnectedServer
+	for _, srv := range manager.Servers() {
+		if srv != nil && srv.Status == mcp.StatusConnected && serverHasTool(srv, defaultImplementTool) {
+			candidates = append(candidates, srv)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, false
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
+	for _, c := range candidates {
+		if strings.EqualFold(c.Config.Env["LOCAL_LLM_TIER"], coderTier) {
+			return c, true
+		}
+	}
+	for _, c := range candidates {
+		if c.Name == defaultServer {
+			return c, true
+		}
+	}
+	return candidates[0], true
+}
+
+func findServer(manager *mcp.Manager, server, toolName string) (*mcp.ConnectedServer, bool) {
 	for _, srv := range manager.Servers() {
 		if srv == nil || srv.Name != server || srv.Status != mcp.StatusConnected {
 			continue
 		}
-		return serverHasTool(srv, name)
+		if serverHasTool(srv, toolName) {
+			return srv, true
+		}
 	}
-	return false
+	return nil, false
 }
 
 func serverHasTool(srv *mcp.ConnectedServer, name string) bool {
-	for _, t := range srv.Tools {
-		if t.Name == name {
-			return true
-		}
-	}
-	return false
+	_, ok := toolDef(srv, name)
+	return ok
 }
 
-func modelName(manager *mcp.Manager, server string) string {
-	for _, srv := range manager.Servers() {
-		if srv != nil && srv.Name == server {
-			return srv.Config.Env["LOCAL_LLM_MODEL"]
+func toolDef(srv *mcp.ConnectedServer, name string) (mcp.ToolDef, bool) {
+	for _, t := range srv.Tools {
+		if t.Name == name {
+			return t, true
 		}
 	}
-	return ""
+	return mcp.ToolDef{}, false
+}
+
+// toolSupportsFiles reports whether a tool's published input schema declares
+// "files" and "root" properties, meaning the server reads files itself.
+func toolSupportsFiles(srv *mcp.ConnectedServer, toolName string) bool {
+	td, ok := toolDef(srv, toolName)
+	if !ok || len(td.InputSchema) == 0 {
+		return false
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(td.InputSchema, &schema); err != nil {
+		return false
+	}
+	_, hasFiles := schema.Properties["files"]
+	_, hasRoot := schema.Properties["root"]
+	return hasFiles && hasRoot
 }

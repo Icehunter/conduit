@@ -134,6 +134,6 @@ type ConnectedServer struct {
 	Disabled     bool // true when the server is in disabledMcpServers
 	Tools        []ToolDef
 	Instructions string // server-provided instructions from initialize response
-	Error        string // set when Status == StatusFailed
+	Error        string // failure detail when Status == StatusFailed; also carries a non-fatal warning (e.g. unresolved config variables) on a connected server
 	client       Client
 }

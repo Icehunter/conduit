@@ -73,3 +73,7 @@ Standards live in `.claude/rules/` and are loaded automatically:
 | `error-handling.md` | `*.go` | `%w` wrapping, no silent swallows, context propagation |
 | `tui.md` | `internal/tui/` | Bubble Tea v2 — no blocking in Update, model/update/view discipline |
 | `porting.md` | `*.go` | Using CC TS source as a behavioral reference; when and how to diverge; PARITY.md updates |
+
+## Local model routing
+
+The `local-coder` and `local-helper` MCP tools are configured for this project. Usage rules, measured limits and the few-shot requirement are in the global `~/.claude/CLAUDE.md` under "Local model routing".

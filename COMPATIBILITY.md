@@ -52,6 +52,7 @@ regression appears.
 | System prompt | Byte-identical to CC TS | Conduit-authored equivalent | Avoids IP reproduction; same behavioral sections |
 | BashTool on Windows | `BashTool` registered | `Shell` (PowerShell) registered instead | Go `os/exec` on Windows uses PowerShell |
 | Beta header count | 2 detected | 11 sent | Extra betas are valid API features; no API rejection observed |
+| MCP config env expansion | `${VAR}` only; `${VAR:-a:-b}` defaults to `a` (JS two-arg `split` truncates); missing vars are a config-load warning | `${VAR}`, `${VAR:-default}` and bare `$VAR`; `${VAR:-a:-b}` defaults to `a:-b` (POSIX); missing vars are reported per-server in `ConnectedServer.Error` | Unresolved references stay verbatim in both, so a typo is visible rather than silently empty; conduit reports at connect time because that's where the value is used (`internal/mcp/config.go:expandEnvVars`) |
 | Tool names `mcp`/`mcp__` | Pass-through aliases | `ListMcpResources`/`ReadMcpResource` | Conduit's MCP surface is explicit, not aliased |
 | Auto-updater | npm self-replace | Passive GitHub Release notifier | Conduit ships as a static binary |
 | AskUserQuestion quick-pick | Digit 1-9 immediately selects and submits in single-select | Digit focuses the option; Enter confirms; first key after open is swallowed (focus guard); popup queued if user has unsent draft | Prevent stray keystrokes (popup appearing mid-typing) from auto-submitting |

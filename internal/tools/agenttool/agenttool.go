@@ -34,7 +34,9 @@ const staticDescription = "Launch a sub-agent to handle a complex multi-step tas
 	"Provide a detailed `prompt` describing exactly what the sub-agent should do. " +
 	"Optionally supply a short `description` (shown in the UI while the agent runs). " +
 	"Available subagent_type values are listed in the system prompt under 'Available agent types'; " +
-	"if none match, omit the subagent_type field."
+	"if none match, omit the subagent_type field. " +
+	"Use for open-ended exploration or a self-contained deep-dive (e.g. \"find every caller of X and summarize the calling patterns\") where you'd otherwise burn many tool calls building context you don't need to keep. " +
+	"Don't use it for a task you can finish in 1-2 direct tool calls, or when you need the intermediate results yourself to decide the next step — the sub-agent's context doesn't return to you, only its final report does."
 
 // AgentDef is the runtime descriptor for a named sub-agent, provided by the
 // plugin agent registry.

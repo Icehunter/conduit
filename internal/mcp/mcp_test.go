@@ -692,6 +692,7 @@ func main() {
 	}
 
 	m := NewManager()
+	t.Cleanup(m.Close)
 	cfg := ServerConfig{Type: "stdio", Command: binFile}
 	m.connectWithCwd(context.Background(), "regress-server", cfg, t.TempDir())
 

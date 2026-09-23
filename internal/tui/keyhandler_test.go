@@ -34,8 +34,13 @@ func keyPress(s string) tea.KeyPressMsg {
 	}
 }
 
-// idleModel returns a New(Config{}) model with no running state — safe base for key tests.
-func idleModel() Model { return New(Config{}) }
+// idleModel returns a New(Config{}) model with no running state — safe base
+// for key tests. Resumed:true skips first-run onboarding, which otherwise
+// triggers non-deterministically depending on whether the test machine's
+// $HOME already has a settings.json with OnboardingComplete set — on a
+// fresh CI runner it does not, so onboarding intercepts every key ahead of
+// the panel/overlay under test.
+func idleModel() Model { return New(Config{Resumed: true}) }
 
 // TestHandleKey_HistoryNav_Up verifies Up navigates backward through history when idle.
 func TestHandleKey_HistoryNav_Up(t *testing.T) {

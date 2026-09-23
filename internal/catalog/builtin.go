@@ -1,7 +1,8 @@
 package catalog
 
 // builtinModels returns a baked-in snapshot of well-known Anthropic models.
-// Pricing is approximate public pricing (USD / 1M tokens) as of 2026-07.
+// Pricing is sourced from the pricing_tiers table in the decoded Claude Code
+// bundle (wire sync 2.1.280) and is USD / 1M tokens.
 // This snapshot is used when the network is unavailable and no cache exists.
 func builtinModels() []ModelInfo {
 	return []ModelInfo{
@@ -28,6 +29,39 @@ func builtinModels() []ModelInfo {
 			Thinking:        true,
 		},
 		{
+			ID:              "claude-mythos-5-1",
+			Name:            "Claude Mythos 5.1",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  10.0,
+			OutputCostPer1M: 50.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
+		{
+			ID:              "claude-mythos-5",
+			Name:            "Claude Mythos 5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  10.0,
+			OutputCostPer1M: 50.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        false,
+		},
+		{
+			ID:              "claude-opus-5-5",
+			Name:            "Claude Opus 5.5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  4.0,
+			OutputCostPer1M: 20.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
+		{
 			ID:              "claude-opus-5",
 			Name:            "Claude Opus 5",
 			Provider:        "anthropic",
@@ -41,6 +75,28 @@ func builtinModels() []ModelInfo {
 		{
 			ID:              "claude-opus-4-8",
 			Name:            "Claude Opus 4.8",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  5.0,
+			OutputCostPer1M: 25.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
+		{
+			ID:              "claude-opus-4-7",
+			Name:            "Claude Opus 4.7",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  5.0,
+			OutputCostPer1M: 25.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
+		{
+			ID:              "claude-opus-4-6",
+			Name:            "Claude Opus 4.6",
 			Provider:        "anthropic",
 			ContextWindow:   1_000_000,
 			InputCostPer1M:  5.0,

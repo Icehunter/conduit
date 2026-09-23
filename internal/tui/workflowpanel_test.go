@@ -56,9 +56,14 @@ func startRun(t *testing.T, id string, release chan struct{}) *workflow.Run {
 		r.Kill()
 		<-done
 	})
-	// Wait until the agent node is registered so the panel has something to show.
+	// Wait until the agent node is registered AND has left the transient
+	// "queued" state, so the panel doesn't race the semaphore hand-off.
 	deadline := time.After(5 * time.Second)
-	for len(r.Snapshot().Nodes) == 0 {
+	for {
+		nodes := r.Snapshot().Nodes
+		if len(nodes) > 0 && nodes[0].Status != workflow.NodeQueued {
+			break
+		}
 		select {
 		case <-deadline:
 			t.Fatal("run never spawned its agent")

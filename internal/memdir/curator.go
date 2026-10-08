@@ -3,12 +3,15 @@ package memdir
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/skillusage"
@@ -29,11 +32,40 @@ type CuratorConfig struct {
 	// MinSessionCount is the minimum number of sessions since the last run.
 	// Whichever gate (time or sessions) fires first triggers the curator.
 	MinSessionCount int
+	// StaleDays, ArchiveDays and PurgeDays tune the skill lifecycle: days
+	// since last use before a skill goes stale and is archived, and days
+	// after archiving before the archived copy is deleted. Zero values use
+	// the skillusage defaults (14 / 30 / 90).
+	StaleDays   int
+	ArchiveDays int
+	PurgeDays   int
 }
 
 var defaultCuratorConfig = CuratorConfig{
 	MinAgeHours:     curatorMinHours,
 	MinSessionCount: curatorMinSessions,
+	StaleDays:       skillusage.DefaultStaleDays,
+	ArchiveDays:     skillusage.DefaultArchiveDays,
+	PurgeDays:       skillusage.DefaultPurgeDays,
+}
+
+// ErrCuratorBusy is returned by RunCurator when another process holds the
+// curator lock.
+var ErrCuratorBusy = errors.New("curator: another curator run holds the lock")
+
+// tryCuratorLock takes the exclusive, cross-process curator lock. The lock is
+// a kernel advisory lock on the lock file, so it is released automatically if
+// the holder crashes: a leftover lock file never blocks a later run.
+func tryCuratorLock(projectDir string) (release func(), err error) {
+	fl := flock.New(filepath.Join(projectDir, curatorLockFileName))
+	locked, err := fl.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("curator: acquire lock: %w", err)
+	}
+	if !locked {
+		return nil, ErrCuratorBusy
+	}
+	return func() { _ = fl.Unlock() }, nil
 }
 
 // curatorState is the JSON structure persisted to curator-state.json.
@@ -61,16 +93,12 @@ func shouldRunCurator(projectDir string, cfg CuratorConfig, now time.Time) bool 
 		minSessions = curatorMinSessions
 	}
 
-	// Check for an in-flight curator lock; treat locks older than 4 hours as
-	// stale (crashed curator).
-	lockPath := filepath.Join(projectDir, curatorLockFileName)
-	if fi, err := os.Stat(lockPath); err == nil {
-		if now.Sub(fi.ModTime()) < 4*time.Hour {
-			return false
-		}
-		// Stale lock — remove it.
-		_ = os.Remove(lockPath)
+	// Another process mid-run holds the lock; probe and release immediately.
+	release, err := tryCuratorLock(projectDir)
+	if err != nil {
+		return false
 	}
+	release()
 
 	state, err := loadCuratorState(projectDir)
 	if err != nil {
@@ -105,13 +133,16 @@ func shouldRunCurator(projectDir string, cfg CuratorConfig, now time.Time) bool 
 // RunCurator spawns a one-shot restricted background agent with the curator
 // prompt. runAgent is the same callback type used by dream.go.
 func RunCurator(ctx context.Context, cwd, projectDir string, runAgent func(ctx context.Context, prompt string) (string, error)) error {
-	// Acquire lock.
-	lockPath := filepath.Join(projectDir, curatorLockFileName)
-	if err := os.WriteFile(lockPath, []byte(time.Now().Format(time.RFC3339)), 0o644); err != nil {
-		return fmt.Errorf("curator: acquire lock: %w", err)
+	return runCurator(ctx, cwd, projectDir, defaultCuratorConfig, time.Now(), runAgent)
+}
+
+func runCurator(ctx context.Context, cwd, projectDir string, cfg CuratorConfig, now time.Time, runAgent func(ctx context.Context, prompt string) (string, error)) error {
+	release, err := tryCuratorLock(projectDir)
+	if err != nil {
+		return err
 	}
 	defer func() {
-		_ = os.Remove(lockPath)
+		release()
 		count := countAllSessions(projectDir)
 		_ = saveCuratorState(projectDir, curatorState{
 			LastRun:           time.Now().UTC().Format(time.RFC3339),
@@ -119,43 +150,103 @@ func RunCurator(ctx context.Context, cwd, projectDir string, runAgent func(ctx c
 		})
 	}()
 
-	// Snapshot skills before mutating (best-effort).
+	// Snapshot skills before mutating. Archiving and purging move or delete
+	// whole skill directories, so without a restore point they are skipped.
+	snapshotOK := true
 	if _, err := skillusage.Snapshot(); err != nil {
-		log.Printf("curator: pre-run snapshot failed: %v", err)
+		snapshotOK = false
+		log.Printf("curator: pre-run snapshot failed; skipping archive and purge this run: %v", err)
 	} else {
 		skillusage.PruneBackups(5)
 	}
 
 	// Apply deterministic lifecycle transitions (no LLM required).
-	transitions := skillusage.ApplyTransitions(time.Now(), 30, 90)
-	for _, tr := range transitions {
-		archiveAgentSkill(tr.Name)
+	staleDays, archiveDays, purgeDays := cfg.StaleDays, cfg.ArchiveDays, cfg.PurgeDays
+	if staleDays <= 0 {
+		staleDays = skillusage.DefaultStaleDays
+	}
+	if archiveDays <= 0 {
+		archiveDays = skillusage.DefaultArchiveDays
+	}
+	if purgeDays <= 0 {
+		purgeDays = skillusage.DefaultPurgeDays
+	}
+	if snapshotOK {
+		for _, tr := range skillusage.ApplyTransitions(now, staleDays, archiveDays) {
+			if tr.To == "archived" {
+				archiveAgentSkill(tr.Name, now)
+			}
+		}
+		for _, name := range skillusage.PurgeArchived(now, purgeDays) {
+			purgeArchivedSkill(name)
+		}
 	}
 
 	agentSkills := skillusage.AgentCreatedNames()
 	prompt := buildCuratorPrompt(cwd, projectDir, agentSkills)
-	_, err := runAgent(ctx, prompt)
+	_, err = runAgent(skillusage.WithActor(ctx, skillusage.ActorCurator), prompt)
 	return err
 }
 
 // archiveAgentSkill moves an agent-created skill that has been marked archived
 // by ApplyTransitions from its live directory to ~/.conduit/skills/.archive/<name>/.
 // Errors are logged but not returned — the LLM curator pass continues regardless.
-func archiveAgentSkill(name string) {
+func archiveAgentSkill(name string, now time.Time) {
 	conduitSkillsDir := filepath.Join(settings.ConduitDir(), "skills")
 	src := filepath.Join(conduitSkillsDir, name)
 	archiveDir := filepath.Join(conduitSkillsDir, ".archive")
-	dst := filepath.Join(archiveDir, name)
 
-	if _, err := os.Stat(src); os.IsNotExist(err) {
+	fi, err := os.Lstat(src)
+	if err != nil {
 		return // already gone or never had a dir
+	}
+	if !fi.IsDir() {
+		// A symlinked skill is the user's own checkout, not ours to move.
+		log.Printf("curator: archive: %s is not a plain directory; leaving it in place", src)
+		return
 	}
 	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
 		log.Printf("curator: archive: mkdir %s: %v", archiveDir, err)
 		return
 	}
+	// Never overwrite an earlier archive: a second archive of the same name
+	// gets a timestamp suffix.
+	dst := filepath.Join(archiveDir, name)
+	if _, err := os.Lstat(dst); err == nil {
+		dst = filepath.Join(archiveDir, name+"."+now.UTC().Format("20060102T150405"))
+		for i := 2; ; i++ {
+			if _, err := os.Lstat(dst); err != nil {
+				break
+			}
+			dst = filepath.Join(archiveDir, fmt.Sprintf("%s.%s-%d", name, now.UTC().Format("20060102T150405"), i))
+		}
+	}
 	if err := os.Rename(src, dst); err != nil {
 		log.Printf("curator: archive: rename %s → %s: %v", src, dst, err)
+		return
+	}
+	skillusage.RecordInfo(skillusage.ActorCurator, skillusage.OpArchive, name, dst, "moved from "+src)
+}
+
+// purgeArchivedSkill deletes the archived copies of name once its retention
+// window has passed. It removes only directories the ledger recorded as
+// archived by the curator, directly under ~/.conduit/skills/.archive/, so a
+// directory that merely happens to carry the skill's name is never touched.
+func purgeArchivedSkill(name string) {
+	archiveDir := filepath.Join(settings.ConduitDir(), "skills", ".archive")
+	for _, e := range skillusage.LedgerList(name, 0) {
+		if e.Op != skillusage.OpArchive || e.Path == "" || filepath.Dir(filepath.Clean(e.Path)) != archiveDir {
+			continue
+		}
+		fi, err := os.Lstat(e.Path)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(e.Path); err != nil {
+			log.Printf("curator: purge: remove %s: %v", e.Path, err)
+			continue
+		}
+		skillusage.RecordInfo(skillusage.ActorCurator, skillusage.OpPurge, name, e.Path, "archive retention window elapsed")
 	}
 }
 

@@ -30,8 +30,8 @@ func TestApplyTransitions(t *testing.T) {
 		{
 			name: "active idle 31 days → stale",
 			record: Record{
-				Name:       "skill-a",
-				CreatedBy:  "agent",
+				Name:      "skill-a",
+				CreatedBy: "agent", Scope: ScopeConduitGlobal,
 				State:      "active",
 				CreatedAt:  now.Add(-32 * 24 * time.Hour),
 				LastUsedAt: now.Add(-31 * 24 * time.Hour),
@@ -43,8 +43,8 @@ func TestApplyTransitions(t *testing.T) {
 		{
 			name: "active idle 91 days → archived directly",
 			record: Record{
-				Name:       "skill-b",
-				CreatedBy:  "agent",
+				Name:      "skill-b",
+				CreatedBy: "agent", Scope: ScopeConduitGlobal,
 				State:      "active",
 				CreatedAt:  now.Add(-92 * 24 * time.Hour),
 				LastUsedAt: now.Add(-91 * 24 * time.Hour),
@@ -56,8 +56,8 @@ func TestApplyTransitions(t *testing.T) {
 		{
 			name: "stale idle 91 days → archived",
 			record: Record{
-				Name:       "skill-c",
-				CreatedBy:  "agent",
+				Name:      "skill-c",
+				CreatedBy: "agent", Scope: ScopeConduitGlobal,
 				State:      "stale",
 				CreatedAt:  now.Add(-92 * 24 * time.Hour),
 				LastUsedAt: now.Add(-91 * 24 * time.Hour),
@@ -69,8 +69,8 @@ func TestApplyTransitions(t *testing.T) {
 		{
 			name: "pinned idle 100 days → no transition",
 			record: Record{
-				Name:       "skill-d",
-				CreatedBy:  "agent",
+				Name:      "skill-d",
+				CreatedBy: "agent", Scope: ScopeConduitGlobal,
 				State:      "active",
 				Pinned:     true,
 				CreatedAt:  now.Add(-101 * 24 * time.Hour),
@@ -92,8 +92,8 @@ func TestApplyTransitions(t *testing.T) {
 		{
 			name: "active used yesterday → no transition",
 			record: Record{
-				Name:       "skill-f",
-				CreatedBy:  "agent",
+				Name:      "skill-f",
+				CreatedBy: "agent", Scope: ScopeConduitGlobal,
 				State:      "active",
 				CreatedAt:  now.Add(-200 * 24 * time.Hour),
 				LastUsedAt: now.Add(-1 * 24 * time.Hour),
@@ -310,7 +310,7 @@ func TestApplyTransitions_ZeroLastUsedAt(t *testing.T) {
 	// Record with no LastUsedAt — age computed from CreatedAt.
 	r := Record{
 		Name:      "no-last-used",
-		CreatedBy: "agent",
+		CreatedBy: "agent", Scope: ScopeConduitGlobal,
 		State:     "active",
 		CreatedAt: now.Add(-31 * 24 * time.Hour),
 		// LastUsedAt zero
@@ -409,4 +409,115 @@ func int64ToString(n int64) string {
 		buf[pos] = '-'
 	}
 	return string(buf[pos:])
+}
+
+func TestApplyTransitions_StampsArchivedAt(t *testing.T) {
+	setupTempDir(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	withStore(func(s map[string]Record) bool {
+		s["old"] = Record{Name: "old", CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "stale", LastUsedAt: now.Add(-40 * 24 * time.Hour)}
+		return true
+	})
+	if got := ApplyTransitions(now, DefaultStaleDays, DefaultArchiveDays); len(got) != 1 || got[0].To != "archived" {
+		t.Fatalf("transitions = %v", got)
+	}
+	var rec Record
+	for _, r := range All() {
+		rec = r
+	}
+	if !rec.ArchivedAt.Equal(now) {
+		t.Errorf("ArchivedAt = %v, want %v", rec.ArchivedAt, now)
+	}
+}
+
+func TestPurgeArchived(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	day := 24 * time.Hour
+	tests := []struct {
+		name      string
+		rec       Record
+		wantPurge bool
+		wantKept  bool
+		wantStamp bool
+	}{
+		{"past retention", Record{CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "archived", ArchivedAt: now.Add(-91 * day)}, true, false, false},
+		{"within retention", Record{CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "archived", ArchivedAt: now.Add(-89 * day)}, false, true, false},
+		{"exactly at retention is kept", Record{CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "archived", ArchivedAt: now.Add(-90 * day)}, false, true, false},
+		{"pinned never purged", Record{CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "archived", Pinned: true, ArchivedAt: now.Add(-999 * day)}, false, true, false},
+		{"user skill never purged", Record{CreatedBy: "user", State: "archived", ArchivedAt: now.Add(-999 * day)}, false, true, false},
+		{"stale not purged", Record{CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "stale", ArchivedAt: now.Add(-999 * day)}, false, true, false},
+		{"no archived_at starts clock", Record{CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "archived"}, false, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupTempDir(t)
+			tt.rec.Name = "s"
+			withStore(func(s map[string]Record) bool { s["s"] = tt.rec; return true })
+			purged := PurgeArchived(now, DefaultPurgeDays)
+			if (len(purged) == 1) != tt.wantPurge {
+				t.Fatalf("purged = %v, want purge=%v", purged, tt.wantPurge)
+			}
+			all := All()
+			if (len(all) == 1) != tt.wantKept {
+				t.Fatalf("records = %v, want kept=%v", all, tt.wantKept)
+			}
+			if tt.wantStamp && !all[0].ArchivedAt.Equal(now) {
+				t.Errorf("ArchivedAt = %v, want clock started at now", all[0].ArchivedAt)
+			}
+		})
+	}
+}
+
+func TestBumpUseClearsArchivedAt(t *testing.T) {
+	setupTempDir(t)
+	withStore(func(s map[string]Record) bool {
+		s["s"] = Record{Name: "s", CreatedBy: "agent", Scope: ScopeConduitGlobal, State: "archived", ArchivedAt: time.Now()}
+		return true
+	})
+	BumpUse("s")
+	if r := All()[0]; r.State != "active" || !r.ArchivedAt.IsZero() {
+		t.Errorf("record = %+v", r)
+	}
+}
+
+// Usage telemetry runs for every skill, hand-written ones included. It must
+// never mark them agent-created, or the curator would archive and purge them.
+func TestBumpsDoNotCreateAgentRecords(t *testing.T) {
+	for name, bump := range map[string]func(string){"use": BumpUse, "view": BumpView, "patch": BumpPatch} {
+		t.Run(name, func(t *testing.T) {
+			setupTempDir(t)
+			bump("hand-written")
+			recs := All()
+			if len(recs) != 1 || recs[0].CreatedBy == "agent" {
+				t.Fatalf("records = %+v", recs)
+			}
+			if IsAgentCreated("hand-written") || len(AgentCreatedNames()) != 0 {
+				t.Error("bump-created record counted as agent-created")
+			}
+			if got := ApplyTransitions(time.Now().Add(400*24*time.Hour), DefaultStaleDays, DefaultArchiveDays); len(got) != 0 {
+				t.Errorf("transitions for user skill: %v", got)
+			}
+		})
+	}
+}
+
+func TestLifecycleRequiresGlobalConduitScope(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-400 * 24 * time.Hour)
+	for _, scope := range []string{"", "project", "claude-global", "global"} {
+		t.Run("scope="+scope, func(t *testing.T) {
+			setupTempDir(t)
+			withStore(func(s map[string]Record) bool {
+				s["a"] = Record{Name: "a", CreatedBy: "agent", Scope: scope, State: "active", LastUsedAt: old}
+				s["b"] = Record{Name: "b", CreatedBy: "agent", Scope: scope, State: "archived", ArchivedAt: old}
+				return true
+			})
+			if got := ApplyTransitions(now, DefaultStaleDays, DefaultArchiveDays); len(got) != 0 {
+				t.Errorf("transitions = %v", got)
+			}
+			if got := PurgeArchived(now, DefaultPurgeDays); len(got) != 0 {
+				t.Errorf("purged = %v", got)
+			}
+		})
+	}
 }

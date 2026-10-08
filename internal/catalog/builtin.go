@@ -2,7 +2,7 @@ package catalog
 
 // builtinModels returns a baked-in snapshot of well-known Anthropic models.
 // Pricing is sourced from the pricing_tiers table in the decoded Claude Code
-// bundle (wire sync 2.1.280) and is USD / 1M tokens.
+// bundle (wire sync 2.1.293) and is USD / 1M tokens.
 // This snapshot is used when the network is unavailable and no cache exists.
 func builtinModels() []ModelInfo {
 	return []ModelInfo{
@@ -106,6 +106,17 @@ func builtinModels() []ModelInfo {
 			Thinking:        true,
 		},
 		{
+			ID:              "claude-sonnet-5-5",
+			Name:            "Claude Sonnet 5.5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  2.0,
+			OutputCostPer1M: 10.0,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
+		},
+		{
 			ID:              "claude-sonnet-5",
 			Name:            "Claude Sonnet 5",
 			Provider:        "anthropic",
@@ -126,6 +137,17 @@ func builtinModels() []ModelInfo {
 			ToolUse:         true,
 			Vision:          true,
 			Thinking:        false,
+		},
+		{
+			ID:              "claude-haiku-5-5",
+			Name:            "Claude Haiku 5.5",
+			Provider:        "anthropic",
+			ContextWindow:   1_000_000,
+			InputCostPer1M:  0.10,
+			OutputCostPer1M: 0.50,
+			ToolUse:         true,
+			Vision:          true,
+			Thinking:        true,
 		},
 		{
 			ID:              "claude-haiku-4-5-20251001",

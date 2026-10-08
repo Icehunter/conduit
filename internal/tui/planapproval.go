@@ -390,11 +390,9 @@ func (m *Model) handlePlanApprovalMouseRelease(msg tea.MouseReleaseMsg) (bool, t
 		applyPlanApprovalSelection(pa)
 		return true, nil
 	}
-	copyToClipboard(text)
-	m.flashMsg = "✓ Copied selection"
 	applyPlanApprovalSelection(pa)
 	return true, tea.Batch(
-		tea.Tick(1200*time.Millisecond, func(time.Time) tea.Msg { return clearFlash{} }),
+		copyCmd(text, "selection"),
 		tea.Tick(220*time.Millisecond, func(time.Time) tea.Msg { return clearMouseSelectionMsg{} }),
 	)
 }

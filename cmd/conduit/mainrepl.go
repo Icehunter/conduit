@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -341,11 +343,15 @@ func runREPL(continueMode bool, resumeID string) error {
 		sessionEnv = s.Env
 	}
 
-	// Connect MCP servers in the background; non-fatal if config missing or servers fail.
+	// Connect MCP servers in the background so a slow or wedged server can't
+	// hold up startup; non-fatal if config missing or servers fail. Servers
+	// are listed as pending meanwhile, BuildRegistry's change hook registers
+	// their tools as they connect, and the first prompt waits for them up to
+	// mcp.InitWaitBudget (LoopConfig.WaitForTools below).
 	mcpManager := mcp.NewManager()
 	// Wire the platform keychain so MCP OAuth tokens persist securely.
 	mcpManager.SetSecureStore(secure.NewDefault())
-	if err := mcpManager.ConnectAll(ctx, cwd, !needsTrust); err != nil {
+	if err := mcpManager.StartConnectAll(ctx, cwd, !needsTrust); err != nil {
 		warnf("Could not connect MCP servers: %v", err)
 	}
 
@@ -462,23 +468,19 @@ func runREPL(continueMode bool, resumeID string) error {
 	})
 	modelName := internalmodel.Resolve()
 
-	// Build MCP server instructions block from connected servers that returned
-	// instructions in their initialize response. Injected as an additional
-	// system block — mirrors MCP instructions delta in Claude Code.
-	var mcpInstructionsBuf strings.Builder
-	for srvName, instr := range mcpManager.ServerInstructions() {
-		mcpInstructionsBuf.WriteString("## ")
-		mcpInstructionsBuf.WriteString(srvName)
-		mcpInstructionsBuf.WriteString("\n")
-		mcpInstructionsBuf.WriteString(instr)
-		mcpInstructionsBuf.WriteString("\n\n")
-	}
 	// Buddy companion intro: when a companion is configured, tell the
 	// model about it so the model defers to the buddy when the user
 	// addresses it by name. Mirrors src/buddy/prompt.ts.
+	buddyIntro := ""
 	if intro := buddy.IntroPrompt(); intro != "" {
-		mcpInstructionsBuf.WriteString(intro)
-		mcpInstructionsBuf.WriteString("\n")
+		buddyIntro = intro + "\n"
+	}
+	// instructionsPrompt is CLAUDE.md, then the instructions MCP servers sent
+	// in their initialize response (mirrors the MCP instructions delta in
+	// Claude Code), then the buddy intro. Servers connect in the background and
+	// can be reconnected or removed mid-session, so it is rebuilt each Run.
+	instructionsPrompt := func() string {
+		return claudeMdPrompt + mcpInstructionsPrompt(mcpManager) + buddyIntro
 	}
 
 	// bgCtx / bgWg bound background memory goroutines to the session lifetime.
@@ -521,7 +523,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build system blocks; append prior session summary on resume so the
 	// new turn picks up where the previous one left off. Append (not
 	// prepend) keeps the Max wire fingerprint intact.
-	systemBlocks := agent.BuildSystemBlocks(mem, claudeMdPrompt+mcpInstructionsBuf.String(), projectDir, agentEntries, skillEntries...)
+	systemBlocks := agent.BuildSystemBlocks(mem, instructionsPrompt(), projectDir, agentEntries, skillEntries...)
 	if strings.TrimSpace(priorSummary) != "" {
 		systemBlocks = append(systemBlocks, api.SystemBlock{
 			Type: "text",
@@ -552,7 +554,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		// resumed-session summary is re-appended because it is part of the
 		// complete block set, not an extra layered on top.
 		RebuildSystem: func() []api.SystemBlock {
-			blocks := agent.BuildSystemBlocks(memdir.BuildPrompt(cwd), claudeMdPrompt+mcpInstructionsBuf.String(), projectDir, agentEntries, skillEntries...)
+			blocks := agent.BuildSystemBlocks(memdir.BuildPrompt(cwd), instructionsPrompt(), projectDir, agentEntries, skillEntries...)
 			if strings.TrimSpace(priorSummary) != "" {
 				blocks = append(blocks, api.SystemBlock{
 					Type: "text",
@@ -560,6 +562,12 @@ func runREPL(continueMode bool, resumeID string) error {
 				})
 			}
 			return blocks
+		},
+		// A prompt sent while MCP servers are still connecting waits for them,
+		// at most mcp.InitWaitBudget from startup, so their tools and
+		// instructions make it into the request; later prompts don't wait.
+		WaitForTools: func(ctx context.Context) error {
+			return mcpManager.WaitForInit(ctx, mcp.InitWaitBudget)
 		},
 		MaxTurns:          agent.DefaultMainMaxTurns,
 		Gate:              gate,
@@ -573,6 +581,23 @@ func runREPL(continueMode bool, resumeID string) error {
 		NotifyOnComplete:  true,
 		BackgroundModel: func() string {
 			return app.ClaudeRoleModel(cwd, settings.RoleBackground, compact.DefaultModel)
+		},
+		// Read per end_turn so a conduit.json edit applies without a restart.
+		AutoCompactTriggerCap: func() int {
+			latest, err := settings.Load(cwd)
+			if err != nil {
+				return internalmodel.DefaultAutoCompactTriggerCap
+			}
+			return latest.EffectiveCompactionTriggerCap()
+		},
+		// Both read per use so a conduit.json edit applies without a restart.
+		RedactSecrets: func() bool {
+			latest, err := settings.Load(cwd)
+			return err != nil || !latest.SecretRedactionOff
+		},
+		RepetitionGuard: func() bool {
+			latest, err := settings.Load(cwd)
+			return err != nil || !latest.RepetitionGuardOff
 		},
 		RoleResolver: func(role string) (string, *api.Client, bool) {
 			latest, err := settings.Load(cwd)
@@ -588,6 +613,16 @@ func runREPL(continueMode bool, resumeID string) error {
 				return provider.Model, nil, true
 			}
 			return provider.Model, client, true
+		},
+		RoleContextWindow: func(role string) int {
+			latest, err := settings.Load(cwd)
+			if err != nil {
+				return 0
+			}
+			if provider, ok := latest.ProviderForRole(role); ok && provider != nil {
+				return provider.ContextWindow
+			}
+			return 0
 		},
 		OnFileAccess: func(op, path string) {
 			if sess != nil {
@@ -694,11 +729,6 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 
 		},
-		OnCompact: func(summary string) {
-			if sess != nil && summary != "" {
-				_ = sess.SetSummary(summary)
-			}
-		},
 		OnToolBatchComplete: func(pendingEdits int) bool {
 			// In acceptEditsLive mode, pause for mid-turn hunk review when
 			// the staged-edit count hits the configured threshold.
@@ -784,7 +814,8 @@ func runREPL(continueMode bool, resumeID string) error {
 		// entries as Background:true which hides them from the panel.
 		func(ctx context.Context, prompt string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
-				Mode: permissions.ModeBypassPermissions,
+				Mode:      permissions.ModeBypassPermissions,
+				AgentType: taskAgentType(""),
 			})
 			return r.Text, err
 		},
@@ -795,6 +826,7 @@ func runREPL(continueMode bool, resumeID string) error {
 				Model:        model,
 				Role:         role,
 				Tools:        tools,
+				AgentType:    taskAgentType(systemPrompt),
 			})
 			return r.Text, err
 		},
@@ -809,6 +841,7 @@ func runREPL(continueMode bool, resumeID string) error {
 			Role:         role,
 			Tools:        tools,
 			OutputSchema: schema,
+			AgentType:    taskAgentType(systemPrompt),
 		})
 		if err != nil {
 			return "", err
@@ -833,7 +866,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	skillLoader := plugins.NewSkillLoader(loadedPlugins, cwd)
 	reg.Register(skilltool.New(
 		skillLoader,
-		lp.RunBackgroundAgent,
+		lp.RunBackgroundSubAgent,
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
 			return r.Text, err
@@ -845,21 +878,32 @@ func runREPL(continueMode bool, resumeID string) error {
 	// sub-agent. Skill reviews inject the SkillManage tool via ExtraTools so
 	// the main registry is not polluted. Memory reviews use the standard tools
 	// (Read/Write/Glob/Grep) already in the registry.
-	lp.SetBackgroundReviewer(bgreview.NewSplit(
-		bgreview.Config{}, // defaults: memory every 5 turns, skill every 7 turns
+	reviewer := bgreview.NewSplit(
+		// Intervals default to memory every 5 turns, skill every 7. Reviews end
+		// with the session and are drained at shutdown.
+		bgreview.Config{Context: bgCtx},
 		cwd,
-		// Memory review runner — uses the standard background model and registry.
+		// Memory review runner — uses the background role and standard registry.
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
-			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+			spec := agent.SubAgentSpec{
+				Role:       settings.RoleBackground,
 				Tools:      tools,
 				Background: true,
 				Mode:       permissions.ModeBypassPermissions,
-			})
+			}
+			// The review reads a digest of the session, tool output
+			// included, and runs unattended: it may write only to the
+			// memory directory.
+			if w, ok := reg.Lookup("Write"); ok {
+				spec.ExtraTools = []tool.Tool{bgreview.RestrictWrites(w, memdir.Path(cwd))}
+			}
+			r, err := lp.RunSubAgentTyped(ctx, prompt, spec)
 			return r.Text, err
 		},
 		// Skill review runner — augments child registry with SkillManage.
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
+				Role:       settings.RoleBackground,
 				Tools:      tools,
 				ExtraTools: []tool.Tool{skillmanagetool.New(cwd, skillmanagetool.WithAgentProvenance())},
 				Background: true,
@@ -867,7 +911,8 @@ func runREPL(continueMode bool, resumeID string) error {
 			})
 			return r.Text, err
 		},
-	))
+	)
+	lp.SetBackgroundReviewer(reviewer)
 
 	// Wire a session-scoped async group so async hooks are cancellable and
 	// drainable at shutdown instead of leaking as untracked goroutines.
@@ -939,7 +984,6 @@ func runREPL(continueMode bool, resumeID string) error {
 		EnterPlan:                 rOpts.EnterPlan,
 		ExitPlan:                  rOpts.ExitPlan,
 		AskUser:                   rOpts.AskUser,
-		ClaudeMd:                  claudeMdPrompt + mcpInstructionsBuf.String(),
 		Skills:                    skillEntries,
 		Agents:                    agentEntries,
 		InitialOutputStyle:        s.OutputStyle,
@@ -990,6 +1034,28 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 			importLegacySessions()
 			return nil
+		},
+		RunShell: func(ctx context.Context, command string) (string, bool) {
+			bash, ok := reg.Lookup("Bash")
+			if !ok {
+				return "Bash tool unavailable", true
+			}
+			raw, _ := json.Marshal(map[string]string{"command": command})
+			res, err := bash.Execute(ctx, raw)
+			if err != nil {
+				return err.Error(), true
+			}
+			var sb strings.Builder
+			for _, b := range res.Content {
+				if b.Type == "text" {
+					sb.WriteString(b.Text)
+				}
+			}
+			return sb.String(), res.IsError
+		},
+		RedactSecrets: func() bool {
+			latest, err := settings.Load(cwd)
+			return err != nil || !latest.SecretRedactionOff
 		},
 		PendingEdits:   pendingTable,
 		DiffReview:     diffReviewHook,
@@ -1071,7 +1137,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// they abort any pending sub-agent API calls, then wait up to 10s.
 	bgCancel()
 	drainDone := make(chan struct{})
-	go func() { bgWg.Wait(); close(drainDone) }()
+	go func() { bgWg.Wait(); reviewer.Wait(); close(drainDone) }()
 	select {
 	case <-drainDone:
 	case <-time.After(10 * time.Second):
@@ -1115,4 +1181,17 @@ func truncateResumeSummary(summary string, maxBytes int) string {
 		cut = maxBytes
 	}
 	return summary[:cut] + "\n\n(Truncated for context efficiency. Open session-memory/summary.md for the full text.)"
+}
+
+// mcpInstructionsPrompt renders the instructions connected MCP servers sent in
+// their initialize response, one "## <server>" section each, sorted by server
+// name: it is rebuilt every Run, and a stable order keeps the system prompt,
+// and so the prompt cache, unchanged while the servers are.
+func mcpInstructionsPrompt(mgr *mcp.Manager) string {
+	instrs := mgr.ServerInstructions()
+	var sb strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(instrs)) {
+		fmt.Fprintf(&sb, "## %s\n%s\n\n", name, instrs[name])
+	}
+	return sb.String()
 }

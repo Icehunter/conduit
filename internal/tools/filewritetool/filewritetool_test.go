@@ -163,3 +163,35 @@ func TestFileWrite_StaticMetadata(t *testing.T) {
 		t.Fatalf("InputSchema not valid JSON: %v", err)
 	}
 }
+
+// A raw "link/../x" must land where the permission gate checked it (the
+// lexically cleaned path), not where the OS would walk it through the link.
+func TestFileWrite_DotDotAfterSymlinkUsesCleanedPath(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "repo")
+	outsideSub := filepath.Join(root, "outside", "sub")
+	for _, d := range []string{repo, outsideSub} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outsideSub, filepath.Join(repo, "g")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	res, err := New().Execute(context.Background(), input(t, map[string]any{
+		"file_path": repo + "/g/../escaped.txt",
+		"content":   "x",
+	}))
+	if err != nil || res.IsError {
+		t.Fatalf("Execute: err=%v res=%v", err, res)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "escaped.txt")); err != nil {
+		t.Errorf("file not at cleaned path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "outside", "escaped.txt")); err == nil {
+		t.Error("file escaped through the symlink")
+	}
+}

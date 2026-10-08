@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -32,7 +31,6 @@ import (
 	"time"
 
 	"github.com/icehunter/conduit/internal/api"
-	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/healthcheck"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/microcompact"
@@ -50,7 +48,6 @@ import (
 // maxConcurrentTools is the worker pool size for parallel tool execution.
 // Mirrors the coordinator's concurrency limit in src/coordinator/coordinatorMode.ts.
 const maxConcurrentTools = 4
-const maxToolUseRecoveries = 2
 
 // DefaultMainMaxTurns is the per-prompt turn cap for the primary interactive
 // loop. Generous enough for complex multi-file tasks; still a runaway backstop.
@@ -80,16 +77,18 @@ const (
 	EventPartial                           // stream errored mid-turn; PartialBlocks holds what was received
 	EventUsage                             // per-API-turn usage from SSE (input + output + cache fields)
 	EventCost                              // running cost estimate (emitted on each message_delta with output tokens)
-	EventCompacted                         // auto-compact ran; CompactedInputTokens and CompactedThreshold carry context
+	EventCompacted                         // history was compacted; Compact* fields and History carry the result
 	EventProviderFailover                  // a provider returned 429/503/529 and the loop switched to the next one
 	EventTTSR                              // a TTSR rule fired; TTSRRule and TTSRCorrection carry details
+	EventNotice                            // informational message for the user; Notice carries the text
+	EventThinking                          // a reasoning/thinking delta; Text carries it (never part of the answer)
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
 type LoopEvent struct {
 	Type EventType
 
-	// EventText
+	// EventText, EventThinking
 	Text string
 
 	// EventToolUse
@@ -111,13 +110,25 @@ type LoopEvent struct {
 	RetryAfter       time.Duration
 	RateLimitResetAt time.Time
 	RetryErr         error
+	// RetryReason is the api.Reason* tag of RetryErr; RetryStatus the HTTP
+	// status (0 for a network or stream failure). RetryMax is the number of
+	// retries the layer makes. RetryStream is true when the retry restarts a
+	// response that had already begun streaming, so the caller must drop the
+	// failed attempt's text.
+	RetryReason string
+	RetryStatus int
+	RetryMax    int
+	RetryStream bool
 
-	// EventPartial — fired before a stream error bubbles up so callers
-	// can persist whatever assistant content was streamed before the
-	// failure. The blocks here are already filtered (empty text/truncated
-	// tool_use dropped by buildContentBlocks).
+	// EventPartial — fired when the user cancels mid-stream, with whatever
+	// assistant content had streamed. The same blocks are appended to the
+	// history Run returns, so callers persist that history rather than this
+	// event. It is no longer fired when retries run out.
 	PartialBlocks []api.ContentBlock
 	PartialErr    error
+
+	// EventNotice
+	Notice string
 
 	// EventUsage carries the API-reported usage for one streamed turn.
 	Usage api.Usage
@@ -125,9 +136,18 @@ type LoopEvent struct {
 	// EventCost carries the running cost estimate.
 	CostUSD float64
 
-	// EventCompacted
+	// EventCompacted. CompactedInputTokens and CompactedThreshold are set for
+	// an auto compaction only. History is a copy of the replacement history
+	// (summary message first, then the verbatim tail of CompactTailLen
+	// messages); the handler persists it before the loop continues.
+	CompactKind          string // compact.KindAuto or compact.KindReactive
+	CompactSummary       string
+	CompactModel         string // model that wrote the summary; "local" for the local fallback
+	CompactTailLen       int
+	CompactPreLen        int // length of the history that was compacted
 	CompactedInputTokens int
 	CompactedThreshold   int
+	History              []api.Message
 
 	// EventProviderFailover
 	FailoverErr      error
@@ -166,7 +186,13 @@ type LoopConfig struct {
 	// session — notably memdir.RunExtract — stays invisible to the running
 	// conversation. Called after compaction, and by RefreshSystem.
 	RebuildSystem func() []api.SystemBlock
-	Metadata      map[string]any
+	// WaitForTools, when set, runs at the start of every Run, before the
+	// system prompt and the tool list are snapshotted, so tool sources still
+	// starting in the background (MCP servers connecting at startup) can make
+	// it into the prompt. It must return promptly once they have settled or
+	// its own budget runs out; an error ends the Run.
+	WaitForTools func(ctx context.Context) error
+	Metadata     map[string]any
 	// MaxTurns caps the number of API calls (tool-use follow-ups each count
 	// as one turn). 0 means no limit (use carefully).
 	MaxTurns int
@@ -247,9 +273,16 @@ type LoopConfig struct {
 	// for every child loop (same pattern as OnEndTurn).
 	OnToolBatchComplete func(pendingEdits int) bool
 
-	// OnCompact fires when auto-compaction runs and provides the summary text.
-	// Used by the TUI to persist the summary to the session transcript.
-	OnCompact func(summary string)
+	// Sleep waits for retry backoff, in both the API layer and the loop. nil
+	// means a real sleep that returns early when ctx is done. Tests inject a
+	// recorder so retries do not wait.
+	Sleep func(ctx context.Context, d time.Duration) error
+
+	// AutoCompactTriggerCap returns the ceiling on the auto-compaction trigger
+	// in tokens; 0 or less means no cap. nil uses
+	// internalmodel.DefaultAutoCompactTriggerCap. Called on every end_turn, so
+	// edits to conduit.json apply without a restart.
+	AutoCompactTriggerCap func() int
 
 	// MicroCompact, when true, runs time-based microcompaction before each
 	// request (mirrors src/services/compact/microCompact.ts time-based path).
@@ -274,6 +307,10 @@ type LoopConfig struct {
 	// parent's client is reused. Returns ok=false when the role is not
 	// configured; the caller falls back to BackgroundModel().
 	RoleResolver func(role string) (model string, client *api.Client, ok bool)
+	// RoleContextWindow returns the context window configured for the role's
+	// provider, 0 when unknown. It sizes the summarizer's input when the
+	// background role's own client writes the summary.
+	RoleContextWindow func(role string) int
 	// IsOAuthSubscription, when true, enables the dynamic per-request billing
 	// suffix computation (SHA256 of the first user message). Set for Claude.ai
 	// Max subscription accounts only; leave false for Console API key and
@@ -286,7 +323,7 @@ type LoopConfig struct {
 	// The reviewer runs fire-and-forget goroutines internally; the loop
 	// does not need to manage their lifetimes.
 	BackgroundReviewer interface {
-		OnEndTurn(ctx context.Context)
+		OnEndTurn(ctx context.Context, history []api.Message)
 	}
 
 	// TTSRRules are mid-stream interruption rules. When a rule's pattern matches
@@ -295,6 +332,15 @@ type LoopConfig struct {
 	// Rules are evaluated per-turn; fire counts reset at the start of each turn.
 	TTSRRules []ttsr.Rule
 
+	// RepetitionGuard, when it returns true (nil means true), interrupts a
+	// response whose text or thinking has degenerated into a repeating loop.
+	// Read once per Run.
+	RepetitionGuard func() bool
+
+	// RedactSecrets, when it returns false, turns off masking of high-confidence
+	// secrets in tool results (nil means on). Read once per tool batch.
+	RedactSecrets func() bool
+
 	// TaskStore is the task store used by SpawnTeammate for self-claim logic.
 	// nil uses tasktool.GlobalStore(). Set in tests to isolate task state.
 	TaskStore *tasktool.Store
@@ -302,10 +348,18 @@ type LoopConfig struct {
 
 // Loop drives the agentic query cycle.
 type Loop struct {
-	mu     sync.RWMutex
-	client *api.Client
-	reg    *tool.Registry
-	cfg    LoopConfig
+	mu sync.RWMutex
+
+	// systemOverlay is appended after cfg.System on every request; see
+	// SetSystemOverlay. Guarded by mu.
+	systemOverlay []api.SystemBlock
+	// modeDirective is the plan/council directive alone. Children inherit it,
+	// only while their own gate is in plan or council mode; the output style
+	// and the rest of systemOverlay never reach them. Guarded by mu.
+	modeDirective []api.SystemBlock
+	client        *api.Client
+	reg           *tool.Registry
+	cfg           LoopConfig
 	// subAgentLabel identifies this loop when it is itself a sub-agent — set
 	// by every child-construction site (runSubAgentWithModel,
 	// runSubAgentOnce, SpawnTeammate), each right after building the child
@@ -321,6 +375,16 @@ type Loop struct {
 	promptID       string
 	parentPromptID string
 	lastRequestID  string
+	// Wire identity for the x-claude-code-* request hint headers (see
+	// api.WireHints). All empty on the root loop, which sends class "main".
+	// Set once at child construction, before the child runs.
+	agentID       string
+	parentAgentID string
+	agentType     string
+	requestClass  string
+	// pendingContextCompacted ("auto" or "manual") marks the next root-loop
+	// prompt's first request as the first after a compaction. Guarded by mu.
+	pendingContextCompacted string
 	// Provider failover: chainResolver returns the ordered provider chain for a
 	// given role; newClientFor builds a fresh API client from a provider.
 	// Both are nil when failover is not configured (default behaviour unchanged).
@@ -331,10 +395,16 @@ type Loop struct {
 	providerRotation *providerrotation.State
 	// role is the role used to look up the provider chain.
 	role string
-	// consecutiveCompactFails tracks how many times auto-compact has failed in a
-	// row. Mirrors the MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES circuit breaker in
-	// autoCompact.ts. Stored on the struct so it persists across Run() calls.
-	consecutiveCompactFails int
+	// compactFails counts compactions that failed in a row for a reason other
+	// than a transient one (network, throttling, cancel). It trips the
+	// MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES breaker in autoCompact.ts and
+	// persists across Run() calls. Reset on success, SetModel and SetClient.
+	compactFails atomic.Int32
+	// compactStuck is the prompt-token estimate an auto-compaction left above
+	// the trigger (0 when none did). Compacting again at the next end_turn
+	// would only repeat itself, so it waits for the prompt to grow past it or
+	// to fall under the trigger. Reset by SetModel, SetClient and SetSessionID.
+	compactStuck atomic.Int64
 	// steerMsg holds an optional user steering message to inject between
 	// tool-call rounds. Written by InjectSteerContent (TUI goroutine), read
 	// and cleared by Run (loop goroutine) via atomic.Pointer so no extra lock
@@ -356,6 +426,13 @@ type Loop struct {
 	// lastCachedPrefixHash is a FNV-1a hash of the cached-prefix content sent
 	// in the previous turn, used to detect silent cache busts.
 	lastCachedPrefixHash uint64
+	// toolDefs, when set, are sent instead of the registry's definitions. A
+	// /btw side question uses it to carry the parent's tools while its own
+	// registry is empty, so the request prefix matches the parent's and the
+	// history's tool_use blocks have their definitions. Set before Run.
+	toolDefs []api.ToolDef
+	// ttsrMem remembers TTSR rule fires across Runs for Once/Gap gating.
+	ttsrMem ttsr.Memory
 }
 
 // NewLoop constructs a Loop.
@@ -366,6 +443,7 @@ func NewLoop(client *api.Client, reg *tool.Registry, cfg LoopConfig) *Loop {
 	// package-level mutable global.
 	if hooks.DefaultAsyncGroup != nil {
 		hooks.DefaultAsyncGroup.SubAgentRunner = l.RunBackgroundAgent
+		hooks.DefaultAsyncGroup.AgentHookRunner = l.RunBackgroundSubAgent
 	}
 	return l
 }
@@ -403,7 +481,9 @@ func (l *Loop) InjectMessage(text string) {
 // SetBackgroundReviewer wires a background review scheduler into the loop.
 // It is safe to call after NewLoop (e.g., after the sub-agent runner is
 // available). A nil value disables background reviews.
-func (l *Loop) SetBackgroundReviewer(r interface{ OnEndTurn(ctx context.Context) }) {
+func (l *Loop) SetBackgroundReviewer(r interface {
+	OnEndTurn(ctx context.Context, history []api.Message)
+}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.cfg.BackgroundReviewer = r
@@ -414,6 +494,8 @@ func (l *Loop) SetModel(name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.cfg.Model = name
+	l.compactFails.Store(0)
+	l.compactStuck.Store(0)
 }
 
 func (l *Loop) SetContextWindow(tokens int) {
@@ -427,20 +509,6 @@ func (l *Loop) Model() string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.cfg.Model
-}
-
-// BackgroundModel returns the helper/background model for new secondary calls.
-func (l *Loop) BackgroundModel() string {
-	l.mu.RLock()
-	bgModel := l.cfg.BackgroundModel
-	model := l.cfg.Model
-	l.mu.RUnlock()
-	if bgModel != nil {
-		if m := strings.TrimSpace(bgModel()); m != "" {
-			return m
-		}
-	}
-	return model
 }
 
 // SetMaxTurns updates the per-prompt turn cap. 0 means unlimited.
@@ -470,6 +538,48 @@ func (l *Loop) SetSystem(blocks []api.SystemBlock) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.cfg.System = blocks
+}
+
+// SetSystemOverlay sets blocks appended after the base system blocks on every
+// request. The base is rebuilt each Run by RefreshSystem; the overlay is not,
+// so caller-owned blocks (output style, plan-mode directive) survive. The
+// overlay must stay after the base: the Claude Code fingerprint requires
+// system[0..3] in exact order.
+func (l *Loop) SetSystemOverlay(blocks []api.SystemBlock) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.systemOverlay = append([]api.SystemBlock(nil), blocks...)
+}
+
+// SetModeDirective sets the plan/council directive child loops inherit when
+// their own gate is in plan or council mode.
+func (l *Loop) SetModeDirective(blocks []api.SystemBlock) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.modeDirective = append([]api.SystemBlock(nil), blocks...)
+}
+
+// inheritedModeBlocks returns the directive blocks a child with the given gate
+// mode inherits: none unless the child itself is in plan or council mode.
+func inheritedModeBlocks(directive []api.SystemBlock, mode permissions.Mode) []api.SystemBlock {
+	if mode == permissions.ModePlan || mode == permissions.ModeCouncil {
+		return directive
+	}
+	return nil
+}
+
+// ModeDirective returns a copy of the directive children may inherit.
+func (l *Loop) ModeDirective() []api.SystemBlock {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return append([]api.SystemBlock(nil), l.modeDirective...)
+}
+
+// SystemOverlay returns a copy of the current overlay blocks.
+func (l *Loop) SystemOverlay() []api.SystemBlock {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return append([]api.SystemBlock(nil), l.systemOverlay...)
 }
 
 // RefreshSystem rebuilds the system blocks from current on-disk state and
@@ -503,6 +613,8 @@ func (l *Loop) SetClient(client *api.Client) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.client = client
+	l.compactFails.Store(0)
+	l.compactStuck.Store(0)
 }
 
 // SetProviderChain configures provider failover for this loop. chainResolver
@@ -555,6 +667,10 @@ func (l *Loop) SetSessionID(id string) {
 	l.mu.Lock()
 	changed := l.cfg.SessionID != id
 	l.cfg.SessionID = id
+	if changed {
+		l.pendingContextCompacted = ""
+		l.compactStuck.Store(0)
+	}
 	l.mu.Unlock()
 	if !changed {
 		return
@@ -628,89 +744,6 @@ func (l *Loop) consumeSessionReminderBlock() *api.SystemBlock {
 	return l.sessionReminderBlock
 }
 
-func isToolUseFlowError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	if !(strings.Contains(msg, "invalid_request_error") || strings.Contains(msg, "bad_request_error") || strings.Contains(msg, "400")) {
-		return false
-	}
-	return strings.Contains(msg, "tool_use") ||
-		strings.Contains(msg, "tool use") ||
-		strings.Contains(msg, "tool_result") ||
-		strings.Contains(msg, "tool result")
-}
-
-// isProviderFailover reports whether err signals that a provider is temporarily
-// unavailable and failover to a different provider should be attempted.
-// Matches HTTP 429/503/529 status codes and common rate-limit phrases.
-// Numeric checks use " NNN" / ":NNN" anchors to avoid false positives on
-// error strings that incidentally contain those digits (e.g. byte counts).
-func isProviderFailover(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, " 429") || strings.Contains(s, ":429") ||
-		strings.Contains(s, " 503") || strings.Contains(s, ":503") ||
-		strings.Contains(s, " 529") || strings.Contains(s, ":529") ||
-		strings.Contains(s, "too many requests") ||
-		strings.Contains(s, "rate limit") ||
-		strings.Contains(s, "overloaded") ||
-		strings.Contains(s, "quota")
-}
-
-// failoverState bundles the mutable provider-rotation variables so tryRotate
-// can update them in place without needing to return multiple values.
-type failoverState struct {
-	chain        []settings.ActiveProviderSettings
-	rotation     *providerrotation.State
-	newClientFor func(settings.ActiveProviderSettings) (*api.Client, error)
-	attempts     int
-
-	// Pointers into Run()'s locals — updated on each successful rotation.
-	client        **api.Client
-	providerKey   *string
-	model         *string
-	contextWindow *int
-}
-
-// tryRotate attempts to rotate to the next available provider when err is a
-// rate-limit or overload signal. Returns true if rotation succeeded (caller
-// should continue the loop); false if no rotation is possible or the per-Run
-// cap is exhausted.
-func (fs *failoverState) tryRotate(err error, handler func(LoopEvent)) bool {
-	if !isProviderFailover(err) || fs.rotation == nil || len(fs.chain) <= 1 {
-		return false
-	}
-	if fs.attempts >= len(fs.chain) {
-		return false
-	}
-	next, ok := fs.rotation.NextAvailable(fs.chain, *fs.providerKey, time.Now())
-	if !ok {
-		return false
-	}
-	nc, cerr := fs.newClientFor(next)
-	if cerr != nil {
-		return false
-	}
-	if *fs.providerKey != "" {
-		fs.rotation.Penalize(*fs.providerKey, time.Now().Add(5*time.Minute))
-	}
-	*fs.client = nc
-	*fs.providerKey = settings.ProviderKey(next)
-	fs.attempts++
-	if next.Model != "" {
-		*fs.model = next.Model
-	}
-	if next.ContextWindow > 0 {
-		*fs.contextWindow = next.ContextWindow
-	}
-	handler(LoopEvent{Type: EventProviderFailover, FailoverErr: err, FailoverProvider: *fs.providerKey})
-	return true
-}
-
 func stripTrailingAssistantToolUse(msgs []api.Message) ([]api.Message, bool) {
 	out := make([]api.Message, len(msgs))
 	copy(out, msgs)
@@ -760,6 +793,15 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	copy(msgs, messages)
 	msgs = session.FilterUnresolvedToolUses(msgs)
 
+	l.mu.RLock()
+	waitForTools := l.cfg.WaitForTools
+	l.mu.RUnlock()
+	if waitForTools != nil {
+		if err := waitForTools(ctx); err != nil {
+			return msgs, err
+		}
+	}
+
 	// Pick up anything written since the last turn — memories extracted by
 	// memdir, skills the agent created, an edited CLAUDE.md. This is what makes
 	// learning apply within a session rather than only after a restart. When
@@ -781,16 +823,19 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		PrevRequestID: l.lastRequestID,
 		IsSubAgent:    l.subAgentLabel != "",
 	}
-	model := l.cfg.Model
-	system := l.cfg.System
-	thinkingBudget := l.cfg.ThinkingBudget
-	contextWindow := l.cfg.ContextWindow
-	client := l.client
+	rs := &runState{
+		client:         l.client,
+		model:          l.cfg.Model,
+		window:         l.cfg.ContextWindow,
+		system:         l.composeSystemLocked(),
+		thinkingBudget: l.cfg.ThinkingBudget,
+	}
 	role := l.role
 	chainResolver := l.chainResolver
 	newClientFor := l.newClientFor
 	providerRotation := l.providerRotation
 	ttsrRules := l.cfg.TTSRRules
+	repetitionGuard := l.cfg.RepetitionGuard
 	l.mu.Unlock()
 
 	// Build the failover chain once so we don't call chainResolver on every turn.
@@ -820,36 +865,65 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 	}()
 
 	// Build tool definitions from registry.
-	tools := buildToolDefs(l.reg)
+	tools := buildToolDefsFor(l.reg, rs.model)
+	if l.toolDefs != nil {
+		tools = l.toolDefs
+	}
 
 	turn := 0
 	lastAssistantTime := l.cfg.LastAssistantTime
 	lastInputTokens := 0 // last reported input token count; 0 means unknown
-	streamFailures := 0
-	toolUseRecoveries := 0
-	prefixLockRecoveries := 0
+	// rec counts recoveries spent on the request being sent; it resets after a
+	// response drains cleanly. stop is handleStop's memory for this prompt.
+	var rec requestRecovery
+	var stop stopState
+	// sameRequest is set by every path that resends the request just sent
+	// (retry, repair, rotation), so it does not use up a turn.
+	sameRequest := false
+	// reminderPending keeps the session reminder on every attempt of the
+	// prompt's first request, not just the first send.
+	reminderPending := sessionReminderBlock != nil
+	var reminder *api.SystemBlock
 	fs := &failoverState{
 		chain:         failoverChain,
 		rotation:      providerRotation,
 		newClientFor:  newClientFor,
-		client:        &client,
+		client:        &rs.client,
 		providerKey:   &currentProviderKey,
-		model:         &model,
-		contextWindow: &contextWindow,
+		model:         &rs.model,
+		contextWindow: &rs.window,
+		run:           rs,
 	}
 	// ttsrFires counts total TTSR rule firings for the current user turn.
 	// When it reaches maxTTSRFiresPerTurn the watcher is disabled (set to nil)
 	// so the stream can complete without further interruptions.
 	ttsrFires := 0
 	const maxTTSRFiresPerTurn = 3
+	turnWatcher := l.newTTSRWatcher(ttsrRules, repetitionGuard)
+	// prevToolDurations carries the last tool round's timings to the next
+	// request (x-claude-code-prev-tool-durations). Empty on a prompt's first
+	// request, as in CC.
+	var prevToolDurations string
+	// contextCompacted rides on every attempt of the first request after a
+	// compaction, including retries, and clears once a response drains (CC
+	// consumes it once per request and re-adds it on each retry).
+	rs.contextCompacted = l.takeContextCompacted()
+	// userTurn marks requests whose trailing message the user wrote: the
+	// prompt, and the request after a steering message. Retries of a request
+	// keep it (a failed attempt may not have reached the server, so "user" is
+	// right, and a rebill after a mid-stream failure is rare).
+	userTurn := true
 	for {
 		if ctx.Err() != nil {
 			return msgs, ctx.Err()
 		}
-		if l.cfg.MaxTurns > 0 && turn >= l.cfg.MaxTurns {
-			return msgs, ErrMaxTurnsExceeded
+		if !sameRequest {
+			if l.cfg.MaxTurns > 0 && turn >= l.cfg.MaxTurns {
+				return msgs, ErrMaxTurnsExceeded
+			}
+			turn++
 		}
-		turn++
+		sameRequest = false
 		msgs = session.FilterUnresolvedToolUses(msgs)
 
 		// Micro-compact: two triggers — time-based (cache expired) or token-pressure
@@ -867,9 +941,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			triggerTime := !lastAssistantTime.IsZero() && time.Since(lastAssistantTime) >= gap
 			triggerTokens := false
 			if lastInputTokens > 0 {
-				cw := contextWindow
+				cw := rs.window
 				if cw <= 0 {
-					cw = internalmodel.ContextWindowFor(model)
+					cw = internalmodel.ContextWindowFor(rs.model)
 				}
 				triggerTokens = lastInputTokens > cw*internalmodel.MicroCompactThresholdPct/100
 			}
@@ -877,7 +951,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				// Compute the live-zone boundary from a preliminary breakpoint
 				// application so we don't mutate messages that form the cached
 				// prefix, which would bust the provider's KV cache.
-				prelimBP := countSystemBreakpoints(system, tools)
+				prelimBP := countSystemBreakpoints(rs.system, tools)
 				prelimMsgs := applyHistoryBreakpoints(msgs, prelimBP)
 				boundary := liveZoneBoundary(prelimMsgs)
 				if r := microcompact.ApplyWithOptions(msgs, lastAssistantTime, gap, keep,
@@ -887,10 +961,13 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			}
 		}
 
-		reqSystem := system
-		if turn == 1 && sessionReminderBlock != nil {
-			if firstReminder := l.consumeSessionReminderBlock(); firstReminder != nil {
-				reqSystem = append(append([]api.SystemBlock(nil), system...), *firstReminder)
+		reqSystem := rs.system
+		if reminderPending {
+			if reminder == nil {
+				reminder = l.consumeSessionReminderBlock()
+			}
+			if reminder != nil {
+				reqSystem = append(append([]api.SystemBlock(nil), rs.system...), *reminder)
 			}
 		}
 		// For Claude.ai OAuth (Max subscription) accounts, replace the static
@@ -917,18 +994,19 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		}
 
 		req := &api.MessageRequest{
-			Model:     model,
-			MaxTokens: l.cfg.MaxTokens,
+			Model:     rs.model,
+			MaxTokens: rs.requestMaxTokens(l.cfg.MaxTokens),
 			System:    reqSystem,
 			Messages:  reqMsgs,
 			Stream:    true,
 			Tools:     tools,
 			Metadata:  l.cfg.Metadata,
+			Hints:     l.wireHints(billingCtx.PromptID, prevToolDurations, rs.contextCompacted, userTurn),
 		}
-		if thinkingBudget > 0 {
+		if rs.thinkingBudget > 0 {
 			req.Thinking = &api.ThinkingConfig{
 				Type:         "enabled",
-				BudgetTokens: thinkingBudget,
+				BudgetTokens: rs.thinkingBudget,
 			}
 		}
 
@@ -938,9 +1016,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		if l.cfg.MicroCompact {
 			if raw, err := json.Marshal(req.Messages); err == nil {
 				estimatedTokens := len(raw) / 4
-				cw := contextWindow
+				cw := rs.window
 				if cw <= 0 {
-					cw = internalmodel.ContextWindowFor(model)
+					cw = internalmodel.ContextWindowFor(rs.model)
 				}
 				if estimatedTokens > cw {
 					keep := l.cfg.MicroCompactKeep
@@ -966,66 +1044,50 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			}
 		}
 
-		streamCtx := api.WithRetryHandler(ctx, func(ev api.RetryEvent) bool {
-			// Fire on a goroutine so a slow/blocked TUI channel can't stall
-			// the retry sleep. EventAPIRetry is informational; order doesn't matter.
-			go handler(LoopEvent{
+		streamCtx := api.WithRetryHandler(l.apiCtx(ctx), func(ev api.RetryEvent) bool {
+			handler(LoopEvent{
 				Type:             EventAPIRetry,
 				RetryAttempt:     ev.Attempt,
+				RetryMax:         ev.MaxAttempts,
 				RetryDelay:       ev.Delay,
 				RetryAfter:       ev.RetryAfter,
 				RateLimitResetAt: ev.ResetAt,
 				RetryErr:         ev.Err,
+				RetryReason:      ev.Reason,
+				RetryStatus:      ev.Status,
 			})
+			// A rate limit with another provider to try is not worth waiting
+			// on: stop retrying so the loop rotates.
+			if ev.Reason == api.ReasonRateLimit && fs.canRotate() {
+				rec.rotationAbort = true
+				return false
+			}
 			// Short 429s are usually transient. Long retry-after values are
 			// plan/quota exhaustion; surfacing the error is clearer than
 			// leaving the user watching a spinner for minutes or hours.
-			return ev.Delay <= 2*time.Minute
+			return ev.Delay <= maxRateLimitWait
 		})
-		stream, err := client.StreamMessage(streamCtx, req)
+		rec.rotationAbort = false
+		stream, err := rs.client.StreamMessage(streamCtx, req)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if ctx.Err() != nil {
+				return msgs, ctx.Err()
+			}
+			if api.Classify(err).Class == api.ClassCancelled {
 				return msgs, err
 			}
-			if toolUseRecoveries < maxToolUseRecoveries && isToolUseFlowError(err) {
-				if recovered, ok := recoverToolUseHistory(msgs); ok {
-					toolUseRecoveries++
-					msgs = recovered
-					handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: toolUseRecoveries, RetryErr: err})
-					continue
-				}
-			}
-			// Strict prefix lock: a replayed thinking signature is bound to
-			// another conversation (compaction, resume, model swap). Strip from
-			// the block the server named and retry; fall back to stripping all
-			// thinking. Nothing to strip means the error is surfaced as-is.
-			if se := prefixLockRejection(err); se != nil && prefixLockRecoveries < maxPrefixLockRecoveries {
-				prefixLockRecoveries++
-				if healed, scope, ok := healPrefixLock(msgs, se.ThinkingMismatch, prefixLockRecoveries); ok {
-					msgs = healed
-					handler(LoopEvent{
-						Type:         EventAPIRetry,
-						RetryAttempt: prefixLockRecoveries,
-						RetryErr:     fmt.Errorf("agent: prefix-lock rejection: stripped thinking (%s), retrying: %w", scope, err),
-					})
-					continue
-				}
-			}
-			if fs.tryRotate(err, handler) {
+			recovered, retry := l.recoverConnect(ctx, err, msgs, &rec, fs, handler)
+			if retry {
+				msgs = recovered
+				sameRequest = true
 				continue
 			}
-			streamFailures++
-			if streamFailures > 3 {
-				return msgs, fmt.Errorf("agent: stream: %w", err)
+			if ctx.Err() != nil {
+				// Cancelled while waiting to resend: report the cancel.
+				return msgs, ctx.Err()
 			}
-			// Compact before resending — avoids amplifying a large payload on each retry.
-			msgs = retryCompact(msgs, lastAssistantTime, contextWindow, model)
-			handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: streamFailures, RetryErr: err})
-			continue
+			return msgs, fmt.Errorf("agent: stream: %w", err)
 		}
-		streamFailures = 0
-		toolUseRecoveries = 0
-		prefixLockRecoveries = 0
 
 		// Remember this response's request-id so the next request in the
 		// conversation can reference it as cc_prev_req.
@@ -1049,12 +1111,13 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		// budget is exhausted (ttsrFires >= maxTTSRFiresPerTurn), pass nil so the
 		// stream is allowed to complete without further TTSR interruption.
 		var ttsrWatcher *ttsr.Watcher
-		if ttsrFires < maxTTSRFiresPerTurn && len(ttsrRules) > 0 {
-			ttsrWatcher = ttsr.NewWatcher(ttsrRules)
+		if ttsrFires < maxTTSRFiresPerTurn && turnWatcher != nil {
+			turnWatcher.StartAttempt()
+			ttsrWatcher = turnWatcher
 		}
 
-		assistantBlocks, _, usage, err := l.drainStream(ctx, stream, handler, ttsrWatcher)
-		inputTokens := usage.PromptInputTokens()
+		res, err := l.drainStream(ctx, stream, handler, ttsrWatcher)
+		inputTokens := res.Usage.PromptInputTokens()
 		if inputTokens > 0 {
 			lastInputTokens = inputTokens
 		}
@@ -1062,10 +1125,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		if err != nil {
 			// TTSR rule fired: discard partial blocks, inject correction as a
 			// <system-reminder> user message, and restart the turn attempt.
-			// This check comes BEFORE context.Canceled because ErrMatch is a
+			// This check comes BEFORE the cancel check because ErrMatch is a
 			// custom error type — errors.Is(context.Canceled) won't match it.
 			if ttsrErr, ok := errors.AsType[*ttsr.ErrMatch](err); ok {
-				ttsrFires++
+				closeDanglingTools(handler, res.StartedTools, danglingToolMsg)
+				if !ttsr.IsRepetition(ttsrErr.Rule) {
+					ttsrFires++ // the repetition guard bounds itself
+				}
+				userTurn = false // the retry's trailing message is conduit's, not the user's
 				correction := ttsrErr.Rule.Correction
 				msgs = append(msgs, api.Message{
 					Role: "user",
@@ -1084,87 +1151,45 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				continue
 			}
 
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				// Conversation recovery: emit any partial assistant content the
-				// caller can persist to the session JSONL before the error
-				// propagates. On /resume the loaded history will pass through
-				// FilterUnresolvedToolUses to drop any orphan tool_use blocks.
-				if len(assistantBlocks) > 0 {
-					handler(LoopEvent{
-						Type:          EventPartial,
-						PartialBlocks: assistantBlocks,
-						PartialErr:    err,
-					})
-					msgs = append(msgs, api.Message{Role: "assistant", Content: assistantBlocks})
-				}
-				return msgs, err
-			}
-			// Non-cancellation drain error — try provider failover first, then
-			// retry up to 3 times before giving up.
-			if fs.tryRotate(err, handler) {
+			recovered, outcome, rerr := l.recoverDrain(ctx, err, res, msgs, &rec, fs, handler)
+			msgs = recovered
+			if outcome == drainRetry {
+				sameRequest = true
 				continue
 			}
-			streamFailures++
-			if streamFailures > 3 {
-				if len(assistantBlocks) > 0 {
-					handler(LoopEvent{
-						Type:          EventPartial,
-						PartialBlocks: assistantBlocks,
-						PartialErr:    err,
-					})
-					msgs = append(msgs, api.Message{Role: "assistant", Content: assistantBlocks})
-				}
-				return msgs, fmt.Errorf("agent: drain: %w", err)
-			}
-			// Compact before resending — avoids amplifying a large payload on each retry.
-			msgs = retryCompact(msgs, lastAssistantTime, contextWindow, model)
-			handler(LoopEvent{Type: EventAPIRetry, RetryAttempt: streamFailures, RetryErr: err})
+			return msgs, rerr
+		}
+		rec.reset()
+		rs.contextCompacted = ""
+		lastAssistantTime = time.Now()
+		if ttsrWatcher != nil && hasToolUse(res.Blocks) {
+			l.deliverTTSRWarnings(ttsrWatcher)
+		}
+
+		var act stopAction
+		var stopErr error
+		msgs, act, stopErr = l.handleStop(ctx, msgs, res, &stop, rs, handler)
+		switch act {
+		case stopFail:
+			return msgs, stopErr
+		case stopRetry:
+			// The request is resent with a nudge merged in: no turn used, and
+			// the trailing message is no longer purely the user's.
+			sameRequest = true
+			userTurn = false
+			continue
+		case stopContinue:
+			userTurn = false
 			continue
 		}
-		streamFailures = 0
+		// Past the retry check: an empty-response resend is still request 1.
+		reminderPending = false
 
-		// Append the assistant message to history.
-		msgs = append(msgs, api.Message{
-			Role:    "assistant",
-			Content: assistantBlocks,
-		})
-		lastAssistantTime = time.Now()
-
-		if !hasToolUse(assistantBlocks) {
+		if act == stopEnd {
 			// end_turn or unknown — we're done.
 			// Auto-compact check: if context is approaching capacity, compact
 			// so future turns don't hit the limit. Non-fatal if it fails.
-			if l.cfg.AutoCompact && inputTokens > 0 && os.Getenv("DISABLE_AUTO_COMPACT") == "" {
-				threshold := internalmodel.AutoCompactThresholdFor(model)
-				if contextWindow > 0 {
-					threshold = internalmodel.AutoCompactThresholdForWindow(contextWindow)
-				}
-				if inputTokens > threshold && l.consecutiveCompactFails < internalmodel.MaxConsecutiveCompactFail {
-					if result, err := compact.CompactWithModel(ctx, l.client, compact.DefaultModel, msgs, ""); err == nil {
-						msgs = result.NewHistory
-						l.consecutiveCompactFails = 0
-						// Compaction is the natural refresh point: the cached
-						// prefix is invalidated anyway, so picking up memories
-						// and skills written earlier in this session costs
-						// nothing extra. Without this the blocks snapshotted at
-						// the top of Run persist for the whole session.
-						//
-						// RefreshSystem's return value isn't used here — this
-						// branch returns right after (end_turn), so `system`
-						// (a local snapshot) is never read again this call.
-						// What matters is its side effect: it writes the
-						// refreshed blocks onto l.cfg.System, which the *next*
-						// Run() call snapshots fresh at the top of the function.
-						l.RefreshSystem()
-						if l.cfg.OnCompact != nil && result.Summary != "" {
-							l.cfg.OnCompact(result.Summary)
-						}
-						handler(LoopEvent{Type: EventCompacted, CompactedInputTokens: inputTokens, CompactedThreshold: threshold})
-					} else {
-						l.consecutiveCompactFails++
-					}
-				}
-			}
+			msgs = l.maybeAutoCompact(ctx, rs, msgs, inputTokens, handler)
 			// Desktop notification on turn complete. Title carries the
 			// project name so users running multiple conduit windows can
 			// tell which one finished. Body is short so the notification
@@ -1180,13 +1205,14 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 			// Periodic background memory/skill review. Fire-and-forget;
 			// the reviewer manages its own goroutines and single-flight logic.
 			if l.cfg.BackgroundReviewer != nil {
-				l.cfg.BackgroundReviewer.OnEndTurn(ctx)
+				l.cfg.BackgroundReviewer.OnEndTurn(ctx, msgs)
 			}
 			return msgs, nil
 		}
 
 		// Execute tools, build a user message with all tool_results.
-		toolResults, stopTurn, err := l.executeTools(ctx, assistantBlocks, handler)
+		toolResults, toolDurations, stopTurn, err := l.executeTools(ctx, res.Blocks, res.InvalidTools, handler)
+		prevToolDurations = api.FormatToolDurations(toolDurations)
 		if err != nil {
 			return msgs, fmt.Errorf("agent: execute tools: %w", err)
 		}
@@ -1209,7 +1235,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 				l.cfg.OnEndTurn(msgs)
 			}
 			if l.cfg.BackgroundReviewer != nil {
-				l.cfg.BackgroundReviewer.OnEndTurn(ctx)
+				l.cfg.BackgroundReviewer.OnEndTurn(ctx, msgs)
 			}
 			return msgs, nil
 		}
@@ -1226,11 +1252,13 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 					l.cfg.OnEndTurn(msgs)
 				}
 				if l.cfg.BackgroundReviewer != nil {
-					l.cfg.BackgroundReviewer.OnEndTurn(ctx)
+					l.cfg.BackgroundReviewer.OnEndTurn(ctx, msgs)
 				}
 				return msgs, nil
 			}
 		}
+
+		userTurn = false
 
 		// Drain programmatic message queue (team mailbox delivery).
 		// All messages preserved in insertion order; delivered before human
@@ -1254,6 +1282,7 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 		// Last-write-wins: earlier steer messages are superseded by later ones.
 		if p := l.steerMsg.Swap(nil); p != nil && len(*p) > 0 {
 			msgs = append(msgs, api.Message{Role: "user", Content: *p})
+			userTurn = true
 			handler(LoopEvent{Type: EventText, Text: ""}) // wake TUI to reflect history update
 		}
 
@@ -1370,32 +1399,6 @@ func applyHistoryBreakpoints(msgs []api.Message, priorBreakpoints int) []api.Mes
 		out[idx].Content = newContent
 	}
 	return out
-}
-
-// retryCompact applies microcompact to the history before a retry so the
-// re-sent payload is smaller than the payload that just failed. Only runs when
-// the estimated message size exceeds a quarter of the context window; tiny
-// histories are left unchanged.
-func retryCompact(msgs []api.Message, seed time.Time, contextWindow int, model string) []api.Message {
-	raw, err := json.Marshal(msgs)
-	if err != nil {
-		return msgs
-	}
-	estimated := len(raw) / 4
-	cw := contextWindow
-	if cw <= 0 {
-		cw = internalmodel.ContextWindowFor(model)
-	}
-	if estimated < cw/4 {
-		return msgs
-	}
-	if seed.IsZero() {
-		seed = time.Now().Add(-time.Hour)
-	}
-	if r := microcompact.Apply(msgs, seed, 0, microcompact.DefaultKeepRecent); r.Triggered {
-		return r.Messages
-	}
-	return msgs
 }
 
 // hashCachedPrefix computes a FNV-1a hash of the content that will be cached

@@ -1,0 +1,6 @@
+event: message
+data: {"jsonrpc":"2.0","method":"notifications/progress","params":{}}
+
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"results\":[{\"url\":\"https://pkg.go.dev\",\"title\":\"pkg.go.dev\",\"excerpts\":[\"Packages\"]}]}"}]}}
+

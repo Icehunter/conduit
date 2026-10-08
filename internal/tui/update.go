@@ -13,8 +13,19 @@ import (
 	"github.com/icehunter/conduit/internal/tui/workinganim"
 )
 
-// Update is the Elm update function.
+// Update is the Elm update function. It wraps update to arm the animation
+// clock whenever something needs frames (see needsAnimation): an idle session
+// does no per-frame work.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if nm, ok := next.(Model); ok && !nm.animTicking && nm.needsAnimation() {
+		nm.animTicking = true
+		return nm, tea.Batch(cmd, nm.working.Step())
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -97,14 +108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.pendingPermission != nil && m.permPrompt == nil {
 					p := m.pendingPermission
 					m.pendingPermission = nil
-					m.permPrompt = &permissionPromptState{
-						toolName:      p.toolName,
-						toolInput:     p.toolInput,
-						subAgentLabel: p.subAgentLabel,
-						reply:         p.reply,
-						selected:      0,
-						guardFirstKey: true,
-					}
+					m.permPrompt = m.newPermissionPrompt(*p)
 					m.refreshViewport()
 				}
 				if len(m.pendingMessages) > 0 && !m.running {
@@ -121,6 +125,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentMsg:
 		m = m.applyAgentEvent(msg.event)
 		return m, nil
+
+	case compactSaveFailedMsg:
+		return m.handleCompactSaveFailed(msg)
+
+	case sessionResetDoneMsg:
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Could not mark the cleared conversation in the session: %v", msg.err)})
+			m.refreshViewport()
+		}
+		return m, nil
+
+	case compactRewriteDoneMsg:
+		return m.handleCompactRewriteDone(msg), nil
 
 	case planUsageMsg:
 		return m.handlePlanUsage(msg)
@@ -144,6 +161,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case trustAcceptedMsg:
 		// Trust accepted and persisted — dialog already cleared in acceptTrust.
+		// MCP reconnects from here on count the workspace as trusted, so
+		// approved .mcp.json servers held at startup can connect.
+		m.cfg.NeedsTrust = false
 		m.refreshViewport()
 		return m, nil
 
@@ -158,14 +178,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, nil
 		}
-		m.permPrompt = &permissionPromptState{
-			toolName:      msg.toolName,
-			toolInput:     msg.toolInput,
-			subAgentLabel: msg.subAgentLabel,
-			reply:         msg.reply,
-			selected:      0,
-			guardFirstKey: true,
-		}
+		m.permPrompt = m.newPermissionPrompt(msg)
 		m.refreshViewport()
 		return m, nil
 
@@ -233,6 +246,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case compactDoneMsg:
 		return m.handleCompactDone(msg)
 
+	case btwDoneMsg:
+		return m.handleBtwDone(msg), nil
+
 	case localCallDoneMsg:
 		return m.handleLocalCallDone(msg)
 
@@ -246,12 +262,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case shellHookMsg:
+		return m.shellAuthorize(msg)
+
+	case shellDoneMsg:
+		return m.applyShellDone(msg)
+
+	case editorReadyMsg:
+		return m, runEditorCmd(msg)
+
+	case editorDoneMsg:
+		if msg.err != nil {
+			m.flashMsg = "Editor: " + msg.err.Error()
+			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearFlash{} })
+		}
+		m.input.SetValue(msg.text)
+		m.input.CursorEnd()
+		return m.applyLayout(), nil
+
+	case copyResultMsg:
+		m.flashMsg = copyFlash(msg)
+		return m, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearFlash{} })
+
+	case memoryExtractDoneMsg:
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("extract: %v", msg.err)})
+		} else {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Memory extraction complete."})
+		}
+		m.refreshViewport()
+		return m, nil
+
+	case locationInfoMsg:
+		cwdChanged := m.locCwd != msg.cwd
+		m.locCwd, m.locBranch = msg.cwd, msg.branch
+		if cwdChanged {
+			// Rendered Bash rows drop a redundant `cd <cwd> &&`.
+			setDisplayCwd(msg.cwd)
+			m.refreshViewport()
+		}
+		return m, nil
+
+	case locationTickMsg:
+		return m, tea.Batch(readLocationCmd(), locationTick())
+
 	case coordTickMsg:
-		// Re-arm the tick whenever there's still active work to display.
-		// When idle, we let it fall off — next sub-agent run schedules a
-		// fresh tick from wherever the work was kicked off (TaskCreate
-		// could call coordTick if needed, but the working indicator tick is
-		// already running during agent.Run so we don't lose ticks during work).
+		// Re-arm once a second while any task is in progress; this keeps the
+		// coordinator footer fresh. It is independent of the animation clock,
+		// which needs a fresh arm (via Update) when work starts after idle.
 		hasActive := false
 		for _, t := range tasktool.GlobalStore().List() {
 			if t.Status == tasktool.StatusInProgress {
@@ -271,7 +329,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleResumeLoad(msg)
 
 	case workinganim.StepMsg:
-		cmds = append(cmds, m.working.Animate(msg))
+		// Keep the clock alive only while something needs frames; the wrapper
+		// in Update re-arms it when the next run, sub-agent or workflow starts.
+		if animCmd := m.working.Animate(msg); m.needsAnimation() {
+			cmds = append(cmds, animCmd)
+		} else {
+			m.animTicking = false
+		}
 		// Maintain the spinner status suffix ("(thought for Xs · ↑ N · Thinking)").
 		// Capture run start on the first tick after running flips on; clear
 		// status when running flips off.
@@ -326,6 +390,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case copilotOAuthCompletedMsg:
 		return m.handleCopilotOAuthCompleted(msg)
+
+	case grokOAuthStartedMsg:
+		return m.handleGrokOAuthStarted(msg)
+
+	case grokOAuthCompletedMsg:
+		return m.handleGrokOAuthCompleted(msg)
 
 	case codexOAuthCompletedMsg:
 		return m.handleCodexOAuthCompleted(msg)
@@ -475,9 +545,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case setPermissionModeMsg:
 		m.applyPermissionMode(msg.mode)
 		m2, cmd := m.startPlanUsageFetch()
-		if rebuildCmd := m2.rebuildSystemCmd(); rebuildCmd != nil {
-			return m2, tea.Batch(cmd, rebuildCmd)
-		}
+		m2.applySystemOverlay()
 		return m2, cmd
 
 	case setModelNameMsg:
@@ -588,14 +656,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingPermission != nil && m.permPrompt == nil {
 			p := m.pendingPermission
 			m.pendingPermission = nil
-			m.permPrompt = &permissionPromptState{
-				toolName:      p.toolName,
-				toolInput:     p.toolInput,
-				subAgentLabel: p.subAgentLabel,
-				reply:         p.reply,
-				selected:      0,
-				guardFirstKey: true,
-			}
+			m.permPrompt = m.newPermissionPrompt(*p)
 			m.refreshViewport()
 		}
 	}

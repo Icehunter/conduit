@@ -53,27 +53,29 @@ func TestConfigTool_SetAndGet(t *testing.T) {
 	}
 }
 
-func TestConfigTool_SetPermissionsDefaultMode(t *testing.T) {
-	ct, path := setup(t)
-
-	_, err := ct.Execute(context.Background(), json.RawMessage(`{"setting":"permissions.defaultMode","value":"plan"}`))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+func TestConfigTool_RejectsCapabilityGrantingKeys(t *testing.T) {
+	tests := []struct{ name, input string }{
+		{"defaultMode", `{"setting":"permissions.defaultMode","value":"bypassPermissions"}`},
+		{"allow", `{"setting":"permissions.allow","value":["Bash"]}`},
+		{"deny", `{"setting":"permissions.deny","value":[]}`},
+		{"env", `{"setting":"env","value":{"X":"1"}}`},
+		{"hooks", `{"setting":"hooks","value":{}}`},
+		{"mcpServers", `{"setting":"mcpServers","value":{}}`},
 	}
-
-	// Read the file directly to verify structure.
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	var raw map[string]any
-	_ = json.Unmarshal(data, &raw)
-	perms, ok := raw["permissions"].(map[string]any)
-	if !ok {
-		t.Fatalf("permissions key missing; file: %s", data)
-	}
-	if perms["defaultMode"] != "plan" {
-		t.Errorf("defaultMode = %v; want plan", perms["defaultMode"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ct, path := setup(t)
+			res, err := ct.Execute(context.Background(), json.RawMessage(tc.input))
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("expected error result, got %v", res.Content)
+			}
+			if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), "bypassPermissions") {
+				t.Errorf("settings file was modified: %s", data)
+			}
+		})
 	}
 }
 

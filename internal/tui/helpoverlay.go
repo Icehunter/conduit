@@ -37,6 +37,9 @@ var helpSections = []helpSection{
 			{"ctrl+u", "Toggle unlimited turns (no cap)"},
 			{"ctrl+v", "Paste image or PDF"},
 			{"ctrl+y", "Copy last code block"},
+			{"ctrl+x", "Edit prompt in $VISUAL / $EDITOR"},
+			{"ctrl+Home / ctrl+End", "Jump to top / bottom of chat"},
+			{"!command", "Run a shell command (shell mode)"},
 		},
 	},
 	{

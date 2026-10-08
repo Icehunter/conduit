@@ -22,10 +22,31 @@ type openAIResponsesRequest struct {
 	Store           *bool                     `json:"store,omitempty"`
 	Tools           []openAIResponsesTool     `json:"tools,omitempty"`
 	Reasoning       *openAIResponsesReasoning `json:"reasoning,omitempty"`
+	Include         []string                  `json:"include,omitempty"`
+	PromptCacheKey  string                    `json:"prompt_cache_key,omitempty"`
 }
 
 type openAIResponsesReasoning struct {
-	Effort string `json:"effort,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"`
+}
+
+// reasoningSignaturePrefix marks a thinking block's Signature as an OpenAI
+// Responses reasoning item: prefix, item id, ":", encrypted_content. Other
+// providers' signatures never carry it, so replay can tell them apart.
+const reasoningSignaturePrefix = "oai-resp:"
+
+func encodeReasoningSignature(id, encrypted string) string {
+	return reasoningSignaturePrefix + id + ":" + encrypted
+}
+
+func decodeReasoningSignature(sig string) (id, encrypted string, ok bool) {
+	rest, found := strings.CutPrefix(sig, reasoningSignaturePrefix)
+	if !found {
+		return "", "", false
+	}
+	id, encrypted, ok = strings.Cut(rest, ":")
+	return id, encrypted, ok && id != "" && encrypted != ""
 }
 
 type openAIResponsesInput struct {
@@ -36,11 +57,18 @@ type openAIResponsesInput struct {
 	Name    string                   `json:"name,omitempty"`
 	Args    string                   `json:"arguments,omitempty"`
 	Output  string                   `json:"output,omitempty"`
+	// ID, Summary and EncryptedContent make a replayed reasoning item.
+	ID               string          `json:"id,omitempty"`
+	Summary          json.RawMessage `json:"summary,omitempty"`
+	EncryptedContent string          `json:"encrypted_content,omitempty"`
 }
 
 type openAIResponsesContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	FileData string `json:"file_data,omitempty"`
 }
 
 type openAIResponsesTool struct {
@@ -50,22 +78,28 @@ type openAIResponsesTool struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
+type openAIInputTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
 type openAIResponsesChunk struct {
 	Type        string `json:"type"`
 	ItemID      string `json:"item_id"`
 	OutputIndex int    `json:"output_index"`
 	Delta       string `json:"delta"`
-	Error       struct {
-		Type    string `json:"type"`
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
-	Item struct {
+	// Code and Message are the top-level fields of an `error` event; Error is
+	// the nested form some servers send instead.
+	Code    json.RawMessage  `json:"code"`
+	Message string           `json:"message"`
+	Error   *openAIErrorBody `json:"error"`
+	Item    struct {
 		ID        string `json:"id"`
 		Type      string `json:"type"`
 		CallID    string `json:"call_id"`
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
+		// EncryptedContent is a reasoning item's opaque replay payload.
+		EncryptedContent string `json:"encrypted_content"`
 	} `json:"item"`
 	Response struct {
 		ID                string `json:"id"`
@@ -74,20 +108,23 @@ type openAIResponsesChunk struct {
 		IncompleteDetails *struct {
 			Reason string `json:"reason"`
 		} `json:"incomplete_details"`
+		Error *openAIErrorBody `json:"error"`
 		Usage *struct {
-			InputTokens        int `json:"input_tokens"`
-			OutputTokens       int `json:"output_tokens"`
-			InputTokensDetails *struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
+			InputTokens        int                       `json:"input_tokens"`
+			OutputTokens       int                       `json:"output_tokens"`
+			InputTokensDetails *openAIInputTokensDetails `json:"input_tokens_details"`
 		} `json:"usage"`
 	} `json:"response"`
 }
 
 type openAIResponsesResponse struct {
-	ID     string `json:"id"`
-	Model  string `json:"model"`
-	Status string `json:"status"`
+	ID                string `json:"id"`
+	Model             string `json:"model"`
+	Status            string `json:"status"`
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
+	Error  *openAIErrorBody `json:"error"`
 	Output []struct {
 		Type      string `json:"type"`
 		ID        string `json:"id"`
@@ -98,10 +135,16 @@ type openAIResponsesResponse struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Summary []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"summary"`
+		EncryptedContent string `json:"encrypted_content"`
 	} `json:"output"`
 	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens        int                       `json:"input_tokens"`
+		OutputTokens       int                       `json:"output_tokens"`
+		InputTokensDetails *openAIInputTokensDetails `json:"input_tokens_details"`
 	} `json:"usage"`
 }
 
@@ -110,8 +153,9 @@ func (openAIResponsesTransport) CreateMessage(ctx context.Context, c *Client, re
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal openai-responses request: %w", err)
 	}
+	extra := c.requestHeaders(req)
 	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
-		return c.doOpenAIResponses(ctx, body)
+		return c.doOpenAIResponses(ctx, body, extra)
 	})
 	if err != nil {
 		return nil, err
@@ -124,9 +168,31 @@ func (openAIResponsesTransport) CreateMessage(ctx context.Context, c *Client, re
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("api: decode openai-responses response: %w", err)
 	}
+	if out.Status == "failed" || (out.Error != nil && len(out.Output) == 0) {
+		e := out.Error
+		if e == nil {
+			e = &openAIErrorBody{Message: "response failed"}
+		}
+		return nil, fmt.Errorf("api: openai-responses response: %w", &sse.Error{Type: e.anthropicType(), Message: e.describe()})
+	}
 	blocks := make([]ContentBlock, 0, len(out.Output))
+	hasToolUse := false
 	for _, item := range out.Output {
 		switch item.Type {
+		case "reasoning":
+			var summary []string
+			for _, part := range item.Summary {
+				if part.Text != "" {
+					summary = append(summary, part.Text)
+				}
+			}
+			block := ContentBlock{Type: "thinking", Thinking: strings.Join(summary, "\n\n")}
+			if item.EncryptedContent != "" {
+				block.Signature = encodeReasoningSignature(item.ID, item.EncryptedContent)
+			}
+			if block.Thinking != "" || block.Signature != "" {
+				blocks = append(blocks, block)
+			}
 		case "message":
 			for _, content := range item.Content {
 				if content.Type == "output_text" && content.Text != "" {
@@ -146,10 +212,19 @@ func (openAIResponsesTransport) CreateMessage(ctx context.Context, c *Client, re
 				id = item.ID
 			}
 			blocks = append(blocks, ContentBlock{Type: "tool_use", ID: id, Name: item.Name, Input: input})
+			hasToolUse = true
 		}
 	}
 	if len(blocks) == 0 {
 		blocks = append(blocks, ContentBlock{Type: "text"})
+	}
+	reason := ""
+	if out.IncompleteDetails != nil {
+		reason = out.IncompleteDetails.Reason
+	}
+	stopReason := openAIResponsesStopReason(out.Status, reason)
+	if stopReason == "end_turn" && hasToolUse {
+		stopReason = "tool_use"
 	}
 	return &MessageResponse{
 		ID:         out.ID,
@@ -157,12 +232,20 @@ func (openAIResponsesTransport) CreateMessage(ctx context.Context, c *Client, re
 		Role:       "assistant",
 		Model:      out.Model,
 		Content:    blocks,
-		StopReason: openAIResponsesStopReason(out.Status, ""),
-		Usage: Usage{
-			InputTokens:  out.Usage.InputTokens,
-			OutputTokens: out.Usage.OutputTokens,
-		},
+		StopReason: stopReason,
+		Usage:      responsesUsage(out.Usage.InputTokens, out.Usage.OutputTokens, out.Usage.InputTokensDetails),
 	}, nil
+}
+
+// responsesUsage maps Responses usage onto Anthropic semantics: input_tokens
+// counts only uncached prompt tokens and the cached share is
+// cache_read_input_tokens, so PromptInputTokens still sums to the full prompt.
+func responsesUsage(input, output int, details *openAIInputTokensDetails) Usage {
+	cached := 0
+	if details != nil {
+		cached = min(max(details.CachedTokens, 0), input)
+	}
+	return Usage{InputTokens: input - cached, OutputTokens: output, CacheReadInputTokens: cached}
 }
 
 func (openAIResponsesTransport) StreamMessage(ctx context.Context, c *Client, req *MessageRequest) (*Stream, error) {
@@ -175,8 +258,9 @@ func (openAIResponsesTransport) StreamMessage(ctx context.Context, c *Client, re
 	// is what the request must be built with.
 	streamCtx, cancel := context.WithCancel(ctx)
 
+	extra := c.requestHeaders(req)
 	resp, err := c.doWithRetryAndAuth(streamCtx, func() (*http.Response, error) {
-		return c.doOpenAIResponses(streamCtx, body)
+		return c.doOpenAIResponses(streamCtx, body, extra)
 	})
 	if err != nil {
 		cancel()
@@ -208,14 +292,14 @@ func (openAIResponsesTransport) StreamMessage(ctx context.Context, c *Client, re
 	}, nil
 }
 
-func (c *Client) doOpenAIResponses(ctx context.Context, body []byte) (*http.Response, error) {
+func (c *Client) doOpenAIResponses(ctx context.Context, body []byte, extra map[string]string) (*http.Response, error) {
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/responses"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("api: build openai-responses request: %w", err)
 	}
-	c.applyOpenAIHeaders(httpReq.Header)
-	resp, err := c.http.Do(httpReq)
+	c.applyOpenAIHeaders(httpReq.Header, extra)
+	resp, err := c.doWithHeaderTimeout(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("api: send openai-responses: %w", err)
 	}
@@ -234,8 +318,16 @@ func openAIResponsesRequestFromMessageRequest(req *MessageRequest, stream bool, 
 	if cfg.OpenAIResponsesStore != nil {
 		out.Store = cfg.OpenAIResponsesStore
 	}
-	if req.Thinking != nil {
-		out.Reasoning = &openAIResponsesReasoning{Effort: "medium"}
+	if effort := reasoningEffort(req.Thinking); effort != "" && sendsReasoningEffort(cfg.BaseURL, req.Model) {
+		// summary=auto asks for the reasoning summary text that the stream
+		// converter shows as thinking.
+		out.Reasoning = &openAIResponsesReasoning{Effort: effort, Summary: "auto"}
+	}
+	if cfg.OpenAIResponsesReplayReasoning && cfg.OpenAIResponsesStore != nil && !*cfg.OpenAIResponsesStore {
+		out.Include = []string{"reasoning.encrypted_content"}
+	}
+	if cfg.OpenAIResponsesPromptCacheKey {
+		out.PromptCacheKey = responsesCacheKey(req, cfg)
 	}
 	if len(req.System) > 0 {
 		text := systemText(req.Model, req.System)
@@ -249,23 +341,34 @@ func openAIResponsesRequestFromMessageRequest(req *MessageRequest, stream bool, 
 		}
 	}
 	for _, msg := range req.Messages {
-		out.Input = append(out.Input, openAIResponsesInputsFromMessage(msg)...)
+		out.Input = append(out.Input, openAIResponsesInputsFromMessage(msg, cfg, req.Model)...)
 	}
 	return out
 }
 
-func openAIResponsesInputsFromMessage(msg Message) []openAIResponsesInput {
+// openAIResponsesInputsFromMessage converts one conduit message to Responses
+// input items: an assistant turn's text before its function calls, a user
+// turn's function_call_output items before its own text.
+func openAIResponsesInputsFromMessage(msg Message, cfg Config, model string) []openAIResponsesInput {
 	role := msg.Role
 	if role == "" {
 		role = "user"
 	}
 	var textParts []string
-	var out []openAIResponsesInput
+	var out, reasoning []openAIResponsesInput
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
 			if block.Text != "" {
 				textParts = append(textParts, block.Text)
+			}
+		case "thinking":
+			if _, enc, ok := decodeReasoningSignature(block.Signature); ok && role == "assistant" && cfg.OpenAIResponsesReplayReasoning {
+				reasoning = append(reasoning, openAIResponsesInput{
+					// No id: with store=false the item is not stored server-side, and
+					// opencode and codex-rs send only the encrypted payload.
+					Type: "reasoning", Summary: json.RawMessage("[]"), EncryptedContent: enc,
+				})
 			}
 		case "tool_use":
 			out = append(out, openAIResponsesInput{
@@ -275,30 +378,47 @@ func openAIResponsesInputsFromMessage(msg Message) []openAIResponsesInput {
 				Args:   marshalToolArguments(block.Input),
 			})
 		case "tool_result":
-			if block.ResultContent != "" {
-				out = append(out, openAIResponsesInput{
-					Type:   "function_call_output",
-					CallID: block.ToolUseID,
-					Output: block.ResultContent,
-				})
-			}
+			out = append(out, openAIResponsesInput{
+				Type:   "function_call_output",
+				CallID: block.ToolUseID,
+				Output: toolResultText(block),
+			})
 		}
 	}
 	text := strings.Join(textParts, "\n\n")
 	if role == "assistant" && isStaleProviderSelfIdentification(text) {
 		text = ""
 	}
-	if text != "" {
-		contentType := "input_text"
-		if role == "assistant" {
-			contentType = "output_text"
+	if role == "assistant" {
+		// Reasoning items come first, then the text, then the calls they led to.
+		items := reasoning
+		if text != "" {
+			items = append(items, openAIResponsesInput{
+				Role:    role,
+				Content: []openAIResponsesContent{{Type: "output_text", Text: text}},
+			})
 		}
-		out = append([]openAIResponsesInput{{
-			Role:    role,
-			Content: []openAIResponsesContent{{Type: contentType, Text: text}},
-		}}, out...)
+		return append(items, out...)
 	}
-	return out
+	media, text := responsesMediaContent(msg.Content, text, cfg, model)
+	var content []openAIResponsesContent
+	if text != "" {
+		content = append(content, openAIResponsesContent{Type: "input_text", Text: text})
+	}
+	content = append(content, media...)
+	if len(content) == 0 {
+		return out
+	}
+	return append(out, openAIResponsesInput{Role: role, Content: content})
+}
+
+// responsesCacheKey is the prompt_cache_key: the conduit session of the
+// request, else the client's own session id.
+func responsesCacheKey(req *MessageRequest, cfg Config) string {
+	if req.Hints != nil && req.Hints.SessionID != "" {
+		return req.Hints.SessionID
+	}
+	return cfg.SessionID
 }
 
 func openAIResponsesToolsFromToolDefs(defs []ToolDef) []openAIResponsesTool {
@@ -319,82 +439,49 @@ func openAIResponsesToolsFromToolDefs(defs []ToolDef) []openAIResponsesTool {
 	return tools
 }
 
+// convertOpenAIResponsesStream converts a /responses SSE body into Anthropic
+// Messages SSE events on writer. The message ends only after
+// response.completed, response.incomplete or response.done; a body that stops
+// before one fails with ErrStreamTruncated. response.failed and error events
+// become an Anthropic error event.
 func convertOpenAIResponsesStream(body io.ReadCloser, writer *io.PipeWriter, fallbackModel string) {
 	defer func() { _ = body.Close() }()
-	bw := bufio.NewWriter(writer)
-	writeAnthropicEvent := func(event string, data any) error {
-		raw, err := json.Marshal(data)
-		if err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(bw, "event: %s\ndata: %s\n\n", event, raw); err != nil {
-			return err
-		}
-		return bw.Flush()
-	}
-	if err := writeAnthropicEvent("message_start", map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id":          "openai-responses",
-			"type":        "message",
-			"role":        "assistant",
-			"model":       fallbackModel,
-			"content":     []any{},
-			"stop_reason": nil,
-			"usage":       map[string]any{"input_tokens": 0},
-		},
-	}); err != nil {
+	if err := runOpenAIResponsesStream(body, anthropicEventWriter{bw: bufio.NewWriter(writer)}, fallbackModel); err != nil {
 		_ = writer.CloseWithError(err)
 		return
 	}
+	_ = writer.Close()
+}
 
-	stopReason := "end_turn"
-	inputTokens := 0
-	outputTokens := 0
-	nextBlockIndex := 0
-	textBlockOpen := false
-	textBlockIndex := -1
-	toolBlocks := map[int]int{}
-	toolIDs := map[int]string{}
-	toolArgs := map[int]string{}
-	startTextBlock := func() error {
-		if textBlockOpen {
-			return nil
-		}
-		textBlockOpen = true
-		textBlockIndex = nextBlockIndex
-		nextBlockIndex++
-		return writeAnthropicEvent("content_block_start", map[string]any{
-			"type":          "content_block_start",
-			"index":         textBlockIndex,
-			"content_block": map[string]any{"type": "text", "text": ""},
-		})
+func runOpenAIResponsesStream(body io.Reader, w anthropicEventWriter, fallbackModel string) error {
+	if err := w.messageStart("openai-responses", fallbackModel); err != nil {
+		return err
 	}
-	startToolBlock := func(outputIndex int, id, name string) error {
-		if _, ok := toolBlocks[outputIndex]; ok {
-			return nil
+	blocks := newAnthropicBlocks(w)
+	tools := map[int]*anthropicToolBlock{} // by output_index
+	startTool := func(outputIndex int, id, name string) (*anthropicToolBlock, error) {
+		if tb, ok := tools[outputIndex]; ok {
+			return tb, nil
 		}
-		blockIndex := nextBlockIndex
-		nextBlockIndex++
-		toolBlocks[outputIndex] = blockIndex
 		if id == "" {
 			id = fmt.Sprintf("call_%d", outputIndex)
 		}
-		toolIDs[outputIndex] = id
-		return writeAnthropicEvent("content_block_start", map[string]any{
-			"type":  "content_block_start",
-			"index": blockIndex,
-			"content_block": map[string]any{
-				"type": "tool_use",
-				"id":   id,
-				"name": name,
-			},
-		})
+		tb, err := blocks.startTool(map[string]any{"type": "tool_use", "id": id, "name": name})
+		if err != nil {
+			return nil, err
+		}
+		tools[outputIndex] = tb
+		return tb, nil
 	}
+	stopReason := "end_turn"
+	inputTokens, outputTokens := 0, 0
+	var cachedTokens int
+	terminal := false
+	reasoningHasText := false // the open reasoning item has shown summary text
+
 	scanner := bufio.NewScanner(body)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 8<<20)
-	for scanner.Scan() {
+	scanner.Buffer(make([]byte, 64*1024), 8<<20)
+	for !terminal && scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
 			continue
@@ -408,147 +495,124 @@ func convertOpenAIResponsesStream(body io.ReadCloser, writer *io.PipeWriter, fal
 		}
 		var chunk openAIResponsesChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			_ = writer.CloseWithError(fmt.Errorf("api: decode openai-responses stream chunk: %w", err))
-			return
+			return fmt.Errorf("api: decode openai-responses stream chunk: %w", err)
 		}
 		switch chunk.Type {
 		case "error":
-			msg := chunk.Error.Message
-			if msg == "" {
-				msg = "openai responses stream error"
+			e := openAIErrorBody{Code: chunk.Code, Message: chunk.Message}
+			if chunk.Error != nil {
+				e.Type = chunk.Error.Type
+				if len(chunk.Error.Code) > 0 {
+					e.Code = chunk.Error.Code
+				}
+				if chunk.Error.Message != "" {
+					e.Message = chunk.Error.Message
+				}
 			}
-			_ = writer.CloseWithError(fmt.Errorf("api: openai-responses stream: %s", msg))
-			return
+			return w.streamError(e.anthropicType(), e.describe())
+		case "response.failed":
+			return w.streamError(responseFailure(chunk.Response.Error, chunk.Response.Status))
 		case "response.output_item.added":
 			if chunk.Item.Type == "function_call" {
 				id := chunk.Item.CallID
 				if id == "" {
 					id = chunk.Item.ID
 				}
-				if err := startToolBlock(chunk.OutputIndex, id, chunk.Item.Name); err != nil {
-					_ = writer.CloseWithError(err)
-					return
+				if _, err := startTool(chunk.OutputIndex, id, chunk.Item.Name); err != nil {
+					return err
 				}
+			}
+		case "response.reasoning_summary_part.added":
+			// A new summary part continues the same thinking block.
+			if reasoningHasText {
+				if err := blocks.text("thinking", "\n\n"); err != nil {
+					return err
+				}
+				reasoningHasText = false
+			}
+		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+			if chunk.Delta != "" {
+				reasoningHasText = true
+			}
+			if err := blocks.text("thinking", chunk.Delta); err != nil {
+				return err
 			}
 		case "response.output_text.delta":
-			if err := startTextBlock(); err != nil {
-				_ = writer.CloseWithError(err)
-				return
-			}
-			if err := writeAnthropicEvent("content_block_delta", map[string]any{
-				"type":  "content_block_delta",
-				"index": textBlockIndex,
-				"delta": map[string]any{"type": "text_delta", "text": chunk.Delta},
-			}); err != nil {
-				_ = writer.CloseWithError(err)
-				return
+			if err := blocks.text("text", chunk.Delta); err != nil {
+				return err
 			}
 		case "response.function_call_arguments.delta":
-			if _, ok := toolBlocks[chunk.OutputIndex]; !ok {
-				if err := startToolBlock(chunk.OutputIndex, chunk.ItemID, ""); err != nil {
-					_ = writer.CloseWithError(err)
-					return
-				}
+			tb, err := startTool(chunk.OutputIndex, chunk.ItemID, "")
+			if err != nil {
+				return err
 			}
-			toolArgs[chunk.OutputIndex] += chunk.Delta
-			blockIndex := toolBlocks[chunk.OutputIndex]
-			if err := writeAnthropicEvent("content_block_delta", map[string]any{
-				"type":  "content_block_delta",
-				"index": blockIndex,
-				"delta": map[string]any{"type": "input_json_delta", "partial_json": chunk.Delta},
-			}); err != nil {
-				_ = writer.CloseWithError(err)
-				return
+			if err := blocks.toolArgs(tb, chunk.Delta); err != nil {
+				return err
 			}
 		case "response.output_item.done":
-			if chunk.Item.Type == "function_call" {
-				if _, ok := toolBlocks[chunk.OutputIndex]; !ok {
-					id := chunk.Item.CallID
-					if id == "" {
-						id = chunk.Item.ID
+			if chunk.Item.Type == "reasoning" {
+				reasoningHasText = false
+				if chunk.Item.EncryptedContent != "" {
+					sig := encodeReasoningSignature(chunk.Item.ID, chunk.Item.EncryptedContent)
+					if err := blocks.thinkingSignature(sig); err != nil {
+						return err
 					}
-					if err := startToolBlock(chunk.OutputIndex, id, chunk.Item.Name); err != nil {
-						_ = writer.CloseWithError(err)
-						return
-					}
+				} else if err := blocks.closeOpen(); err != nil {
+					return err
 				}
-				if toolArgs[chunk.OutputIndex] == "" && chunk.Item.Arguments != "" {
-					blockIndex := toolBlocks[chunk.OutputIndex]
-					toolArgs[chunk.OutputIndex] = chunk.Item.Arguments
-					if err := writeAnthropicEvent("content_block_delta", map[string]any{
-						"type":  "content_block_delta",
-						"index": blockIndex,
-						"delta": map[string]any{"type": "input_json_delta", "partial_json": chunk.Item.Arguments},
-					}); err != nil {
-						_ = writer.CloseWithError(err)
-						return
+			}
+			if chunk.Item.Type == "function_call" {
+				id := chunk.Item.CallID
+				if id == "" {
+					id = chunk.Item.ID
+				}
+				tb, err := startTool(chunk.OutputIndex, id, chunk.Item.Name)
+				if err != nil {
+					return err
+				}
+				if !tb.hasArgs {
+					if err := blocks.toolArgs(tb, chunk.Item.Arguments); err != nil {
+						return err
 					}
 				}
 			}
-		case "response.completed", "response.incomplete":
+		case "response.completed", "response.incomplete", "response.done":
+			status := chunk.Response.Status
+			if status == "failed" || status == "cancelled" {
+				return w.streamError(responseFailure(chunk.Response.Error, status))
+			}
 			if chunk.Response.Usage != nil {
-				inputTokens = chunk.Response.Usage.InputTokens
-				outputTokens = chunk.Response.Usage.OutputTokens
+				u := responsesUsage(chunk.Response.Usage.InputTokens, chunk.Response.Usage.OutputTokens, chunk.Response.Usage.InputTokensDetails)
+				inputTokens, outputTokens, cachedTokens = u.InputTokens, u.OutputTokens, u.CacheReadInputTokens
 			}
 			reason := ""
 			if chunk.Response.IncompleteDetails != nil {
 				reason = chunk.Response.IncompleteDetails.Reason
 			}
-			stopReason = openAIResponsesStopReason(chunk.Response.Status, reason)
+			stopReason = openAIResponsesStopReason(status, reason)
+			terminal = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		_ = writer.CloseWithError(fmt.Errorf("api: read openai-responses stream: %w", err))
-		return
+		return fmt.Errorf("api: read openai-responses stream: %w", err)
 	}
-	if textBlockOpen {
-		if err := writeAnthropicEvent("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": textBlockIndex,
-		}); err != nil {
-			_ = writer.CloseWithError(err)
-			return
-		}
+	if !terminal {
+		return fmt.Errorf("api: openai-responses stream: %w", ErrStreamTruncated)
 	}
-	for callIndex := 0; callIndex < len(toolBlocks); callIndex++ {
-		blockIndex, ok := toolBlocks[callIndex]
-		if !ok {
-			continue
-		}
-		if toolArgs[callIndex] == "" {
-			if err := writeAnthropicEvent("content_block_delta", map[string]any{
-				"type":  "content_block_delta",
-				"index": blockIndex,
-				"delta": map[string]any{"type": "input_json_delta", "partial_json": "{}"},
-			}); err != nil {
-				_ = writer.CloseWithError(err)
-				return
-			}
-		}
-		if err := writeAnthropicEvent("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": blockIndex,
-		}); err != nil {
-			_ = writer.CloseWithError(err)
-			return
-		}
+	return blocks.finish(stopReason, map[string]any{
+		"input_tokens":            inputTokens,
+		"output_tokens":           outputTokens,
+		"cache_read_input_tokens": cachedTokens,
+	})
+}
+
+// responseFailure is the Anthropic error type and message for a Responses
+// response that ended as failed or cancelled.
+func responseFailure(e *openAIErrorBody, status string) (typ, message string) {
+	if e == nil || e.Message == "" {
+		e = &openAIErrorBody{Message: "response " + status}
 	}
-	if err := writeAnthropicEvent("message_delta", map[string]any{
-		"type":  "message_delta",
-		"delta": map[string]any{"stop_reason": stopReason},
-		"usage": map[string]any{
-			"input_tokens":  inputTokens,
-			"output_tokens": outputTokens,
-		},
-	}); err != nil {
-		_ = writer.CloseWithError(err)
-		return
-	}
-	if err := writeAnthropicEvent("message_stop", map[string]any{"type": "message_stop"}); err != nil {
-		_ = writer.CloseWithError(err)
-		return
-	}
-	_ = writer.Close()
+	return e.anthropicType(), e.describe()
 }
 
 func openAIResponsesStopReason(status, reason string) string {
@@ -556,8 +620,8 @@ func openAIResponsesStopReason(status, reason string) string {
 		switch reason {
 		case "max_output_tokens", "max_tokens":
 			return "max_tokens"
-		default:
-			return "end_turn"
+		case "content_filter":
+			return "refusal"
 		}
 	}
 	return "end_turn"

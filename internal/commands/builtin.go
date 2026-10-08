@@ -12,6 +12,7 @@ import (
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/provider/copilot"
+	"github.com/icehunter/conduit/internal/provider/xai"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -305,9 +306,9 @@ func accountModelPickerItems(provider settings.ActiveProviderSettings) []PickerO
 	return []PickerOption{
 		{Label: section, Section: true},
 		{Value: providerPickerValue(provider, models[0]), Label: "Fable 5.1  — most capable (default)"},
-		{Value: providerPickerValue(provider, models[1]), Label: "Opus 5     — deep reasoning"},
-		{Value: providerPickerValue(provider, models[2]), Label: "Sonnet 5   — balanced"},
-		{Value: providerPickerValue(provider, models[3]), Label: "Haiku 4.5  — fastest, cheapest"},
+		{Value: providerPickerValue(provider, models[1]), Label: "Opus 5.5   — deep reasoning"},
+		{Value: providerPickerValue(provider, models[2]), Label: "Sonnet 5.5 — balanced"},
+		{Value: providerPickerValue(provider, models[3]), Label: "Haiku 5.5  — fastest, cheapest"},
 	}
 }
 
@@ -317,7 +318,7 @@ func accountModelPickerItems(provider settings.ActiveProviderSettings) []PickerO
 // internalmodel.Default: its label above literally says "(default)", so a
 // mismatch here makes that label a lie.
 func accountModelNames() []string {
-	return []string{internalmodel.Default, "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"}
+	return []string{internalmodel.Default, "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
 }
 
 func customModelPickerItems(providers map[string]settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []PickerOption {
@@ -468,6 +469,13 @@ func customModelPickerSection(provider settings.ActiveProviderSettings) (string,
 		if strings.HasPrefix(provider.Credential, "chatgpt-codex") || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
 			label := "ChatGPT / Codex"
 			if provider.Credential != "" && provider.Credential != codex.ProviderID {
+				label += " · " + provider.Credential
+			}
+			return label, true
+		}
+		if strings.HasPrefix(provider.Credential, xai.ProviderID) {
+			label := xai.DisplayName
+			if provider.Credential != xai.ProviderID {
 				label += " · " + provider.Credential
 			}
 			return label, true
@@ -665,15 +673,17 @@ func resolveModelName(s string) string {
 	// wrongly mapping both "opus" and "fable" to claude-opus-4-8 (Fable
 	// wasn't reachable via its own shorthand at all).
 	case "opus":
-		return "claude-opus-5"
+		return "claude-opus-5-5"
 	case "fable":
 		return "claude-fable-5-1"
 	case "sonnet":
-		return "claude-sonnet-5"
+		return "claude-sonnet-5-5"
 	case "haiku":
-		return "claude-haiku-4-5-20251001"
+		return "claude-haiku-5-5"
 	// Explicit version shorthand still names that exact model, not whatever
 	// is currently the flagship.
+	case "opus5.5", "opus-5.5":
+		return "claude-opus-5-5"
 	case "opus5", "opus-5":
 		return "claude-opus-5"
 	case "opus4.8", "opus-4.8":
@@ -684,10 +694,14 @@ func resolveModelName(s string) string {
 		return "claude-fable-5-1"
 	case "fable5", "fable-5":
 		return "claude-fable-5"
+	case "sonnet5.5", "sonnet-5.5":
+		return "claude-sonnet-5-5"
 	case "sonnet5", "sonnet-5":
 		return "claude-sonnet-5"
 	case "sonnet4", "sonnet-4", "sonnet4.6", "sonnet-4.6":
 		return "claude-sonnet-4-6"
+	case "haiku5.5", "haiku-5.5":
+		return "claude-haiku-5-5"
 	case "haiku4", "haiku-4", "haiku4.5", "haiku-4.5":
 		return "claude-haiku-4-5-20251001"
 	}

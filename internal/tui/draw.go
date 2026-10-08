@@ -16,7 +16,7 @@ import (
 	"github.com/icehunter/conduit/internal/workflow"
 )
 
-func makeTeaView(content string) tea.View {
+func makeTeaView(content string, captureMouse bool) tea.View {
 	var v tea.View
 	v.SetContent(content)
 	v.AltScreen = true
@@ -26,7 +26,10 @@ func makeTeaView(content string) tea.View {
 	// viewport while UP/DOWN navigates input history — matching CC's UX.
 	// Trade-off: text selection requires Shift+drag (standard for
 	// mouse-mode TUIs like vim/tmux). Text copy still works via ^Y.
-	v.MouseMode = tea.MouseModeCellMotion
+	// The disableMouse setting skips capture for native terminal selection.
+	if captureMouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 

@@ -34,6 +34,9 @@ func runPromptHook(ctx context.Context, hook settings.Hook, input HookInput) Res
 // Mirrors src/utils/hooks/execAgentHook.ts.
 func runAgentHook(ctx context.Context, hook settings.Hook, input HookInput) Result {
 	runner := subAgentRunner()
+	if DefaultAsyncGroup != nil && DefaultAsyncGroup.AgentHookRunner != nil {
+		runner = DefaultAsyncGroup.AgentHookRunner
+	}
 	if runner == nil || hook.Prompt == "" {
 		return Result{} // no runner available — advisory no-op
 	}
@@ -92,15 +95,5 @@ func parseHookResponse(text string) Result {
 	if err := json.Unmarshal([]byte(candidate), &out); err != nil {
 		return Result{}
 	}
-	switch strings.ToLower(out.Decision) {
-	case "block":
-		reason := out.Reason
-		if reason == "" {
-			reason = "blocked by hook"
-		}
-		return Result{Blocked: true, Reason: reason}
-	case "approve":
-		return Result{Approved: true}
-	}
-	return Result{}
+	return out.result("blocked by hook")
 }

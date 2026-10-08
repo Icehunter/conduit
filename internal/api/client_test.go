@@ -348,6 +348,49 @@ func TestCreateMessage_OpenAITransports401RetryAfterRefresh(t *testing.T) {
 	}
 }
 
+func TestCreateMessage_OpenAICompatibleMergesExtraBody(t *testing.T) {
+	var capturedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chatcmpl_1","model":"qwen3.8-27b","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		ProviderKind: ProviderKindOpenAICompatible,
+		BaseURL:      srv.URL,
+		APIKey:       "local",
+		ExtraBody: map[string]any{
+			"chat_template_kwargs": map[string]any{"enable_thinking": false},
+		},
+	}, srv.Client())
+	resp, err := c.CreateMessage(context.Background(), &MessageRequest{
+		Model:     "qwen3.8-27b",
+		MaxTokens: 8,
+		Messages:  []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage: %v", err)
+	}
+	if len(resp.Content) == 0 || resp.Content[0].Text != "ok" {
+		t.Fatalf("response content = %#v, want ok text", resp.Content)
+	}
+	kwargs, ok := capturedBody["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != false {
+		t.Fatalf("chat_template_kwargs = %#v, want enable_thinking=false", capturedBody["chat_template_kwargs"])
+	}
+	if capturedBody["model"] != "qwen3.8-27b" {
+		t.Fatalf("model = %#v, want unaffected by ExtraBody merge", capturedBody["model"])
+	}
+	messages, ok := capturedBody["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatalf("messages = %#v, want non-empty list", capturedBody["messages"])
+	}
+}
+
 // TestCreateMessage_401NoRetryWhenNoHook: without OnAuth401, a 401 surfaces
 // as an error rather than looping.
 func TestCreateMessage_401NoRetryWhenNoHook(t *testing.T) {

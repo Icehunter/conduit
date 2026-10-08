@@ -235,7 +235,7 @@ func TestRegisterModelCommand_ClaudeSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-5" {
+	if result.Provider.Kind != "claude-subscription" || result.Provider.Model != "claude-opus-5-5" {
 		t.Fatalf("provider = %#v, want Claude Opus provider", result.Provider)
 	}
 }
@@ -261,7 +261,7 @@ func TestRegisterModelCommand_AnthropicSelectionSwitchesProvider(t *testing.T) {
 	if result.Type != "provider-switch" || result.Provider == nil {
 		t.Fatalf("/model opus = %#v", result)
 	}
-	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-5" || result.Provider.Account != "api@example.com" {
+	if result.Provider.Kind != "anthropic-api" || result.Provider.Model != "claude-opus-5-5" || result.Provider.Account != "api@example.com" {
 		t.Fatalf("provider = %#v, want Anthropic API Opus provider", result.Provider)
 	}
 
@@ -371,10 +371,12 @@ func TestResolveModelName(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"opus", "claude-opus-5"},
-		{"OPUS", "claude-opus-5"},
+		{"opus", "claude-opus-5-5"},
+		{"OPUS", "claude-opus-5-5"},
 		{"opus5", "claude-opus-5"},
 		{"opus-5", "claude-opus-5"},
+		{"opus5.5", "claude-opus-5-5"},
+		{"sonnet-5.5", "claude-sonnet-5-5"},
 		{"opus4.8", "claude-opus-4-8"},
 		{"opus-4.8", "claude-opus-4-8"},
 		{"fable", "claude-fable-5-1"},
@@ -382,11 +384,12 @@ func TestResolveModelName(t *testing.T) {
 		{"fable-5.1", "claude-fable-5-1"},
 		{"fable5", "claude-fable-5"},
 		{"fable-5", "claude-fable-5"},
-		{"sonnet", "claude-sonnet-5"},
+		{"sonnet", "claude-sonnet-5-5"},
 		{"sonnet5", "claude-sonnet-5"},
 		{"sonnet-5", "claude-sonnet-5"},
 		{"sonnet4.6", "claude-sonnet-4-6"},
-		{"haiku", "claude-haiku-4-5-20251001"},
+		{"haiku", "claude-haiku-5-5"},
+		{"haiku5.5", "claude-haiku-5-5"},
 		{"haiku4.5", "claude-haiku-4-5-20251001"},
 		{"claude-opus-5", "claude-opus-5"}, // already-full ID passes through unchanged
 	}
@@ -788,7 +791,7 @@ func TestRegisterModelCommand_RoleSelection(t *testing.T) {
 	if result.Role != settings.RolePlanning {
 		t.Fatalf("role = %q, want planning", result.Role)
 	}
-	if result.Provider == nil || result.Provider.Model != "claude-opus-5" {
+	if result.Provider == nil || result.Provider.Model != "claude-opus-5-5" {
 		t.Fatalf("provider = %#v, want opus provider", result.Provider)
 	}
 	if called {

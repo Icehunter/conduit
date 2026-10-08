@@ -27,8 +27,32 @@ type Record struct {
 	PatchCount int       `json:"patch_count"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastUsedAt time.Time `json:"last_used_at"`
+	// ArchivedAt is when the record entered the "archived" state; the purge
+	// window is measured from it. Zero for records that are not archived.
+	ArchivedAt time.Time `json:"archived_at,omitempty"`
 	State      string    `json:"state"` // "active" | "stale" | "archived"
 	Pinned     bool      `json:"pinned"`
+}
+
+// Default lifecycle thresholds, in days since last use. Archived skills are
+// purged PurgeDays after they were archived.
+const (
+	DefaultStaleDays   = 14
+	DefaultArchiveDays = 30
+	DefaultPurgeDays   = 90
+)
+
+// ScopeConduitGlobal is the only scope whose skills the curator archives and
+// purges: it is the one directory the curator moves things in.
+const ScopeConduitGlobal = "global-conduit"
+
+// lifecycleManaged reports whether the curator may archive or purge r. Usage
+// telemetry creates records for any skill that runs, so a record alone proves
+// nothing: only RecordCreate(byAgent=true) writes CreatedBy "agent", and the
+// skill must live in global-conduit scope (records are keyed by name, so a
+// same-named skill in another scope must never be touched).
+func lifecycleManaged(r Record) bool {
+	return !r.Pinned && r.CreatedBy == "agent" && r.Scope == ScopeConduitGlobal
 }
 
 // Transition records a state change made by ApplyTransitions.
@@ -168,11 +192,12 @@ func BumpUse(name string) {
 	withStore(func(s map[string]Record) bool {
 		r := s[name]
 		if r.Name == "" {
-			r = Record{Name: name, CreatedAt: time.Now(), CreatedBy: "agent"}
+			r = Record{Name: name, CreatedAt: time.Now(), CreatedBy: "user"}
 		}
 		r.UseCount++
 		r.LastUsedAt = time.Now()
 		r.State = "active"
+		r.ArchivedAt = time.Time{}
 		s[name] = r
 		return true
 	})
@@ -183,7 +208,7 @@ func BumpView(name string) {
 	withStore(func(s map[string]Record) bool {
 		r := s[name]
 		if r.Name == "" {
-			r = Record{Name: name, CreatedAt: time.Now(), CreatedBy: "agent"}
+			r = Record{Name: name, CreatedAt: time.Now(), CreatedBy: "user"}
 		}
 		r.ViewCount++
 		s[name] = r
@@ -196,11 +221,12 @@ func BumpPatch(name string) {
 	withStore(func(s map[string]Record) bool {
 		r := s[name]
 		if r.Name == "" {
-			r = Record{Name: name, CreatedAt: time.Now(), CreatedBy: "agent"}
+			r = Record{Name: name, CreatedAt: time.Now(), CreatedBy: "user"}
 		}
 		r.PatchCount++
 		r.LastUsedAt = time.Now()
 		r.State = "active"
+		r.ArchivedAt = time.Time{}
 		s[name] = r
 		return true
 	})
@@ -325,7 +351,7 @@ func All() []Record {
 // disk — the caller (curator) is responsible for that.
 //
 // Rules (applied in this order):
-//   - Skip if Pinned==true or CreatedBy!="agent"
+//   - Skip if Pinned==true, CreatedBy!="agent" or Scope!="global-conduit"
 //   - "active"→"archived" or "stale"→"archived" if age > archiveDays
 //   - "active"→"stale" if age > staleDays (and archiveDays not triggered)
 func ApplyTransitions(now time.Time, staleDays, archiveDays int) []Transition {
@@ -353,7 +379,7 @@ func ApplyTransitions(now time.Time, staleDays, archiveDays int) []Transition {
 
 	for _, name := range names {
 		r := store[name]
-		if r.Pinned || r.CreatedBy != "agent" {
+		if !lifecycleManaged(r) {
 			continue
 		}
 
@@ -369,6 +395,7 @@ func ApplyTransitions(now time.Time, staleDays, archiveDays int) []Transition {
 		switch {
 		case age > archiveDur && (r.State == "active" || r.State == "stale"):
 			r.State = "archived"
+			r.ArchivedAt = now
 		case age > staleDur && r.State == "active":
 			r.State = "stale"
 		default:
@@ -386,4 +413,53 @@ func ApplyTransitions(now time.Time, staleDays, archiveDays int) []Transition {
 		}
 	}
 	return transitions
+}
+
+// PurgeArchived deletes the records of agent-created, unpinned skills that
+// have been archived for more than retentionDays and returns their names; the
+// caller removes the archived directories. An archived record with no
+// ArchivedAt (written before the field existed) has its clock started at now
+// rather than being purged on sight.
+func PurgeArchived(now time.Time, retentionDays int) []string {
+	release := acquireLock()
+	defer release()
+
+	store, err := loadStore()
+	if err != nil {
+		log.Printf("skillusage: PurgeArchived: %v", err)
+		return nil
+	}
+	retention := time.Duration(retentionDays) * 24 * time.Hour
+
+	names := make([]string, 0, len(store))
+	for k := range store {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	var purged []string
+	changed := false
+	for _, name := range names {
+		r := store[name]
+		if !lifecycleManaged(r) || r.State != "archived" {
+			continue
+		}
+		if r.ArchivedAt.IsZero() {
+			r.ArchivedAt = now
+			store[name] = r
+			changed = true
+			continue
+		}
+		if now.Sub(r.ArchivedAt) > retention {
+			delete(store, name)
+			purged = append(purged, name)
+			changed = true
+		}
+	}
+	if changed {
+		if err := saveStore(store); err != nil {
+			log.Printf("skillusage: PurgeArchived save: %v", err)
+		}
+	}
+	return purged
 }

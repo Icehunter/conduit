@@ -104,12 +104,15 @@ func (m *Model) handleToolExpansionClick(mouseY int, _ image.Rectangle) bool {
 	msg := &m.messages[msgIndex]
 
 	// Toggle for tool messages (header or hint click) and system messages (hint click only).
-	const collapsedLines = 10
 	eligible := (msg.Role == RoleTool && msg.Content != "" && msg.Content != "running…") ||
 		(msg.Role == RoleSystem && isExpandHint && msg.Content != "")
+	if msg.Role == RoleThinking && isExpandHint && msg.Content != "" {
+		msg.ToolExpanded = !msg.ToolExpanded
+		m.refreshViewport()
+		return true
+	}
 	if eligible {
-		resultLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
-		if len(resultLines) > collapsedLines {
+		if canCollapse(len(outputLines(msg.Content))) {
 			msg.ToolExpanded = !msg.ToolExpanded
 			m.refreshViewport()
 			return true
@@ -207,11 +210,9 @@ func (m *Model) handleMouseRelease(msg tea.MouseReleaseMsg, area image.Rectangle
 		m.applyViewportSelection()
 		return true, nil
 	}
-	copyToClipboard(text)
-	m.flashMsg = "✓ Copied selection"
 	m.applyViewportSelection()
 	return true, tea.Batch(
-		tea.Tick(1200*time.Millisecond, func(time.Time) tea.Msg { return clearFlash{} }),
+		copyCmd(text, "selection"),
 		tea.Tick(220*time.Millisecond, func(time.Time) tea.Msg { return clearMouseSelectionMsg{} }),
 	)
 }
@@ -253,7 +254,7 @@ func (m Model) selectedViewportText() string {
 		return ""
 	}
 	start, end := orderedSelection(m.mouseSelect.start, m.mouseSelect.end)
-	var out []string
+	var parts, fulls []string
 	for line := start.line; line <= end.line && line < len(m.viewportLines); line++ {
 		if line < 0 {
 			continue
@@ -266,9 +267,10 @@ func (m Model) selectedViewportText() string {
 		if line == end.line {
 			to = end.col
 		}
-		out = append(out, sliceRunes(plain, from, to))
+		parts = append(parts, sliceRunes(plain, from, to))
+		fulls = append(fulls, plain)
 	}
-	return strings.TrimRight(strings.Join(out, "\n"), "\n")
+	return joinSelectedRows(parts, fulls, m.vp.Width()-outerPad)
 }
 
 func orderedSelection(a, b mouseSelectionPoint) (mouseSelectionPoint, mouseSelectionPoint) {

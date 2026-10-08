@@ -30,6 +30,11 @@ func mustExec(t *testing.T, tool *Tool, raw map[string]any) (string, bool) {
 	return sb.String(), res.IsError
 }
 
+// fm builds a valid SKILL.md with the given name and body.
+func fm(name, body string) string {
+	return "---\nname: " + name + "\ndescription: Use when testing " + name + ".\n---\n" + body + "\n"
+}
+
 func TestCreate_ProjectScope(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(t.TempDir(), ".conduit"))
@@ -38,7 +43,7 @@ func TestCreate_ProjectScope(t *testing.T) {
 	text, isErr := mustExec(t, tk, map[string]any{
 		"action":  "create",
 		"name":    "my-skill",
-		"content": "# My Skill\nDoes a thing.",
+		"content": fm("my-skill", "My Skill\nDoes a thing."),
 		"scope":   "project",
 	})
 	if isErr {
@@ -64,7 +69,7 @@ func TestCreate_GlobalConduitScope(t *testing.T) {
 	text, isErr := mustExec(t, tk, map[string]any{
 		"action":  "create",
 		"name":    "reusable-skill",
-		"content": "# Reusable\nWorks anywhere.",
+		"content": fm("reusable", "Reusable\nWorks anywhere."),
 		"scope":   "global-conduit",
 	})
 	if isErr {
@@ -104,7 +109,7 @@ func TestCreate_AlreadyExists(t *testing.T) {
 	input := map[string]any{
 		"action":  "create",
 		"name":    "dup-skill",
-		"content": "# Dup\nContent.",
+		"content": fm("dup", "Dup\nContent."),
 		"scope":   "project",
 	}
 
@@ -132,7 +137,7 @@ func TestUpdate_NotFound(t *testing.T) {
 	text, isErr := mustExec(t, tk, map[string]any{
 		"action":  "update",
 		"name":    "nonexistent",
-		"content": "# New Content",
+		"content": fm("x", "# New Content"),
 		"scope":   "project",
 	})
 	if !isErr {
@@ -154,7 +159,7 @@ func TestPromote(t *testing.T) {
 	_, isErr := mustExec(t, tk, map[string]any{
 		"action":  "create",
 		"name":    "promote-me",
-		"content": "# Promote Me\nGoes global.",
+		"content": fm("promote-me", "Promote Me\nGoes global."),
 		"scope":   "project",
 	})
 	if isErr {
@@ -195,7 +200,7 @@ func TestPromote_AlreadyAtDest(t *testing.T) {
 	_, isErr := mustExec(t, tk, map[string]any{
 		"action":  "create",
 		"name":    "conflict-skill",
-		"content": "# Conflict\nIn project.",
+		"content": fm("conflict", "Conflict\nIn project."),
 		"scope":   "project",
 	})
 	if isErr {
@@ -206,7 +211,7 @@ func TestPromote_AlreadyAtDest(t *testing.T) {
 	_, isErr = mustExec(t, tk, map[string]any{
 		"action":  "create",
 		"name":    "conflict-skill",
-		"content": "# Conflict\nAlready in conduit.",
+		"content": fm("conflict", "Conflict\nAlready in conduit."),
 		"scope":   "global-conduit",
 	})
 	if isErr {
@@ -237,7 +242,7 @@ func TestView_BumpsView(t *testing.T) {
 	_, isErr := mustExec(t, tk, map[string]any{
 		"action":  "create",
 		"name":    "viewable",
-		"content": "# Viewable\nSome content.",
+		"content": fm("viewable", "Viewable\nSome content."),
 		"scope":   "project",
 	})
 	if isErr {

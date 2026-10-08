@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/plugins"
@@ -411,30 +412,48 @@ func leadingVarName(s string) string {
 	return s
 }
 
-// isMcpjsonApproved checks the project-scope MCP approval state from the
-// user/project settings.json hierarchy. Returns true if the server should
-// be allowed to connect: explicitly enabled, OR enableAllProjectMcpServers
-// is set, AND not explicitly disabled. Mirrors CC's MCPServerApprovalDialog
-// gate (see src/components/MCPServerApprovalDialog.tsx).
-func isMcpjsonApproved(name, cwd string) bool {
-	merged, err := settings.Load(cwd)
-	if err != nil || merged == nil {
-		return false
+// mcpjsonApproval is the user's decision on a project-scope (.mcp.json)
+// server.
+type mcpjsonApproval int
+
+const (
+	mcpjsonUndecided mcpjsonApproval = iota // never asked, or settings unreadable
+	mcpjsonApproved
+	mcpjsonDenied
+)
+
+// mcpjsonApprovalState reads the user's decision on a project-scope server. A
+// server is approved when explicitly enabled or enableAllProjectMcpServers is
+// set, and denied when explicitly disabled, which wins over both. Mirrors CC's
+// MCPServerApprovalDialog gate (see src/components/MCPServerApprovalDialog.tsx),
+// which doesn't ask about a rejected server again.
+//
+// Only sources the repository can't write count: the user-level settings and
+// conduit's per-project state, both under the user's home, which is where the
+// approval prompt records its answers. Settings files inside the checkout
+// (.claude/settings*.json, .conduit/settings*.json) are ignored, or a cloned
+// repo could approve its own .mcp.json servers and have them started on launch.
+func mcpjsonApprovalState(name, cwd string) mcpjsonApproval {
+	var enabled, disabled []string
+	enableAll := false
+	if user, err := settings.Load(""); err == nil && user != nil {
+		enabled, disabled = user.EnabledMcpjsonServers, user.DisabledMcpjsonServers
+		enableAll = user.EnableAllProjectMcpServers
 	}
-	for _, n := range merged.DisabledMcpjsonServers {
-		if n == name {
-			return false
+	if cwd != "" {
+		if state, ok, err := settings.LoadConduitProjectState(cwd); err == nil && ok {
+			enabled = append(enabled, state.EnabledMcpjsonServers...)
+			disabled = append(disabled, state.DisabledMcpjsonServers...)
+			enableAll = enableAll || state.EnableAllProjectMcpServers
 		}
 	}
-	if merged.EnableAllProjectMcpServers {
-		return true
+	switch {
+	case slices.Contains(disabled, name):
+		return mcpjsonDenied
+	case enableAll, slices.Contains(enabled, name):
+		return mcpjsonApproved
 	}
-	for _, n := range merged.EnabledMcpjsonServers {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	return mcpjsonUndecided
 }
 
 // IsDisabled returns true if the named server is in disabledMcpServers for cwd.

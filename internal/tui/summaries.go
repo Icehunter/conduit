@@ -50,15 +50,3 @@ func (m *Model) LastThinking() string {
 	}
 	return ""
 }
-
-// CopyLastResponse copies the last assistant text to clipboard.
-// Returns "" on success, error message otherwise.
-func (m *Model) CopyLastResponse() string {
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		if m.messages[i].Role == RoleAssistant {
-			copyToClipboard(m.messages[i].Content)
-			return ""
-		}
-	}
-	return "No assistant response to copy."
-}

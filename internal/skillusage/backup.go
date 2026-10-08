@@ -77,10 +77,14 @@ func Snapshot() (string, error) {
 	}
 
 	for _, src := range sources {
-		if _, statErr := os.Stat(src.dir); errors.Is(statErr, os.ErrNotExist) {
+		root, evalErr := filepath.EvalSymlinks(src.dir)
+		if errors.Is(evalErr, os.ErrNotExist) {
 			continue
 		}
-		if walkErr := addDirToTar(tw, src.dir, src.archName); walkErr != nil {
+		if evalErr != nil {
+			return "", fmt.Errorf("skillusage: snapshot resolve %s: %w", src.dir, evalErr)
+		}
+		if walkErr := addDirToTar(tw, root, src.archName); walkErr != nil {
 			return "", fmt.Errorf("skillusage: snapshot walk %s: %w", src.dir, walkErr)
 		}
 	}
@@ -109,7 +113,16 @@ func addDirToTar(tw *tar.Writer, srcDir, archPrefix string) error {
 		// Use forward slashes inside the archive regardless of OS.
 		archPath := archPrefix + "/" + filepath.ToSlash(rel)
 
-		hdr, err := tar.FileInfoHeader(info, "")
+		// Symlinks (e.g. a skill dir linked from another checkout) are stored
+		// as symlink headers and never followed, so a link to a directory
+		// cannot fail the snapshot or pull in files from outside the tree.
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			if link, err = os.Readlink(path); err != nil {
+				return fmt.Errorf("skillusage: readlink %s: %w", path, err)
+			}
+		}
+		hdr, err := tar.FileInfoHeader(info, link)
 		if err != nil {
 			return fmt.Errorf("skillusage: tar header for %s: %w", path, err)
 		}
@@ -118,7 +131,7 @@ func addDirToTar(tw *tar.Writer, srcDir, archPrefix string) error {
 		if err := tw.WriteHeader(hdr); err != nil {
 			return fmt.Errorf("skillusage: write tar header %s: %w", archPath, err)
 		}
-		if info.IsDir() {
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 
@@ -273,6 +286,24 @@ func Rollback(id string) (retErr error) {
 			if err := os.MkdirAll(destPath, hdr.FileInfo().Mode()); err != nil {
 				return fmt.Errorf("skillusage: rollback mkdir %s: %w", destPath, err)
 			}
+			continue
+		}
+		if hdr.Typeflag == tar.TypeSymlink {
+			if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
+				return fmt.Errorf("skillusage: rollback mkdir parent %s: %w", destPath, err)
+			}
+			if fi, lerr := os.Lstat(destPath); lerr == nil {
+				if fi.Mode()&os.ModeSymlink == 0 {
+					continue // a real file or dir now lives here: leave it
+				}
+				_ = os.Remove(destPath)
+			}
+			if err := os.Symlink(hdr.Linkname, destPath); err != nil {
+				return fmt.Errorf("skillusage: rollback symlink %s: %w", destPath, err)
+			}
+			continue
+		}
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 

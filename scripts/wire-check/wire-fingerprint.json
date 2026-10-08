@@ -1,8 +1,8 @@
 {
-  "extracted_at": "2026-09-23T04:14:51.515Z",
-  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.280",
-  "binary_version": "2.1.280",
-  "version": "2.1.280",
+  "extracted_at": "2026-10-08T01:00:24.722Z",
+  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.293",
+  "binary_version": "2.1.293",
+  "version": "2.1.293",
   "cch": "<<bun-macro>>",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   "oauth_beta_header": "oauth-2025-04-20",
@@ -12,7 +12,7 @@
   "anthropic_version": "2023-06-01",
   "billing_salt": "59cf53e54c78",
   "billing_note": "cc_version suffix is SHA256(billing_salt + firstMsg[4,7,20] + version).slice(0,3); cch is always \"00000\" for non-bedrock/vertex",
-  "sdk_package_version": "0.112.1",
+  "sdk_package_version": "0.128.0",
   "stainless_runtime_version": "<<runtime:process.version>>",
   "beta_registry": [
     "oauth-2025-04-20",
@@ -36,7 +36,6 @@
   "tools": [
     "Agent",
     "AppifactRepl",
-    "Artifact",
     "AskUserQuestion",
     "Bash",
     "ClaudeDesign",
@@ -48,6 +47,7 @@
     "ExitPlanMode",
     "ExitWorktree",
     "FetchInboxMessage",
+    "GetTask",
     "Glob",
     "Grep",
     "LSP",
@@ -57,6 +57,7 @@
     "NotebookEdit",
     "PowerShell",
     "Projects",
+    "PublishPlugin",
     "PushNotification",
     "Read",
     "ReadMcpResourceDirTool",
@@ -87,15 +88,7 @@
     "memory_read",
     "memory_write"
   ],
-  "discovered_headers": [
-    "anthropic-client-version",
-    "anthropic-plugin-directory",
-    "x-claude-code-agent-type",
-    "x-claude-code-compaction",
-    "x-claude-code-context-compacted",
-    "x-claude-code-prev-tool-durations",
-    "x-claude-code-request-class"
-  ],
+  "discovered_headers": [],
   "cch_note": "Per-request native substitution — not reproducible from the decoded bundle; source literal is 00000 (Vertex value). API accepts 00000 from conduit (see COMPATIBILITY.md).",
-  "billing_template": "x-anthropic-billing-header: cc_version=2.1.280.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.280\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
+  "billing_template": "x-anthropic-billing-header: cc_version=2.1.293.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.293\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,6 +51,11 @@ type runOptions struct {
 
 // RunOptions carries optional TUI startup parameters passed from main.
 type RunOptions struct {
+	// RunShell executes shell-mode ("!cmd") commands; nil uses a bare Bash tool.
+	RunShell func(ctx context.Context, command string) (string, bool)
+	// RedactSecrets mirrors the agent loop's secret-masking setting.
+	RedactSecrets func() bool
+
 	// AuthErr is non-nil when no credentials were found at startup.
 	AuthErr error
 
@@ -118,10 +124,6 @@ type RunOptions struct {
 	// StartupWarnings are non-fatal startup failures shown as system messages.
 	StartupWarnings []string
 
-	// ClaudeMd is the concatenated CLAUDE.md + MCP server instructions passed to
-	// the initial BuildSystemBlocks call. Carried here so output-style rebuilds
-	// can include it instead of passing an empty string.
-	ClaudeMd string
 	// Skills is the skill listing from the initial BuildSystemBlocks call.
 	Skills []agent.SkillEntry
 	// Agents is the agent types listing from the initial BuildSystemBlocks call.
@@ -174,15 +176,11 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		}
 	}
 
-	// Populate coordinator MCP names from connected servers so the coordinator
-	// system prompt knows what workers can access.
-	if runOpts.MCPManager != nil {
-		servers := runOpts.MCPManager.Servers()
-		names := make([]string, 0, len(servers))
-		for _, srv := range servers {
-			names = append(names, srv.Name)
-		}
-		agent.CoordinatorMCPNames = names
+	// The coordinator system prompt names the MCP servers workers can reach.
+	// Servers connect in the background and can be added or removed
+	// mid-session, so the names are read live on every prompt build.
+	if mgr := runOpts.MCPManager; mgr != nil {
+		agent.CoordinatorMCPNames = func() []string { return connectedMCPServerNames(mgr) }
 	}
 
 	// Session state shared between commands and the TUI model.
@@ -194,7 +192,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	usageStatusEnabled := runOpts.InitialUsageStatusEnabled
 
 	// modelPtr is still used for methods that can only run inside the event loop
-	// (TasksSummary, LastThinking, CopyLastResponse — they read m.messages).
+	// (TasksSummary, LastThinking — they read m.messages).
 	var modelPtr *Model
 
 	reg := commands.New()
@@ -339,12 +337,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		},
 		GetColor: func() bool { return true },
 		SetColor: func(bool) {},
-		CopyLast: func() string {
-			if modelPtr == nil {
-				return "Nothing to copy."
-			}
-			return modelPtr.CopyLastResponse()
-		},
+		// CopyLast only marks /copy as available; the TUI performs the copy in
+		// applyCommandResult, where the live Model is at hand.
+		CopyLast: func() string { return "" },
 		// /fast — toggle between Default and Fast model.
 		GetFast: func() bool { return live.FastMode() },
 		SetFast: func(on bool) {
@@ -475,56 +470,48 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		},
 		// /memory extract — fork a sub-agent over the recent conversation
 		// to update the auto-memory dir. Mirrors CC's extractMemories flow.
-		ExtractMemory: func() (string, error) {
-			if loop == nil {
-				return "", fmt.Errorf("no agent loop")
-			}
-			if modelPtr == nil || len(modelPtr.history) == 0 {
-				return "No conversation to extract from yet.", nil
-			}
-			recent := SummarizeMessages(modelPtr.history, 20)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if err := memdir.RunExtract(ctx, cwd, recent, loop.RunBackgroundAgent); err != nil {
-				return "", err
-			}
-			// Install what was just written. Without this the session keeps
-			// running on the blocks it started with and the extraction only
-			// takes effect after a restart. rebuildSystemCmd is reused rather
-			// than rebuilt here so the output-style and mode blocks layered on
-			// top of the base survive; its Cmd applies the change and returns a
-			// nil Msg, so calling it is the whole operation.
-			if cmd := modelPtr.rebuildSystemCmd(); cmd != nil {
-				_ = cmd()
-			}
-			return "Memory extraction complete.", nil
-		},
+		ExtractMemory: func() (string, error) { return "", nil },
 	}
 	commands.RegisterSessionCommands(reg, state)
 
 	apiClient := opts.apiClient
 
+	historyStore, inputHistory := openInputHistory(inputHistoryPath(cwd))
+	defer historyStore.Close()
+
 	cfg := Config{
-		Version:                   version,
-		ModelName:                 modelName,
-		Loop:                      loop,
-		Program:                   &prog,
-		Commands:                  reg,
-		APIClient:                 apiClient,
-		MCPManager:                runOpts.MCPManager,
-		Gate:                      opts.gate,
-		AuthErr:                   runOpts.AuthErr,
-		Profile:                   runOpts.Profile,
-		Session:                   runOpts.Session,
-		ResumedHistory:            runOpts.ResumedHistory,
-		Resumed:                   runOpts.Resumed,
-		LoadAuth:                  runOpts.LoadAuth,
-		NewAPIClient:              runOpts.NewAPIClient,
-		NewProviderAPIClient:      runOpts.NewProviderAPIClient,
-		Live:                      live,
-		NeedsTrust:                runOpts.NeedsTrust,
-		SetTrusted:                runOpts.SetTrusted,
-		UsageStatusEnabled:        runOpts.InitialUsageStatusEnabled,
+		Version:              version,
+		ModelName:            modelName,
+		Loop:                 loop,
+		Program:              &prog,
+		Commands:             reg,
+		APIClient:            apiClient,
+		MCPManager:           runOpts.MCPManager,
+		Gate:                 opts.gate,
+		AuthErr:              runOpts.AuthErr,
+		Profile:              runOpts.Profile,
+		Session:              runOpts.Session,
+		ResumedHistory:       runOpts.ResumedHistory,
+		Resumed:              runOpts.Resumed,
+		LoadAuth:             runOpts.LoadAuth,
+		NewAPIClient:         runOpts.NewAPIClient,
+		NewProviderAPIClient: runOpts.NewProviderAPIClient,
+		Live:                 live,
+		NeedsTrust:           runOpts.NeedsTrust,
+		SetTrusted:           runOpts.SetTrusted,
+		UsageStatusEnabled:   runOpts.InitialUsageStatusEnabled,
+		DisableMouse:         mouseDisabledInConfig(),
+		Hooks:                opts.hooksConfig,
+		RunShell:             runOpts.RunShell,
+		RedactSecrets:        runOpts.RedactSecrets,
+		ExtractMemory: func(ctx context.Context, recent string) error {
+			if loop == nil {
+				return fmt.Errorf("no agent loop")
+			}
+			return memdir.RunExtract(ctx, cwd, recent, loop.RunBackgroundAgent)
+		},
+		InputHistory:              inputHistory,
+		PersistInput:              historyStore.Add,
 		InitialLocalMode:          runOpts.InitialLocalMode,
 		InitialLocalServer:        runOpts.InitialLocalServer,
 		InitialLocalDirectTool:    runOpts.InitialLocalDirectTool,
@@ -533,7 +520,6 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InitialRoles:              runOpts.InitialRoles,
 		InitialCouncilProviders:   runOpts.InitialCouncilProviders,
 		StartupWarnings:           runOpts.StartupWarnings,
-		ClaudeMd:                  runOpts.ClaudeMd,
 		Skills:                    runOpts.Skills,
 		Agents:                    runOpts.Agents,
 		SteerContent:              runOpts.SteerContent,
@@ -573,25 +559,15 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		if s, ok := byName[runOpts.InitialOutputStyle]; ok {
 			m.outputStyleName = s.Name
 			m.outputStylePrompt = s.Prompt
-			// Push the style into the loop's system blocks. Built-in
-			// "default" carries an empty Prompt — leave the loop's
-			// default base blocks alone in that case. The style block
-			// must be APPENDED, never prepended, because the Max
-			// fingerprint requires system[0] to be the billing header.
-			if s.Prompt != "" && loop != nil {
-				mem := memdir.BuildPrompt(cwd)
-				sessionProjectDir := ""
-				if m.cfg.Session != nil {
-					sessionProjectDir = m.cfg.Session.ProjectDir
-				}
-				baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, sessionProjectDir, m.cfg.Agents, m.cfg.Skills...)
-				styleBlock := api.SystemBlock{
-					Type: "text",
-					Text: "# Output style: " + s.Name + "\n\n" + s.Prompt,
-				}
-				loop.SetSystem(append(baseBlocks, styleBlock))
-			}
 		}
+	}
+	// Install the overlay (style block and plan/council directive) once the
+	// startup style and mode are known. It is appended after the base blocks,
+	// never prepended: the Max fingerprint requires system[0] to be the
+	// billing header. Runs even without a style so starting in plan or
+	// council mode applies its directive.
+	if loop != nil {
+		m.applySystemOverlay()
 	}
 	modelPtr = &m
 	// AltScreen now lives on the View struct (bubbletea v2) — see Model.View.
@@ -808,6 +784,9 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 
 	// Guarantee alt-screen is exited even if Bubble Tea's cleanup was partial.
 	fmt.Fprint(os.Stdout, altScreenExit)
+	if hint := resumeHint(live.SessionID(), live.SessionFile()); hint != "" {
+		fmt.Fprintln(os.Stdout, hint)
+	}
 
 	signal.Stop(winch)
 	close(winch)
@@ -831,4 +810,37 @@ func askDiffReview(
 		// approving the drained snapshot instead of draining the now-empty table.
 		return DiffReviewResult{Approved: entries}
 	}
+}
+
+// connectedMCPServerNames returns the names of mgr's connected servers,
+// sorted so the prompt they go into stays byte-stable between builds.
+func connectedMCPServerNames(mgr *mcp.Manager) []string {
+	var names []string
+	for _, srv := range mgr.Servers() {
+		if srv.Status == mcp.StatusConnected {
+			names = append(names, srv.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// resumeHint is the line printed after the TUI exits so the user can pick the
+// session back up. It is empty when no session file with content exists, which
+// keeps a session that never got a message from advertising itself.
+func resumeHint(id, file string) string {
+	if id == "" || file == "" {
+		return ""
+	}
+	info, err := os.Stat(file)
+	if err != nil || info.Size() == 0 {
+		return ""
+	}
+	return "Resume this session with: conduit --resume " + id
+}
+
+// mouseDisabledInConfig reports the conduit.json disableMouse setting.
+func mouseDisabledInConfig() bool {
+	cfg, err := settings.LoadConduitConfig()
+	return err == nil && cfg.DisableMouse
 }

@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	internalmodel "github.com/icehunter/conduit/internal/model"
 )
 
 // Permissions is the permissions section of a settings file.
@@ -192,6 +194,33 @@ type Merged struct {
 	CouncilConvergenceThreshold float64 `json:"councilConvergenceThreshold,omitempty"`
 	// CouncilRoles maps provider keys to role names ("architect", "skeptic", "perf-reviewer").
 	CouncilRoles map[string]string `json:"councilRoles,omitempty"`
+
+	// CompactionMaxTriggerTokens is compaction.maxTriggerTokens from
+	// conduit.json. nil means unset (use the default cap).
+	CompactionMaxTriggerTokens *int `json:"-"`
+
+	// SecretRedactionOff is true when conduit.json sets redactSecrets to
+	// false. The zero value keeps redaction on.
+	SecretRedactionOff bool `json:"-"`
+	// RepetitionGuardOff is true when conduit.json sets ttsr.repetitionGuard
+	// to false. The zero value keeps the guard on.
+	RepetitionGuardOff bool `json:"-"`
+	// WebSearchKeyless is webSearch.keyless from conduit.json, normalized to
+	// "auto", "always" or "never". Unset or unrecognised values are "auto".
+	WebSearchKeyless string `json:"-"`
+}
+
+// EffectiveCompactionTriggerCap returns the cap on the auto-compact trigger
+// token count: the configured value, internalmodel.DefaultAutoCompactTriggerCap
+// when unset, or 0 (uncapped) when configured as zero or negative.
+func (s *Merged) EffectiveCompactionTriggerCap() int {
+	if s == nil || s.CompactionMaxTriggerTokens == nil {
+		return internalmodel.DefaultAutoCompactTriggerCap
+	}
+	if *s.CompactionMaxTriggerTokens <= 0 {
+		return 0
+	}
+	return *s.CompactionMaxTriggerTokens
 }
 
 // EffectiveCouncilMaxRounds returns the configured max debate rounds, defaulting
@@ -255,6 +284,27 @@ type ActiveProviderSettings struct {
 	Server        string `json:"server,omitempty"`
 	DirectTool    string `json:"directTool,omitempty"`
 	ImplementTool string `json:"implementTool,omitempty"`
+	// ExtraBody carries vendor/model-specific request fields for
+	// openai-compatible providers (e.g. llama.cpp/LM Studio's
+	// chat_template_kwargs), merged into every request to this provider as a
+	// JSON merge patch: objects merge, other values replace, null deletes.
+	ExtraBody map[string]any `json:"extraBody,omitempty"`
+	// ReasoningReplay says when an openai-compatible provider gets an
+	// assistant turn's reasoning back as reasoning_content: "auto" (the
+	// default when empty; local/LAN servers and the model families that
+	// require it), "on" (every turn that has reasoning) or "off" (never).
+	ReasoningReplay string `json:"reasoningReplay,omitempty"`
+	// ToolCallFormat is how an openai-compatible provider carries tool calls:
+	// "native" (the default when empty; the `tools` request field), "hermes"
+	// or "qwen3" (schemas in the system prompt, <tool_call> blocks parsed from
+	// the reply, for servers or models without native tool support), or
+	// "auto" (native until the server rejects tools).
+	ToolCallFormat string `json:"toolCallFormat,omitempty"`
+	// ResponseHeaderTimeout is how many seconds an openai-compatible provider
+	// may take to send response headers. 0 or unset: no limit (a local server
+	// can spend minutes prefilling); a positive value sets one. Hosted
+	// ChatGPT/Codex and Copilot clients always use 5 minutes.
+	ResponseHeaderTimeout int `json:"responseHeaderTimeout,omitempty"`
 }
 
 const (
@@ -303,6 +353,19 @@ func Load(cwd string) (*Merged, error) {
 		if len(cfg.ProviderChains) > 0 {
 			merged.ProviderChains = maps.Clone(cfg.ProviderChains)
 		}
+		if cfg.Compaction != nil && cfg.Compaction.MaxTriggerTokens != nil {
+			v := *cfg.Compaction.MaxTriggerTokens
+			merged.CompactionMaxTriggerTokens = &v
+		}
+		merged.SecretRedactionOff = cfg.RedactSecrets != nil && !*cfg.RedactSecrets
+		merged.WebSearchKeyless = WebSearchKeylessAuto
+		if cfg.WebSearch != nil {
+			switch m := strings.ToLower(strings.TrimSpace(cfg.WebSearch.Keyless)); m {
+			case WebSearchKeylessAlways, WebSearchKeylessNever:
+				merged.WebSearchKeyless = m
+			}
+		}
+		merged.RepetitionGuardOff = cfg.TTSR != nil && cfg.TTSR.RepetitionGuard != nil && !*cfg.TTSR.RepetitionGuard
 	}
 	applyConduitProjectState(merged, cwd)
 	return merged, nil

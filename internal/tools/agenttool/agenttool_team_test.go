@@ -237,3 +237,15 @@ func TestAgentTool_Teams_CounterIncrementsPerCall(t *testing.T) {
 		seen[n] = true
 	}
 }
+
+func TestAgentTool_TeamModeRejectsIsolation(t *testing.T) {
+	setTeamActive(t, true)
+	at := New(runAgent, nil, nil).WithSpawnTeammate(func(context.Context, string, string) (string, error) {
+		t.Error("teammate must not be spawned")
+		return "id", nil
+	})
+	res, _ := at.Execute(context.Background(), teamTestInput(Input{Prompt: "p", Isolation: "worktree"}))
+	if !res.IsError || !strings.Contains(resultText(res), "not supported for teammates") {
+		t.Errorf("want teammate isolation error, got %+v", res)
+	}
+}

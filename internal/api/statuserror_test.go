@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseThinkingMismatch(t *testing.T) {
@@ -138,7 +140,9 @@ func TestCreateMessage_NonJSONErrorBody(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{BaseURL: srv.URL, AuthToken: "t"}, srv.Client())
-	_, err := c.CreateMessage(t.Context(), &MessageRequest{Model: "m", MaxTokens: 1, Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hi"}}}}})
+	// A 502 is retried, so keep the backoff from really sleeping.
+	ctx := WithSleep(t.Context(), func(context.Context, time.Duration) error { return nil })
+	_, err := c.CreateMessage(ctx, &MessageRequest{Model: "m", MaxTokens: 1, Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hi"}}}}})
 	var se *APIStatusError
 	if !errors.As(err, &se) {
 		t.Fatalf("error is %T: %v", err, err)

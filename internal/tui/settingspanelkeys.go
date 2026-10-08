@@ -80,6 +80,7 @@ func (m Model) handleSettingsPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool
 			return closePanel()
 		case "esc":
 			if p.providerForm != nil {
+				p.providerForm.cancelOAuth()
 				p.providerForm = nil
 				return done()
 			}

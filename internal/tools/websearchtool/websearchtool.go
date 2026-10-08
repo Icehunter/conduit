@@ -6,9 +6,12 @@
 // assembles the results (text, citations, search hits) into a single text
 // block returned to the main agent.
 //
-// When one or more SearchProviders are configured via NewWithProviders, they
-// are tried in order before falling back to the Anthropic-native path. The
-// first provider that returns a non-empty result set wins.
+// Provider order: providers passed to NewWithProviders (key-based), then the
+// Anthropic-native path when the client speaks the Anthropic Messages API,
+// then the WithFallbackProviders chain (Codex subscription), then the
+// WithKeylessProviders tier. The first that returns a non-empty result set
+// wins. Providers that report themselves unavailable (no key or credential)
+// are skipped. The keyless tier is gated by webSearch.keyless.
 //
 // Mirrors src/tools/WebSearchTool/WebSearchTool.ts.
 // max_uses=8 is hardcoded to match the TS implementation.
@@ -23,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/truncate"
 	"github.com/icehunter/conduit/internal/websearch"
@@ -40,6 +44,13 @@ type Tool struct {
 	tool.NotDeferrable
 	client    *api.Client
 	providers []websearch.SearchProvider
+	// fallbacks run after the Anthropic-native path (when the client can use
+	// it): subscription search first, then keyless providers.
+	fallbacks []websearch.SearchProvider
+	// keyless run last and send the query to third parties; keylessModeFn
+	// returns the webSearch.keyless setting ("auto" when nil).
+	keyless       []websearch.SearchProvider
+	keylessModeFn func() string
 }
 
 // New returns a WebSearch tool backed by the given API client.
@@ -54,6 +65,23 @@ func New(client *api.Client) *Tool {
 // configured or all fail, the Anthropic native search is used.
 func NewWithProviders(client *api.Client, providers ...websearch.SearchProvider) *Tool {
 	return &Tool{client: client, providers: providers}
+}
+
+// WithFallbackProviders sets providers tried after the configured providers
+// and, for clients that speak the Anthropic Messages API, after the native
+// web_search path (the Codex subscription). Order is preserved. It returns t for chaining.
+func (t *Tool) WithFallbackProviders(providers ...websearch.SearchProvider) *Tool {
+	t.fallbacks = providers
+	return t
+}
+
+// WithKeylessProviders sets the keyless tier and a function returning the
+// webSearch.keyless mode ("auto", "always" or "never"; read per search so
+// settings changes apply live). In "auto" the tier runs only when no
+// configured provider was usable; "always" also runs it after a failure.
+func (t *Tool) WithKeylessProviders(mode func() string, providers ...websearch.SearchProvider) *Tool {
+	t.keyless, t.keylessModeFn = providers, mode
+	return t
 }
 
 func (*Tool) Name() string { return "WebSearch" }
@@ -110,27 +138,126 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("`query` is required"), nil
 	}
 
-	// Try each configured provider in order; skip to next on error or no results.
-	for _, p := range t.providers {
-		results, err := p.Search(ctx, websearch.Query{
-			Text:           in.Query,
-			AllowedDomains: in.AllowedDomains,
-			BlockedDomains: in.BlockedDomains,
-			MaxResults:     10,
-		})
-		if err != nil || len(results) == 0 {
-			continue
-		}
-		return t.formatProviderResults(in.Query, p.Name(), results)
+	query := websearch.Query{
+		Text:           in.Query,
+		AllowedDomains: in.AllowedDomains,
+		BlockedDomains: in.BlockedDomains,
+		MaxResults:     10,
+	}
+	var failures []string
+	// attempted is true once any configured (non-keyless) provider was usable
+	// and tried. In "auto" keyless mode that closes the keyless tier: a
+	// configured provider that fails is an error to report, not a reason to
+	// send the query to third parties.
+	attempted := false
+
+	// 1. Configured (key-based) providers.
+	if res, ok := t.tryProviders(ctx, t.providers, query, &failures, &attempted); ok {
+		return res, nil
 	}
 
-	// All providers failed or none configured — fall through to Anthropic-native.
-	return t.anthropicSearch(ctx, in)
+	// 2. Anthropic-native search, only for clients that can run it.
+	var nativeRes *tool.Result
+	if ctx.Err() == nil && t.client.SpeaksAnthropicMessages() {
+		attempted = true
+		res, err := t.anthropicSearch(ctx, in)
+		if err != nil || !res.IsError {
+			return res, err
+		}
+		nativeRes = &res
+		failures = append(failures, "Anthropic: "+resultText(res))
+	}
+
+	// 3. Codex subscription search.
+	if res, ok := t.tryProviders(ctx, t.fallbacks, query, &failures, &attempted); ok {
+		return res, nil
+	}
+
+	// 4. Keyless tier, per webSearch.keyless.
+	mode := t.keylessMode()
+	useKeyless := mode == settings.WebSearchKeylessAlways || (mode == settings.WebSearchKeylessAuto && !attempted)
+	if useKeyless {
+		var unused bool
+		if res, ok := t.tryProviders(ctx, t.keyless, query, &failures, &unused); ok {
+			return res, nil
+		}
+	}
+
+	if ctx.Err() != nil {
+		return tool.ErrorResult("search cancelled"), nil
+	}
+	if nativeRes != nil && len(failures) == 1 {
+		return *nativeRes, nil
+	}
+	if len(failures) == 0 {
+		if mode == settings.WebSearchKeylessNever {
+			return tool.ErrorResult("no web search provider is available and keyless search is disabled (webSearch.keyless=never): configure a search API key or sign in to a provider with web search"), nil
+		}
+		return tool.ErrorResult("no web search provider is available: configure a search API key or sign in to a provider with web search"), nil
+	}
+	msg := "web search failed: " + strings.Join(failures, "; ")
+	if !useKeyless && len(t.keyless) > 0 && mode == settings.WebSearchKeylessAuto {
+		msg += " (keyless fallback not used: webSearch.keyless is \"auto\"; set it to \"always\" to allow it)"
+	}
+	return tool.ErrorResult(msg), nil
+}
+
+// keylessMode returns the normalized webSearch.keyless mode; "auto" by default.
+func (t *Tool) keylessMode() string {
+	if t.keylessModeFn != nil {
+		switch m := strings.ToLower(strings.TrimSpace(t.keylessModeFn())); m {
+		case settings.WebSearchKeylessAlways, settings.WebSearchKeylessNever:
+			return m
+		}
+	}
+	return settings.WebSearchKeylessAuto
+}
+
+// resultText joins a result's text blocks into one trimmed line for error
+// messages.
+func resultText(r tool.Result) string {
+	var parts []string
+	for _, b := range r.Content {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			parts = append(parts, strings.TrimSpace(b.Text))
+		}
+	}
+	text := strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+	if len(text) > 400 {
+		text = strings.ToValidUTF8(text[:400], "") + "..."
+	}
+	return text
+}
+
+// tryProviders runs the available providers in order and formats the first
+// non-empty result set. Unavailable providers are skipped without being
+// recorded; failures and empty sets are appended to failures and set
+// *attempted.
+func (t *Tool) tryProviders(ctx context.Context, providers []websearch.SearchProvider, q websearch.Query, failures *[]string, attempted *bool) (tool.Result, bool) {
+	for _, p := range providers {
+		if ctx.Err() != nil {
+			return tool.Result{}, false
+		}
+		if !websearch.Available(p) {
+			continue
+		}
+		*attempted = true
+		results, err := p.Search(ctx, q)
+		switch {
+		case err != nil:
+			*failures = append(*failures, fmt.Sprintf("%s: %v", p.Name(), err))
+		case len(results) == 0:
+			*failures = append(*failures, p.Name()+": no results")
+		default:
+			return t.formatProviderResults(q.Text, p.Name(), results), true
+		}
+	}
+	return tool.Result{}, false
 }
 
 // formatProviderResults formats a slice of search results into a tool.Result.
 // Results are deduplicated by URL before formatting.
-func (t *Tool) formatProviderResults(query, providerName string, results []websearch.Result) (tool.Result, error) {
+func (t *Tool) formatProviderResults(query, providerName string, results []websearch.Result) tool.Result {
 	// Deduplicate by URL.
 	seen := make(map[string]bool, len(results))
 	deduped := make([]websearch.Result, 0, len(results))
@@ -161,7 +288,7 @@ func (t *Tool) formatProviderResults(query, providerName string, results []webse
 		Direction: "head",
 		HasTask:   false,
 	})
-	return tool.TextResult(tr.Content), nil
+	return tool.TextResult(tr.Content)
 }
 
 // anthropicSearch performs a web search via Anthropic's native search tool.
@@ -203,6 +330,7 @@ func (t *Tool) anthropicSearch(ctx context.Context, in Input) (tool.Result, erro
 		},
 		Stream: true,
 		Tools:  []api.ToolDef{nativeSearchTool},
+		Hints:  &api.WireHints{RequestClass: "auxiliary"},
 	}
 
 	stream, err := t.client.StreamMessage(ctx, req)

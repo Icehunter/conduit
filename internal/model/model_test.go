@@ -143,3 +143,57 @@ func TestStripSuffix(t *testing.T) {
 		})
 	}
 }
+
+func TestAutoCompactThreshold(t *testing.T) {
+	tests := []struct {
+		name        string
+		window, cap int
+		want        int
+	}{
+		{"200K under cap", 200_000, DefaultAutoCompactTriggerCap, 167_000},
+		{"1M capped", 1_000_000, DefaultAutoCompactTriggerCap, 256_000},
+		{"1M uncapped (zero)", 1_000_000, 0, 967_000},
+		{"1M uncapped (negative)", 1_000_000, -1, 967_000},
+		{"cap equals threshold", 200_000, 167_000, 167_000},
+		{"zero window defaults", 0, 0, 167_000},
+		// window - 33K would be negative or tiny: floor at 75%.
+		{"32K local model", 32_768, DefaultAutoCompactTriggerCap, 24_576},
+		{"16K local model", 16_384, 0, 12_288},
+		{"50K window", 50_000, 0, 37_500},
+		{"128K sits on the floor", 128_000, 0, 96_000},
+		{"200K is untouched by the floor", 200_000, 0, 167_000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AutoCompactThreshold(tt.window, tt.cap); got != tt.want {
+				t.Errorf("AutoCompactThreshold(%d, %d) = %d, want %d", tt.window, tt.cap, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveContextWindow(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		configured int
+		model      string
+		want       int
+	}{
+		{"configured wins", "", 128_000, "claude-sonnet-4-6", 128_000},
+		{"configured 1M without env", "", 1_000_000, "gpt-x", 1_000_000},
+		{"unset derives from model", "", 0, "claude-sonnet-4-6", 200_000},
+		{"unset 1M suffix", "", 0, "claude-sonnet-4-6[1m]", 1_000_000},
+		{"env caps configured", "50000", 1_000_000, "gpt-x", 50_000},
+		{"env above configured ignored", "500000", 128_000, "gpt-x", 128_000},
+		{"env caps derived", "50000", 0, "claude-sonnet-4-6", 50_000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", tt.env)
+			if got := ResolveContextWindow(tt.configured, tt.model); got != tt.want {
+				t.Errorf("ResolveContextWindow(%d, %q) = %d, want %d", tt.configured, tt.model, got, tt.want)
+			}
+		})
+	}
+}

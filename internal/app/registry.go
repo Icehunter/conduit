@@ -2,6 +2,8 @@ package app
 
 import (
 	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
@@ -10,6 +12,8 @@ import (
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/pendingedits"
 	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/provider/codex"
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/team"
@@ -48,6 +52,10 @@ import (
 	"github.com/icehunter/conduit/internal/tools/winshelltool"
 	"github.com/icehunter/conduit/internal/tools/worktreetool"
 	braveprovider "github.com/icehunter/conduit/internal/websearch/brave"
+	codexsearch "github.com/icehunter/conduit/internal/websearch/codex"
+	duckduckgosearch "github.com/icehunter/conduit/internal/websearch/duckduckgo"
+	mojeeksearch "github.com/icehunter/conduit/internal/websearch/mojeek"
+	parallelsearch "github.com/icehunter/conduit/internal/websearch/parallel"
 )
 
 // BuildAgentEntries converts loaded plugin agents into AgentEntry values for
@@ -128,7 +136,9 @@ type RegistryOpts struct {
 	SessionID     string
 }
 
-// BuildRegistry builds the tool registry, including MCP server tools.
+// BuildRegistry builds the tool registry, including MCP server tools. With a
+// manager it also installs the manager's change hook, so the registry's MCP
+// tools track servers as they connect and disconnect (see SyncMCPTools).
 func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *RegistryOpts, implementProvider func() *settings.ActiveProviderSettings) *tool.Registry {
 	reg := tool.NewRegistry()
 	var sessionEnv map[string]string
@@ -147,15 +157,19 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	} else {
 		reg.Register(bashtool.New(sessionEnv))
 	}
-	reg.Register(fileedittool.NewWithStager(stager))
-	reg.Register(hashedittool.NewWithStager(stager))
-	reg.Register(filereadtool.New())
-	reg.Register(astgreptool.NewWithStager(stager))
-	reg.Register(filewritetool.NewWithStager(stager))
+	// One read tracker per registry (so per session) backs the
+	// read-before-write guard. Sub-agent registries are views over this one
+	// and share these tool instances, hence the tracker.
+	reads := readtracker.New()
+	reg.Register(fileedittool.NewWithStager(stager).WithTracker(reads))
+	reg.Register(hashedittool.NewWithStager(stager).WithTracker(reads))
+	reg.Register(filereadtool.New().WithTracker(reads))
+	reg.Register(astgreptool.NewWithStager(stager).WithTracker(reads))
+	reg.Register(filewritetool.NewWithStager(stager).WithTracker(reads))
 	reg.Register(globtool.New())
 	reg.Register(ccrtool.New())
 	reg.Register(greptool.New())
-	reg.Register(notebookedittool.New())
+	reg.Register(notebookedittool.New().WithTracker(reads))
 	if kernelMgr != nil {
 		reg.Register(repltool.NewWithKernelManager(kernelMgr, sessionID))
 	} else {
@@ -172,24 +186,24 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(decisiontool.New())
 	reg.Register(toolsearchtool.New(reg))
 	reg.Register(webfetchtool.New())
+	// Order: Brave (key), Anthropic-native (Anthropic-capable clients only),
+	// the Codex subscription, then the keyless tier, which webSearch.keyless
+	// gates (auto: only when nothing else is configured).
+	searchStore := secure.NewDefault()
 	reg.Register(websearchtool.NewWithProviders(client,
-		braveprovider.New(secure.NewDefault()),
+		braveprovider.New(searchStore),
+	).WithFallbackProviders(
+		codexsearch.New(searchStore).WithModel(codexSearchModel),
+	).WithKeylessProviders(webSearchKeylessMode,
+		parallelsearch.New(),
+		duckduckgosearch.New(),
+		mojeeksearch.New(),
 	))
-	reg.Register(sessionsearchtool.New())
+	reg.Register(sessionsearchtool.New(sessionsearchtool.WithCurrentSession(func() string { return sessionID })))
 	reg.Register(lsptool.New(lspManager))
 	reg.Register(&configtool.ConfigTool{})
 	reg.Register(&mcpresourcetool.ListMcpResources{Manager: mcpManager})
 	reg.Register(&mcpresourcetool.ReadMcpResource{Manager: mcpManager})
-	if _, ok := localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider)); ok {
-		reg.Register(localimplementtool.NewDynamic(mcpManager, func() (localimplementtool.Config, bool) {
-			return localimplementtool.ResolveConfig(mcpManager, resolveImplementProvider(implementProvider))
-		}))
-	}
-	if _, ok := localhelpertool.ResolveConfig(mcpManager); ok {
-		reg.Register(localhelpertool.NewDynamic(mcpManager, func() (localhelpertool.Config, bool) {
-			return localhelpertool.ResolveConfig(mcpManager)
-		}))
-	}
 	// Agent Teams: always register SendMessage so the toggle works live.
 	// Execute is gated on team.IsActive() so it's a no-op when teams are off.
 	// Teammates get a per-sender instance injected via SpawnTeammate ExtraTools.
@@ -211,20 +225,76 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 			reg.Register(rOpts.ExitAutoMode)
 		}
 	}
-	// Register MCP server tools (if any servers are configured).
 	if mcpManager != nil {
-		mcptool.RegisterAll(reg, mcpManager)
-		// For each HTTP/SSE server in the StatusNeedsAuth state, register
-		// the per-server pseudo-tool so the model can trigger OAuth itself.
-		urls := make(map[string]string)
-		for _, srv := range mcpManager.Servers() {
-			if srv.Status == mcp.StatusNeedsAuth && srv.Config.URL != "" {
-				urls[srv.Name] = srv.Config.URL
-			}
-		}
-		mcpauthtool.RegisterPending(reg, mcpManager, urls)
+		followMCPTools(reg, mcpManager, implementProvider)
 	}
 	return reg
+}
+
+// followMCPTools registers reg's MCP-derived tools and keeps them current:
+// servers connect in the background and can be reconnected, authenticated,
+// added or removed mid-session, so the manager's change hook re-syncs on each
+// change. The hook goes in before the first sync so no change can land
+// between them unseen. This makes reg the registry that follows mgr; it
+// replaces any change hook mgr already had.
+func followMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings) {
+	mgr.SetOnChange(func() { SyncMCPTools(reg, mgr, implementProvider) })
+	SyncMCPTools(reg, mgr, implementProvider)
+}
+
+// mcpSyncMu serializes SyncMCPTools. Each call reads the manager while
+// holding it, so when change notifications overlap, the last call to run
+// installs the newest state rather than an older snapshot.
+var mcpSyncMu sync.Mutex
+
+// SyncMCPTools brings reg's MCP-derived tools in line with mgr's current
+// state: a tool for every tool a connected server lists (dropping those of
+// servers that are disabled, removed, reconnecting or failed), an
+// authenticate pseudo-tool for each remote server awaiting OAuth, and
+// LocalImplement / LocalHelper while a connected server provides them. Every
+// other tool in reg is left alone. Safe to call concurrently.
+//
+// MCP tools are deferred behind ToolSearch, so their churn leaves the request's
+// tool list unchanged; the authenticate and Local* tools are always sent, and
+// adding or removing one changes the cached prompt prefix.
+func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings) {
+	if reg == nil || mgr == nil {
+		return
+	}
+	mcpSyncMu.Lock()
+	defer mcpSyncMu.Unlock()
+
+	var want []tool.Tool
+	// The model triggers OAuth itself through these. A server's real tools
+	// are added after them, so they win any name clash.
+	for _, srv := range mgr.Servers() {
+		if srv.Status == mcp.StatusNeedsAuth && srv.Config.URL != "" {
+			want = append(want, mcpauthtool.New(mgr, srv.Name, srv.Config.URL))
+		}
+	}
+	for _, nt := range mgr.AllTools() {
+		want = append(want, mcptool.New(mgr, nt))
+	}
+	resolveImplement := func() (localimplementtool.Config, bool) {
+		return localimplementtool.ResolveConfig(mgr, resolveImplementProvider(implementProvider))
+	}
+	if _, ok := resolveImplement(); ok {
+		want = append(want, localimplementtool.NewDynamic(mgr, resolveImplement))
+	}
+	resolveHelper := func() (localhelpertool.Config, bool) { return localhelpertool.ResolveConfig(mgr) }
+	if _, ok := resolveHelper(); ok {
+		want = append(want, localhelpertool.NewDynamic(mgr, resolveHelper))
+	}
+	reg.Reconcile(isMCPDerived, want)
+}
+
+// isMCPDerived reports whether t is one of the tools SyncMCPTools manages.
+func isMCPDerived(t tool.Tool) bool {
+	switch t.(type) {
+	case *mcptool.MCPTool, *localimplementtool.Tool, *localhelpertool.Tool:
+		return true
+	}
+	return mcpauthtool.IsAuthTool(t)
 }
 
 func resolveImplementProvider(fn func() *settings.ActiveProviderSettings) *settings.ActiveProviderSettings {
@@ -244,4 +314,28 @@ func ClaudeRoleModel(cwd, role, fallback string) string {
 		return fallback
 	}
 	return provider.Model
+}
+
+// webSearchKeylessMode reads webSearch.keyless from conduit.json on each
+// search so a settings change applies without a restart.
+func webSearchKeylessMode() string {
+	m, err := settings.Load("")
+	if err != nil || m == nil {
+		return settings.WebSearchKeylessAuto
+	}
+	return m.WebSearchKeyless
+}
+
+// codexSearchModel returns the model of the default-role provider when that
+// provider is a Codex one, else "" so the search provider uses its default.
+func codexSearchModel() string {
+	m, err := settings.Load("")
+	if err != nil || m == nil {
+		return ""
+	}
+	p, ok := m.Providers[m.Roles["default"]]
+	if !ok || !(strings.HasPrefix(p.Credential, codex.ProviderID) || strings.Contains(p.BaseURL, "chatgpt.com/backend-api/codex")) {
+		return ""
+	}
+	return p.Model
 }

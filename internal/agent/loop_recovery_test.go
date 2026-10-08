@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"github.com/icehunter/conduit/internal/api"
 )
 
 // TestBuildContentBlocks_TextAndToolUse covers the happy path —
@@ -53,20 +55,51 @@ func TestBuildContentBlocks_DropsEmptyText(t *testing.T) {
 	}
 }
 
-// TestBuildContentBlocks_DropsTruncatedToolUse — a tool_use whose JSON
-// input was cut off mid-stream is unparseable; we drop it rather than
-// emit a half-formed call that the resume path would have to filter.
-func TestBuildContentBlocks_DropsTruncatedToolUse(t *testing.T) {
-	metas := map[int]blockMeta{
-		0: {blockType: "tool_use", toolID: "toolu_bad", toolName: "Bash"},
+// TestBuildBlocks_KeepsInvalidToolUse — a tool_use whose JSON input was cut
+// off or is not an object is kept with an empty input and reported as invalid,
+// so the loop can answer it with an error result instead of losing the call
+// and leaving its UI row running forever.
+func TestBuildBlocks_KeepsInvalidToolUse(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		valid bool
+	}{
+		{"truncated mid-string", `{"cmd":"l`, false},
+		{"truncated mid-object", `{"cmd":"ls",`, false},
+		{"not json", `ls -la`, false},
+		{"array not object", `["ls"]`, false},
+		{"complete", `{"cmd":"ls"}`, true},
+		{"empty means no args", ``, true},
 	}
-	texts := map[int]*strings.Builder{
-		0: bld(`{"cmd":"l`), // truncated mid-string
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metas := map[int]blockMeta{
+				0: {blockType: "text"},
+				1: {blockType: "tool_use", toolID: "toolu_bad", toolName: "Bash"},
+			}
+			texts := map[int]*strings.Builder{0: bld("before"), 1: bld(tt.input)}
 
-	got := buildContentBlocks(metas, texts, map[int]string{})
-	if len(got) != 0 {
-		t.Fatalf("expected 0 blocks (truncated dropped); got %d (%+v)", len(got), got)
+			blocks, invalid := buildBlocks(metas, texts, map[int]string{})
+			if len(blocks) != 2 || blocks[1].Type != "tool_use" || blocks[1].ID != "toolu_bad" {
+				t.Fatalf("blocks = %+v; want the text and the tool_use kept", blocks)
+			}
+			if blocks[1].Input == nil {
+				t.Errorf("Input is nil; want a non-nil map so the block marshals as {}")
+			}
+			if tt.valid {
+				if len(invalid) != 0 {
+					t.Errorf("invalid = %v; want none", invalid)
+				}
+				return
+			}
+			if len(blocks[1].Input) != 0 {
+				t.Errorf("Input = %v; want empty for an invalid call", blocks[1].Input)
+			}
+			if len(invalid) != 1 || invalid[0] != "toolu_bad" {
+				t.Errorf("invalid = %v; want [toolu_bad]", invalid)
+			}
+		})
 	}
 }
 
@@ -145,4 +178,10 @@ func TestBuildContentBlocks_ThinkingBlocks(t *testing.T) {
 	if got[1].Type != "text" {
 		t.Errorf("blocks[1] = %+v; want text", got[1])
 	}
+}
+
+// buildContentBlocks is buildBlocks without the invalid-tool list.
+func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Builder, blockSignatures map[int]string) []api.ContentBlock {
+	blocks, _ := buildBlocks(metas, blockTexts, blockSignatures)
+	return blocks
 }

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -274,5 +277,198 @@ func TestDrainSearchStream_ContextCancelled(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled; got: %v", err)
+	}
+}
+
+// orderProvider records its name in a shared log when called.
+type orderProvider struct {
+	name    string
+	log     *[]string
+	results []websearch.Result
+	err     error
+	// unavailable makes the provider report itself unconfigured.
+	unavailable bool
+}
+
+func (o *orderProvider) Available() bool { return !o.unavailable }
+
+func (o *orderProvider) Name() string { return o.name }
+
+func (o *orderProvider) Search(context.Context, websearch.Query) ([]websearch.Result, error) {
+	*o.log = append(*o.log, o.name)
+	return o.results, o.err
+}
+
+var oneResult = []websearch.Result{{Title: "T", URL: "https://example.com/r", Snippet: "s"}}
+
+// nativeServer stands in for the Anthropic Messages endpoint. It logs "native"
+// per request and answers with a text block, or with 400 when fail is set.
+func nativeServer(t *testing.T, log *[]string, fail bool) *api.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		*log = append(*log, "native")
+		if fail {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"no web_search"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"native answer\"}}\n\n"+
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	return api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "tok"}, srv.Client())
+}
+
+func TestWebSearch_ProviderOrder(t *testing.T) {
+	type step struct {
+		name  string
+		res   []websearch.Result
+		err   error
+		unavl bool
+	}
+	ok, bad := oneResult, errors.New("down")
+	native := func(fail bool) func(*testing.T, *[]string) *api.Client {
+		return func(t *testing.T, l *[]string) *api.Client { return nativeServer(t, l, fail) }
+	}
+	tests := []struct {
+		name       string
+		client     func(t *testing.T, log *[]string) *api.Client
+		mode       string
+		key        step
+		codex      step
+		keyless    []step
+		wantOrder  []string
+		wantInBody string
+		wantError  bool
+		notInBody  string
+	}{
+		{
+			name: "key provider wins, nothing else runs", client: native(false), mode: "always",
+			key: step{name: "Brave", res: ok}, codex: step{name: "Codex", res: ok}, keyless: []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"Brave"}, wantInBody: "via Brave",
+		},
+		{
+			name: "native success preempts codex and keyless", client: native(false), mode: "always",
+			key: step{name: "Brave", err: bad}, codex: step{name: "Codex", res: ok}, keyless: []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"Brave", "native"}, wantInBody: "native answer",
+		},
+		{
+			name: "native failure falls to codex before keyless", client: native(true), mode: "always",
+			key: step{name: "Brave", err: bad}, codex: step{name: "Codex", res: ok}, keyless: []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"Brave", "native", "Codex"}, wantInBody: "via Codex",
+		},
+		{
+			name: "always: codex failure falls to keyless in order", client: native(true), mode: "always",
+			key: step{name: "Brave", err: bad}, codex: step{name: "Codex", err: bad},
+			keyless:   []step{{name: "Parallel"}, {name: "DuckDuckGo", res: ok}, {name: "Mojeek", res: ok}},
+			wantOrder: []string{"Brave", "native", "Codex", "Parallel", "DuckDuckGo"}, wantInBody: "via DuckDuckGo",
+		},
+		{
+			name: "auto: configured provider fails, keyless not used, reason kept", client: native(true), mode: "auto",
+			key: step{name: "Brave", err: errors.New("quota exhausted")}, codex: step{name: "Codex", unavl: true},
+			keyless:   []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"Brave", "native"}, wantError: true,
+			wantInBody: "Brave: quota exhausted", notInBody: "via DuckDuckGo",
+		},
+		{
+			name: "auto: native failure detail is preserved", client: native(true), mode: "",
+			key: step{name: "Brave", unavl: true}, codex: step{name: "Codex", unavl: true},
+			keyless:   []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"native"}, wantError: true, wantInBody: "no web_search", notInBody: "via DuckDuckGo",
+		},
+		{
+			name: "auto: codex fails, keyless not used", client: nilClient, mode: "auto",
+			key: step{name: "Brave", unavl: true}, codex: step{name: "Codex", err: errors.New("status 429")},
+			keyless:   []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"Codex"}, wantError: true, wantInBody: "Codex: status 429", notInBody: "via DuckDuckGo",
+		},
+		{
+			name: "auto: nothing configured uses keyless in order", client: nilClient, mode: "auto",
+			key: step{name: "Brave", unavl: true}, codex: step{name: "Codex", unavl: true},
+			keyless:   []step{{name: "Parallel", err: bad}, {name: "DuckDuckGo", res: ok}, {name: "Mojeek", res: ok}},
+			wantOrder: []string{"Parallel", "DuckDuckGo"}, wantInBody: "via DuckDuckGo",
+		},
+		{
+			name: "auto: non-Anthropic client with no credentials uses keyless and skips native",
+			client: func(t *testing.T, l *[]string) *api.Client {
+				srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { *l = append(*l, "native") }))
+				t.Cleanup(srv.Close)
+				return api.NewClient(api.Config{BaseURL: srv.URL, ProviderKind: api.ProviderKindOpenAIResponses}, srv.Client())
+			},
+			mode: "auto", key: step{name: "Brave", unavl: true}, codex: step{name: "Codex", unavl: true},
+			keyless:   []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"DuckDuckGo"}, wantInBody: "via DuckDuckGo",
+		},
+		{
+			name: "never: keyless unused even when nothing is configured", client: nilClient, mode: "never",
+			key: step{name: "Brave", unavl: true}, codex: step{name: "Codex", unavl: true},
+			keyless:   []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: nil, wantError: true, wantInBody: "webSearch.keyless=never",
+		},
+		{
+			name: "never: keyless unused after failure", client: nilClient, mode: "never",
+			key: step{name: "Brave", err: bad}, codex: step{name: "Codex", unavl: true},
+			keyless:   []step{{name: "DuckDuckGo", res: ok}},
+			wantOrder: []string{"Brave"}, wantError: true, wantInBody: "Brave: down", notInBody: "via DuckDuckGo",
+		},
+		{
+			name: "always: everything fails reports each provider", client: native(true), mode: "always",
+			key: step{name: "Brave", err: bad}, codex: step{name: "Codex", err: bad}, keyless: []step{{name: "Mojeek"}},
+			wantOrder: []string{"Brave", "native", "Codex", "Mojeek"}, wantError: true, wantInBody: "Mojeek: no results",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var log []string
+			mk := func(s step) *orderProvider {
+				return &orderProvider{name: s.name, log: &log, results: s.res, err: s.err, unavailable: s.unavl}
+			}
+			var kl []websearch.SearchProvider
+			for _, k := range tt.keyless {
+				kl = append(kl, mk(k))
+			}
+			tool := NewWithProviders(tt.client(t, &log), mk(tt.key)).
+				WithFallbackProviders(mk(tt.codex)).
+				WithKeylessProviders(func() string { return tt.mode }, kl...)
+			b, _ := json.Marshal(map[string]any{"query": "go news"})
+			res, err := tool.Execute(context.Background(), b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(log, ",") != strings.Join(tt.wantOrder, ",") {
+				t.Errorf("order = %v, want %v", log, tt.wantOrder)
+			}
+			if res.IsError != tt.wantError {
+				t.Errorf("IsError = %v, want %v (%v)", res.IsError, tt.wantError, res)
+			}
+			body := fmt.Sprint(res.Content)
+			if !strings.Contains(body, tt.wantInBody) {
+				t.Errorf("result %v missing %q", body, tt.wantInBody)
+			}
+			if tt.notInBody != "" && strings.Contains(body, tt.notInBody) {
+				t.Errorf("result %v must not contain %q", body, tt.notInBody)
+			}
+		})
+	}
+}
+
+func nilClient(*testing.T, *[]string) *api.Client { return nil }
+
+func TestWebSearch_CancelledContextStopsChain(t *testing.T) {
+	var log []string
+	p := &orderProvider{name: "P", log: &log, err: errors.New("x")}
+	f := &orderProvider{name: "F", log: &log, results: oneResult}
+	tool := NewWithProviders(nil, p).WithFallbackProviders(f).WithKeylessProviders(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b, _ := json.Marshal(map[string]any{"query": "go news"})
+	res, err := tool.Execute(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 0 || !res.IsError {
+		t.Errorf("log=%v IsError=%v, want no provider calls and an error", log, res.IsError)
 	}
 }

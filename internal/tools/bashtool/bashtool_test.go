@@ -3,14 +3,36 @@ package bashtool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/truncate"
 )
+
+// TestMain points CONDUIT_CONFIG_DIR at a scratch directory for the whole
+// binary: spill files and the CCR store live under it, and the tests must not
+// write to the real ~/.conduit.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "bashtool-test-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("CONDUIT_CONFIG_DIR", dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
 
 func TestBash_StdoutCapture(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -115,18 +137,124 @@ func TestBash_OutputTruncated(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash tool is unavailable on Windows")
 	}
-	tt := New(nil)
-	// Generate ~50KB of output (more than MaxOutputBytes).
-	res, err := tt.Execute(context.Background(),
-		json.RawMessage(`{"command":"yes a | head -c 50000"}`))
+	// ~50KB in 25000 short lines: over both the byte and the line budget,
+	// but small enough to stay in memory.
+	text := execText(t, `{"command":"yes a | head -c 50000"}`, false)
+	if !strings.Contains(text, " lines / ") || !strings.Contains(text, " bytes omitted; full output: ") {
+		t.Fatalf("expected head/tail marker; got len=%d", len(text))
+	}
+	if len(text) > MaxOutputBytes+500 {
+		t.Errorf("output not bounded: len=%d", len(text))
+	}
+	if !strings.HasPrefix(text, "a\na\n") || !strings.HasSuffix(text, "a\na") {
+		t.Errorf("head or tail missing: %q ... %q", text[:20], text[len(text)-20:])
+	}
+	want := strings.TrimRight(strings.Repeat("a\n", 25000), "\n")
+	if got := readSpill(t, text); got != want {
+		t.Errorf("spill file holds %d bytes, want the full %d", len(got), len(want))
+	}
+}
+
+// TestBash_LargeOutputNotKilled: output past the in-memory threshold streams
+// to a spill file instead of killing the command, and the model sees both
+// ends of it.
+func TestBash_LargeOutputNotKilled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
+	// seq 1 200000 writes 1.3 MB.
+	text := execText(t, `{"command":"seq 1 200000"}`, false)
+	if !strings.HasPrefix(text, "1\n2\n3\n") {
+		t.Errorf("head missing: %q", text[:min(len(text), 40)])
+	}
+	if !strings.HasSuffix(text, "199999\n200000") {
+		t.Errorf("tail missing: %q", text[max(len(text)-40, 0):])
+	}
+	if len(text) > MaxOutputBytes+500 {
+		t.Errorf("output not bounded: len=%d", len(text))
+	}
+	if got, want := readSpill(t, text), seqOutput(200000); got != want {
+		t.Errorf("spill file holds %d bytes, want the full %d", len(got), len(want))
+	}
+}
+
+// TestBash_SpillFileIsPrivate: spill files hold raw command output, which
+// can include secrets, so they are 0600 in a 0700 directory.
+func TestBash_SpillFileIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
+	for _, command := range []string{
+		`{"command":"seq 1 30000"}`,  // spilled after the run
+		`{"command":"seq 1 200000"}`, // spilled while running
+	} {
+		path := spillPath(t, execText(t, command, false))
+		for p, want := range map[string]os.FileMode{path: 0o600, filepath.Dir(path): 0o700} {
+			info, err := os.Stat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != want {
+				t.Errorf("%s: mode of %s = %v, want %v", command, p, got, want)
+			}
+		}
+		if filepath.Dir(path) != truncate.Dir() {
+			t.Errorf("spill file %s is outside %s", path, truncate.Dir())
+		}
+	}
+}
+
+// TestBash_NonZeroExitStillSpills: a failing command's output is bounded and
+// saved the same way; its tail is usually where the failure is.
+func TestBash_NonZeroExitStillSpills(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
+	text := execText(t, `{"command":"seq 1 30000; exit 3"}`, true)
+	if !strings.HasSuffix(text, "29999\n30000\nExit code: 3") {
+		t.Errorf("tail or exit code missing: %q", text[max(len(text)-60, 0):])
+	}
+	if got, want := readSpill(t, text), strings.TrimRight(seqOutput(30000), "\n"); got != want {
+		t.Errorf("spill file holds %d bytes, want the full %d", len(got), len(want))
+	}
+}
+
+// TestBash_TimeoutStillSpills: a timed-out command's output is bounded and
+// saved too, instead of being cut to its head.
+func TestBash_TimeoutStillSpills(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
+	text := execText(t, `{"command":"seq 1 30000; sleep 30","timeout":1000}`, true)
+	if !strings.HasSuffix(text, "29999\n30000\nCommand timed out after 1s.") {
+		t.Errorf("tail or timeout message missing: %q", text[max(len(text)-60, 0):])
+	}
+	if got, want := readSpill(t, text), strings.TrimRight(seqOutput(30000), "\n"); got != want {
+		t.Errorf("spill file holds %d bytes, want the full %d", len(got), len(want))
+	}
+}
+
+// TestBash_DiskCapKillsRunaway: the disk safety cap is the only output limit
+// that kills a command, and what was written before it is kept as the
+// partial output.
+func TestBash_DiskCapKillsRunaway(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is unavailable on Windows")
+	}
+	setCaptureLimits(t, 64<<10, 1<<20)
+	text := execText(t, `{"command":"yes"}`, true)
+	if !strings.Contains(text, "[killed: output exceeded 1 MB; partial output: ") {
+		t.Fatalf("missing kill report: %q", text[max(len(text)-200, 0):])
+	}
+	if !strings.HasPrefix(text, "y\ny\n") {
+		t.Errorf("head missing: %q", text[:min(len(text), 20)])
+	}
+	info, err := os.Stat(spillPath(t, text))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Content[0].Text, "truncated to first") {
-		t.Errorf("expected truncation marker; got len=%d", len(res.Content[0].Text))
-	}
-	if len(res.Content[0].Text) > MaxOutputBytes+200 {
-		t.Errorf("output not truncated: len=%d", len(res.Content[0].Text))
+	if info.Size() != 1<<20 {
+		t.Errorf("partial output is %d bytes, want the 1 MB cap", info.Size())
 	}
 }
 
@@ -190,4 +318,57 @@ func TestBash_RunsInContextCwd(t *testing.T) {
 	if gotReal, _ := filepath.EvalSymlinks(got); gotReal != want {
 		t.Errorf("pwd = %q, want %q", got, want)
 	}
+}
+
+var spillPathRe = regexp.MustCompile(`(?:full|partial) output: ([^\]]+)\]`)
+
+// execText runs the Bash tool and returns its text, failing unless IsError
+// matches wantErr.
+func execText(t *testing.T, input string, wantErr bool) string {
+	t.Helper()
+	res, err := New(nil).Execute(context.Background(), json.RawMessage(input))
+	if err != nil {
+		t.Fatalf("Execute(%s): %v", input, err)
+	}
+	text := res.Content[0].Text
+	if res.IsError != wantErr {
+		t.Fatalf("Execute(%s) IsError = %v, want %v; output tail %q", input, res.IsError, wantErr, text[max(len(text)-200, 0):])
+	}
+	return text
+}
+
+// spillPath returns the spill file named in a tool result.
+func spillPath(t *testing.T, text string) string {
+	t.Helper()
+	m := spillPathRe.FindStringSubmatch(text)
+	if m == nil {
+		t.Fatalf("no spill path in output (len=%d): %q", len(text), text[max(len(text)-300, 0):])
+	}
+	return m[1]
+}
+
+func readSpill(t *testing.T, text string) string {
+	t.Helper()
+	data, err := os.ReadFile(spillPath(t, text))
+	if err != nil {
+		t.Fatalf("read spill file: %v", err)
+	}
+	return string(data)
+}
+
+// seqOutput is what `seq 1 n` prints.
+func seqOutput(n int) string {
+	var sb strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&sb, "%d\n", i)
+	}
+	return sb.String()
+}
+
+// setCaptureLimits lowers the spill threshold and disk cap for one test.
+func setCaptureLimits(t *testing.T, threshold, diskCap int64) {
+	t.Helper()
+	oldThreshold, oldCap := spillThreshold, outputDiskCap
+	spillThreshold, outputDiskCap = threshold, diskCap
+	t.Cleanup(func() { spillThreshold, outputDiskCap = oldThreshold, oldCap })
 }

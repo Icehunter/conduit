@@ -258,6 +258,7 @@ func (db *DB) indexFile(sessionID, projectSlug, path string, mtime int64) error 
 	type rawEntry struct {
 		Type    string          `json:"type"`
 		Message json.RawMessage `json:"message"`
+		TailLen int             `json:"tailLen"`
 	}
 	type rawMessage struct {
 		Role    string          `json:"role"`
@@ -278,6 +279,10 @@ func (db *DB) indexFile(sessionID, projectSlug, path string, mtime int64) error 
 	}
 
 	msgIndex := 0
+	// skipCopies counts message entries still to skip after a
+	// compact_boundary: the summary message plus the re-appended tail are
+	// copies of content already indexed from before the boundary.
+	skipCopies := 0
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -287,10 +292,22 @@ func (db *DB) indexFile(sessionID, projectSlug, path string, mtime int64) error 
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
+		if entry.Type == "compact_boundary" {
+			skipCopies = 1 + entry.TailLen
+			continue
+		}
+		if entry.Type == "session_reset" {
+			skipCopies = 0 // a /clear: what follows is new; what came before stays indexed
+			continue
+		}
 		if entry.Type != "message" && entry.Type != "user" && entry.Type != "assistant" {
 			continue
 		}
 		if len(entry.Message) == 0 {
+			continue
+		}
+		if skipCopies > 0 {
+			skipCopies--
 			continue
 		}
 		var msg rawMessage
@@ -394,25 +411,19 @@ type SessionSummary struct {
 // each containing the matched message and up to 3 surrounding messages.
 // projectSlug filters results to a specific project; pass "" to search all.
 func (db *DB) Search(query string, projectSlug string, maxResults int) ([]MessageWindow, error) {
+	return db.SearchFiltered(query, Filter{Project: projectSlug}, maxResults)
+}
+
+// SearchFiltered is Search with date bounds and session exclusions applied in
+// the SQL WHERE clause.
+func (db *DB) SearchFiltered(query string, f Filter, maxResults int) ([]MessageWindow, error) {
 	if maxResults <= 0 {
 		maxResults = 5
 	}
 
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if projectSlug == "" {
-		rows, err = db.conn.QueryContext(context.Background(),
-			`SELECT session_id, project_slug, msg_index FROM messages WHERE content MATCH ? ORDER BY rank LIMIT ?`,
-			query, maxResults,
-		)
-	} else {
-		rows, err = db.conn.QueryContext(context.Background(),
-			`SELECT session_id, project_slug, msg_index FROM messages WHERE content MATCH ? AND project_slug = ? ORDER BY rank LIMIT ?`,
-			query, projectSlug, maxResults,
-		)
-	}
+	where, args := f.clauses("session_id", "project_slug")
+	q := `SELECT session_id, project_slug, msg_index FROM messages WHERE content MATCH ?` + where + ` ORDER BY rank LIMIT ?` //nolint:gosec // where is built from fixed fragments; values are bound args
+	rows, err := db.conn.QueryContext(context.Background(), q, append(append([]any{query}, args...), maxResults)...)
 	if err != nil {
 		return nil, fmt.Errorf("sessionsearch: fts query: %w", err)
 	}
@@ -506,17 +517,23 @@ func (db *DB) Scroll(sessionID string, aroundMsgIndex int, windowSize int) (*Mes
 // Browse returns a summary of the most recent sessions, ordered by
 // indexed_at descending.
 func (db *DB) Browse(maxSessions int) ([]SessionSummary, error) {
+	return db.BrowseFiltered(Filter{}, maxSessions)
+}
+
+// BrowseFiltered is Browse with the filter applied.
+func (db *DB) BrowseFiltered(f Filter, maxSessions int) ([]SessionSummary, error) {
 	if maxSessions <= 0 {
 		maxSessions = 10
 	}
-	rows, err := db.conn.QueryContext(context.Background(),
-		`SELECT s.id, s.project_slug, s.indexed_at, s.message_count,
+	where, args := f.clauses("s.id", "s.project_slug")
+	if where != "" {
+		where = " WHERE " + strings.TrimPrefix(where, " AND ")
+	}
+	const browseSelect = `SELECT s.id, s.project_slug, s.indexed_at, s.message_count,
 		        COALESCE((SELECT content FROM messages WHERE session_id = s.id AND msg_index = 0 LIMIT 1), '')
-		 FROM sessions s
-		 ORDER BY s.indexed_at DESC
-		 LIMIT ?`,
-		maxSessions,
-	)
+		 FROM sessions s`
+	q := browseSelect + where + ` ORDER BY s.indexed_at DESC LIMIT ?` //nolint:gosec // where is built from fixed fragments; values are bound args
+	rows, err := db.conn.QueryContext(context.Background(), q, append(args, maxSessions)...)
 	if err != nil {
 		return nil, fmt.Errorf("sessionsearch: browse query: %w", err)
 	}

@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // MaxCharCount is the recommended max character count for a single memory file.
@@ -221,6 +222,56 @@ func collectDirs(cwd string) []string {
 	return dirs
 }
 
+// maxOmittedHeadings caps how many dropped headings the truncation marker lists.
+const maxOmittedHeadings = 15
+
+// truncateContent cuts content to MaxCharCount bytes without splitting a UTF-8
+// character and appends a marker naming the markdown headings that were
+// dropped, so the model knows what it is missing.
+func truncateContent(content string) string {
+	if len(content) <= MaxCharCount {
+		return content
+	}
+	cut := MaxCharCount
+	for cut > 0 && !utf8.RuneStart(content[cut]) {
+		cut--
+	}
+	marker := fmt.Sprintf("\n\n[truncated: file exceeds %d characters", MaxCharCount)
+	if omitted := omittedHeadings(content, cut); len(omitted) > 0 {
+		marker += ". Omitted sections: " + strings.Join(omitted, "; ")
+	}
+	return content[:cut] + marker + "]"
+}
+
+// omittedHeadings returns the markdown headings whose line starts at or after
+// byte offset from. "#" lines inside fenced code blocks are comments, not
+// headings. The list is capped at maxOmittedHeadings with a trailing "...".
+func omittedHeadings(content string, from int) []string {
+	var out []string
+	offset, fenced := 0, false
+	for _, line := range strings.SplitAfter(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~"):
+			fenced = !fenced
+		case !fenced && offset >= from && isHeading(trimmed):
+			if len(out) == maxOmittedHeadings {
+				return append(out, "...")
+			}
+			out = append(out, strings.TrimSpace(strings.TrimLeft(trimmed, "#")))
+		}
+		offset += len(line)
+	}
+	return out
+}
+
+// isHeading reports whether a trimmed line is an ATX heading ("# Title" ..
+// "###### Title").
+func isHeading(trimmed string) bool {
+	n := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+	return n >= 1 && n <= 6 && len(trimmed) > n+1 && trimmed[n] == ' ' && strings.TrimSpace(trimmed[n:]) != ""
+}
+
 // loadFile reads one file, truncates if over MaxCharCount, deduplicates by path.
 func loadFile(path string, typ MemoryType, seen map[string]bool) (*File, error) {
 	abs, err := filepath.Abs(path)
@@ -236,9 +287,7 @@ func loadFile(path string, typ MemoryType, seen map[string]bool) (*File, error) 
 	}
 	seen[abs] = true
 	content := string(data)
-	if len(content) > MaxCharCount {
-		content = content[:MaxCharCount] + fmt.Sprintf("\n\n[truncated: file exceeds %d characters]", MaxCharCount)
-	}
+	content = truncateContent(content)
 	return &File{Path: abs, Content: content, Type: typ}, nil
 }
 
@@ -297,9 +346,7 @@ func resolveIncludes(f File, seen map[string]bool) []File {
 			continue
 		}
 		content := string(data)
-		if len(content) > MaxCharCount {
-			content = content[:MaxCharCount] + fmt.Sprintf("\n\n[truncated: file exceeds %d characters]", MaxCharCount)
-		}
+		content = truncateContent(content)
 		included := File{Path: includePath, Content: content, Type: f.Type}
 		// Recurse for nested includes
 		result = append(result, resolveIncludes(included, seen)...)
@@ -395,9 +442,7 @@ func loadCursorRulesDir(dir, gitRoot, cwd string, seen map[string]bool) ([]File,
 			continue
 		}
 		seen[abs] = true
-		if len(body) > MaxCharCount {
-			body = body[:MaxCharCount] + fmt.Sprintf("\n\n[truncated: file exceeds %d characters]", MaxCharCount)
-		}
+		body = truncateContent(body)
 		files = append(files, File{Path: abs, Content: body, Type: TypeCursor})
 	}
 	return files, nil

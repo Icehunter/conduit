@@ -9,6 +9,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/provider/xai"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -97,7 +98,8 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			picked := p.items[p.selected].Value
 			m.picker = nil
 			m.applyPermissionMode(permissions.Mode(picked))
-			return m, m.rebuildSystemCmd()
+			m.applySystemOverlay()
+			return m, nil
 		}
 		if p.kind == "model" && p.role == roleCouncil {
 			// Toggle this provider key in m.councilProviders.
@@ -154,7 +156,8 @@ func (m Model) handlePickerKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			picked := p.items[p.selected].Value
 			m.picker = nil
 			m.applyPermissionMode(permissions.Mode(picked))
-			return m, m.rebuildSystemCmd()
+			m.applySystemOverlay()
+			return m, nil
 		}
 		if p.kind == "model" && p.role == roleCouncil {
 			// Save the current council roster and close.
@@ -694,6 +697,8 @@ func modelPickerProviderText(value string) string {
 			return "Copilot"
 		case strings.HasPrefix(rest, "chatgpt-codex"):
 			return "ChatGPT"
+		case strings.HasPrefix(rest, xai.ProviderID):
+			return "Grok"
 		default:
 			return "OpenAI"
 		}

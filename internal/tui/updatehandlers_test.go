@@ -113,6 +113,7 @@ func TestApplyAPIRateLimitToPlanUsageMarksCurrentSessionFull(t *testing.T) {
 		RetryAfter:       time.Minute,
 		RateLimitResetAt: resetAt,
 		RetryErr:         context.DeadlineExceeded,
+		RetryReason:      api.ReasonRateLimit,
 	})
 
 	if got := m.planUsage.FiveHour.Utilization; got != 100 {

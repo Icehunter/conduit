@@ -61,8 +61,8 @@ const TOOLS_DELIBERATELY_NOT_PORTED = {
   SearchPlugins: "CC marketplace plugin search — conduit's plugin flow is /plugins",
   ReportFindings: "ultrareview/auto-mode findings reporter — Claude cloud feature",
   TestingPermission: "CC internal permission-system test fixture — not a real tool",
-  RefreshMcpTools: "MCP tool-list refresh — conduit refreshes on reconnect via /mcp",
-  WaitForMcpServers: "MCP startup wait — conduit bounds MCP connect at startup instead",
+  RefreshMcpTools: "MCP tool-list refresh — conduit re-syncs MCP tools into the registry on every connect, reconnect, OAuth and add/remove (app.SyncMCPTools)",
+  WaitForMcpServers: "MCP startup wait — conduit connects MCP servers in the background and the first prompt waits up to mcp.InitWaitBudget (10s) instead",
   ReadMcpResourceDirTool: "MCP resource directory listing — covered by ListMcpResources",
   memory_list: "Anthropic cloud memory store — conduit uses local memdir",
   memory_read: "Anthropic cloud memory store — conduit uses local memdir",
@@ -70,6 +70,11 @@ const TOOLS_DELIBERATELY_NOT_PORTED = {
   self_hosted_runner_read_health: "SELF_HOSTED_RUNNER_TOOLS — enterprise runner ops",
   self_hosted_runner_read_metrics: "SELF_HOSTED_RUNNER_TOOLS — enterprise runner ops",
   self_hosted_runner_tail_log: "SELF_HOSTED_RUNNER_TOOLS — enterprise runner ops",
+  AppifactRepl: "claude.ai Artifacts appifact SDK REPL (tengu_buzzing_lightning) — product integration",
+  FetchInboxMessage: "Remote Control session-inbox relay — Claude cloud feature",
+  GetTask: "background-shell task status (tengu_violin_rosin) — conduit's Bash has no run_in_background; TaskGet is the to-do list",
+  PublishPlugin: "publish plugin to the claude.ai org library (tengu_copper_gazette) — product integration",
+  SubagentHandback: "auto-mode sub-agent final-report handoff — conduit's Task returns the sub-agent's final text directly",
 };
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────

@@ -30,6 +30,18 @@ var panelTabNames = []string{"MCP"}
 // so the TUI can re-open the /mcp panel with fresh server state.
 type mcpReconnectDoneMsg struct{}
 
+// mcpReconnectCmd reconnects an MCP server off the event loop, re-reading its
+// config and disabled state, and then delivers done (nil delivers nothing).
+// The tool registry follows through the manager's change hook, so by the time
+// done arrives the server's tools are registered, or gone if it didn't
+// connect. The outcome, failures included, shows in the /mcp panel.
+func mcpReconnectCmd(mgr *mcp.Manager, name, cwd string, trusted bool, done tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		_ = mgr.Reconnect(context.Background(), name, cwd, trusted) // outcome is recorded on the server's state
+		return done
+	}
+}
+
 // panelMCPItem is one MCP server row — carries all info for detail view.
 type panelMCPItem struct {
 	name      string
@@ -230,43 +242,30 @@ func (m Model) handlePanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) { //nolint:u
 				case "Reconnect":
 					if m.cfg.MCPManager != nil {
 						cwd, _ := os.Getwd()
-						srvName := item.name
-						mgr := m.cfg.MCPManager
-						trusted := !m.cfg.NeedsTrust
 						m.panel = nil
 						m.refreshViewport()
-						return m, func() tea.Msg {
-							_ = mgr.Reconnect(context.Background(), srvName, cwd, trusted)
-							return mcpReconnectDoneMsg{}
-						}
+						return m, mcpReconnectCmd(m.cfg.MCPManager, item.name, cwd, !m.cfg.NeedsTrust, mcpReconnectDoneMsg{})
 					}
 					p.view = panelViewList
 					p.selected = 0
-				case "Disable":
+				case "Disable", "Enable":
+					disable := action == "Disable"
 					cwd, _ := os.Getwd()
-					_ = mcp.SetDisabled(item.name, cwd, true)
-					p.mcpItems[p.serverIdx].disabled = true
-					p.mcpItems[p.serverIdx].status = "disabled"
-					// Close the live connection.
-					if m.cfg.MCPManager != nil {
-						go func() { m.cfg.MCPManager.DisconnectServer(item.name) }()
+					_ = mcp.SetDisabled(item.name, cwd, disable)
+					status := "pending"
+					if disable {
+						status = "disabled"
 					}
+					p.mcpItems[p.serverIdx].disabled = disable
+					p.mcpItems[p.serverIdx].status = status
 					p.view = panelViewList
 					p.selected = 0
-				case "Enable":
-					cwd, _ := os.Getwd()
-					_ = mcp.SetDisabled(item.name, cwd, false)
-					p.mcpItems[p.serverIdx].disabled = false
-					p.mcpItems[p.serverIdx].status = "pending"
-					// Reconnect.
+					// Reconnecting re-reads the disabled list: the server closes
+					// and stays listed as disabled, or connects again.
 					if m.cfg.MCPManager != nil {
-						srvName := item.name
-						mgr := m.cfg.MCPManager
-						trusted := !m.cfg.NeedsTrust
-						go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
+						m.panel = p
+						return m, mcpReconnectCmd(m.cfg.MCPManager, item.name, cwd, !m.cfg.NeedsTrust, nil)
 					}
-					p.view = panelViewList
-					p.selected = 0
 				}
 			}
 		case "esc":
@@ -342,11 +341,30 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		return m, nil
+	case "copy-last":
+		text := m.lastAssistantText()
+		if text == "" {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "No assistant response to copy."})
+			m.refreshViewport()
+			return m, nil
+		}
+		return m, copyCmd(text, "last response")
+	case "memory-extract":
+		return m.startMemoryExtract()
 	case "clear":
 		m.messages = nil
 		m.history = nil
+		m.persistedCount = 0
 		m.pendingMessages = nil
+		if m.cfg.Loop != nil {
+			m.cfg.Loop.ForgetContextCompacted()
+		}
 		m.refreshViewport()
+		// The session keeps appending to the same file: mark where the
+		// conversation restarts so /resume does not bring the old one back.
+		if sess := m.cfg.Session; sess != nil {
+			return m, func() tea.Msg { return sessionResetDoneMsg{err: sess.AppendReset()} }
+		}
 		return m, nil
 	case "exit":
 		m.quitConfirm = &quitConfirmState{selected: 1}
@@ -358,6 +376,8 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		return m.applyProviderSwitch(res)
 	case "compact":
 		return m.applyCompactResult(res)
+	case "btw":
+		return m.applyBtwResult(res)
 	case "local-call":
 		return m.applyLocalCall(res)
 	case "local-mode":
@@ -457,5 +477,32 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 			m.refreshViewport()
 		}
 		return m, nil
+	}
+}
+
+// memoryExtractDoneMsg reports the end of a /memory extract run.
+type memoryExtractDoneMsg struct{ err error }
+
+// startMemoryExtract runs the memory sub-agent over the recent conversation
+// in a Cmd, so Update is never blocked by the (slow) background call.
+func (m Model) startMemoryExtract() (Model, tea.Cmd) {
+	say := func(role Role, text string) Model {
+		m.messages = append(m.messages, Message{Role: role, Content: text})
+		m.refreshViewport()
+		return m
+	}
+	if m.cfg.ExtractMemory == nil {
+		return say(RoleSystem, "Memory extraction not available (no agent loop)."), nil
+	}
+	if len(m.history) == 0 {
+		return say(RoleSystem, "No conversation to extract from yet."), nil
+	}
+	recent := SummarizeMessages(m.history, 20)
+	extract := m.cfg.ExtractMemory
+	m = say(RoleSystem, "Extracting memory…")
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		return memoryExtractDoneMsg{err: extract(ctx, recent)}
 	}
 }

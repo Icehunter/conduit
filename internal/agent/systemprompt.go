@@ -36,7 +36,7 @@ import (
 // verbatim for Vertex accounts, and the API has accepted it from conduit
 // since 2.1.200, so that is what we send.
 // CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
-const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.266; cc_entrypoint=sdk-cli; cch=00000;\n"
+const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.293; cc_entrypoint=sdk-cli; cch=00000;\n"
 
 const (
 	billingSalt = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.200/1470.js)
@@ -46,7 +46,7 @@ const (
 	// (confirmed live 2026-09-03: this constant was missed in an earlier
 	// Version bump this session and broke every request until caught here).
 	// scripts/wire-check/verify.mjs now checks the two together.
-	BillingVersion = "2.1.266"
+	BillingVersion = "2.1.293"
 )
 
 // computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.200/1470.js:
@@ -54,6 +54,13 @@ const (
 // Re-verified against the 2.1.266 live capture: "say the word hello and
 // nothing else" → "0f4".
 func computeBillingSuffix(firstUserMsg string) string {
+	return billingSuffixFor(firstUserMsg, BillingVersion)
+}
+
+// billingSuffixFor is computeBillingSuffix with an explicit version, so the
+// algorithm can be pinned against a live capture from an older CC version
+// (unchanged through 2.1.292: decoded-2.1.292/0618_e5o.js vk()).
+func billingSuffixFor(firstUserMsg, version string) string {
 	k := make([]byte, 3)
 	for i, idx := range [3]int{4, 7, 20} {
 		if idx < len(firstUserMsg) {
@@ -62,7 +69,7 @@ func computeBillingSuffix(firstUserMsg string) string {
 			k[i] = '0'
 		}
 	}
-	h := sha256.Sum256([]byte(billingSalt + string(k) + BillingVersion))
+	h := sha256.Sum256([]byte(billingSalt + string(k) + version))
 	return fmt.Sprintf("%x", h[:])[:3]
 }
 
@@ -263,10 +270,12 @@ func AgentTypesReminder(agents []AgentEntry) string {
 	return sb.String()
 }
 
-// CoordinatorMCPNames can be set at startup to make BuildSystemBlocks inject
-// the connected MCP server names into the coordinator worker-context block.
-// Should be populated from the MCPManager before the first request.
-var CoordinatorMCPNames []string
+// CoordinatorMCPNames, when set, returns the connected MCP server names that
+// BuildSystemBlocks injects into the coordinator worker-context block. It is
+// called on every build, so servers that connect, or are added or removed,
+// after startup show up on the next prompt. Set it once, before the first
+// request, and return the names in a stable order to keep the prompt cacheable.
+var CoordinatorMCPNames func() []string
 
 // BuildSystemBlocks returns the system field that mimics the real CLI's
 // request shape. Caller can override BillingHeader via the
@@ -359,7 +368,11 @@ func BuildSystemBlocks(memory, claudeMd string, projectDir string, agents []Agen
 	// break the static cacheable prefix above.
 	if coordinator.IsActive() {
 		blocks = append(blocks, api.SystemBlock{Type: "text", Text: coordinator.SystemPrompt()})
-		if ctx := coordinator.UserContext(CoordinatorMCPNames); ctx != "" {
+		var mcpNames []string
+		if CoordinatorMCPNames != nil {
+			mcpNames = CoordinatorMCPNames()
+		}
+		if ctx := coordinator.UserContext(mcpNames); ctx != "" {
 			blocks = append(blocks, api.SystemBlock{Type: "text", Text: ctx})
 		}
 	}

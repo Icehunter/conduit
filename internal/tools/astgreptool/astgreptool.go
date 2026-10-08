@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/pendingedits"
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
@@ -55,7 +56,16 @@ var runCmdFunc = func(ctx context.Context, name string, args ...string) ([]byte,
 
 // Tool implements the AstGrep structural-search/rewrite tool.
 type Tool struct {
-	stager pendingedits.Stager
+	stager  pendingedits.Stager
+	tracker *readtracker.Tracker
+}
+
+// WithTracker makes rewrites keep the session read tracker current: a file the
+// model had already read stays editable after ast-grep rewrites it. Files the
+// model never read stay unread. It returns t.
+func (t *Tool) WithTracker(rt *readtracker.Tracker) *Tool {
+	t.tracker = rt
+	return t
 }
 
 // New returns a new AstGrep tool that writes directly to disk on rewrites.
@@ -319,6 +329,9 @@ func (t *Tool) rewriteApply(ctx context.Context, bin string, in *Input, affected
 				ToolName:    "AstGrep",
 			})
 			if stageErr == nil {
+				if t.tracker.Check(f, orig) == nil {
+					t.tracker.RecordStaged(f, newContent)
+				}
 				staged = append(staged, f)
 				// Restore the file to its original content because the change is
 				// now pending review in the staging gate. The flusher will apply
@@ -332,6 +345,9 @@ func (t *Tool) rewriteApply(ctx context.Context, bin string, in *Input, affected
 				return tool.ErrorResult(fmt.Sprintf("cannot stage %s: %v", f, stageErr)), nil
 			}
 			// ErrNotStaging → file was already written by ast-grep; leave it.
+		}
+		if t.tracker.Check(f, orig) == nil {
+			t.tracker.RecordWrite(f, newContent)
 		}
 		direct = append(direct, f)
 	}

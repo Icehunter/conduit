@@ -20,6 +20,8 @@ import (
 //	/skills unpin <name> — unpin a skill
 //	/skills backups    — list available skill backup snapshots
 //	/skills rollback <id> — restore skills from a backup snapshot
+//	/skills history [name] — list recorded skill edits (who, when, what)
+//	/skills revert <entry-id> — undo one recorded skill edit
 func RegisterSkillsCommand(r *Registry, ps []*plugins.Plugin) {
 	r.Register(Command{
 		Name:        "skills",
@@ -43,10 +45,14 @@ func RegisterSkillsCommand(r *Registry, ps []*plugins.Plugin) {
 				return skillsBackups()
 			case "rollback":
 				return skillsRollback(rest)
+			case "history":
+				return skillsHistory(rest)
+			case "revert":
+				return skillsRevert(rest)
 			default:
 				return Result{
 					Type: "error",
-					Text: fmt.Sprintf("Unknown /skills sub-command %q.\n\nUsage:\n  /skills            — list plugin skills\n  /skills status     — show skill usage records\n  /skills pin <name> — pin a skill\n  /skills unpin <name> — unpin a skill\n  /skills backups    — list backup snapshots\n  /skills rollback <id> — restore from a snapshot", sub),
+					Text: fmt.Sprintf("Unknown /skills sub-command %q.\n\nUsage:\n  /skills            — list plugin skills\n  /skills status     — show skill usage records\n  /skills pin <name> — pin a skill\n  /skills unpin <name> — unpin a skill\n  /skills backups    — list backup snapshots\n  /skills rollback <id> — restore from a snapshot\n  /skills history [name] — list recorded skill edits\n  /skills revert <entry-id> — undo one recorded edit", sub),
 				}
 			}
 		},
@@ -152,6 +158,40 @@ func skillsRollback(id string) Result {
 		return Result{Type: "error", Text: fmt.Sprintf("skills rollback: %v", err)}
 	}
 	return Result{Type: "text", Text: fmt.Sprintf("Skills restored from snapshot %q.\nA pre-rollback backup was saved automatically.", id)}
+}
+
+const skillsHistoryLimit = 30
+
+// skillsHistory lists recorded skill edits, newest first.
+func skillsHistory(name string) Result {
+	entries := skillusage.LedgerList(name, skillsHistoryLimit)
+	if len(entries) == 0 {
+		return Result{Type: "text", Text: "No recorded skill edits."}
+	}
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tWhen\tActor\tOp\tSkill\tUndo")
+	for _, e := range entries {
+		undo := "no"
+		if e.Reversible {
+			undo = "yes"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.ID, e.Time.Local().Format("2006-01-02 15:04"), e.Actor, e.Op, e.Skill, undo)
+	}
+	_ = w.Flush()
+	return Result{Type: "text", Text: strings.TrimRight(buf.String(), "\n") + "\n\nUse /skills revert <id> to undo one edit."}
+}
+
+// skillsRevert undoes one recorded skill edit.
+func skillsRevert(id string) Result {
+	if id == "" {
+		return Result{Type: "error", Text: "Usage: /skills revert <entry-id>  (see /skills history)"}
+	}
+	e, err := skillusage.LedgerRollback(id, skillusage.ActorUser)
+	if err != nil {
+		return Result{Type: "error", Text: fmt.Sprintf("skills revert: %v", err)}
+	}
+	return Result{Type: "text", Text: fmt.Sprintf("Reverted %s of skill %q (%s).", e.Op, e.Skill, e.Path)}
 }
 
 func pluralS(n int) string {

@@ -19,7 +19,13 @@ type Tool struct {
 }
 
 func New(reg *tool.Registry) *Tool { return &Tool{registry: reg} }
-func (*Tool) Name() string         { return "ToolSearch" }
+
+// BindRegistry implements tool.RegistryBound: a sub-agent's registry view
+// gets a ToolSearch that searches the view, so it offers only tools the
+// sub-agent can call.
+func (*Tool) BindRegistry(r *tool.Registry) tool.Tool { return New(r) }
+
+func (*Tool) Name() string { return "ToolSearch" }
 func (*Tool) Description() string {
 	return `Search the tool registry by name or keyword.
 

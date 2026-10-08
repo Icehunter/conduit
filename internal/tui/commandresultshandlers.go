@@ -11,7 +11,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/catalog"
@@ -19,7 +18,6 @@ import (
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/mcp"
-	"github.com/icehunter/conduit/internal/memdir"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
@@ -158,11 +156,28 @@ func (m Model) applyMCPAuth(res commands.Result) (Model, tea.Cmd) {
 			return mcpAuthDoneMsg{name: name, err: fmt.Errorf("save tokens: %w", err)}
 		}
 		// trusted=true: user reached /mcp auth after workspace trust was granted.
+		// The manager's change hook registers the server's tools as it connects.
 		if err := manager.Reconnect(context.Background(), name, cwd, true); err != nil {
 			return mcpAuthDoneMsg{name: name, reconnectErr: err}
 		}
+		// Reconnect only errors on config problems; a server that still
+		// rejects the token or won't start says so in its state.
+		if srv, ok := manager.Server(name); !ok || srv.Status != mcp.StatusConnected {
+			return mcpAuthDoneMsg{name: name, reconnectErr: mcpServerStateErr(srv, ok)}
+		}
 		return mcpAuthDoneMsg{name: name}
 	}
+}
+
+// mcpServerStateErr describes why a server isn't connected.
+func mcpServerStateErr(srv *mcp.ConnectedServer, ok bool) error {
+	if !ok {
+		return errors.New("server is no longer configured")
+	}
+	if srv.Error != "" {
+		return fmt.Errorf("server is %s: %s", srv.Status, srv.Error)
+	}
+	return fmt.Errorf("server is %s", srv.Status)
 }
 
 // mcpAuthDoneMsg is sent by the OAuth goroutine when the flow completes.
@@ -197,6 +212,20 @@ func (m Model) applyCompactResult(res commands.Result) (Model, tea.Cmd) {
 	}
 	histCopy := make([]api.Message, len(m.history))
 	copy(histCopy, m.history)
+	opts := compact.Options{
+		Model:              compactModel,
+		Kind:               compact.KindManual,
+		CustomInstructions: customInstructions,
+		MainWindow:         m.effectiveContextWindow(),
+	}
+	if m.cfg.Loop != nil {
+		opts.RecoveryTools = m.cfg.Loop.RecoveryTools()
+	}
+	sess := m.cfg.Session
+	onDisk := m.persistedCount
+	if sess != nil {
+		opts.SessionID = sess.ID
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelTurn = cancel
 	compactCtx := api.WithRetryHandler(ctx, func(ev api.RetryEvent) bool {
@@ -206,11 +235,27 @@ func (m Model) applyCompactResult(res commands.Result) (Model, tea.Cmd) {
 	})
 	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
 		defer cancel()
-		result, err := compact.CompactWithModel(compactCtx, client, compactModel, histCopy, customInstructions)
+		result, err := compact.CompactWithOptions(compactCtx, client, histCopy, opts)
 		if err != nil {
 			return compactDoneMsg{err: err}
 		}
-		return compactDoneMsg{newHistory: result.NewHistory, summary: result.Summary}
+		if len(result.NewHistory) == 0 {
+			return compactDoneMsg{err: errors.New("compaction produced an empty history")}
+		}
+		done := compactDoneMsg{
+			newHistory: result.NewHistory,
+			summary:    result.Summary,
+			tailLen:    result.TailLen,
+			model:      compactModel,
+			fallback:   result.Fallback,
+		}
+		// Appended, not rewritten: the file keeps the older messages for
+		// session_search, and the loader resumes from the boundary.
+		if sess != nil {
+			copies := tailCopies(len(histCopy), onDisk, result.TailLen)
+			done.persistErr = sess.AppendCompaction(result.Summary, result.NewHistory, copies)
+		}
+		return done
 	})
 }
 
@@ -243,11 +288,13 @@ func (m Model) applyLocalCall(res commands.Result) (Model, tea.Cmd) {
 	m.running = true
 	m.cancelled = false
 	m.streaming = ""
+	m.thinking = ""
 	m.apiRetryStatus = ""
 	m.turnStarted = time.Now()
 	m.refreshViewport()
 	m.vp.GotoBottom()
 	m.turnID++
+	m.attemptSet = false
 	turnID := m.turnID
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelTurn = cancel
@@ -316,29 +363,16 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 	m.running = true
 	m.cancelled = false
 	m.streaming = ""
+	m.thinking = ""
 	m.apiRetryStatus = ""
 	m.turnStarted = time.Now()
 	m.refreshViewport()
 	m.vp.GotoBottom()
 	m.turnID++
+	m.attemptSet = false
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelTurn = cancel
-	prog := *m.cfg.Program
-	histCopy := make([]api.Message, len(m.history))
-	copy(histCopy, m.history)
-	turnID := m.turnID
-	return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
-		var usage api.Usage
-		contextInputTokens := 0
-		newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
-			if ev.Type == agent.EventUsage {
-				usage = accumulateUsage(usage, ev.Usage)
-				contextInputTokens = maxPromptInputTokens(contextInputTokens, ev.Usage)
-			}
-			prog.Send(agentMsg{event: ev})
-		})
-		return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage, contextInputTokens: contextInputTokens}
-	})
+	return m, m.runLoopCmd(ctx, m.turnID)
 }
 
 // applyCoordinatorToggle handles the "coordinator-toggle" command result.
@@ -685,26 +719,12 @@ func (m Model) applyOutputStyle(res commands.Result) (Model, tea.Cmd) {
 	// res.Model = style name, res.Text = style prompt (empty to clear).
 	m.outputStyleName = res.Model
 	m.outputStylePrompt = res.Text
-	// Rebuild system blocks. The Max-subscription wire fingerprint
-	// requires system[0..3] to be billing/identity/agent/output-guidance
-	// in exact order — prepending anything else returns a literal
-	// 429 rate_limit_error with no quota actually hit. So we append
-	// the style block AFTER the base fingerprint blocks.
+	// The style block is an overlay appended after the base blocks: the
+	// Max-subscription wire fingerprint requires system[0..3] to be
+	// billing/identity/agent/output-guidance in exact order, and the loop
+	// rebuilds the base itself every Run.
 	if m.cfg.Loop != nil {
-		cwd, _ := os.Getwd()
-		mem := memdir.BuildPrompt(cwd)
-		sessionProjectDir := ""
-		if m.cfg.Session != nil {
-			sessionProjectDir = m.cfg.Session.ProjectDir
-		}
-		baseBlocks := agent.BuildSystemBlocks(mem, m.cfg.ClaudeMd, sessionProjectDir, m.cfg.Agents, m.cfg.Skills...)
-		if res.Text != "" {
-			styleBlock := api.SystemBlock{Type: "text", Text: "# Output style: " + res.Model + "\n\n" + res.Text}
-			newBlocks := append(baseBlocks, styleBlock)
-			m.cfg.Loop.SetSystem(newBlocks)
-		} else {
-			m.cfg.Loop.SetSystem(baseBlocks)
-		}
+		m.cfg.Loop.SetSystemOverlay(systemOverlayBlocks(res.Model, res.Text, m.permissionMode))
 	}
 	// Persist to settings so the style survives restarts.
 	_ = settings.SaveOutputStyle(res.Model)
@@ -738,6 +758,9 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 	}
 	// Drop any orphaned tool_use/tool_result pairs left by the slice.
 	m.history = session.FilterUnresolvedToolUses(m.history)
+	if m.cfg.Loop != nil {
+		m.cfg.Loop.ForgetContextCompacted()
+	}
 
 	// Also trim display messages — keep system messages, remove last n user+assistant pairs.
 	for i := 0; i < removed; i++ {

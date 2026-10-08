@@ -111,9 +111,26 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	return t.executeSubprocess(ctx, lang, in.Code)
 }
 
+// kernelKey is the kernel-manager session for an agent scope: the session id
+// alone for the root agent, and a per-agent key for a sub-agent so it gets its
+// own interpreter instead of the parent's.
+func (t *Tool) kernelKey(scope string) string {
+	if scope == "" {
+		return t.sessionID
+	}
+	return t.sessionID + "/" + scope
+}
+
+// ReleaseScope closes the kernels a finished sub-agent started.
+func (t *Tool) ReleaseScope(scope string) {
+	if t.mgr != nil && scope != "" {
+		t.mgr.DisposeSession(t.kernelKey(scope))
+	}
+}
+
 // executeKernel runs code via the persistent kernel for the session.
 func (t *Tool) executeKernel(ctx context.Context, kernelLang, code string) (tool.Result, error) {
-	k, err := t.mgr.Get(t.sessionID, kernelLang)
+	k, err := t.mgr.GetIn(t.kernelKey(tool.ScopeFromContext(ctx)), kernelLang, tool.CwdFromContext(ctx))
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("kernel unavailable: %s", err.Error())), nil
 	}
@@ -178,6 +195,7 @@ func (t *Tool) executeSubprocess(ctx context.Context, lang, code string) (tool.R
 		cmd = exec.CommandContext(ctx, "bash", tmp.Name())
 	}
 
+	cmd.Dir = tool.CwdFromContext(ctx)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

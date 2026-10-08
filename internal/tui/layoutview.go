@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -110,6 +111,7 @@ func (m *Model) refreshViewport() {
 		return
 	}
 	wasAtBottom := m.vp.AtBottom()
+	m.renderCache.trim(len(m.messages))
 	var sb strings.Builder
 	first := true
 
@@ -141,10 +143,12 @@ func (m *Model) refreshViewport() {
 			} else {
 				treePrefix = "  ├─ " // Middle tool in group
 			}
-			rendered := renderToolMessageWithPrefix(toolMsg, w, m.verboseMode, treePrefix, isLast)
+			msgIndex := toolIndices[i]
+			rendered := m.renderCache.get(msgIndex,
+				renderKey{msg: toolMsg, width: w, verbose: m.verboseMode, prefix: treePrefix, isLast: isLast, gen: styleGeneration.Load(), cwd: currentDisplayCwd()},
+				func() string { return renderToolMessageWithPrefix(toolMsg, w, m.verboseMode, treePrefix, isLast) })
 
 			// Track lines for this tool message
-			msgIndex := toolIndices[i]
 			lineCount := strings.Count(rendered, "\n") + 1
 			for j := range lineCount {
 				lineToMsg[currentLine+j] = msgIndex
@@ -169,7 +173,9 @@ func (m *Model) refreshViewport() {
 		// Flush any pending tool group before rendering non-tool message
 		flushToolGroup()
 
-		rendered := renderMessage(msg, w, m.verboseMode)
+		rendered := m.renderCache.get(i,
+			renderKey{msg: msg, width: w, verbose: m.verboseMode, gen: styleGeneration.Load(), cwd: currentDisplayCwd()},
+			func() string { return renderMessage(msg, w, m.verboseMode) })
 		if rendered == "" {
 			continue // skip empty renders (e.g. pure companion quip messages)
 		}
@@ -194,6 +200,15 @@ func (m *Model) refreshViewport() {
 	// Flush any remaining tool group
 	flushToolGroup()
 
+	if m.running && strings.TrimSpace(m.thinking) != "" && m.streaming == "" {
+		if !first {
+			sb.WriteString(separator(w))
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(surfaceSpaces(outerPad) + styleStatusFaded.Render("Thinking…"))
+		sb.WriteByte('\n')
+		first = false
+	}
 	if m.streaming != "" {
 		if !first {
 			sb.WriteString(separator(w))
@@ -224,7 +239,7 @@ func (m *Model) refreshViewport() {
 // don't need key release events.
 func (m Model) View() tea.View {
 	if !m.ready {
-		return makeTeaView("Loading…\n")
+		return makeTeaView("Loading…\n", !m.cfg.DisableMouse)
 	}
 
 	// Re-apply theme styles to widgets every render. Necessary because
@@ -246,7 +261,7 @@ func (m Model) View() tea.View {
 	})
 	m.Draw(canvas, canvas.Bounds())
 	rendered := strings.ReplaceAll(canvas.Render(), "\r\n", "\n")
-	return makeTeaView(paintApp(m.width, m.height, rendered))
+	return makeTeaView(paintApp(m.width, m.height, rendered), !m.cfg.DisableMouse)
 }
 
 func (m Model) renderFooterStack(usageFooter, statusBar string) string {
@@ -320,11 +335,10 @@ func (m Model) renderLocationStatus(maxWidth int) string {
 	if maxWidth < 8 {
 		return ""
 	}
-	cwd, err := os.Getwd()
-	if err != nil || cwd == "" {
+	cwd, branch := m.locCwd, m.locBranch
+	if cwd == "" {
 		return ""
 	}
-	branch := gitBranchName(cwd)
 	sep := " | "
 	if branch == "" {
 		return styleStatus.Render(truncateMiddle(displayPath(cwd), maxWidth))
@@ -356,6 +370,30 @@ func displayPath(path string) string {
 		}
 	}
 	return path
+}
+
+// locationInfoMsg carries the cwd and git branch read off the render path.
+type locationInfoMsg struct{ cwd, branch string }
+
+// locationTickMsg re-reads the location every locationRefresh.
+type locationTickMsg struct{}
+
+const locationRefresh = 3 * time.Second
+
+// readLocationCmd reads the working directory and branch from disk. View only
+// uses the cached result so no frame touches the filesystem.
+func readLocationCmd() tea.Cmd {
+	return func() tea.Msg {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return locationInfoMsg{}
+		}
+		return locationInfoMsg{cwd: cwd, branch: gitBranchName(cwd)}
+	}
+}
+
+func locationTick() tea.Cmd {
+	return tea.Tick(locationRefresh, func(time.Time) tea.Msg { return locationTickMsg{} })
 }
 
 func gitBranchName(cwd string) string {

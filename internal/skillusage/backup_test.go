@@ -210,3 +210,84 @@ func TestPruneBackupsNoop(t *testing.T) {
 		t.Errorf("expected 1 backup after no-op prune; got %d", len(backups))
 	}
 }
+
+func TestSnapshotSymlinkedSkillDir(t *testing.T) {
+	conduit := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", conduit)
+	claude := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	seedSkillsDir(t, conduit)
+
+	// ~/.claude/skills/linked -> a skill checkout elsewhere.
+	external := filepath.Join(t.TempDir(), "checkout")
+	if err := os.MkdirAll(external, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "SKILL.md"), []byte("external"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(claude, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(claude, "skills", "linked")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	id, err := Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot with symlinked skill dir: %v", err)
+	}
+	names := listTarEntries(t, filepath.Join(conduit, "skill-backups", id, "skills.tar.gz"))
+	for _, n := range names {
+		if n == "claude-skills/linked/SKILL.md" {
+			t.Errorf("symlink was followed into %s", n)
+		}
+	}
+	found := false
+	for _, n := range names {
+		found = found || n == "claude-skills/linked"
+	}
+	if !found {
+		t.Errorf("symlink entry missing: %v", names)
+	}
+
+	// Rollback restores the link as a link.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rollback(id); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if got, err := os.Readlink(link); err != nil || got != external {
+		t.Errorf("restored link = %q, %v; want %q", got, err, external)
+	}
+}
+
+func TestSnapshotSymlinkedSkillsRoot(t *testing.T) {
+	conduit := t.TempDir()
+	t.Setenv("CONDUIT_CONFIG_DIR", conduit)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	real := filepath.Join(t.TempDir(), "real-skills")
+	if err := os.MkdirAll(filepath.Join(real, "s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "s", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(conduit, "skills")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	id, err := Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := listTarEntries(t, filepath.Join(conduit, "skill-backups", id, "skills.tar.gz"))
+	found := false
+	for _, n := range names {
+		found = found || n == "conduit-skills/s/SKILL.md"
+	}
+	if !found {
+		t.Errorf("symlinked skills root not archived: %v", names)
+	}
+}

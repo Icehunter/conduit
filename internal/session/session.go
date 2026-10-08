@@ -36,10 +36,21 @@ type Entry struct {
 	IsSidechain bool            `json:"isSidechain,omitempty"`
 	Message     json.RawMessage `json:"message,omitempty"`
 	Summary     string          `json:"summary,omitempty"`
-	Title       string          `json:"customTitle,omitempty"`
+	// TailLen is set on compact_boundary entries: how many messages after
+	// the summary message are verbatim copies of messages already in the
+	// file (the rest of the tail is new to it).
+	TailLen int    `json:"tailLen,omitempty"`
+	Title   string `json:"customTitle,omitempty"`
 	// Mode is set on type="session_settings" entries to persist session-level
 	// settings (e.g. "coordinator" or "normal") across resume.
 	Mode string `json:"mode,omitempty"`
+	// SessionModel is set on type="session_settings" entries to record the
+	// model in use, so /resume can switch back to it.
+	SessionModel string `json:"sessionModel,omitempty"`
+	// SessionProvider is the provider family the model ran on ("anthropic",
+	// "openai-compatible", "mcp", ...), so a restore never applies a model name
+	// to a client of a different family.
+	SessionProvider string `json:"sessionProvider,omitempty"`
 	// ProviderKind/Provider are conduit-only display metadata for provider
 	// routed turns. The embedded API message remains Anthropic-compatible.
 	ProviderKind string `json:"providerKind,omitempty"`
@@ -227,6 +238,33 @@ func (s *Session) ReadMode() string {
 	return mode
 }
 
+// SetModel persists the model in use, and the provider family it ran on, as a
+// "session_settings" entry.
+func (s *Session) SetModel(model, provider string) error {
+	return s.Append(Entry{Type: "session_settings", SessionModel: model, SessionProvider: provider})
+}
+
+// ReadModel returns the most recent model and provider family recorded by
+// SetModel, or "" if the session never recorded one.
+func (s *Session) ReadModel() (model, provider string) {
+	f, err := os.Open(s.FilePath)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+	for {
+		var e Entry
+		if err := dec.Decode(&e); err != nil {
+			break
+		}
+		if e.Type == "session_settings" && e.SessionModel != "" {
+			model, provider = e.SessionModel, e.SessionProvider
+		}
+	}
+	return model, provider
+}
+
 // AppendMessage serializes an api.Message and appends it.
 func (s *Session) AppendMessage(msg api.Message) error {
 	raw, err := json.Marshal(msg)
@@ -249,6 +287,77 @@ func (s *Session) SetTitle(title string) error {
 // SetSummary persists a compaction summary.
 func (s *Session) SetSummary(summary string) error {
 	return s.Append(Entry{Type: "summary", Summary: summary})
+}
+
+// EntryTypeCompactBoundary marks the point where a compaction replaced the
+// live history. The loader discards every record before the last boundary.
+const EntryTypeCompactBoundary = "compact_boundary"
+
+// EntryTypeReset marks a /clear: the conversation restarts in the same file.
+// The loader discards every record before it; session_search still indexes
+// them.
+const EntryTypeReset = "session_reset"
+
+// AppendReset records that the conversation was cleared.
+func (s *Session) AppendReset() error {
+	return s.Append(Entry{Type: EntryTypeReset})
+}
+
+// AppendCompaction records a compaction without rewriting the file: a
+// summary entry, a compact_boundary marker, then every message of history.
+// Older records stay on disk (session_search still indexes them) but the
+// loader ignores everything before the last boundary. The whole block is
+// written in one append under the session lock, so a crash cannot leave a
+// boundary without its messages in the middle of a block. Safe for
+// concurrent use.
+//
+// history is compact.Result.NewHistory (summary message first) and copiedTail is
+// how many of its leading tail messages are already in the file. The boundary
+// records it so the search indexer skips the summary message and those copies;
+// tail messages not yet in the file are indexed from the block.
+func (s *Session) AppendCompaction(summary string, history []api.Message, copiedTail int) error {
+	ts := time.Now().UnixMilli()
+	var sb strings.Builder
+	write := func(e Entry) error {
+		e.SessionID = s.ID
+		e.Timestamp = ts
+		b, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("session: compaction marshal: %w", err)
+		}
+		sb.Write(b)
+		sb.WriteByte('\n')
+		return nil
+	}
+	if err := write(Entry{Type: "summary", Summary: summary}); err != nil {
+		return err
+	}
+	if err := write(Entry{Type: EntryTypeCompactBoundary, TailLen: copiedTail}); err != nil {
+		return err
+	}
+	for _, msg := range history {
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("session: compaction marshal message: %w", err)
+		}
+		if err := write(Entry{Type: "message", Message: raw, ProviderKind: msg.ProviderKind, Provider: msg.Provider}); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := os.OpenFile(s.FilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("session: compaction open: %w", err)
+	}
+	if _, err := f.WriteString(sb.String()); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("session: compaction write: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("session: compaction close: %w", err)
+	}
+	return nil
 }
 
 // Snapshot returns the current message count — used as a rewind point.

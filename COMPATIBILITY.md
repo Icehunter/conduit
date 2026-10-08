@@ -23,8 +23,8 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.266` |
-| `SDKPackageVersion` | `internal/api/client.go` | `0.112.1` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.293` |
+| `SDKPackageVersion` | `internal/api/client.go` | `0.128.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
 | Token URL | `internal/auth/flow.go` | see source |
@@ -54,6 +54,7 @@ regression appears.
 | Beta header count | 2 detected | 11 sent | Extra betas are valid API features; no API rejection observed |
 | MCP config env expansion | `${VAR}` only; `${VAR:-a:-b}` defaults to `a` (JS two-arg `split` truncates); missing vars are a config-load warning | `${VAR}`, `${VAR:-default}` and bare `$VAR`; `${VAR:-a:-b}` defaults to `a:-b` (POSIX); missing vars are reported per-server in `ConnectedServer.Error` | Unresolved references stay verbatim in both, so a typo is visible rather than silently empty; conduit reports at connect time because that's where the value is used (`internal/mcp/config.go:expandEnvVars`) |
 | Tool names `mcp`/`mcp__` | Pass-through aliases | `ListMcpResources`/`ReadMcpResource` | Conduit's MCP surface is explicit, not aliased |
+| MCP project-server approval | `enabledMcpjsonServers` / `disabledMcpjsonServers` / `enableAllProjectMcpServers` come from every settings layer, including the repo's `.claude/settings.json` and the `.claude/settings.local.json` its approval dialog writes (`getProjectMcpServerStatus`) | Read only from user-level settings and conduit's per-project state in `~/.conduit/conduit.json`, where the approval prompt records answers; settings files inside the checkout are ignored, and no `.mcp.json` server starts while the workspace is untrusted | A cloned repo could otherwise approve its own `.mcp.json` servers and have their commands run on first launch. Approvals CC recorded in `.claude/settings.local.json` don't carry over, so conduit asks once (`internal/mcp/config.go:mcpjsonApprovalState`) |
 | Auto-updater | npm self-replace | Passive GitHub Release notifier | Conduit ships as a static binary |
 | AskUserQuestion quick-pick | Digit 1-9 immediately selects and submits in single-select | Digit focuses the option; Enter confirms; first key after open is swallowed (focus guard); popup queued if user has unsent draft | Prevent stray keystrokes (popup appearing mid-typing) from auto-submitting |
 | Agent Teams: teammate process model | Separate OS processes; each teammate is a `claude` subprocess | In-process goroutine `Loop`s sharing the same process; no subprocess or shell involved | Single-process Go architecture; `internal/agent/loopteammate.go` |
@@ -65,10 +66,44 @@ regression appears.
 | Agent Teams: plan-approval flow | Lead agent runs in a separate process; plan delivered via IPC | Lead receives `<team-plan from=…>` injected as a user message; approves via `SendMessage` kind `plan-approve/reject` which writes to `member.PlanReply` channel; teammate's `ExitPlanMode.AskApprove` blocks on that channel | Same behavioral result; implemented without IPC using Go channels |
 | Agent Teams: shutdown protocol | CC orchestrates subprocess termination | Lead sends `SendMessage` kind `shutdown-request` → teammate receives `<team-shutdown-request>` injection → replies `shutdown-approve/reject` via its own `ShutdownReply` channel → approve cancels the goroutine context | Goroutine cancellation replaces process kill |
 | Beta `ccr-byoc-2025-07-29` | Sent (bring-your-own-cloud gate for Bedrock/Vertex customer-hosted deployments) | Not sent | Gates enterprise BYOC deployments; conduit only authenticates via Max/Pro OAuth and never exercises that path — same reasoning as `oidc-federation-2026-04-01` above |
+| Retry headers (adopted) | The SDK honors `retry-after-ms`, then `retry-after`, then `x-should-retry` | Same order in `api.withRetry` (`retryAfterFromHeaders`, `shouldRetryStatus`); a retry-after past 2 minutes is surfaced instead of waited out | Matches CC; the cap mirrors CC giving up on long subscription limits |
+| Retry scope | The SDK retries 408, 409, 429, 5xx and connection errors; stream failures after a 200 are not resent | Same status set before a response. After a 200 the loop resends up to 3 times with backoff, then rotates provider, then keeps the completed text | Local and OpenAI-compatible servers drop streams far more often than the first-party API |
+| Empty response | No equivalent adopted | Retries once with a `<system-reminder>` nudge merged into the trailing user message (no turn used), then records `(no content)` and shows a notice | A silent empty turn looks like a hang; the nudge is conduit's, not CC's |
+| Refusal | No equivalent adopted | Returns `ErrModelRefusal` with a notice and drops the refused prompt from history | Replaying a refusal primes the next request |
+| Reactive compaction (adopted) | On a context-overflow error CC lowers max_tokens (`max(3000, limit − input − 1000)`), then compacts and retries once | Same order, each step once per Run (microcompaction between the two); a second overflow surfaces. The max_tokens clamp also covers OpenAI/vLLM wordings and is limited to 2 per request; `model_context_window_exceeded` takes the same path | Matches CC; local servers word the overflow differently |
+| Local fallback summary | A failed summarizer fails the compaction | Reactive compaction falls back to a deterministic local summary (`compact.CompactLocal`) when the summarizer errors, and any compaction whose summary has no usable text uses it too (notice "Summary model unavailable — used a local summary") | The request cannot continue without a smaller history, and an empty summary used to wipe it |
+| Auto-compact trigger cap | Triggers at window − 33K (about 967K on a 1M window) | `min(max(window − 33K, 75% of window), compaction.maxTriggerTokens)`, default 256K, 0 = no cap (the 75% floor keeps a 32K local model from compacting every turn); `CLAUDE_CODE_AUTO_COMPACT_WINDOW` still applies | A 1M conversation is slow, costly and degraded long before 967K |
+| Compaction tail and persistence | Summary replaces the history | The latest min(20K tokens, window/5) of messages stays verbatim after the summary; every compaction is appended to the session file behind a `compact_boundary` (older records stay for `session_search`) | Keeps the working context, and `/resume` restores the compacted conversation |
+| Compaction summarizer | Small fast model | The background role's model, else Haiku only on an Anthropic client that can serve it (first-party, or a non-Copilot gateway with dash-style Claude IDs), else the active model; never a Claude ID for a non-Anthropic client | A local or Copilot client has no Haiku to call |
+| Cut-off tool call | No equivalent adopted | Kept with empty input and answered with an error `tool_result` telling the model to re-issue it | The model learns the call failed; the UI row closes |
 
 ---
 
 ## Wire sync log
+
+### 2.1.292 → 2.1.293 (2026-10-08)
+
+| Item | Action |
+|------|--------|
+| `Version` / `BillingVersion` / `BillingHeader` | Bumped to `2.1.293`. SDK, client ID, OAuth, betas, headers and tools unchanged (`make wire-claude`: 0 NEW). |
+| `claude-haiku-5-5` added | Haiku 5.5: 1M context (native), 128K output, pricing tier `haiku_55` ($0.10/$0.50, cache read $0.01) with a `long_prompt` tier above 100K prompt tokens ($0.50/$2.50, cache read $0.05). `cost.go` rows can now carry a long-prompt tier. Bundle aliases: `haiku` → `claude-haiku-5-5`, `latest_per_family.haiku` likewise; `resolveModelName`, the `/model` shortlist and a `haiku5.5` shorthand follow. `compact.DefaultModel` moved to `claude-haiku-5-5` with the auto-compact model work (CC 2.1.293 `latest_per_family.haiku`); the web-search model stays on Haiku 4.5. |
+
+### 2.1.266 → 2.1.292 (2026-10-06)
+
+The 2.1.280 sync (commit `e10ba98`) only updated the fingerprint and model catalog; the version constants stayed at 2.1.266. This sync covers both releases.
+
+| Item | Action |
+|------|--------|
+| `Version` / `BillingVersion` / `BillingHeader` | Bumped `2.1.266` → `2.1.292` in `cmd/conduit/main.go` and `internal/agent/systemprompt.go`. |
+| `SDKPackageVersion` | Bumped `0.112.1` → `0.128.0` in `internal/api/client.go`. |
+| `cc_version` suffix algorithm | Unchanged: same salt, same `[4,7,20]` indices, same SHA-256 slice (`decoded-2.1.292/0618_e5o.js` `vk()`, identical to 2.1.266 apart from minified names). `TestComputeBillingSuffix_MatchesLiveCapture` now pins the algorithm against the 2.1.266 live capture with the version passed explicitly (`billingSuffixFor`), so a version bump no longer breaks it. A fresh live capture for 2.1.292 has not been taken. |
+| `claude-sonnet-5-5` added | New model: Sonnet 5.5, 1M context (native), 128K max output, pricing tier `tier_2_10` ($2/$10, cache read $0.20). Added to `internal/catalog/builtin.go`. |
+| Family aliases | The bundle's `aliases` table now maps `opus` → `claude-opus-5-5` and `sonnet` → `claude-sonnet-5-5` (`latest_per_family` agrees). `resolveModelName` follows; `opus5.5`/`sonnet5.5` shorthands added; the `/model` account shortlist and `model.Fast` (`/fast`) move to the 5.5 models. `opus5`/`sonnet5` still name the 5.0 models. |
+| Pricing table (`internal/api/cost.go`) | Rebuilt from the bundle's `pricing_tiers` table. Fixes: `claude-opus-5-5` was billed at Opus 5's $5/$25 (prefix match) instead of $4/$20; `claude-mythos-*` had no row ($0); `claude-opus-4-0`/`4-1` were billed at $5/$25 instead of $15/$75; cache reads were a flat 10% of input, but Fable 5.1 and Mythos 5.1 read at $0.25 and Opus 5.5 / Sonnet 5.x at $0.20. Rows now carry an optional cache-read rate. Pinned by `TestCostUSDForModel`. |
+| Client-hint request headers (adopted) | CC sends these on `/v1/messages` when `DEn()` is true, which for a first-party OAuth or API-key session against `api.anthropic.com` needs no flag (`CLAUDE_CODE_GATEWAY_HINT_HEADERS` overrides). Conduit was missing all of them since at least 2.1.280. Now sent via `api.WireHints` (`internal/api/wirehints.go`): `x-claude-code-request-class` (`main`/`subagent`/`workflow`/`compaction`/`auxiliary`), `x-claude-code-agent-type` (`general-purpose`, `custom`, `teammate`), `x-claude-code-prompt-id` (new in 2.1.292; same UUID as `cc_prompt_id`), `x-claude-code-compaction` + `x-cc-compaction-request` on the summarization request, `x-claude-code-context-compacted` + `x-cc-context-compacted` on the first main request after a compaction, and `x-claude-code-prev-tool-durations` (`Name=ms;…`, max 32 entries / 4096 bytes, CC's escaping). `x-claude-code-agent-id` / `x-claude-code-parent-agent-id` are sent on sub-agent requests to any Anthropic endpoint, as in CC. Gates match CC: the `x-claude-code-*` set follows `DEn()` (first-party base URL, or `CLAUDE_CODE_GATEWAY_HINT_HEADERS` parsed as CC's triBool: `1/true/yes/on`, `0/false/no/off`); the legacy `x-cc-*` pair follows `yl()` (first-party base URL only, no env override). The context-compacted flag rides on every attempt of the first request after a compaction (CC re-adds it per retry), clears once a response drains, and is forgotten on `/clear`, `/rewind` and a session switch. Request classes follow CC's `rs()`: agent hooks and forked skills are `subagent`; prompt hooks, memory extraction, session memory and dream are `auxiliary`. The `reactive` context-compacted value is adopted: after a compaction forced by a context-overflow error the next request carries `x-claude-code-context-compacted: reactive` on every attempt, while the summarization request still sends `compaction: auto`. |
+| Other new headers (not adopted) | Baselined in `KNOWN_HEADERS` with reasons: `anthropic-cache-keepalive`, `x-claude-code-tunnel-credential-epoch`, `x-anthropic-attachment-prefetch-seen` (response headers); `x-anthropic-attachment-prefetch`, `x-claude-remote-session-origin`, `anthropic-client-feature`, `anthropic-client-version` (other endpoints/modes); `anthropic-example`, `anthropic-experimental`, `anthropic-plugin-directory`, `anthropic-sans`, `anthropic-serif`, `x-claude-code-keep-branch` (scan false positives). |
+| New tools (not ported) | `AppifactRepl`, `FetchInboxMessage`, `GetTask`, `PublishPlugin`, `SubagentHandback` added to `TOOLS_DELIBERATELY_NOT_PORTED` with reasons. `Artifact` left the tool list upstream. |
+| `client_id`, OAuth URLs, beta registry, `billing_salt`, `anthropic-version` | Unchanged. `make wire-claude-fast`: 0 CHANGED, 0 NEW. |
 
 ### Tooling: Claude Code's Bun bundle format changed (2026-09-03)
 
@@ -202,6 +237,12 @@ triaged.
 5. If new wire headers appeared, add them to `KNOWN_HEADERS` in `extract.mjs`.
 6. Record any intentional divergences in the table above.
 7. Run `make verify` — must pass.
+
+---
+
+## Intentional behavior divergences
+
+- **WebSearch provider chain.** Claude Code's WebSearch uses only Anthropic's server-side `web_search`. Conduit tries Brave (key), Anthropic-native (Anthropic-capable clients only), the ChatGPT/Codex subscription, then a keyless tier (Parallel public MCP, DuckDuckGo, Mojeek). None of this touches the Anthropic wire format. Because the keyless tier sends the query to third parties, `webSearch.keyless` in conduit.json gates it: `auto` (default) uses it only when no other provider is configured or usable, and returns a configured provider's error rather than falling back; `always` falls back after a failure; `never` disables it.
 
 ---
 

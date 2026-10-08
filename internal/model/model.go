@@ -49,8 +49,8 @@ func SetDefault(name string) {
 const Default = "claude-fable-5-1"
 
 // Fast is the faster/cheaper model used when /fast is active.
-// Mirrors getSmallFastModel() — Sonnet 5 for fast responses (latest_per_family.sonnet).
-const Fast = "claude-sonnet-5"
+// Mirrors getSmallFastModel() — latest_per_family.sonnet in the CC 2.1.292 bundle.
+const Fast = "claude-sonnet-5-5"
 
 // MaxTokens is the default max_tokens value for /v1/messages.
 // Real CC uses 16000 for the main loop; we match that.
@@ -104,10 +104,40 @@ func ContextWindowFor(name string) int {
 	return window
 }
 
+// ResolveContextWindow returns the window to size compaction against: the
+// configured one when positive, else ContextWindowFor(name). The
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW cap applies to both.
+func ResolveContextWindow(configured int, name string) int {
+	if configured <= 0 {
+		return ContextWindowFor(name)
+	}
+	if cap := contextWindowOverride(); cap > 0 && cap < configured {
+		return cap
+	}
+	return configured
+}
+
 // AutoCompactThresholdFor returns the input-token count at which auto-compact
 // should fire for the given model. Mirrors getAutoCompactThreshold in autoCompact.ts.
 func AutoCompactThresholdFor(name string) int {
 	return AutoCompactThresholdForWindow(ContextWindowFor(name))
+}
+
+// DefaultAutoCompactTriggerCap is the default ceiling on the auto-compact
+// trigger. Windows of 1M would otherwise wait for ~967K tokens, by which point
+// the conversation is slow, expensive and degraded. Override with
+// compaction.maxTriggerTokens in conduit.json; 0 disables the cap.
+const DefaultAutoCompactTriggerCap = 256_000
+
+// AutoCompactThreshold returns the input-token count that triggers
+// auto-compaction for a context window: window minus the output reserve and
+// buffer, capped at cap when cap > 0.
+func AutoCompactThreshold(window, cap int) int {
+	t := AutoCompactThresholdForWindow(window)
+	if cap > 0 && cap < t {
+		return cap
+	}
+	return t
 }
 
 func AutoCompactThresholdForWindow(w int) int {
@@ -115,7 +145,13 @@ func AutoCompactThresholdForWindow(w int) int {
 		w = ContextWindowDefault
 	}
 	effective := w - CompactReserveTokens
-	return effective - CompactBufferTokens
+	t := effective - CompactBufferTokens
+	// A small window (a local 32K model) would otherwise trigger at or below
+	// zero and compact on every turn: never trigger before 75% of the window.
+	if floor := w * 3 / 4; t < floor {
+		t = floor
+	}
+	return t
 }
 
 // UsableContext returns the usable input token budget for the given model,

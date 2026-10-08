@@ -18,7 +18,7 @@ import (
 // picker if any project-scope servers are awaiting consent, and the
 // coordinator-panel tick that drives the active-task footer.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink, m.working.Start(), coordTick()}
+	cmds := []tea.Cmd{textarea.Blink, coordTick(), readLocationCmd(), locationTick()}
 	if m.cfg.MCPManager != nil {
 		if pending := m.cfg.MCPManager.PendingApprovals(); len(pending) > 0 {
 			cmds = append(cmds, func() tea.Msg {

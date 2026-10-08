@@ -51,6 +51,13 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "shift+pgdown", "pgdown":
 		m.vp.PageDown()
 		return m, nil, true
+	case "ctrl+home":
+		m.vp.GotoTop()
+		return m, nil, true
+	case "ctrl+end":
+		// Pinned to the bottom again, so streaming output follows.
+		m.vp.GotoBottom()
+		return m, nil, true
 	}
 
 	switch msg.String() {
@@ -140,8 +147,8 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.flashMsg = "default mode (shift+tab to cycle)"
 		}
 		m2, usageCmd := m.startPlanUsageFetch()
-		rebuildCmd := m2.rebuildSystemCmd()
-		return m2, tea.Batch(usageCmd, rebuildCmd, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} })), true
+		m2.applySystemOverlay()
+		return m2, tea.Batch(usageCmd, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} })), true
 
 	case "tab", "esc":
 		// Clear pending images and paste placeholders on Esc.
@@ -225,10 +232,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.cancelled = true
 			m.running = false
 			m.cancelTurn = nil
+			m.shellID = ""            // a cancelled shell command no longer owns the turn
 			m.pendingQuestion = nil   // question from the cancelled turn; goroutine unblocks via ctx.Done()
 			m.pendingPermission = nil // same — permission goroutine unblocks via ctx.Done()
 			// Commit whatever partial response was streamed so the next turn
 			// has context. Keep the user message in history too.
+			m.flushThinking()
 			if m.streaming != "" {
 				m.messages = append(m.messages, m.assistantMessage(m.streaming))
 				m.history = append(m.history, api.Message{
@@ -397,12 +406,10 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, false
 		}
 		// Find and toggle the most recent expandable tool result
-		const collapsedLines = 10
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			msg := &m.messages[i]
 			if msg.Role == RoleTool && msg.Content != "" && msg.Content != "running…" {
-				resultLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
-				if len(resultLines) > collapsedLines {
+				if canCollapse(len(outputLines(msg.Content))) {
 					msg.ToolExpanded = !msg.ToolExpanded
 					if msg.ToolExpanded {
 						m.flashMsg = "▼ expanded"
@@ -416,16 +423,21 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		return m, nil, false
 
+	case editorKey:
+		if m.running {
+			m.flashMsg = "Editor unavailable while a turn is running"
+			return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		}
+		return m, prepareEditorCmd(m.input.Value()), true
+
 	case "ctrl+y":
 		// Copy the raw code from the most recent assistant code block to
-		// the system clipboard via OSC 52 (works in iTerm2, kitty, WezTerm).
+		// the system clipboard (native tool plus OSC 52).
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			if m.messages[i].Role == RoleAssistant {
 				blocks := extractCodeBlocks(m.messages[i].Content)
 				if len(blocks) > 0 {
-					copyToClipboard(blocks[len(blocks)-1].code)
-					m.flashMsg = "✓ Copied to clipboard"
-					return m, tea.Tick(2000000000, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+					return m, copyCmd(blocks[len(blocks)-1].code, "code block"), true
 				}
 			}
 		}
@@ -435,6 +447,26 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "enter":
 		if m.running {
 			text := strings.TrimSpace(m.input.Value())
+			// /btw is a side question on a copy of the history; it never
+			// touches the running turn, so it is the one slash command that
+			// works mid-turn.
+			if strings.HasPrefix(text, "/btw ") && m.cfg.Commands != nil {
+				if res, ok := m.cfg.Commands.Dispatch(text); ok && res.Type == "btw" {
+					m = m.resetInput()
+					m2, cmd := m.applyBtwResult(res)
+					return m2, cmd, true
+				}
+			}
+			if _, isShell := shellCommand(text); isShell || m.shellID != "" {
+				// A shell-mode turn has no agent loop to steer, and "!cmd" must
+				// not reach the model as text: queue until the turn ends.
+				if text != "" && !strings.HasPrefix(text, "/") {
+					m = m.resetInput()
+					m.pendingMessages = append(m.pendingMessages, text)
+					m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
+					return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+				}
+			}
 			if text != "" && !strings.HasPrefix(text, "/") {
 				m = m.resetInput()
 				if m.cfg.SteerContent != nil {
@@ -512,6 +544,19 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.todoAutoContinues = 0
 		}
 
+		// Shell mode: "!command" runs locally instead of going to the model.
+		if shellCmd, ok := shellCommand(text); ok && !isAutoPrompt {
+			if shellCmd == "" {
+				m.flashMsg = "Type a command after ! to run it"
+				return m, tea.Tick(1500*time.Millisecond, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+			}
+			m.dismissWelcome()
+			m = m.resetInput()
+			m.rememberInput(text)
+			m2, cmd := m.startShellMode(shellCmd)
+			return m2, cmd, true
+		}
+
 		// Dispatch slash commands before sending to the agent.
 		if strings.HasPrefix(text, "/") {
 			m.dismissWelcome()
@@ -547,12 +592,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			// Don't pollute input history or show raw instruction text.
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "↻ Continuing unfinished tasks…"})
 		} else {
-			// Append to history only if it differs from the last entry.
-			if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != text {
-				m.inputHistory = append(m.inputHistory, text)
-			}
-			m.historyIdx = -1
-			m.historyDraft = ""
+			m.rememberInput(text)
 			m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 		}
 
@@ -568,6 +608,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.running = true
 			m.cancelled = false
 			m.streaming = ""
+			m.thinking = ""
 			m.apiRetryStatus = ""
 			m.turnStarted = time.Now()
 			m.refreshViewport()
@@ -588,6 +629,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.running = true
 			m.cancelled = false
 			m.streaming = ""
+			m.thinking = ""
 			m.turnAssistant = ""
 			m.turnProviderKind = ""
 			m.turnProvider = ""
@@ -596,6 +638,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.refreshViewport()
 			m.vp.GotoBottom()
 			m.turnID++
+			m.attemptSet = false
 			turnID := m.turnID
 			ctx, cancel := context.WithCancel(context.Background())
 			m.cancelTurn = cancel
@@ -631,6 +674,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.running = true
 		m.cancelled = false
 		m.streaming = ""
+		m.thinking = ""
 		m.captureTurnProvider()
 		m.apiRetryStatus = ""
 		m.turnStarted = time.Now()
@@ -638,25 +682,27 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.vp.GotoBottom()
 
 		m.turnID++
+
+		m.attemptSet = false
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelTurn = cancel
-		prog := *m.cfg.Program
-		histCopy := make([]api.Message, len(m.history))
-		copy(histCopy, m.history)
-		turnID := m.turnID
-
-		return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
-			var usage api.Usage
-			contextInputTokens := 0
-			newHist, err := m.cfg.Loop.Run(ctx, histCopy, func(ev agent.LoopEvent) {
-				if ev.Type == agent.EventUsage {
-					usage = accumulateUsage(usage, ev.Usage)
-					contextInputTokens = maxPromptInputTokens(contextInputTokens, ev.Usage)
-				}
-				prog.Send(agentMsg{event: ev})
-			})
-			return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage, contextInputTokens: contextInputTokens}
-		}), true
+		return m, m.runLoopCmd(ctx, m.turnID), true
 	}
 	return m, nil, false
+}
+
+// rememberInput adds a submitted prompt to the up-arrow history (skipping a
+// repeat of the last entry) and queues it for persistence.
+func (m *Model) rememberInput(text string) {
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != text {
+		m.inputHistory = append(m.inputHistory, text)
+		if len(m.inputHistory) > inputHistoryMax {
+			m.inputHistory = m.inputHistory[len(m.inputHistory)-inputHistoryMax:]
+		}
+		if m.cfg.PersistInput != nil {
+			m.cfg.PersistInput(text)
+		}
+	}
+	m.historyIdx = -1
+	m.historyDraft = ""
 }

@@ -53,6 +53,11 @@ type ConduitConfig struct {
 	ThemeOverrides     map[string]string            `json:"themeOverrides,omitempty"`
 	Themes             map[string]map[string]string `json:"themes,omitempty"`
 
+	// DisableMouse turns off terminal mouse capture so the terminal's native
+	// selection works (useful over tmux/ssh). Wheel scroll and click-to-expand
+	// are unavailable while it is set; use the keyboard bindings instead.
+	DisableMouse bool `json:"disableMouse,omitempty"`
+
 	Accounts *accountStoreSettings `json:"accounts,omitempty"`
 
 	// LSPServers maps langKey (e.g. "go", "typescript") to per-server overrides.
@@ -63,6 +68,38 @@ type ConduitConfig struct {
 
 	// Compaction configures conversation compaction behavior.
 	Compaction *CompactionConfig `json:"compaction,omitempty"`
+
+	// RedactSecrets turns masking of secrets (API keys, tokens, private keys,
+	// password assignments) in tool results on or off. nil means on.
+	RedactSecrets *bool `json:"redactSecrets,omitempty"`
+	// TTSR configures mid-stream rules beyond the rule files themselves.
+	TTSR *TTSRConfig `json:"ttsr,omitempty"`
+
+	// WebSearch configures the WebSearch tool's provider chain.
+	WebSearch *WebSearchConfig `json:"webSearch,omitempty"`
+}
+
+// WebSearchConfig holds the WebSearch toggles.
+type WebSearchConfig struct {
+	// Keyless controls the keyless search tier (Parallel, DuckDuckGo, Mojeek),
+	// which sends the query to third parties: "auto" (default) uses it only
+	// when no other provider is configured or usable, "always" also falls
+	// back to it when a configured provider fails, "never" disables it.
+	Keyless string `json:"keyless,omitempty"`
+}
+
+// Keyless modes for WebSearchConfig.Keyless.
+const (
+	WebSearchKeylessAuto   = "auto"
+	WebSearchKeylessAlways = "always"
+	WebSearchKeylessNever  = "never"
+)
+
+// TTSRConfig holds the TTSR toggles.
+type TTSRConfig struct {
+	// RepetitionGuard interrupts output that has degenerated into a repeating
+	// loop. nil means on.
+	RepetitionGuard *bool `json:"repetitionGuard,omitempty"`
 }
 
 // ToolOutputConfig configures tool output truncation (truncate-to-disk).
@@ -85,6 +122,10 @@ type CompactionConfig struct {
 	Reserved int `json:"reserved,omitempty"`
 	// Auto enables/disables auto-compaction. Default: true.
 	Auto *bool `json:"auto,omitempty"`
+	// MaxTriggerTokens caps the input-token count at which auto-compaction
+	// fires, so a 1M-window model does not wait for 970K tokens. nil uses
+	// internalmodel.DefaultAutoCompactTriggerCap; 0 or negative means no cap.
+	MaxTriggerTokens *int `json:"maxTriggerTokens,omitempty"`
 }
 
 // LSPServerOverride holds per-language-server configuration overrides.

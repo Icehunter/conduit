@@ -91,6 +91,26 @@ type SubAgentSpec struct {
 	// paths and run shell commands there, and the child is told about it in
 	// its system prompt. Used for worktree-isolated workflow agents.
 	Cwd string
+	// AgentType is sent as x-claude-code-agent-type: a built-in agent name
+	// (general-purpose), "custom" for registry/plugin agents, or empty.
+	AgentType string
+	// Workflow marks a workflow-script node; its requests use class
+	// "workflow" instead of "subagent".
+	Workflow bool
+}
+
+// requestClass returns the x-claude-code-request-class for a child built
+// from spec. Background children are system-initiated side work, which CC
+// classes as auxiliary (extract_memories, session_memory).
+func (spec SubAgentSpec) requestClass() string {
+	switch {
+	case spec.Background:
+		return requestClassAuxiliary
+	case spec.Workflow:
+		return requestClassWorkflow
+	default:
+		return requestClassSubagent
+	}
 }
 
 // RunSubAgentTyped runs a nested agent loop with optional specialisation
@@ -133,6 +153,8 @@ func (l *Loop) runSubAgentOnce(ctx context.Context, prompt string, spec SubAgent
 		}
 	}
 	child.subAgentLabel = label
+	child.setWireIdentity(childID, l.wireAgentID(), spec.AgentType, spec.requestClass())
+	defer child.reg.ReleaseScope(childID) // close the REPL kernels this child started
 	subagent.Default.Add(subagent.Entry{
 		ID:         childID,
 		Label:      label,
@@ -273,18 +295,44 @@ func (l *Loop) RunSubAgentWithTools(ctx context.Context, prompt string, tools []
 // process it correctly per its system prompt instructions.
 func (l *Loop) RunSubAgent(ctx context.Context, prompt string) (string, error) {
 	l.mu.RLock()
-	model := l.cfg.Model
+	client, model := l.client, l.cfg.Model
 	l.mu.RUnlock()
-	return l.runSubAgentWithModel(ctx, prompt, model, "")
+	return l.runSubAgentWithModel(ctx, prompt, client, model, "", requestClassSubagent)
 }
 
 // RunBackgroundAgent runs a nested agent loop on the configured background
-// model. The foreground chat model is not changed.
+// model. The foreground chat model is not changed. Its requests are classed
+// auxiliary: use it for system side work (memory extraction, session memory,
+// dream, prompt hooks).
 func (l *Loop) RunBackgroundAgent(ctx context.Context, prompt string) (string, error) {
-	return l.runSubAgentWithModel(ctx, prompt, l.BackgroundModel(), permissions.ModeBypassPermissions)
+	client, model := l.backgroundTargetNow()
+	return l.runSubAgentWithModel(ctx, prompt, client, model, permissions.ModeBypassPermissions, requestClassAuxiliary)
 }
 
-func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, mode permissions.Mode) (string, error) {
+// BackgroundTarget is the client and model for helper work such as a manual
+// /compact: the background role's, else Haiku where the active client can
+// serve it, else the active ones.
+func (l *Loop) BackgroundTarget() (*api.Client, string) { return l.backgroundTargetNow() }
+
+// backgroundTargetNow is backgroundTarget for the loop's current client and
+// model.
+func (l *Loop) backgroundTargetNow() (*api.Client, string) {
+	l.mu.RLock()
+	client, model := l.client, l.cfg.Model
+	l.mu.RUnlock()
+	return l.backgroundTarget(client, model)
+}
+
+// RunBackgroundSubAgent is RunBackgroundAgent for agent work the model or a
+// hook asked for (agent hooks, forked skills), which CC classes as subagent.
+func (l *Loop) RunBackgroundSubAgent(ctx context.Context, prompt string) (string, error) {
+	client, model := l.backgroundTargetNow()
+	return l.runSubAgentWithModel(ctx, prompt, client, model, permissions.ModeBypassPermissions, requestClassSubagent)
+}
+
+// runSubAgentWithModel runs a one-shot child on client and model. client may
+// differ from the loop's own when the model belongs to another provider.
+func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt string, client *api.Client, model string, mode permissions.Mode, class string) (string, error) {
 	start := time.Now()
 	msgs := []api.Message{
 		{
@@ -293,9 +341,10 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 		},
 	}
 	l.mu.RLock()
-	childClient := l.client
 	childCfg := l.cfg
+	modeDirective := l.modeDirective
 	l.mu.RUnlock()
+	childClient := client
 
 	// Cap subagent iterations at DefaultSubAgentMaxTurns unless the parent
 	// explicitly configured a higher limit. The parent loop's own MaxTurns
@@ -315,10 +364,16 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
 	childCfg.OnToolBatchComplete = nil
-	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
 	childCfg.OnSubAgentUsage = nil    // child sub-agents report to their own parent
 	childCfg.BackgroundReviewer = nil // sub-agents must not chain-trigger reviews
+	// Children keep the parent's snapshot plus their own blocks; a refresh
+	// would rebuild the parent's base and drop those extras.
+	childCfg.RebuildSystem = nil
+	// The parent's plan/council directive travels with the snapshot, after the
+	// base and before the child's own blocks, only when the child's own gate
+	// ends up in that mode. Background children and the output style never
+	// inherit it.
 
 	// Clone the permission gate so child mutations don't affect the parent.
 	var childGate *permissions.Gate
@@ -331,6 +386,11 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 		childGate.SetMode(mode)
 	}
 	childCfg.Gate = childGate
+	// Background callers ask for bypass; the gate may clamp that to the
+	// parent's stricter mode, so key off the request, not the resulting mode.
+	if mode != permissions.ModeBypassPermissions {
+		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), inheritedModeBlocks(modeDirective, childGate.Mode())...)
+	}
 
 	// Sub-agents must not block on interactive permission prompts.
 	childCfg.AskPermission = nil
@@ -378,6 +438,8 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt, model string, m
 	childReg := l.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 
 	child := &Loop{client: childClient, reg: childReg, cfg: childCfg, subAgentLabel: label, parentPromptID: l.currentPromptID()}
+	child.setWireIdentity(childID, l.wireAgentID(), "", class)
+	defer child.reg.ReleaseScope(childID) // close the REPL kernels this child started
 	if strings.TrimSpace(model) != "" {
 		child.cfg.Model = model
 	}
@@ -520,6 +582,10 @@ func countToolUses(history []api.Message) int {
 // One retry, not a loop. If a second attempt with the specific complaint still
 // fails, the schema or the task is wrong, and more turns only cost money.
 func (l *Loop) RunSubAgentTyped(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
+	if spec.Cwd == "" {
+		// Task(isolation: "worktree") hands the worktree path through ctx.
+		spec.Cwd = tool.IsolatedCwd(ctx)
+	}
 	sch, err := compileOutputSchema(spec.OutputSchema)
 	if err != nil {
 		// Fail before spawning: a schema that cannot compile could never have

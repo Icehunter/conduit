@@ -286,11 +286,23 @@ func ExtractEmail(tokens *TokenResponse) string {
 }
 
 func (a *Authorizer) EnsureFresh(ctx context.Context) (*providerauth.ProviderCredential, error) {
+	return a.ensureFresh(ctx, false)
+}
+
+// ForceRefresh renews the credential regardless of its recorded expiry, for a
+// 401 on a token that looked valid. A credential another process rotated while
+// this one waited for the lock is adopted instead.
+func (a *Authorizer) ForceRefresh(ctx context.Context) (*providerauth.ProviderCredential, error) {
+	return a.ensureFresh(ctx, true)
+}
+
+func (a *Authorizer) ensureFresh(ctx context.Context, force bool) (*providerauth.ProviderCredential, error) {
 	cred, err := settings.LoadStructuredProviderCredential(a.store, a.credentialName)
+	stale := cred // compared by access token below, before cred changes
 	if err != nil {
 		return nil, fmt.Errorf("codex credential: %w", err)
 	}
-	if cred.AccessToken != "" && time.Until(cred.Expiry) > 5*time.Minute {
+	if !force && cred.AccessToken != "" && time.Until(cred.Expiry) > 5*time.Minute {
 		return cred, nil
 	}
 	if cred.RefreshToken == "" {
@@ -307,7 +319,8 @@ func (a *Authorizer) EnsureFresh(ctx context.Context) (*providerauth.ProviderCre
 	// Re-read after waiting: whoever held the lock has just written a new
 	// credential, so adopt it rather than presenting a token they consumed.
 	if latest, lerr := settings.LoadStructuredProviderCredential(a.store, a.credentialName); lerr == nil && latest.RefreshToken != "" {
-		if latest.AccessToken != "" && time.Until(latest.Expiry) > 5*time.Minute {
+		rotated := stale == nil || latest.AccessToken != stale.AccessToken
+		if latest.AccessToken != "" && time.Until(latest.Expiry) > 5*time.Minute && (!force || rotated) {
 			return latest, nil
 		}
 		cred = latest
@@ -380,12 +393,12 @@ func Headers(accountID, sessionID, version string) map[string]string {
 func FallbackModels() []catalog.ModelInfo {
 	now := time.Now()
 	return []catalog.ModelInfo{
-		{ID: "gpt-5.5", Name: "GPT-5.5", Provider: ProviderID, ContextWindow: 400000, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
-		{ID: "gpt-5.4", Name: "GPT-5.4", Provider: ProviderID, ContextWindow: 272000, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
-		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Provider: ProviderID, ContextWindow: 272000, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
-		{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Provider: ProviderID, ContextWindow: 272000, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
-		{ID: "gpt-5.3-codex-spark", Name: "GPT-5.3 Codex Spark", Provider: ProviderID, ContextWindow: 272000, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
-		{ID: "gpt-5.2", Name: "GPT-5.2", Provider: ProviderID, ContextWindow: 272000, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
+		{ID: "gpt-5.5", Name: "GPT-5.5", Provider: ProviderID, ContextWindow: InputLimit, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
+		{ID: "gpt-5.4", Name: "GPT-5.4", Provider: ProviderID, ContextWindow: InputLimit, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
+		{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Provider: ProviderID, ContextWindow: InputLimit, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
+		{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Provider: ProviderID, ContextWindow: InputLimit, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
+		{ID: "gpt-5.3-codex-spark", Name: "GPT-5.3 Codex Spark", Provider: ProviderID, ContextWindow: InputLimit, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
+		{ID: "gpt-5.2", Name: "GPT-5.2", Provider: ProviderID, ContextWindow: InputLimit, ToolUse: true, Vision: true, Thinking: true, FetchedAt: now},
 	}
 }
 
@@ -398,6 +411,8 @@ func FallbackModelIDs() []string {
 	return out
 }
 
+// ContextWindowForModel is the window auto-compact uses for a Codex model:
+// never above InputLimit, whatever the model advertises.
 func ContextWindowForModel(model string, current int) int {
 	for _, info := range FallbackModels() {
 		if strings.EqualFold(info.ID, model) {
@@ -405,7 +420,7 @@ func ContextWindowForModel(model string, current int) int {
 		}
 	}
 	if current > 0 {
-		return current
+		return min(current, InputLimit)
 	}
-	return 272000
+	return InputLimit
 }

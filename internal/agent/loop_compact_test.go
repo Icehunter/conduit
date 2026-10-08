@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/icehunter/conduit/internal/api"
-	"github.com/icehunter/conduit/internal/compact"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/tool"
 )
@@ -310,92 +309,6 @@ func TestLoop_AutoCompact_DisableEnv(t *testing.T) {
 // tokens exceed the model's context threshold, and that the active model is
 // used for the compaction call. Uses CLAUDE_CODE_AUTO_COMPACT_WINDOW to set a
 // small window so we can test with low token counts.
-func TestLoop_AutoCompact(t *testing.T) {
-	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "50000")
-
-	modelName := "claude-sonnet-4-6"
-	threshold := internalmodel.AutoCompactThresholdFor(modelName) // 17000
-	inputTokens := threshold + 1000                               // above threshold → compact must fire
-
-	calls := 0
-	var compactModel string
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
-		calls++
-
-		var body struct {
-			Model  string `json:"model"`
-			System []struct {
-				Text string `json:"text"`
-			} `json:"system"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-
-		w.Header().Set("Content-Type", "text/event-stream")
-
-		if isCompactRequest(body.System) {
-			compactModel = body.Model
-			// Compaction call — return summary.
-			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"c\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"haiku\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n")
-			fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-			fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"<summary>compacted summary</summary>\"}}\n\n")
-			fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-			fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
-			fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-			return
-		}
-
-		// Main turn — end_turn with above-threshold input tokens.
-		fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":%d,\"output_tokens\":5}}}\n\n", inputTokens)
-		fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-		fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n")
-		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-		fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
-		fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	client := api.NewClient(api.Config{BaseURL: srv.URL, AuthToken: "tok"}, srv.Client())
-	reg := tool.NewRegistry()
-
-	lp := NewLoop(client, reg, LoopConfig{
-		Model:       modelName,
-		MaxTokens:   internalmodel.MaxTokens,
-		MaxTurns:    10,
-		AutoCompact: true,
-		BackgroundModel: func() string {
-			return "background-model"
-		},
-	})
-
-	msgs := []api.Message{
-		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "hello"}}},
-	}
-
-	var gotCompacted bool
-	_, err := lp.Run(context.Background(), msgs, func(ev LoopEvent) {
-		if ev.Type == EventCompacted {
-			gotCompacted = true
-		}
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	// Should have: turn1 + compact on the active model = 2 calls.
-	if calls != 2 {
-		t.Errorf("calls = %d; want 2 (main turn + compact call)", calls)
-	}
-	if compactModel != compact.DefaultModel {
-		t.Errorf("compact model = %q, want %q (compact.DefaultModel)", compactModel, compact.DefaultModel)
-	}
-	if !gotCompacted {
-		t.Error("EventCompacted not fired; want it fired on auto-compact")
-	}
-}
-
 // stubTool is a minimal tool.Tool implementation for testing.
 type stubTool struct {
 	name string

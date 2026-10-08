@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icehunter/conduit/internal/pendingedits"
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/pmezard/go-difflib/difflib"
 )
@@ -27,7 +28,8 @@ import (
 // Tool implements the Edit tool. When stager is non-nil writes are routed
 // through the diff-first review gate instead of touching disk directly.
 type Tool struct {
-	stager pendingedits.Stager
+	stager  pendingedits.Stager
+	tracker *readtracker.Tracker
 }
 
 type pendingLookup interface {
@@ -41,6 +43,13 @@ func New() *Tool { return &Tool{} }
 // NewWithStager returns an Edit tool that stages writes through s. When s is
 // nil the tool behaves identically to New().
 func NewWithStager(s pendingedits.Stager) *Tool { return &Tool{stager: s} }
+
+// WithTracker makes the tool refuse to edit an existing file the model has
+// not read, or that changed since it was read. It returns t.
+func (t *Tool) WithTracker(rt *readtracker.Tracker) *Tool {
+	t.tracker = rt
+	return t
+}
 
 func (*Tool) Name() string { return "Edit" }
 
@@ -98,6 +107,9 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("`file_path` is required"), nil
 	}
 	in.FilePath = tool.ResolvePath(ctx, in.FilePath)
+	if !filepath.IsAbs(in.FilePath) {
+		return tool.ErrorResult(fmt.Sprintf("`file_path` must be absolute, got: %s", in.FilePath)), nil
+	}
 	if in.OldString == in.NewString {
 		return tool.ErrorResult("No changes to make: old_string and new_string are exactly the same."), nil
 	}
@@ -133,6 +145,12 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult(err.Error()), nil
 	}
 
+	if origExisted {
+		if err := t.tracker.Check(in.FilePath, origContent); err != nil {
+			return tool.ErrorResult(err.Error()), nil
+		}
+	}
+
 	fileStr := string(content)
 
 	// Find the old_string, with curly-quote normalization fallback.
@@ -165,6 +183,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			ToolName:    "Edit",
 		})
 		if err == nil {
+			t.tracker.RecordStaged(in.FilePath, []byte(updated))
 			return tool.TextResult(stagedMessage(in.FilePath, fileStr, updated)), nil
 		}
 		if !errors.Is(err, pendingedits.ErrNotStaging) {
@@ -176,6 +195,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if err := writeAtomic(in.FilePath, updated); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
+	t.tracker.RecordWrite(in.FilePath, []byte(updated))
 
 	return tool.TextResult(editDiff(in.FilePath, fileStr, updated)), nil
 }
@@ -217,6 +237,7 @@ func (t *Tool) createFile(path, content string) (tool.Result, error) {
 			ToolName:    "Edit",
 		})
 		if err == nil {
+			t.tracker.RecordStaged(path, []byte(content))
 			return tool.TextResult(stagedMessage(path, "", content)), nil
 		}
 		if !errors.Is(err, pendingedits.ErrNotStaging) {
@@ -230,6 +251,7 @@ func (t *Tool) createFile(path, content string) (tool.Result, error) {
 	if err := writeAtomic(path, content); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
+	t.tracker.RecordWrite(path, []byte(content))
 	return tool.TextResult(editDiff(path, "", content)), nil
 }
 

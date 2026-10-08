@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/credlock"
 	"github.com/icehunter/conduit/internal/providerauth"
@@ -32,6 +33,9 @@ const (
 
 var (
 	ErrNotAvailable = errors.New("github copilot not available for this account")
+	// ErrModelPolicy is a 403 about a model's policy or enablement rather than
+	// about the account. The credential is fine, so it is never deleted.
+	ErrModelPolicy = errors.New("github copilot model policy denied the request")
 
 	httpClient        = &http.Client{Timeout: 30 * time.Second}
 	deviceAuthURLFunc = func() string { return deviceAuthURL }
@@ -93,6 +97,8 @@ func Headers() map[string]string {
 	}
 }
 
+// ChatHeaders are the static headers for the /chat/completions and /responses
+// routes. The per-request headers come from RequestHeaders.
 func ChatHeaders() map[string]string {
 	return map[string]string{
 		"Copilot-Integration-Id": "vscode-chat",
@@ -100,10 +106,11 @@ func ChatHeaders() map[string]string {
 		"Editor-Plugin-Version":  "copilot-chat/0.32.4",
 		"OpenAI-Intent":          "conversation-edits",
 		"X-GitHub-Api-Version":   "2023-07-07",
-		"x-initiator":            "user",
 	}
 }
 
+// MessagesHeaders are the static headers for the Claude /v1/messages route.
+// The per-request headers come from RequestHeaders.
 func MessagesHeaders() map[string]string {
 	return map[string]string{
 		"Copilot-Integration-Id": "vscode-chat",
@@ -111,8 +118,79 @@ func MessagesHeaders() map[string]string {
 		"Editor-Plugin-Version":  "copilot-chat/0.32.4",
 		"OpenAI-Intent":          "conversation-edits",
 		"X-GitHub-Api-Version":   "2023-07-07",
-		"x-initiator":            "user",
 	}
+}
+
+// Values of the x-initiator header. Copilot bills a premium request for each
+// "user" request; tool follow-ups, sub-agents, compaction and background
+// calls are "agent".
+const (
+	InitiatorUser  = "user"
+	InitiatorAgent = "agent"
+)
+
+// RequestHeaders is the api.Config.RequestHeaders hook for every Copilot
+// route, following opencode's copilot.ts: x-initiator from Initiator,
+// X-Interaction-Id from the session id, and Copilot-Vision-Request when the
+// conversation holds an image.
+func RequestHeaders(req *api.MessageRequest) map[string]string {
+	h := map[string]string{"x-initiator": Initiator(req)}
+	if req != nil && req.Hints != nil && req.Hints.SessionID != "" {
+		h["X-Interaction-Id"] = req.Hints.SessionID
+	}
+	if req != nil && hasImage(req.Messages) {
+		h["Copilot-Vision-Request"] = "true"
+	}
+	return h
+}
+
+// Initiator reports who started req: InitiatorUser only for a main-loop
+// request the loop marked as a user turn (api.WireHints.UserTurn: the prompt,
+// or a steering message). Tool follow-ups, text conduit injected as a user
+// message (team mailbox deliveries, task notifications), sub-agents and
+// compaction are InitiatorAgent, as are requests without hints. The loop
+// decides because the injected text is indistinguishable from typed text.
+func Initiator(req *api.MessageRequest) string {
+	if req == nil || req.Hints == nil || req.Hints.RequestClass != "main" || !req.Hints.UserTurn || len(req.Messages) == 0 {
+		return InitiatorAgent
+	}
+	last := req.Messages[len(req.Messages)-1]
+	if last.Role != "user" {
+		return InitiatorAgent
+	}
+	// Defensive: a user turn carries something of its own, not just tool
+	// results or a <system-reminder> conduit injected (a TTSR correction).
+	for _, block := range last.Content {
+		switch block.Type {
+		case "text":
+			text := strings.TrimSpace(block.Text)
+			synthetic := strings.HasPrefix(text, "<system-reminder>") && strings.HasSuffix(text, "</system-reminder>")
+			if text != "" && !synthetic {
+				return InitiatorUser
+			}
+		case "image", "document":
+			return InitiatorUser
+		}
+	}
+	return InitiatorAgent
+}
+
+// hasImage reports whether any message carries an image block, including one
+// nested in a tool result.
+func hasImage(msgs []api.Message) bool {
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Type == "image" {
+				return true
+			}
+			for _, nested := range block.ResultBlocks {
+				if nested.Type == "image" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func ModelDiscoveryHeaders() map[string]string {
@@ -325,6 +403,9 @@ func (a *Authorizer) exchangeGitHubToken(ctx context.Context, githubToken string
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusForbidden {
+		if isModelPolicyBody(body) {
+			return nil, fmt.Errorf("%w: %s", ErrModelPolicy, strings.TrimSpace(string(body)))
+		}
 		return nil, ErrNotAvailable
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -333,6 +414,9 @@ func (a *Authorizer) exchangeGitHubToken(ctx context.Context, githubToken string
 	var result struct {
 		Token     string `json:"token"`
 		ExpiresAt int64  `json:"expires_at"`
+		Endpoints struct {
+			API string `json:"api"`
+		} `json:"endpoints"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("copilot: decode token exchange: %w", err)
@@ -364,6 +448,15 @@ func (a *Authorizer) exchangeGitHubToken(ctx context.Context, githubToken string
 	if cred.Expiry.IsZero() && res.ExpiresIn > 0 {
 		cred.Expiry = time.Now().Add(time.Duration(res.ExpiresIn) * time.Second)
 	}
+	// Business and Enterprise seats are served from their own host, which the
+	// exchange names in endpoints.api.
+	if endpoint, ok := validAPIEndpoint(result.Endpoints.API); ok {
+		cred.Metadata[metaAPIEndpoint] = endpoint
+	}
+	// The route table comes from /models, not from the exchange; keep it.
+	if prev, err := settings.LoadStructuredProviderCredential(a.store, a.credentialName); err == nil && prev.Metadata[metaModelEndpoints] != "" {
+		cred.Metadata[metaModelEndpoints] = prev.Metadata[metaModelEndpoints]
+	}
 	if err := settings.SaveStructuredProviderCredential(a.store, a.credentialName, cred); err != nil {
 		return nil, err
 	}
@@ -377,7 +470,7 @@ func (a *Authorizer) FetchModels(ctx context.Context) ([]catalog.ModelInfo, erro
 			return nil, err
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURLFunc(), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsEndpoint(cred), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -409,10 +502,12 @@ func (a *Authorizer) FetchModels(ctx context.Context) ([]catalog.ModelInfo, erro
 		return nil, fmt.Errorf("copilot: model discovery failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	models, err := decodeModels(resp.Body)
+	models, endpoints, err := decodeModelList(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+	// Best effort: without the table, routing falls back to model names.
+	_ = a.saveModelEndpoints(ctx, endpoints)
 	return models, nil
 }
 
@@ -442,6 +537,8 @@ func (a *Authorizer) Refresh(ctx context.Context) error {
 	}
 
 	if _, err := a.exchangeGitHubToken(ctx, cred.RefreshToken); err != nil {
+		// Only a plain "no Copilot on this account" answer drops the credential;
+		// ErrModelPolicy and transient failures leave it alone.
 		if errors.Is(err, ErrNotAvailable) {
 			_ = settings.DeleteProviderCredential(a.store, a.credentialName)
 		}
@@ -515,18 +612,26 @@ func (a *Authorizer) GetAccount(ctx context.Context) (*providerauth.ProviderAcco
 }
 
 func decodeModels(r io.Reader) ([]catalog.ModelInfo, error) {
+	models, _, err := decodeModelList(r)
+	return models, err
+}
+
+// decodeModelList decodes a /models response into catalog entries and each
+// model's supported_endpoints, keyed by model id.
+func decodeModelList(r io.Reader) ([]catalog.ModelInfo, map[string][]string, error) {
 	var raw struct {
 		Models []copilotModel `json:"models"`
 		Data   []copilotModel `json:"data"`
 	}
 	if err := json.NewDecoder(r).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("copilot: decode models: %w", err)
+		return nil, nil, fmt.Errorf("copilot: decode models: %w", err)
 	}
 	models := raw.Models
 	if len(models) == 0 {
 		models = raw.Data
 	}
 	out := make([]catalog.ModelInfo, 0, len(models))
+	endpoints := map[string][]string{}
 	now := time.Now()
 	for _, model := range models {
 		id := strings.TrimSpace(model.ID)
@@ -536,6 +641,9 @@ func decodeModels(r io.Reader) ([]catalog.ModelInfo, error) {
 		name := strings.TrimSpace(model.Name)
 		if name == "" {
 			name = id
+		}
+		if len(model.SupportedEndpoints) > 0 {
+			endpoints[id] = model.SupportedEndpoints
 		}
 		out = append(out, catalog.ModelInfo{
 			ID:            id,
@@ -549,9 +657,9 @@ func decodeModels(r io.Reader) ([]catalog.ModelInfo, error) {
 		})
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("copilot: no usable models returned")
+		return nil, nil, fmt.Errorf("copilot: no usable models returned")
 	}
-	return out, nil
+	return out, endpoints, nil
 }
 
 type copilotModel struct {

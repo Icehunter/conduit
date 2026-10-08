@@ -171,7 +171,9 @@ func runMcpAuth(manager *mcp.Manager, name string, servers []*mcp.ConnectedServe
 
 // RegisterMCPApproveCommand registers /mcp-approve, the back-end for the
 // startup approval picker. Args: "<server-name> <yes|yes_all|no>". Persists
-// the choice to user settings then triggers a reconnect for "yes"/"yes_all".
+// the choice to user settings, records it on the manager, then connects the
+// approved servers in the background ("yes_all" covers every server still
+// awaiting approval).
 func RegisterMCPApproveCommand(r *Registry, manager *mcp.Manager, cwd string) {
 	r.Register(Command{
 		Name:        "mcp-approve",
@@ -185,9 +187,31 @@ func RegisterMCPApproveCommand(r *Registry, manager *mcp.Manager, cwd string) {
 			if err := settings.ApproveMcpjsonServer(name, choice, cwd); err != nil {
 				return Result{Type: "error", Text: fmt.Sprintf("mcp-approve: %v", err)}
 			}
-			if (choice == "yes" || choice == "yes_all") && manager != nil {
-				// trusted=true: the user just approved this server, so trust is granted.
-				_ = manager.Reconnect(context.Background(), name, cwd, true)
+			if manager != nil {
+				decided := []string{name}
+				if choice == "yes_all" {
+					for _, n := range manager.PendingApprovals() {
+						if n != name {
+							decided = append(decided, n)
+						}
+					}
+				}
+				// Recorded now, not after connecting: the TUI queues the next
+				// approval prompt from PendingApprovals as soon as this
+				// returns, and must not ask about these servers again.
+				approved := choice != "no"
+				for _, n := range decided {
+					manager.ApprovalDecided(n, approved)
+				}
+				// Connecting can take up to mcp.ConnectTimeout, so it runs off
+				// the event loop; the manager's change hook registers the
+				// servers' tools as they connect.
+				if approved {
+					for _, n := range decided {
+						// trusted=true: the user just approved this server, so trust is granted.
+						go func() { _ = manager.Reconnect(context.Background(), n, cwd, true) }() // outcome is recorded on the server's state
+					}
+				}
 			}
 			verb := "Approved"
 			switch choice {

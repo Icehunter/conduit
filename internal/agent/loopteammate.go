@@ -10,6 +10,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/permissions"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/subagent"
 	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tools/automodetool"
@@ -32,11 +33,17 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 
 	l.mu.RLock()
 	childCfg := l.cfg
+	modeDirective := l.modeDirective
 	childClient := l.client
 	parentReg := l.reg
 	l.mu.RUnlock()
 
-	if spec.Role != "" && spec.Model == "" && childCfg.RoleResolver != nil {
+	switch {
+	case spec.Role == settings.RoleBackground && spec.Model == "":
+		// Helper work follows the background target, which never sends a
+		// Claude ID to a client that cannot serve one.
+		childClient, model = l.backgroundTarget(childClient, childCfg.Model)
+	case spec.Role != "" && spec.Model == "" && childCfg.RoleResolver != nil:
 		if roleModel, roleClient, ok := childCfg.RoleResolver(spec.Role); ok {
 			if roleModel != "" {
 				model = roleModel
@@ -58,11 +65,24 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
 	childCfg.OnToolBatchComplete = nil
-	childCfg.OnCompact = nil
 	childCfg.OnFileAccess = nil
 	childCfg.OnSubAgentUsage = nil
 	childCfg.BackgroundReviewer = nil
 	childCfg.TaskStore = nil // child loops don't self-claim tasks
+	// Children keep the parent's snapshot plus their own blocks; a refresh
+	// would rebuild the parent's base and drop those extras.
+	childCfg.RebuildSystem = nil
+	// The parent's plan/council directive travels with the snapshot, after the
+	// base and before the child's own blocks, only when the child's own gate
+	// ends up in that mode. Background children and the output style never
+	// inherit it.
+	if !spec.Background && spec.Mode != permissions.ModeBypassPermissions {
+		effMode := spec.Mode
+		if effMode == "" && childCfg.Gate != nil {
+			effMode = childCfg.Gate.Mode()
+		}
+		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), inheritedModeBlocks(modeDirective, effMode)...)
+	}
 	childCfg.Model = model
 	if spec.MaxTokens > 0 {
 		childCfg.MaxTokens = spec.MaxTokens
@@ -185,6 +205,7 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 	child.subAgentLabel = name
 
 	childID := fmt.Sprintf("teammate-%d", teammateSeq.Add(1))
+	child.setWireIdentity(childID, l.wireAgentID(), "teammate", requestClassSubagent)
 	label := name
 	if len(prompt) > 0 {
 		s := strings.ReplaceAll(strings.TrimSpace(prompt), "\n", " ")
@@ -289,6 +310,7 @@ func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubA
 	}
 
 	go func() {
+		defer child.reg.ReleaseScope(childID) // close the REPL kernels this teammate started
 		baseHandler := subAgentEventHandler(childID)
 		onEvent := spec.OnEvent
 		currentMsgs := initialMsgs

@@ -11,10 +11,22 @@ import (
 	"github.com/icehunter/conduit/internal/team"
 )
 
+// isolateSubagentTracker swaps in an empty tracker for the test. Remove moves
+// an entry to the tracker's completed list, so with the shared default a
+// second run (-count>1) would find the previous run's finished entry under the
+// same ID.
+func isolateSubagentTracker(t *testing.T) {
+	t.Helper()
+	orig := subagent.Default
+	subagent.Default = &subagent.Tracker{}
+	t.Cleanup(func() { subagent.Default = orig })
+}
+
 // TestKillSelectedSubagent_CancelsRunningTeammate verifies that pressing "x"
 // in the sub-agent list panel cancels the selected teammate's context without
 // touching the rest of the team.
 func TestKillSelectedSubagent_CancelsRunningTeammate(t *testing.T) {
+	isolateSubagentTracker(t)
 	tm := team.New("test")
 	orig := team.Default
 	team.Default = tm
@@ -57,6 +69,7 @@ func TestKillSelectedSubagent_CancelsRunningTeammate(t *testing.T) {
 // sub-agent entry cannot be killed, since it has no independent cancellation
 // handle.
 func TestKillSelectedSubagent_NonTeammateIsNoop(t *testing.T) {
+	isolateSubagentTracker(t)
 	subagent.Default.Add(subagent.Entry{
 		ID:        "sub-1",
 		Label:     "plain sub-agent",
@@ -80,6 +93,7 @@ func TestKillSelectedSubagent_NonTeammateIsNoop(t *testing.T) {
 // TestKillSelectedSubagent_DoneEntryIsNoop verifies killing a completed entry
 // reports it is not running rather than erroring.
 func TestKillSelectedSubagent_DoneEntryIsNoop(t *testing.T) {
+	isolateSubagentTracker(t)
 	subagent.Default.Add(subagent.Entry{
 		ID:          "teammate-2",
 		Label:       "worker-2",

@@ -51,6 +51,11 @@ func historyToDisplayMessages(msgs []api.Message) []Message {
 			switch block.Type {
 			case "text":
 				appendText(block.Text)
+			case "thinking":
+				flushText()
+				if t := strings.TrimSpace(block.Thinking); t != "" {
+					out = append(out, Message{Role: RoleThinking, Content: t})
+				}
 			case "tool_use":
 				flushText()
 				input := ""
@@ -165,10 +170,30 @@ func (m *Model) persistNewMessages(history []api.Message) {
 	if m.cfg.Session == nil {
 		return
 	}
+	if m.persistedCount > len(history) {
+		m.persistedCount = len(history)
+	}
 	for i := m.persistedCount; i < len(history); i++ {
 		_ = m.cfg.Session.AppendMessage(history[i]) // best-effort
 	}
 	m.persistedCount = len(history)
+	// Record the model once per change so /resume can switch back to it.
+	if key := m.modelName + "@" + m.providerFamily(); m.modelName != "" && key != m.recordedModel && len(history) > 0 {
+		_ = m.cfg.Session.SetModel(m.modelName, m.providerFamily()) // best-effort
+		m.recordedModel = key
+	}
+}
+
+// routedThroughProvider reports whether any assistant turn in history ran on a
+// non-default provider (local MCP, OpenAI-compatible, ...). Those sessions are
+// not model-restored: switching providers rewrites persisted role settings.
+func routedThroughProvider(history []api.Message) bool {
+	for _, msg := range history {
+		if msg.Role == "assistant" && (msg.Provider != "" || msg.ProviderKind != "") {
+			return true
+		}
+	}
+	return false
 }
 
 // filterCouncilMessages returns a copy of msgs with any RoleCouncil messages

@@ -21,9 +21,11 @@ done
 if ((${#pass_args[@]})); then
   "${SCRIPT_DIR}/check-copilot.sh" "${pass_args[@]}"
   "${SCRIPT_DIR}/check-codex.sh" "${pass_args[@]}"
+  "${SCRIPT_DIR}/check-xai.sh" "${pass_args[@]}"
 else
   "${SCRIPT_DIR}/check-copilot.sh"
   "${SCRIPT_DIR}/check-codex.sh"
+  "${SCRIPT_DIR}/check-xai.sh"
 fi
 
 if [[ "$include_claude" == "1" || "${RUN_CLAUDE_WIRE:-0}" == "1" ]]; then

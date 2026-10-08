@@ -14,6 +14,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/plugins"
@@ -62,6 +63,8 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 		m.running = false
 		m.cancelTurn = nil
 		m.cancelled = true
+		m.shellID = ""
+		m.flushThinking()
 		if m.streaming != "" {
 			m.messages = append(m.messages, m.assistantMessage(m.streaming))
 			m.streaming = ""
@@ -225,6 +228,8 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	m.cancelled = false
 	m.cancelTurn = nil
 	m.apiRetryStatus = ""
+	m.attemptSet = false
+	m.flushThinking()
 	if m.streaming != "" {
 		m.messages = append(m.messages, m.assistantMessage(m.streaming))
 		m.streaming = ""
@@ -267,20 +272,26 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 			Content: "Turn limit reached. Send a message to continue.",
 		})
 	} else if msg.err != nil {
-		m.messages = append(m.messages, Message{Role: RoleError, Content: msg.err.Error()})
+		// A refusal was already announced by the loop's notice; every other
+		// error gets a row, with a hint when its class has one.
+		if !errors.Is(msg.err, agent.ErrModelRefusal) {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: friendlyAgentError(msg.err)})
+		}
 		// Persist any assistant turns that completed before the error (e.g.
 		// a 401 that fires mid-session after several successful turns). The
 		// returned history may be longer than m.history when the loop made
 		// progress before failing — save those turns so /resume picks them up.
 		if len(msg.history) > len(m.history) {
-			cleaned := session.FilterUnresolvedToolUses(msg.history)
-			m.history = m.annotateTurnProvider(cleaned)
-			m.persistNewMessages(cleaned)
+			m.history = m.annotateTurnProvider(session.FilterUnresolvedToolUses(msg.history))
 		}
-		// Drop the final user message so it is not replayed on /resume.
-		if len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
-			m.history = m.history[:len(m.history)-1]
+		// Drop the failed prompt so it is not replayed on /resume. Only a
+		// prompt: a trailing tool_result answers a tool_use in the history,
+		// and dropping it would orphan that call. Decided before persisting,
+		// so persistedCount ends equal to the history the next turn extends.
+		if n := len(m.history); n > 0 && isPromptMessage(m.history[n-1]) {
+			m.history = m.history[:n-1]
 		}
+		m.persistNewMessages(m.history)
 	} else {
 		m.history = m.annotateTurnProvider(msg.history)
 		// Prefer real API-reported usage over local estimation. Fall back
@@ -583,6 +594,14 @@ func (m Model) handleCompactDone(msg compactDoneMsg) (Model, tea.Cmd) {
 	m.cancelTurn = nil
 	if msg.err != nil {
 		content := fmt.Sprintf("Compact failed: %v", msg.err)
+		if compact.IsNothingToCompact(msg.err) {
+			// Not a failure: the conversation is already within the verbatim tail.
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Nothing to compact yet."})
+			m.refreshViewport()
+			m.vp.GotoBottom()
+			m.input.Focus()
+			return m, clearWindowTitleCmd()
+		}
 		if strings.Contains(msg.err.Error(), "429") || strings.Contains(msg.err.Error(), "rate_limit") {
 			content = "Compact rate-limited — try again in a moment."
 		} else if errors.Is(msg.err, context.Canceled) {
@@ -591,14 +610,18 @@ func (m Model) handleCompactDone(msg compactDoneMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: content})
 	} else {
 		m.history = msg.newHistory
-		// Rewrite the on-disk session so it reflects the compacted history.
-		// Without this, persistedCount stays at the pre-compact value and
-		// future turns never write the compact-wrap message, leaving stale
-		// pre-compact messages on disk and causing spurious /resume entries.
-		if m.cfg.Session != nil {
-			_ = m.cfg.Session.ReplaceHistory(msg.newHistory, msg.summary)
-		}
+		// The command already appended the compaction to the session file;
+		// everything in the new history is on disk.
 		m.persistedCount = len(msg.newHistory)
+		if msg.persistErr != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Could not save the compaction to the session: %v", msg.persistErr)})
+		}
+		if m.cfg.Loop != nil {
+			m.cfg.Loop.MarkContextCompacted(compact.KindManual)
+		}
+		if msg.fallback {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: compact.FallbackNotice})
+		}
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: fmt.Sprintf("Conversation compacted. Summary:\n\n%s", msg.summary)})
 		m.tallyTokens()
 	}
@@ -700,6 +723,7 @@ func (m Model) handleResumeLoad(msg resumeLoadMsg) (Model, tea.Cmd) {
 		if notice := coordinator.MatchSessionMode(m.cfg.Session.ReadMode()); notice != "" {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: notice})
 		}
+		m.restoreSessionModel(msg.msgs, msg.model, msg.modelFamily)
 	}
 	m.messages = append(m.messages, Message{
 		Role:    RoleSystem,
@@ -758,4 +782,75 @@ func (m Model) handlePluginPanelReload(msg pluginPanelReloadMsg) (Model, tea.Cmd
 		counts, err := plugins.LoadInstallCounts()
 		return pluginCountsMsg{counts: counts, err: err}
 	}
+}
+
+// handleCompactSaveFailed falls back to rewriting the session file with the
+// compacted history when appending it failed. The rewrite is a command: Update
+// does no file I/O. Until it reports, the EventCompacted that follows leaves
+// persistedCount alone.
+func (m Model) handleCompactSaveFailed(msg compactSaveFailedMsg) (Model, tea.Cmd) {
+	sess := m.cfg.Session
+	if sess == nil {
+		return m, nil
+	}
+	m.compactUnsaved = true
+	return m, func() tea.Msg {
+		return compactRewriteDoneMsg{err: sess.ReplaceHistory(msg.history, msg.summary), appendErr: msg.err, count: len(msg.history)}
+	}
+}
+
+// compactRewriteDoneMsg is the result of the rewrite fallback.
+type compactRewriteDoneMsg struct {
+	err       error // the rewrite's failure
+	appendErr error // why the append failed
+	count     int   // messages the rewritten file holds
+}
+
+func (m Model) handleCompactRewriteDone(msg compactRewriteDoneMsg) Model {
+	m.compactUnsaved = false
+	if msg.err == nil {
+		m.persistedCount = msg.count
+		return m
+	}
+	m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Could not save the compaction to the session: %v", msg.appendErr)})
+	m.refreshViewport()
+	return m
+}
+
+// isPromptMessage reports whether m is a user message the user wrote, not a
+// tool_result turn.
+func isPromptMessage(m api.Message) bool {
+	if m.Role != "user" {
+		return false
+	}
+	for _, b := range m.Content {
+		if b.Type == "tool_result" {
+			return false
+		}
+	}
+	return true
+}
+
+// sessionResetDoneMsg is the result of writing the /clear marker.
+type sessionResetDoneMsg struct{ err error }
+
+// restoreSessionModel switches back to the model the resumed session last
+// used. It only acts when the session recorded a model on the Anthropic
+// family and that is also the family serving the current mode; a model name
+// applied to a client of another provider would be sent to the wrong API.
+// Sessions with provider-routed turns are left alone: re-selecting a provider
+// rewrites persisted role settings.
+func (m *Model) restoreSessionModel(history []api.Message, want, wantFamily string) {
+	m.recordedModel = want + "@" + wantFamily
+	if m.cfg.Loop == nil || want == "" || want == m.modelName || routedThroughProvider(history) {
+		return
+	}
+	if wantFamily != providerFamilyAnthropic || m.providerFamily() != providerFamilyAnthropic {
+		return
+	}
+	m.modelName = want
+	m.cfg.Loop.SetModel(want)
+	m.syncLive()
+	m.refreshWelcomeCardMessage()
+	m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Restored model " + want + " from the session."})
 }

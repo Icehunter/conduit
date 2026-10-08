@@ -8,36 +8,68 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
-func TestIsProviderFailover(t *testing.T) {
+func TestShouldFailover(t *testing.T) {
+	status := func(code int, typ, msg string) error {
+		return &api.APIStatusError{Status: code, Type: typ, Message: msg}
+	}
 	tests := []struct {
 		name string
 		err  error
 		want bool
 	}{
-		{"nil error", nil, false},
-		{"429 in message", errors.New("HTTP 429: too many requests"), true},
-		{"503 in message", errors.New("upstream returned 503"), true},
-		{"529 in message", errors.New("server error 529"), true},
+		{"429 status", status(429, "rate_limit_error", "slow down"), true},
+		{"503 status", status(503, "", "unavailable"), true},
+		{"529 overloaded", status(529, "overloaded_error", "Overloaded"), true},
+		{"502 gateway", status(502, "", "bad gateway"), true},
+		{"model not found", status(404, "not_found_error", "model: x"), true},
+		{"429 in text", errors.New("HTTP 429: too many requests"), true},
+		{"503 in text", errors.New("upstream returned 503"), true},
 		{"rate limit phrase", errors.New("rate limit exceeded"), true},
-		{"too many requests phrase", errors.New("Too Many Requests"), true},
 		{"overloaded phrase", errors.New("API is overloaded"), true},
 		{"quota phrase", errors.New("quota exhausted for this plan"), true},
-		{"generic error", errors.New("connection refused"), false},
+		{"network error", errors.New("read tcp: connection reset by peer"), true},
+		{"truncated stream", api.ErrStreamTruncated, true},
+		{"nil error", nil, false},
 		{"context canceled", context.Canceled, false},
-		{"bad request 400", errors.New("400 bad request"), false},
+		{"401 auth", status(401, "authentication_error", "bad token"), false},
+		{"400 invalid request", status(400, "invalid_request_error", "bad field"), false},
+		{"400 in text", errors.New("400 bad request"), false},
+		{"overflow wins over 500", status(500, "", "request exceeds the available context size (9000 tokens)"), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isProviderFailover(tt.err)
+			got := shouldFailover(api.Classify(tt.err))
 			if got != tt.want {
-				t.Errorf("isProviderFailover(%v) = %v, want %v", tt.err, got, tt.want)
+				t.Errorf("shouldFailover(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRotateCooldown(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		c    api.Classified
+		want time.Time
+	}{
+		{"retry-after wins", api.Classified{RetryAfter: 30 * time.Second, ResetAt: now.Add(time.Hour)}, now.Add(30 * time.Second)},
+		{"reset when no retry-after", api.Classified{ResetAt: now.Add(time.Hour)}, now.Add(time.Hour)},
+		{"past reset ignored", api.Classified{ResetAt: now.Add(-time.Hour)}, now.Add(5 * time.Minute)},
+		{"default", api.Classified{}, now.Add(5 * time.Minute)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rotateCooldown(tt.c, now); !got.Equal(tt.want) {
+				t.Errorf("rotateCooldown() = %v, want %v", got, tt.want)
 			}
 		})
 	}

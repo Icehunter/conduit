@@ -1,6 +1,9 @@
 package shellsafe
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsReadOnly(t *testing.T) {
 	tests := []struct {
@@ -8,8 +11,11 @@ func TestIsReadOnly(t *testing.T) {
 		cmd  string
 		want bool
 	}{
-		// The exact command from the bug report.
-		{"cd chain with echo and discard redirect", `cd web/src/tabs && ls ServerSettingsTab/ && echo "===" && ls BattlepassTab/ 2>/dev/null`, true},
+		// A chain from a bug report: the strict policy refuses every
+		// redirect, /dev/null included, so it prompts. Without the redirect,
+		// the same chain is read-only.
+		{"cd chain with echo and discard redirect", `cd web/src/tabs && ls ServerSettingsTab/ && echo "===" && ls BattlepassTab/ 2>/dev/null`, false},
+		{"cd chain with echo", `cd web/src/tabs && ls ServerSettingsTab/ && echo "===" && ls BattlepassTab/`, true},
 
 		// Simple read-only commands.
 		{"bare ls", "ls", true},
@@ -25,16 +31,18 @@ func TestIsReadOnly(t *testing.T) {
 		// Compound read-only.
 		{"and chain", "ls && pwd && cat x", true},
 		{"or fallback", "cat a || cat b", true},
-		{"pipe between read-only", "ls -la | grep foo", true},
 		{"semicolon chain", "pwd ; ls", true},
 		{"leading cd", "cd src && ls", true},
-		{"nested cd then pipe", "cd src && ls | grep go", true},
 
-		// Safe redirects.
-		{"stderr to dev null", "ls 2>/dev/null", true},
-		{"stdout to dev null", "grep x file >/dev/null", true},
-		{"fd dup 2>&1", "ls 2>&1", true},
-		{"both to dev null", "find . -name x >/dev/null 2>&1", true},
+		// Pipes prompt: they hand one command's output to another.
+		{"pipe between read-only", "ls -la | grep foo", false},
+		{"nested cd then pipe", "cd src && ls | grep go", false},
+
+		// Redirects prompt, including discards and fd dups.
+		{"stderr to dev null", "ls 2>/dev/null", false},
+		{"stdout to dev null", "grep x file >/dev/null", false},
+		{"fd dup 2>&1", "ls 2>&1", false},
+		{"both to dev null", "find . -name x >/dev/null 2>&1", false},
 
 		// Unsafe: mutation / execution.
 		{"rm", "rm -rf /tmp/x", false},
@@ -193,19 +201,57 @@ func TestStripLeadingCd(t *testing.T) {
 }
 
 func FuzzIsReadOnly(f *testing.F) {
-	f.Add("ls && pwd")
-	f.Add("cd x && ls 2>/dev/null")
-	f.Add("echo $(rm -rf /)")
-	f.Add("")
+	for _, seed := range []string{
+		"ls && pwd",
+		"cd x && ls 2>/dev/null",
+		"echo $(rm -rf /)",
+		"",
+		"git branch -D main",
+		"env -S 'rm -rf /' ls",
+		"find . '-exec' rm {} +",
+		`find . -de\lete`,
+		"git diff --{ext-diff,stat}",
+		"rg foo *",
+		"sort --outp=/etc/hosts x",
+		"timeout -k5 10 nice -n 3 git --no-pager log",
+		"(cd sub && ls) && git stash show -p stash@{1}",
+		"echo x >&file",
+		"export PATH=.:$PATH; ls",
+		"echo $((a))",
+		"cd 0\v0",
+	} {
+		f.Add(seed)
+	}
 	f.Fuzz(func(t *testing.T, cmd string) {
 		// Must never panic and must be deterministic.
 		got := IsReadOnly(cmd)
 		if got != IsReadOnly(cmd) {
 			t.Errorf("IsReadOnly(%q) not deterministic", cmd)
 		}
+		// Permission rules are matched per segment, so a read-only command
+		// must be read-only in every segment it splits into. The printer
+		// that renders segments turns some control characters (\v, \f)
+		// into spaces, so those inputs do not round-trip and are skipped.
+		if got && !strings.ContainsFunc(cmd, isControlNotSpace) {
+			segs, ok := SplitForPermissions(cmd)
+			if !ok {
+				t.Fatalf("IsReadOnly(%q) = true but SplitForPermissions failed", cmd)
+			}
+			for _, seg := range segs {
+				if !IsReadOnly(seg) {
+					t.Errorf("IsReadOnly(%q) = true but segment %q is not read-only", cmd, seg)
+				}
+			}
+		}
 		_ = HasUnsafeConstructs(cmd)
 		_, _ = StripLeadingCd(cmd)
 		_ = IsFileDump(cmd)
 		_ = ContainsFileDump(cmd)
 	})
+}
+
+// isControlNotSpace reports an ASCII control character other than the
+// newline and tab the shell grammar uses.
+func isControlNotSpace(r rune) bool {
+	return r < 0x20 && r != '\n' && r != '\t'
 }

@@ -93,3 +93,31 @@ func TestManager_DisposeSession(t *testing.T) {
 		t.Error("expected kernel to be removed after DisposeSession")
 	}
 }
+
+// Disposing a session also closes its scoped sub-agent kernels, but not those
+// of a different session whose id merely starts the same.
+func TestManager_DisposeSessionClosesScopedKernels(t *testing.T) {
+	if !pythonAvailable() {
+		t.Skip("python3 not available")
+	}
+	m := NewManager()
+	keys := []string{"root", "root/sub-1", "root/teammate-2", "rootbeer"}
+	for _, k := range keys {
+		if _, err := m.Get(k, "python"); err != nil {
+			t.Fatalf("Get(%s): %v", k, err)
+		}
+	}
+	defer m.DisposeSession("rootbeer")
+	m.DisposeSession("root")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, k := range []string{"root:python", "root/sub-1:python", "root/teammate-2:python"} {
+		if _, ok := m.kernels[k]; ok {
+			t.Errorf("kernel %s survived DisposeSession(root)", k)
+		}
+	}
+	if _, ok := m.kernels["rootbeer:python"]; !ok {
+		t.Error("an unrelated session's kernel was closed")
+	}
+}

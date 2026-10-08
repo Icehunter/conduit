@@ -1,51 +1,24 @@
 package tui
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/auth"
 	"github.com/icehunter/conduit/internal/settings"
+	"github.com/icehunter/conduit/internal/transcript"
 )
+
+// summarizeMaxChars bounds SummarizeMessages output so a few huge messages
+// cannot blow up the extraction sub-agent's prompt.
+const summarizeMaxChars = 48_000
 
 // SummarizeMessages renders the last n model-visible messages as a
 // plain-text transcript for /memory extract. Tool blocks are flattened so
 // the sub-agent sees a readable conversation, not raw JSON. Exported
 // because cmd/conduit/main.go's auto-extract path also needs it.
 func SummarizeMessages(history []api.Message, n int) string {
-	if len(history) == 0 {
-		return ""
-	}
-	start := 0
-	if len(history) > n {
-		start = len(history) - n
-	}
-	var sb strings.Builder
-	for _, m := range history[start:] {
-		role := strings.ToUpper(m.Role)
-		sb.WriteString("---\n")
-		sb.WriteString(role + ":\n")
-		for _, b := range m.Content {
-			switch b.Type {
-			case "text":
-				sb.WriteString(b.Text)
-				sb.WriteString("\n")
-			case "tool_use":
-				fmt.Fprintf(&sb, "[tool_use %s]\n", b.Name)
-			case "tool_result":
-				txt := b.Text
-				if len(txt) > 500 {
-					txt = txt[:500] + "…"
-				}
-				sb.WriteString("[tool_result]\n")
-				sb.WriteString(txt)
-				sb.WriteString("\n")
-			}
-		}
-	}
-	return sb.String()
+	return transcript.Render(history, transcript.Options{LastN: n, MaxChars: summarizeMaxChars})
 }
 
 func configuredAccountProviders() []settings.ActiveProviderSettings {

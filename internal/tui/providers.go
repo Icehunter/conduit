@@ -16,16 +16,21 @@ import (
 	"github.com/icehunter/conduit/internal/commands"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/mcp"
-	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/provider/copilot"
+	"github.com/icehunter/conduit/internal/provider/xai"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
 func runLocalCall(ctx context.Context, manager *mcp.Manager, call commands.LocalCall, input []byte, turnID int, chat bool) tea.Msg {
+	// MCP servers connect in the background; a local-provider prompt sent
+	// right after startup waits for its server like an agent Run does.
+	if err := manager.WaitForInit(ctx, mcp.InitWaitBudget); err != nil {
+		return localCallDoneMsg{turnID: turnID, call: call, chat: chat, err: err}
+	}
 	result, err := manager.CallTool(ctx, call.Tool, input)
 	if err != nil {
 		return localCallDoneMsg{turnID: turnID, call: call, chat: chat, err: err}
@@ -110,51 +115,38 @@ func (m *Model) applyPermissionMode(mode permissions.Mode) {
 	m.refreshWelcomeCardMessage()
 }
 
-// rebuildSystemCmd returns a Cmd that asynchronously rebuilds the loop's
-// system blocks to reflect the current permission mode. Council mode appends
-// a directive telling the model to always route through ExitPlanMode.
-func (m Model) rebuildSystemCmd() tea.Cmd {
+// systemOverlayBlocks returns the TUI-owned system blocks (output style, then
+// the plan/council directive). They go to Loop.SetSystemOverlay so they are
+// appended after the base blocks and survive the per-Run base rebuild.
+func systemOverlayBlocks(styleName, stylePrompt string, mode permissions.Mode) []api.SystemBlock {
+	var blocks []api.SystemBlock
+	if stylePrompt != "" {
+		blocks = append(blocks, api.SystemBlock{
+			Type: "text",
+			Text: "# Output style: " + styleName + "\n\n" + stylePrompt,
+		})
+	}
+	switch mode {
+	case permissions.ModePlan:
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: agent.PlanModeDirective})
+	case permissions.ModeCouncil:
+		blocks = append(blocks, api.SystemBlock{Type: "text", Text: agent.CouncilModeDirective})
+	}
+	return blocks
+}
+
+// applySystemOverlay installs the system overlay for the current permission
+// mode and output style. It runs synchronously (a mutex-guarded assignment) so
+// rapid mode toggles apply in order. Council mode appends a directive telling
+// the model to always route through ExitPlanMode. The base blocks are rebuilt
+// by the loop itself at the start of every Run.
+func (m Model) applySystemOverlay() {
 	if m.cfg.Loop == nil {
-		return nil
+		return
 	}
-	loop := m.cfg.Loop
-	claudeMd := m.cfg.ClaudeMd
-	skills := m.cfg.Skills
-	agents := m.cfg.Agents
-	mode := m.permissionMode
-	outputStyle := m.outputStylePrompt
-	outputStyleName := m.outputStyleName
-	sessionProjectDir := ""
-	if m.cfg.Session != nil {
-		sessionProjectDir = m.cfg.Session.ProjectDir
-	}
-
-	return func() tea.Msg {
-		cwd, _ := os.Getwd()
-		mem := memdir.BuildPrompt(cwd)
-		base := agent.BuildSystemBlocks(mem, claudeMd, sessionProjectDir, agents, skills...)
-
-		if outputStyle != "" {
-			base = append(base, api.SystemBlock{
-				Type: "text",
-				Text: "# Output style: " + outputStyleName + "\n\n" + outputStyle,
-			})
-		}
-		if mode == permissions.ModePlan {
-			base = append(base, api.SystemBlock{
-				Type: "text",
-				Text: agent.PlanModeDirective,
-			})
-		}
-		if mode == permissions.ModeCouncil {
-			base = append(base, api.SystemBlock{
-				Type: "text",
-				Text: agent.CouncilModeDirective,
-			})
-		}
-		loop.SetSystem(base)
-		return nil
-	}
+	m.cfg.Loop.SetSystemOverlay(systemOverlayBlocks(m.outputStyleName, m.outputStylePrompt, m.permissionMode))
+	// Children inherit only the mode directive, never the output style.
+	m.cfg.Loop.SetModeDirective(systemOverlayBlocks("", "", m.permissionMode))
 }
 
 func (m *Model) applyEffectiveProviderForMode() {
@@ -214,6 +206,8 @@ func (m *Model) applyEffectiveProviderForMode() {
 			provider.ContextWindow = copilot.ContextWindowForModel(provider.Model, provider.ContextWindow)
 		} else if strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
 			provider.ContextWindow = codex.ContextWindowForModel(provider.Model, provider.ContextWindow)
+		} else if isGrokProvider(provider) {
+			provider.ContextWindow = xai.ContextWindowForModel(provider.Model, provider.ContextWindow)
 		}
 		if m.cfg.NewProviderAPIClient == nil {
 			return
@@ -251,6 +245,13 @@ func (m Model) currentProviderRole() string {
 }
 
 func (m Model) compactClientAndModel() (*api.Client, string, error) {
+	// The loop knows the background role and what its client can serve; a
+	// manual /compact summarizes through the same target as auto-compaction.
+	if m.cfg.Loop != nil {
+		if c, model := m.cfg.Loop.BackgroundTarget(); c != nil && model != "" {
+			return c, model, nil
+		}
+	}
 	provider, ok := m.providerForCurrentMode()
 	if !ok {
 		return m.cfg.APIClient, compact.DefaultModel, nil
@@ -553,6 +554,8 @@ func accountProviderDisplayName(provider settings.ActiveProviderSettings) string
 			label = "GitHub Copilot"
 		} else if strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex") {
 			label = "ChatGPT / Codex"
+		} else if isGrokProvider(provider) {
+			label = xai.DisplayName
 		}
 		provider.Account = ""
 	}
@@ -718,4 +721,24 @@ func parseProviderContextWindow(value string) (int, bool) {
 		return 0, false
 	}
 	return n * multiplier, true
+}
+
+const providerFamilyAnthropic = "anthropic"
+
+// providerFamily names the provider family serving the current mode. The two
+// Anthropic kinds (subscription, API key) and the unconfigured default are one
+// family because they share model names.
+func (m Model) providerFamily() string {
+	if m.localMode {
+		return settings.ProviderKindMCP
+	}
+	provider, ok := m.providerForCurrentMode()
+	if !ok {
+		return providerFamilyAnthropic
+	}
+	switch provider.Kind {
+	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI, "":
+		return providerFamilyAnthropic
+	}
+	return provider.Kind
 }

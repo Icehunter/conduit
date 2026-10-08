@@ -116,6 +116,9 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		}
 		return pad + surfaceSpaces(2) + styleStatusAccent.Render(label+":") + " " + stylePickerDesc.Render(msg.Content)
 
+	case RoleThinking:
+		return renderThinking(msg, inner, pad)
+
 	case RoleSystem:
 		if msg.WelcomeCard {
 			return renderWelcomeCard(msg.Content, width)
@@ -134,12 +137,12 @@ func renderMessage(msg Message, width int, verbose bool) string {
 			strings.Contains(trimmed, "`")
 		if hasMarkdown {
 			const (
-				sysCollapsed       = 10
+				sysCollapsed       = collapsedLines
 				sysTruncateFmt     = "… (%d lines hidden) [click to expand]"
 				sysExpandedHintFmt = "[click to collapse]"
 			)
-			rawLines := strings.Split(strings.TrimSpace(msg.Content), "\n")
-			canExpand := len(rawLines) > sysCollapsed
+			rawLines := outputLines(msg.Content)
+			canExpand := canCollapse(len(rawLines))
 			prefix := pad + styleSystemText.Render("· ") + "\n"
 			var body string
 			if canExpand && !msg.ToolExpanded {
@@ -246,7 +249,6 @@ func renderToolMessage(msg Message, width int, verbose bool) string {
 func renderToolMessageWithPrefix(msg Message, width int, verbose bool, treePrefix string, isLast bool) string {
 	// Constants for collapsible tool output (inspired by crush)
 	const (
-		collapsedLines     = 10
 		truncationFormat   = "… (%d lines hidden) [click to expand]"
 		expandedHintFormat = "[click to collapse]"
 	)
@@ -267,9 +269,9 @@ func renderToolMessageWithPrefix(msg Message, width int, verbose bool, treePrefi
 		statusText = "used"
 	}
 
-	result := strings.TrimSpace(msg.Content)
+	result := trimOutput(msg.Content)
 	resultLines := strings.Split(result, "\n")
-	canExpand := len(resultLines) > collapsedLines && !running && !archived && result != ""
+	canExpand := canCollapse(len(resultLines)) && !running && !archived && result != ""
 
 	headerParts := []string{
 		statusIcon,
@@ -282,11 +284,25 @@ func renderToolMessageWithPrefix(msg Message, width int, verbose bool, treePrefi
 	header := strings.Join(headerParts, surfaceSpaces(1))
 
 	summary := toolInputSummary(msg.ToolName, msg.ToolInput)
-	if summary == "" && !msg.ToolError && !running {
+	available := width - lipgloss.Width(header) - lipgloss.Width(" · ") - 4 // -4 for tree prefix
+
+	// A Bash command that does not fit inline is shown in full, wrapped under
+	// the header, instead of being cut off.
+	var commandLines []string
+	if isBashTool(msg.ToolName) {
+		if cmd := displayBashCommand(msg.ToolInput, currentDisplayCwd()); cmd != "" {
+			summary = ""
+			if !strings.Contains(cmd, "\n") && lipgloss.Width(cmd) <= available {
+				summary = cmd
+			} else {
+				commandLines = wrapBashCommand(cmd, max(10, width-6))
+			}
+		}
+	}
+	if summary == "" && len(commandLines) == 0 && !msg.ToolError && !running {
 		summary = toolResultSummary(msg.ToolName, msg.Content)
 	}
 	if !msg.ToolError && summary != "" {
-		available := width - lipgloss.Width(header) - lipgloss.Width(" · ") - 4 // -4 for tree prefix
 		if available >= 8 {
 			header += styleStatus.Render(" · " + truncatePlainToWidth(summary, available))
 		}
@@ -311,6 +327,10 @@ func renderToolMessageWithPrefix(msg Message, width int, verbose bool, treePrefi
 	}
 	// Note: For tree rendering, body lines have NO prefix here;
 	// the prefix gets added in the final tree assembly below.
+
+	for _, ln := range commandLines {
+		lines = append(lines, continuationPrefix+ln)
+	}
 
 	// Add body content if we have output (indented with continuation)
 	if verbose && !msg.ToolError && !running && !archived && result != "" {
@@ -565,4 +585,23 @@ func formatMessageDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%02ds", min, sec)
 	}
 	return d.Round(time.Minute).String()
+}
+
+// renderThinking shows model reasoning dimmed. Collapsed it is one line with
+// the line count; ToolExpanded (click toggle) reveals the full text.
+func renderThinking(msg Message, inner int, pad string) string {
+	text := strings.TrimSpace(msg.Content)
+	if text == "" {
+		return ""
+	}
+	if !msg.ToolExpanded {
+		n := strings.Count(text, "\n") + 1
+		unit := "lines"
+		if n == 1 {
+			unit = "line"
+		}
+		return pad + styleStatusFaded.Render(fmt.Sprintf("Thinking… (%d %s) [click to expand]", n, unit))
+	}
+	body := styleStatusFaded.Width(inner).Render(text)
+	return pad + styleStatusFaded.Render("Thinking… [click to collapse]") + "\n" + indentLines(body, pad)
 }

@@ -91,6 +91,8 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	cmd := exec.CommandContext(ctx, "powershell.exe",
 		"-NoProfile", "-NonInteractive", "-Command", in.Command)
 
+	cmd.Dir = tool.CwdFromContext(ctx)
+
 	// Inject session environment.
 	if len(t.env) > 0 {
 		base := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", "exit 0")

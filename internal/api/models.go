@@ -49,7 +49,7 @@ func (c *Client) listModelsPage(ctx context.Context, afterID string) (page []cat
 		}
 		// model="" — this is not a Messages request, so the model-scoped beta
 		// filtering applyHeaders also does is a no-op here.
-		c.applyHeaders(req.Header, "")
+		c.applyHeaders(req.Header, "", nil, nil)
 		return c.http.Do(req)
 	})
 	if err != nil {

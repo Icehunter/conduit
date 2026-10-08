@@ -177,3 +177,27 @@ func FuzzComputeFind(f *testing.F) {
 		}
 	})
 }
+
+func TestComputeIgnoresBOM(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"single line", "package main\n"},
+		{"multi line", "first\nsecond\nthird\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plain := hashline.Compute([]byte(tt.src))
+			bom := hashline.Compute([]byte(hashline.BOM + tt.src))
+			if len(plain) != len(bom) {
+				t.Fatalf("len %d vs %d", len(plain), len(bom))
+			}
+			for i := range plain {
+				if plain[i] != bom[i] {
+					t.Errorf("anchor %d differs: %+v vs %+v", i, plain[i], bom[i])
+				}
+			}
+		})
+	}
+}

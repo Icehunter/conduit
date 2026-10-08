@@ -298,6 +298,132 @@ the OpenAI-compatible endpoint. Gemini can be represented this way:
 }
 ```
 
+### Driving a Local Model Through the Full Agent Loop (not LocalImplement)
+
+`LocalImplement`/`local-router` is a deliberately bounded, single-shot draft
+helper (see "Observed Router Contract" above) — the local model never sees
+tool results, so it can't self-correct across turns. A local llama.cpp/LM
+Studio endpoint can instead be configured as a normal `openai-compatible`
+provider and assigned to a role (e.g. `main` or a dedicated role). Conduit's
+existing OpenAI-compatible adapter (`internal/api/openaicompat.go`) then
+drives it through the same multi-turn tool-use loop used for Claude/Gemini —
+the local model gets real `Edit`/`Bash`/`Read` tool access, sees actual
+test/build output, and can retry across turns. This is the mechanism that
+gives pi.dev-style "multi-turn re-eval" behavior; verified live against a
+qwen3.8-27b LM Studio instance (turn 1 issues a real tool call, turn 2
+consumes the fed-back tool result and produces a final answer).
+
+Reasoning models such as qwen3.8-27b need `chat_template_kwargs:
+{"enable_thinking": false}` in the request body or they spend the whole
+token budget on hidden reasoning and return empty content — the same
+workaround `local-router/src/local-client.ts` already applies. Conduit's
+`ExtraBody` provider field carries this through:
+
+```json
+{
+  "providers": {
+    "openai-compatible.local-lmstudio.qwen3.8-27b": {
+      "kind": "openai-compatible",
+      "model": "qwen3.8-27b",
+      "credential": "local-lmstudio",
+      "baseURL": "http://192.168.0.71:1234/v1",
+      "extraBody": {
+        "chat_template_kwargs": { "enable_thinking": false }
+      }
+    }
+  },
+  "roles": {
+    "implement": "openai-compatible.local-lmstudio.qwen3.8-27b"
+  }
+}
+```
+
+`credential` still needs a stored alias (`settings.SaveProviderCredential`)
+even though LM Studio doesn't enforce auth — any placeholder value works.
+`extraBody` is config-file-only for now (no Ctrl+M/`/providers` UI field
+yet); hand-edit `~/.conduit/conduit.json`.
+
+`extraBody` is applied as a JSON merge patch (RFC 7396): nested objects merge
+key by key with the fields conduit generates, any other value replaces the
+generated one, and `null` deletes it (e.g. `"stream_options": null` for a
+server that rejects it). So `chat_template_kwargs` above is merged with
+conduit's own `chat_template_kwargs.preserve_thinking`, not swapped for it.
+
+#### Reasoning on OpenAI-compatible servers
+
+- **Effort.** `/effort` reaches the model as `reasoning_effort`: a thinking
+  budget of 8000+ tokens is `high`, 2000+ `medium`, anything lower `low`;
+  `normal` (no budget) sends nothing. It goes only to reasoning-capable model
+  families (o-series, gpt-5, gpt-oss, DeepSeek, Qwen3/QwQ, Grok 3 mini/4,
+  Gemini 2.5/3, GLM 4.5+, Kimi K2 thinking) and to local/LAN servers; a 400
+  that names `reasoning_effort` is retried once without it and the model is
+  remembered. It is skipped when `extraBody` turns
+  thinking off (`chat_template_kwargs.enable_thinking: false`, top-level
+  `enable_thinking: false`, `thinking.type: "disabled"` or
+  `reasoning.enabled: false`), and an `extraBody` `reasoning_effort` wins
+  (`null` removes it). The Responses transport sends the same scale as
+  `reasoning.effort`.
+- **Streaming.** `delta.reasoning_content` (llama.cpp, vLLM, DeepSeek, Qwen,
+  Kimi) and `delta.reasoning` (OpenRouter, Ollama, Groq) become a thinking
+  block. So does a `<think>…</think>` block the server leaves in
+  `delta.content` (no reasoning parser), split live across chunks. A
+  `<think>` counts only in leading position (nothing visible yet) or right
+  after a `</think>`; elsewhere it is prose, as are tags inside Markdown code
+  spans or fences. For reasoning-capable models whose template puts `<think>`
+  in the prompt (local hosts with thinking requested only), output up to a bare
+  `</think>` is thinking; it is held until that tag, a `<think>`, a reasoning
+  field or tool call, the end, or 2 KiB. The official OpenAI endpoint is
+  never split. A host that sends a finish_reason but neither usage nor `[DONE]`
+  and keeps the connection open is cut off 2 s after the finish_reason.
+- **Replay.** The provider field `reasoningReplay` decides when an assistant
+  turn's reasoning goes back as `reasoning_content` (or `reasoning`, when that
+  is the field the server streams). Without it, Qwen3 / DeepSeek-R1 / GLM chat
+  templates re-render prior turns without their `<think>` block and llama.cpp
+  re-processes the whole prompt every turn.
+  - `auto` (default): every turn for localhost / LAN / `*.local` servers and
+    for DeepSeek and MiMo models (they require it); tool-call turns only for
+    Kimi models and OpenRouter (they require it there); never for Claude
+    models, whose reasoning only replays with a signature.
+  - `on`: every turn that has reasoning, on any server. Use it for a
+    self-hosted server on a public hostname.
+  - `off`: never.
+
+  Only reasoning that came from an OpenAI-compatible stream is replayed;
+  Claude's signed thinking stays on the Anthropic wire. When replay applies to
+  every turn and the model is Qwen, conduit also sends
+  `chat_template_kwargs.preserve_thinking: true`, which makes Qwen3.6+
+  templates keep `<think>` on older turns as well (oh-my-pi `ac958d5905`,
+  `3cc61d3014`).
+
+```json
+{
+  "kind": "openai-compatible",
+  "model": "qwen3.8-27b",
+  "credential": "local-lmstudio",
+  "baseURL": "http://192.168.0.71:1234/v1",
+  "reasoningReplay": "auto"
+}
+```
+
+### Tools for models without native tool support
+
+The provider field `toolCallFormat` is `native` (default: the `tools` request
+field), `hermes`, `qwen3` or `auto`. For `hermes` and `qwen3` conduit sends no
+`tools`: the schemas and the `<tool_call>` calling rules go into the system
+prompt, and `internal/api/texttools.go` parses the reply. The parser runs on
+the visible text after the `<think>` split (a call inside reasoning is not a
+call) and is chunk-boundary safe and linear in the input. A call must start a
+line, or end the reply, so prose or file content that mentions the tag stays
+text, and fenced blocks are skipped (`FuzzTextToolParser` checks chunking invariance and that a
+stray backtick never hides a later call). Prior calls and results are
+sent back as text in the same syntax. `qwen3` differs from `hermes` only in a
+prompt line asking for reasoning in `<think>` before calls. `auto` stays
+native until the server rejects `tools` with a "does not support tools" style
+400/422, then uses `hermes` for that model; a missing `tool_calls` in a reply
+is not a signal. Not done: the XML-style `<function=…>` qwen variant, a
+`<tool_response>` fabrication guard, and the other oh-my-pi syntaxes (glm,
+kimi, deepseek, harmony, gemma).
+
 The provider can be saved, validated, shown in Ctrl+M, and assigned to a role.
 `/providers` opens the Settings Providers tab to add a Gemini/OpenAI-compatible
 provider; the API key is stored through Conduit's secure storage under the

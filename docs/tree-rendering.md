@@ -43,9 +43,9 @@ Since there may be multiple expandable items on screen simultaneously, the inter
 
 - **Grouping**: `refreshViewport()` in `layoutview.go` groups consecutive `RoleTool` messages
 - **Rendering**: Each tool in a group gets a tree prefix (`├─` or `╰─`)
-- **Tree package**: Uses `lipgloss/v2/tree` with custom `crushTreeEnumerator()`
+- **Tree prefixes**: `refreshViewport()` picks `  ├─ ` for every tool in a group but the last and `  ╰─ ` for the last; `renderToolMessageWithPrefix()` indents continuation lines with `  │  ` or five spaces to match
 
 See:
 - `internal/tui/layoutview.go:refreshViewport()` — groups tool calls
 - `internal/tui/render.go:renderToolMessageWithPrefix()` — applies tree prefix
-- `internal/tui/render.go:crushTreeEnumerator()` — emits `├─` / `╰─`
+- `internal/tui/layoutview.go:refreshViewport()` — chooses the `├─` / `╰─` prefix per tool

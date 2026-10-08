@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Wire types for /v1/messages.
@@ -24,6 +25,8 @@ type MessageRequest struct {
 	// Thinking enables extended thinking (interleaved-thinking-2025-05-14 beta).
 	// When non-nil, sent as {"type":"enabled","budget_tokens":N}.
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
+	// Hints are per-request client-hint headers; never part of the body.
+	Hints *WireHints `json:"-"`
 }
 
 // ThinkingConfig enables the extended thinking feature.
@@ -341,9 +344,8 @@ type ThinkingMismatch struct {
 }
 
 // APIStatusError is a non-2xx response decoded into a Go error. Error()
-// keeps the same flattened string as before so existing substring checks
-// (isToolUseFlowError, isProviderFailover, …) keep working; callers that need
-// structure use errors.As.
+// keeps the same flattened string as before, so text checks written against
+// it still match; callers that need structure use errors.As or Classify.
 type APIStatusError struct {
 	Status  int
 	Type    string
@@ -351,6 +353,15 @@ type APIStatusError struct {
 	// ThinkingMismatch is non-nil when the response carried a parseable
 	// anthropic-thinking-prefix-mismatch header.
 	ThinkingMismatch *ThinkingMismatch
+	// RetryAfter is the delay the server asked for in retry-after-ms or
+	// retry-after; zero when absent or unusable.
+	RetryAfter time.Duration
+	// ResetAt is when the unified rate limit resets
+	// (anthropic-ratelimit-unified-reset); zero when absent.
+	ResetAt time.Time
+	// ShouldRetry is the lowercased x-should-retry header: "true", "false",
+	// or "" when the server sent none.
+	ShouldRetry string
 
 	text string
 }

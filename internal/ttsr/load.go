@@ -59,14 +59,27 @@ func Load(dirs ...string) ([]Rule, error) {
 			}
 
 			patternStr := fields["pattern"]
-			if patternStr == "" {
+			paths := splitList(fields["paths"])
+			// A rule on file paths may omit the pattern: it then fires on
+			// every tool call that targets a matching path.
+			if patternStr == "" && len(paths) == 0 {
 				fmt.Fprintf(os.Stderr, "conduit: ttsr: skipping %s: missing 'pattern' field\n", filePath)
 				continue
 			}
 
-			compiled, err := regexp.Compile(patternStr)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "conduit: ttsr: skipping %s: invalid pattern %q: %v\n", filePath, patternStr, err)
+			var compiled *regexp.Regexp
+			if patternStr != "" {
+				var err error
+				compiled, err = regexp.Compile(patternStr)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "conduit: ttsr: skipping %s: invalid pattern %q: %v\n", filePath, patternStr, err)
+					continue
+				}
+			}
+
+			mode, scope, ok := parseModeScope(fields["mode"], fields["scope"])
+			if !ok {
+				fmt.Fprintf(os.Stderr, "conduit: ttsr: skipping %s: invalid 'mode' or 'scope'\n", filePath)
 				continue
 			}
 
@@ -87,6 +100,15 @@ func Load(dirs ...string) ([]Rule, error) {
 				Pattern:    compiled,
 				Correction: correction,
 				MaxFires:   maxFires,
+				Mode:       mode,
+				Scope:      scope,
+				Tools:      splitList(fields["tools"]),
+				Paths:      paths,
+				Agents:     splitList(fields["agents"]),
+				Once:       strings.EqualFold(fields["repeat"], "once"),
+			}
+			if g, err := strconv.Atoi(fields["repeat_gap"]); err == nil && g > 0 {
+				rule.Gap = g
 			}
 
 			if _, exists := byName[ruleName]; !exists {
@@ -135,4 +157,40 @@ func parseFrontmatter(content string) (map[string]string, string) {
 	}
 	body := strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
 	return fields, body
+}
+
+// splitList splits a comma-separated frontmatter value into trimmed, non-empty items.
+func splitList(v string) []string {
+	var out []string
+	for part := range strings.SplitSeq(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// parseModeScope reads the mode ("interrupt" default, or "warn") and scope
+// ("text", "tool", or both comma-separated; empty = decided by the rule) values.
+func parseModeScope(modeStr, scopeStr string) (Mode, Scope, bool) {
+	var mode Mode
+	switch strings.ToLower(strings.TrimSpace(modeStr)) {
+	case "", "interrupt":
+	case "warn":
+		mode = ModeWarn
+	default:
+		return 0, 0, false
+	}
+	var scope Scope
+	for _, s := range splitList(strings.ToLower(scopeStr)) {
+		switch s {
+		case "text":
+			scope |= ScopeText
+		case "tool", "tools", "args":
+			scope |= ScopeToolArgs
+		default:
+			return 0, 0, false
+		}
+	}
+	return mode, scope, true
 }

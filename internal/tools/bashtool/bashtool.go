@@ -12,7 +12,6 @@
 package bashtool
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/icehunter/conduit/internal/iox"
 	"github.com/icehunter/conduit/internal/rtk"
 	"github.com/icehunter/conduit/internal/rtk/track"
 	"github.com/icehunter/conduit/internal/sessionstats"
@@ -57,9 +55,11 @@ const DefaultTimeout = 2 * time.Minute
 // loop hostage. Real BashTool exposes 10 min.
 const MaxTimeout = 10 * time.Minute
 
-// MaxOutputBytes truncates combined stdout+stderr to keep tool_result
+// MaxOutputBytes bounds the combined stdout+stderr the model sees, split
+// between the head and the tail of longer output, to keep tool_result
 // blocks under typical context budgets. Matches the real BashTool's
-// `maxResultSizeChars` of ~30000.
+// `maxResultSizeChars` of ~30000. Output past it is saved in full to a spill
+// file the result names.
 const MaxOutputBytes = 30000
 
 // Tool implements the Bash tool.
@@ -151,9 +151,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Use exec.CommandContext so cancel-after-timeout sends SIGKILL.
+	// Use exec.CommandContext so cancel-after-timeout sends SIGKILL, to the
+	// whole process group so the command's children die with it.
 	// `bash -c` matches the real tool's shell-out behavior.
 	cmd := exec.CommandContext(cctx, "bash", "-c", in.Command)
+	setProcessGroup(cmd)
+	// A backgrounded child (`server &`) inherits the output pipe and keeps it
+	// open after bash exits; without a WaitDelay, Run waits for that child
+	// and neither the timeout nor a cancel can end the call.
+	cmd.WaitDelay = waitDelay
 	cmd.Dir = tool.CwdFromContext(ctx)
 	// Inherit process env + any session-level env injected from settings.
 	if len(t.env) > 0 {
@@ -163,91 +169,77 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		}
 		cmd.Env = base
 	}
-	// LimitWriter caps the output buffer before cmd.Run() returns, preventing
-	// a subprocess that spews gigabytes from filling RAM. The hard cap is 4×
-	// MaxOutputBytes; on overflow cancel() is called immediately, which sends
-	// SIGKILL to the subprocess via exec.CommandContext.
-	var combined bytes.Buffer
-	lw := &iox.AtomicLimitWriter{
-		W:          &combined,
-		Limit:      int64(MaxOutputBytes) * 4,
-		OnOverflow: cancel,
-	}
-	cmd.Stdout = lw
-	cmd.Stderr = lw
+	// The capture keeps all output: small output in memory, larger output in
+	// a spill file. It only cancels the command (killing it) past the disk
+	// cap, so long builds and test runs are never cut short for being loud.
+	capture := newOutputCapture(cancel)
+	cmd.Stdout = capture
+	cmd.Stderr = capture
 
 	runErr := cmd.Run()
+	capture.finish()
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		// bash exited cleanly; only a background child still held the pipe.
+		runErr = nil
+	}
 
-	rawOut := combined.Bytes()
-	overflowed := lw.Overflow.Load()
-
+	maxBytes, maxLines := outputBudget()
 	switch {
-	case cctx.Err() == context.DeadlineExceeded:
-		// Build timeout response from whatever we captured.
-		var sb strings.Builder
-		if len(rawOut) > 0 {
-			out := rawOut
-			if len(out) > MaxOutputBytes {
-				out = out[:MaxOutputBytes]
-			}
-			sb.Write(out)
-			if !bytes.HasSuffix(out, []byte{'\n'}) {
-				sb.WriteByte('\n')
-			}
-		}
-		fmt.Fprintf(&sb, "Command timed out after %s.\n", timeout)
-		return tool.ErrorResult(strings.TrimRight(sb.String(), "\n")), nil
 	case ctx.Err() == context.Canceled:
+		capture.discard()
 		return tool.ErrorResult("Command cancelled."), nil
-	}
-
-	// Step 1: RTK filter on the raw (possibly very large) output so the filter
-	// can see the full stream before we hard-cap it. RTK classifiers often
-	// achieve 10x reduction, so filtering first means the tail-drop cap never
-	// discards content that RTK would have kept.
-	// If overflowed, the tail was silently dropped before RTK; no stderr print
-	// here because writing to os.Stderr while the TUI is active corrupts the
-	// alt-screen display. The RTK footer appended below is visible in the model.
-	rawOutput := strings.TrimRight(string(rawOut), "\n")
-	filtered := rtk.Filter(in.Command, rawOutput)
-	if filtered.SavedBytes > 0 {
-		// Record RTK savings metrics. Use the pre-footer filtered size so the
-		// recovery hint bytes do not distort /rtk gain analytics.
-		sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)
-		if db := getTrackDB(); db != nil {
-			_ = db.Record(track.Row{
-				Command:       in.Command,
-				OriginalBytes: len(filtered.Original),
-				FilteredBytes: len(filtered.Filtered), // pre-footer size
-				SavedBytes:    filtered.SavedBytes,
-				SavedPct:      filtered.SavingsPct,
-				RecordedAt:    time.Now(),
-			})
+	case capture.wasKilled():
+		return tool.ErrorResult(killedReport(capture, maxBytes, maxLines)), nil
+	case cctx.Err() == context.DeadlineExceeded:
+		// Report whatever was captured, bounded the same way as a finished
+		// command's output, but without RTK: a filter that summarizes a
+		// complete run can misread a partial one.
+		var sb strings.Builder
+		if out := boundedOutput(capture, maxBytes, maxLines); out != "" {
+			sb.WriteString(out)
+			sb.WriteByte('\n')
 		}
+		fmt.Fprintf(&sb, "Command timed out after %s.", timeout)
+		return tool.ErrorResult(sb.String()), nil
 	}
 
-	// Step 2: hard-cap at MaxOutputBytes AFTER RTK has had a chance to reduce.
-	rtkOut := filtered.Filtered
-	hardCapped := overflowed
-	if len(rtkOut) > MaxOutputBytes {
-		rtkOut = rtkOut[:MaxOutputBytes]
-		hardCapped = true
+	var out, handle string
+	if raw, ok := capture.inMemory(); ok {
+		// RTK filters the whole output before it is bounded, so the bound
+		// never discards content RTK would have kept.
+		filtered := rtk.Filter(in.Command, strings.TrimRight(raw, "\n"))
+		if filtered.SavedBytes > 0 {
+			// Record RTK savings metrics. Use the pre-footer filtered size so the
+			// recovery hint bytes do not distort /rtk gain analytics.
+			sessionstats.SessionMetrics.RecordRTK(filtered.SavedBytes)
+			if db := getTrackDB(); db != nil {
+				_ = db.Record(track.Row{
+					Command:       in.Command,
+					OriginalBytes: len(filtered.Original),
+					FilteredBytes: len(filtered.Filtered), // pre-footer size
+					SavedBytes:    filtered.SavedBytes,
+					SavedPct:      filtered.SavingsPct,
+					RecordedAt:    time.Now(),
+				})
+			}
+		}
+		out = fitOutput(filtered.Filtered, maxBytes, maxLines)
+		handle = filtered.Handle
+	} else {
+		// Too large to hold, so too large for RTK: show both ends of the raw
+		// stream and point at the spill file for the rest.
+		out = capture.excerpt(maxBytes, maxLines, true)
 	}
 
 	var sb strings.Builder
-	if len(rtkOut) > 0 {
-		sb.WriteString(rtkOut)
-		if !strings.HasSuffix(rtkOut, "\n") {
-			sb.WriteByte('\n')
-		}
+	if out != "" {
+		sb.WriteString(out)
+		sb.WriteByte('\n')
 	}
-	if hardCapped {
-		fmt.Fprintf(&sb, "[truncated to first %d bytes]\n", MaxOutputBytes)
-	}
-	// Append the CCR recovery footer AFTER the hard-cap so the handle hint is
-	// never silently truncated mid-string.
-	if filtered.Handle != "" {
-		fmt.Fprintf(&sb, "[full output compressed; recover with CCRRetrieve handle=%q]\n", filtered.Handle)
+	// The CCR recovery footer goes after the bounded output so the handle
+	// hint is never cut.
+	if handle != "" {
+		fmt.Fprintf(&sb, "[full output compressed; recover with CCRRetrieve handle=%q]\n", handle)
 	}
 
 	if runErr != nil {
@@ -264,16 +256,41 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if sb.Len() == 0 {
 		return tool.TextResult("(no output)"), nil
 	}
+	return tool.TextResult(strings.TrimRight(sb.String(), "\n")), nil
+}
 
-	// Step 3: truncate-to-disk for large outputs. HasTask=true so the hint
-	// tells the model it can delegate large file inspection to a Task sub-agent.
-	finalOutput := strings.TrimRight(sb.String(), "\n")
-	maxLines, maxBytes := truncate.Limits()
-	tr, _ := truncate.Apply(finalOutput, truncate.Options{
-		MaxLines:  maxLines,
-		MaxBytes:  maxBytes,
-		Direction: "tail", // bash output: most recent (tail) is usually most relevant
-		HasTask:   true,
-	})
-	return tool.TextResult(tr.Content), nil
+// outputBudget returns how many bytes and lines of output the model sees:
+// MaxOutputBytes, tightened by the user's tool-output limits.
+func outputBudget() (maxBytes, maxLines int) {
+	lines, size := truncate.Limits()
+	return min(MaxOutputBytes, size), lines
+}
+
+// boundedOutput renders the captured output within the budget, saving the
+// full output to a spill file when it does not fit.
+func boundedOutput(c *outputCapture, maxBytes, maxLines int) string {
+	if raw, ok := c.inMemory(); ok {
+		return fitOutput(strings.TrimRight(raw, "\n"), maxBytes, maxLines)
+	}
+	return c.excerpt(maxBytes, maxLines, true)
+}
+
+// killedReport describes a command killed for passing the disk cap: both
+// ends of what it wrote first, and where all of that was saved.
+func killedReport(c *outputCapture, maxBytes, maxLines int) string {
+	path, err := c.spillPath()
+	partial := "partial output: " + path
+	if path == "" {
+		partial = fmt.Sprintf("partial output unavailable: %v", err)
+	}
+	return fmt.Sprintf("%s\n[killed: output exceeded %s; %s]",
+		c.excerpt(maxBytes, maxLines, false), formatSize(c.diskCap), partial)
+}
+
+// formatSize renders a byte count in whole megabytes when it is one.
+func formatSize(n int64) string {
+	if n >= 1<<20 && n%(1<<20) == 0 {
+		return fmt.Sprintf("%d MB", n>>20)
+	}
+	return fmt.Sprintf("%d bytes", n)
 }

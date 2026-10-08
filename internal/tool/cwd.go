@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type cwdKey struct{}
@@ -37,14 +38,49 @@ func Cwd(ctx context.Context) (string, error) {
 	return os.Getwd()
 }
 
-// ResolvePath makes p absolute against the effective working directory.
-// Absolute paths are returned unchanged.
+// ResolvePath makes p absolute against the effective working directory and
+// cleans it. Tools must use the returned path for every filesystem call: the
+// permission gate checks the lexically cleaned path, so a raw "link/../x"
+// would be resolved by the OS through the symlink to a different file.
 func ResolvePath(ctx context.Context, p string) string {
-	if p == "" || filepath.IsAbs(p) {
+	if p == "" || hasURLScheme(p) {
 		return p
 	}
-	if dir := CwdFromContext(ctx); dir != "" {
-		return filepath.Join(dir, p)
+	if !filepath.IsAbs(p) {
+		if dir := CwdFromContext(ctx); dir != "" {
+			p = filepath.Join(dir, p)
+		}
 	}
-	return p
+	return filepath.Clean(p)
+}
+
+// hasURLScheme reports whether p starts with a scheme of two or more
+// characters followed by ":/" (http://, issue:/...). Such strings are
+// identifiers the Read tool dispatches on, not filesystem paths; a single
+// letter is a Windows drive.
+func hasURLScheme(p string) bool {
+	i := strings.Index(p, ":/")
+	if i < 2 {
+		return false
+	}
+	for _, r := range p[:i] {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+type isolatedCwdKey struct{}
+
+// WithIsolatedCwd returns a context asking the sub-agent runner to start the
+// child in dir (an isolated worktree). agent.RunSubAgentTyped reads it back.
+func WithIsolatedCwd(ctx context.Context, dir string) context.Context {
+	return context.WithValue(ctx, isolatedCwdKey{}, dir)
+}
+
+// IsolatedCwd returns the directory set by WithIsolatedCwd, or "".
+func IsolatedCwd(ctx context.Context) string {
+	dir, _ := ctx.Value(isolatedCwdKey{}).(string)
+	return dir
 }

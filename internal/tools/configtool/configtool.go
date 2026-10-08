@@ -42,7 +42,7 @@ func (t *ConfigTool) InputSchema() json.RawMessage {
 	"properties": {
 		"setting": {
 			"type": "string",
-			"description": "The setting key (e.g. \"model\", \"permissions.defaultMode\")"
+			"description": "The setting key (e.g. \"model\")"
 		},
 		"value": {
 			"description": "The new value. Omit to get current value."
@@ -140,11 +140,7 @@ func (t *ConfigTool) saveSettings(path string, s rawSettings) error {
 
 // Supported settings and their dot-path keys.
 var supportedSettings = map[string]bool{
-	"model":                   true,
-	"permissions.defaultMode": true,
-	"permissions.allow":       true,
-	"permissions.deny":        true,
-	"env":                     true,
+	"model": true,
 }
 
 func getField(s rawSettings, key string) any {
@@ -175,35 +171,15 @@ func getField(s rawSettings, key string) any {
 
 func setField(s rawSettings, key string, value any) error {
 	if !supportedSettings[key] {
-		return fmt.Errorf("unsupported setting %q (supported: model, permissions.defaultMode, permissions.allow, permissions.deny, env)", key)
+		return fmt.Errorf("unsupported setting %q (supported: model)", key)
 	}
 	switch key {
 	case "model":
 		s["model"] = value
-	case "permissions.defaultMode":
-		p := ensureMap(s, "permissions")
-		p["defaultMode"] = value
-	case "permissions.allow":
-		p := ensureMap(s, "permissions")
-		p["allow"] = value
-	case "permissions.deny":
-		p := ensureMap(s, "permissions")
-		p["deny"] = value
-	case "env":
-		s["env"] = value
 	default:
 		s[key] = value
 	}
 	return nil
 }
 
-func ensureMap(s rawSettings, key string) map[string]any {
-	if m, ok := s[key].(map[string]any); ok {
-		return m
-	}
-	m := make(map[string]any)
-	s[key] = m
-	return m
-}
-
-const description = `Read or write conduit settings. Omit value to get current setting. Supported settings: model, permissions.defaultMode, permissions.allow, permissions.deny, env.`
+const description = `Read or write conduit settings. Omit value to get current setting. Supported settings: model. Permission, hook, env and MCP settings cannot be changed through this tool.`

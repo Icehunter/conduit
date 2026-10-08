@@ -8,6 +8,7 @@
 package filereadtool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icehunter/conduit/internal/hashline"
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/truncate"
 )
@@ -34,10 +36,19 @@ const MaxLines = 2000
 const MaxLineLength = 2000
 
 // Tool implements the Read tool.
-type Tool struct{}
+type Tool struct {
+	tracker *readtracker.Tracker
+}
 
 // New returns a fresh FileRead tool.
 func New() *Tool { return &Tool{} }
+
+// WithTracker makes the tool record every local file it reads in rt, which
+// the write tools consult to enforce read-before-write. It returns t.
+func (t *Tool) WithTracker(rt *readtracker.Tracker) *Tool {
+	t.tracker = rt
+	return t
+}
 
 // Name implements tool.Tool.
 func (*Tool) Name() string { return "Read" }
@@ -75,6 +86,9 @@ func (*Tool) InputSchema() json.RawMessage {
 		"required": ["file_path"]
 	}`)
 }
+
+// ResetReadState forgets every file read so far (see agent.readStateResetter).
+func (t *Tool) ResetReadState() { t.tracker.Reset() }
 
 // IsReadOnly: reading a file is always read-only.
 func (*Tool) IsReadOnly(json.RawMessage) bool { return true }
@@ -128,7 +142,19 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if slices.Contains(sniff, byte(0x00)) {
 		return tool.ErrorResult("file appears to be binary (contains null bytes)"), nil
 	}
-	if n > 0 && !utf8.Valid(sniff) {
+	// The sniff may end mid-rune; drop an incomplete trailing rune (only when
+	// the file is longer than the sniff) before validating.
+	checked := sniff
+	if n == len(sniff) {
+		checked = trimIncompleteRune(sniff)
+	}
+	if n > 0 && !utf8.Valid(checked) {
+		// Remember the bytes anyway: the model cannot view them, but Write may
+		// still replace a text file in another encoding (Latin-1) it was told
+		// about. Only Write-overwrite benefits; Edit needs text it can quote.
+		if all, err := io.ReadAll(io.MultiReader(bytes.NewReader(sniff), f)); err == nil {
+			t.tracker.RecordRead(in.FilePath, all, nil)
+		}
 		return tool.ErrorResult("file appears to be binary (invalid UTF-8)"), nil
 	}
 
@@ -160,12 +186,14 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		allAnchors = hashline.Compute(fullContent)
 	}
 
-	rawLines := strings.Split(strings.ReplaceAll(string(fullContent), "\r\n", "\n"), "\n")
+	display := strings.TrimPrefix(string(fullContent), "\ufeff") // BOM is not content
+	rawLines := strings.Split(strings.ReplaceAll(display, "\r\n", "\n"), "\n")
 	// Drop trailing empty element from a trailing newline.
 	if len(rawLines) > 0 && rawLines[len(rawLines)-1] == "" {
 		rawLines = rawLines[:len(rawLines)-1]
 	}
 
+	var shown []string
 	var sb strings.Builder
 	lineNum := 0
 	linesEmitted := 0
@@ -183,6 +211,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			line = line[:MaxLineLength] + fmt.Sprintf("... [%d chars truncated]", truncated)
 		}
 		if in.Anchors && lineNum-1 < len(allAnchors) {
+			shown = append(shown, allAnchors[lineNum-1].Hash)
 			fmt.Fprintf(&sb, "%s\t%6d\t%s\n", allAnchors[lineNum-1].Hash, lineNum, line)
 		} else if in.Anchors {
 			fmt.Fprintf(&sb, "-------\t%6d\t%s\n", lineNum, line)
@@ -191,6 +220,8 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		}
 		linesEmitted++
 	}
+
+	t.tracker.RecordRead(in.FilePath, fullContent, shown)
 
 	text := strings.TrimRight(sb.String(), "\n")
 
@@ -204,4 +235,19 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		HasTask:   false,  // TODO: wire up Task tool availability
 	})
 	return tool.TextResult(tr.Content), nil
+}
+
+// trimIncompleteRune drops a trailing partial UTF-8 sequence from b, so a
+// buffer cut in the middle of a multi-byte rune still validates.
+func trimIncompleteRune(b []byte) []byte {
+	for i := 1; i <= utf8.UTFMax-1 && i <= len(b); i++ {
+		c := b[len(b)-i]
+		if utf8.RuneStart(c) {
+			if c >= utf8.RuneSelf && !utf8.FullRune(b[len(b)-i:]) {
+				return b[:len(b)-i]
+			}
+			return b
+		}
+	}
+	return b
 }

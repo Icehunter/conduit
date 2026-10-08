@@ -120,7 +120,7 @@ version-major:
 	git push && git push origin "v$$NEW"; \
 	echo "Bumped $$V -> $$NEW (tagged and pushed v$$NEW)"
 
-# Provider-account wire checks for Copilot and ChatGPT/Codex.
+# Provider-account wire checks for Copilot, ChatGPT/Codex and Grok/xAI.
 wire:
 	scripts/provider-wire-check/check-all.sh
 
@@ -161,7 +161,7 @@ help:
 	@echo "  version-patch    Bump patch (1.0.0 → 1.0.1), tag, push → triggers release"
 	@echo "  version-minor    Bump minor (1.0.0 → 1.1.0), tag, push → triggers release"
 	@echo "  version-major    Bump major (1.0.0 → 2.0.0), tag, push → triggers release"
-	@echo "  wire             Check Copilot and ChatGPT/Codex provider-account wire contracts"
+	@echo "  wire             Check Copilot, ChatGPT/Codex and Grok/xAI provider-account wire contracts"
 	@echo "  wire-strict      Same as wire, but require local reference checkouts"
 	@echo "  wire-claude      Decode+extract+diff Claude wire fingerprint"
 	@echo "  wire-claude-fast Skip Claude decode phase; require existing decoded-<v>/"

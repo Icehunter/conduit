@@ -64,7 +64,7 @@ func TestGeminiThoughtSignatureRoundTrip(t *testing.T) {
 		},
 	}
 
-	msgs := openAIMessagesFromMessage(msg)
+	msgs := openAIMessagesFromMessage(msg, reasoningPolicy{}, Config{}, "m")
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
@@ -111,7 +111,7 @@ func TestGeminiThoughtSignatureNoExtraContent(t *testing.T) {
 		},
 	}
 
-	msgs := openAIMessagesFromMessage(msg)
+	msgs := openAIMessagesFromMessage(msg, reasoningPolicy{}, Config{}, "m")
 	if len(msgs[0].ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call")
 	}
@@ -144,7 +144,7 @@ func TestGeminiThoughtSignatureStreamingCapture(t *testing.T) {
 	body := io.NopCloser(strings.NewReader(sseInput))
 	reader, writer := io.Pipe()
 
-	go convertOpenAIStream(body, writer, "gemini-2.5-flash")
+	go convertOpenAIStream(body, writer, openAIStreamConfig{model: "gemini-2.5-flash"})
 
 	// Collect all synthetic Anthropic SSE events.
 	events := collectSSEEvents(t, reader)

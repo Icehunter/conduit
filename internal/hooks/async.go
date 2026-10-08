@@ -18,6 +18,10 @@ type AsyncGroup struct {
 	// can execute a sub-agent prompt. When non-nil, prompt/agent hooks invoke
 	// it to evaluate hook prompts via the LLM.
 	SubAgentRunner func(ctx context.Context, prompt string) (string, error)
+	// AgentHookRunner, when non-nil, runs agent hooks instead of
+	// SubAgentRunner. The loop injects one whose requests are classed as
+	// sub-agent work (CC's hook_agent), while prompt hooks stay auxiliary.
+	AgentHookRunner func(ctx context.Context, prompt string) (string, error)
 }
 
 // NewAsyncGroup creates an AsyncGroup whose goroutines run under a child of

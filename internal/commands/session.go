@@ -627,14 +627,8 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 				if state.ExtractMemory == nil {
 					return Result{Type: "text", Text: "Memory extraction not available (no agent loop)."}
 				}
-				summary, err := state.ExtractMemory()
-				if err != nil {
-					return Result{Type: "error", Text: fmt.Sprintf("extract: %v", err)}
-				}
-				if summary == "" {
-					summary = "Memory extraction complete."
-				}
-				return Result{Type: "text", Text: summary}
+				// The TUI runs the extraction off the event loop.
+				return Result{Type: "memory-extract"}
 
 			default:
 				return Result{Type: "error", Text: "Usage: /memory [list|show|scan|extract]"}
@@ -1002,10 +996,8 @@ func RegisterSessionCommands(r *Registry, state *SessionState) {
 			if state.CopyLast == nil {
 				return Result{Type: "text", Text: "Copy not available in this session."}
 			}
-			if msg := state.CopyLast(); msg != "" {
-				return Result{Type: "error", Text: msg}
-			}
-			return Result{Type: "flash", Text: "✓ Copied to clipboard"}
+			// The TUI copies the live last response and reports the outcome.
+			return Result{Type: "copy-last"}
 		},
 	})
 }

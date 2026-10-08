@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +18,7 @@ import (
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/provider/copilot"
+	"github.com/icehunter/conduit/internal/provider/xai"
 	"github.com/icehunter/conduit/internal/providerauth"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -47,6 +49,7 @@ var knownProviders = []knownProviderEntry{
 	{id: "openrouter", displayName: "OpenRouter", baseURL: "https://openrouter.ai/api/v1/", catalogSlug: "openrouter"},
 	{id: "github-copilot", displayName: "GitHub Copilot", isOAuth: true, oauthKind: "copilot"},
 	{id: "chatgpt-codex", displayName: "ChatGPT / Codex", isOAuth: true, oauthKind: "codex"},
+	{id: xai.ProviderID, displayName: xai.DisplayName, isOAuth: true, oauthKind: "grok"},
 }
 
 type providerFormState struct {
@@ -65,6 +68,32 @@ type providerFormState struct {
 	oauthInfo     *copilot.DeviceCodeResponse
 	oauthProvider bool
 	oauthKind     string
+	oauthURL      string // authorization URL shown while a Grok sign-in waits
+	oauthID       int64  // tags the in-flight Codex/Grok sign-in; stale results are dropped
+	oauthCancel   func() // aborts the in-flight Codex/Grok sign-in
+}
+
+var oauthSeq atomic.Int64
+
+// beginOAuth tags a new sign-in on f, aborting any earlier one, and returns
+// its id.
+func (f *providerFormState) beginOAuth() int64 {
+	f.cancelOAuth()
+	f.oauthID = oauthSeq.Add(1)
+	return f.oauthID
+}
+
+// cancelOAuth aborts the sign-in in flight and invalidates its results. It is
+// safe on a nil form.
+func (f *providerFormState) cancelOAuth() {
+	if f == nil {
+		return
+	}
+	if f.oauthCancel != nil {
+		f.oauthCancel()
+		f.oauthCancel = nil
+	}
+	f.oauthID = 0
 }
 
 type copilotOAuthStartedMsg struct {
@@ -79,7 +108,23 @@ type copilotOAuthCompletedMsg struct {
 }
 
 type codexOAuthCompletedMsg struct {
+	id     int64
 	models []string
+	err    error
+}
+
+// grokOAuthStartedMsg reports the Grok loopback listener is up; the browser is
+// opened by the handler so the URL can be shown if that fails.
+type grokOAuthStartedMsg struct {
+	id   int64
+	flow *xai.BrowserFlow
+	auth *xai.Authorizer
+	err  error
+}
+
+type grokOAuthCompletedMsg struct {
+	id     int64
+	models []catalog.ModelInfo
 	err    error
 }
 
@@ -105,6 +150,7 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 		f := p.providerForm
 		switch key {
 		case "esc":
+			f.cancelOAuth()
 			p.providerForm = nil
 			f.err = ""
 		case "up", "left", "shift+tab":
@@ -139,7 +185,14 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 				f.oauthStarting = true
 				f.err = ""
 				if f.oauthKind == "codex" {
-					return doneWithCmd(codexStartOAuthCmd(f.credential, m.catalogData))
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					id := f.beginOAuth()
+					f.oauthCancel = cancel
+					return doneWithCmd(codexStartOAuthCmd(ctx, id, f.credential, m.catalogData))
+				}
+				if f.oauthKind == "grok" {
+					f.oauthURL = ""
+					return doneWithCmd(grokStartOAuthCmd(f.beginOAuth(), f.credential))
 				}
 				return doneWithCmd(copilotStartOAuthCmd(f.credential))
 			} else if f.oauthProvider && f.step == providerFormStepCredential && f.editKey != "" {
@@ -149,6 +202,14 @@ func (m Model) handleProvidersTabKey(key string) (Model, tea.Cmd, bool) {
 				}
 				m = m.commitProviderFormIfComplete(f)
 			} else if f.step == providerFormStepOAuth {
+				if f.oauthKind == "grok" {
+					if err := m.completeGrokOAuthForm(f, nil); err != nil {
+						f.err = err.Error()
+						return done()
+					}
+					m = m.commitProviderFormIfComplete(f)
+					return done()
+				}
 				if f.oauthKind == "codex" {
 					if err := m.completeCodexOAuthForm(f, nil); err != nil {
 						f.err = err.Error()
@@ -276,6 +337,10 @@ func formForProvider(provider settings.ActiveProviderSettings, key string, token
 		f.oauthProvider = true
 		f.oauthKind = "codex"
 		f.baseURL = codex.CodexBaseURL
+	} else if isGrokProvider(provider) {
+		f.oauthProvider = true
+		f.oauthKind = "grok"
+		f.baseURL = xai.BaseURL
 	}
 	if tokenOnly {
 		f.step = providerFormStepAPIKey
@@ -299,6 +364,9 @@ func (m Model) applyProviderPicker(f *providerFormState) {
 		if f.oauthKind == "codex" {
 			f.credential = m.nextCodexCredentialAlias()
 			f.baseURL = codex.CodexBaseURL
+		} else if f.oauthKind == "grok" {
+			f.credential = m.nextGrokCredentialAlias()
+			f.baseURL = xai.BaseURL
 		} else {
 			f.credential = m.nextCopilotCredentialAlias()
 			f.baseURL = copilot.ChatBaseURL
@@ -324,6 +392,10 @@ func (m Model) applyProviderPicker(f *providerFormState) {
 
 func (m Model) nextCodexCredentialAlias() string {
 	return m.nextOAuthCredentialAlias(codex.ProviderID, isCodexProvider)
+}
+
+func (m Model) nextGrokCredentialAlias() string {
+	return m.nextOAuthCredentialAlias(xai.ProviderID, isGrokProvider)
 }
 
 func (m Model) nextCopilotCredentialAlias() string {
@@ -464,6 +536,15 @@ func (m Model) commitProviderFormIfComplete(f *providerFormState) Model {
 		if f.oauthKind == "codex" {
 			baseURL = codex.CodexBaseURL
 		}
+		if f.oauthKind == "grok" {
+			baseURL = xai.BaseURL
+			// The alias prefix is how a Grok account is recognised.
+			if !strings.HasPrefix(f.credential, xai.ProviderID) {
+				f.step = providerFormStepCredential
+				f.err = "Grok account alias must start with " + xai.ProviderID
+				return m
+			}
+		}
 		if err := m.renameProviderGroup(f.editKey, f.credential, baseURL, ""); err != nil {
 			f.step = providerFormStepCredential
 			f.err = err.Error()
@@ -563,6 +644,9 @@ func (m *Model) renameProviderGroup(editKey, credential, baseURL, apiKey string)
 	} else if isCodexProvider(row.provider) {
 		baseURL = codex.CodexBaseURL
 		oldBaseURL = codex.CodexBaseURL
+	} else if isGrokProvider(row.provider) {
+		baseURL = xai.BaseURL
+		oldBaseURL = xai.BaseURL
 	}
 
 	updated := map[string]string{}
@@ -727,16 +811,13 @@ func copilotModelIDs(models []catalog.ModelInfo) []string {
 
 // codexCatalogModelIDs filters the live OpenRouter-sourced catalog down to
 // the OpenAI models actually reachable through the ChatGPT-OAuth Codex
-// backend: the gpt-5.x/gpt-6.x chat lineage, excluding batch, audio, image,
-// gpt-oss, and the ambiguous "chat-latest" alias (o-series reasoning models
-// and legacy gpt-3.5/gpt-4 are dropped implicitly — they don't match the
-// gpt-5/gpt-6 prefix). Returns nil if cat is nil or nothing matches, so
-// callers can fall back to codex.FallbackModelIDs().
+// backend (codex.IsAgenticModel: the gpt-5.x/gpt-6.x lineage without -pro and
+// non-chat models). Returns nil if cat is nil or nothing matches, so callers
+// can fall back to codex.FallbackModelIDs().
 func codexCatalogModelIDs(cat *catalog.Catalog) []string {
 	if cat == nil {
 		return nil
 	}
-	excluded := []string{"batch", "image", "audio", "oss", "chat-latest"}
 	modelIDs := make([]string, 0, len(cat.Models))
 	seen := map[string]bool{}
 	for _, model := range cat.Models {
@@ -747,17 +828,7 @@ func codexCatalogModelIDs(cat *catalog.Catalog) []string {
 		if id == "" || seen[id] {
 			continue
 		}
-		if !strings.HasPrefix(id, "gpt-5") && !strings.HasPrefix(id, "gpt-6") {
-			continue
-		}
-		skip := false
-		for _, bad := range excluded {
-			if strings.Contains(id, bad) {
-				skip = true
-				break
-			}
-		}
-		if skip {
+		if !codex.IsAgenticModel(id) {
 			continue
 		}
 		seen[id] = true
@@ -770,20 +841,153 @@ func codexCatalogModelIDs(cat *catalog.Catalog) []string {
 	return modelIDs
 }
 
-func codexStartOAuthCmd(credential string, cat *catalog.Catalog) tea.Cmd {
+func codexStartOAuthCmd(ctx context.Context, id int64, credential string, cat *catalog.Catalog) tea.Cmd {
 	return func() tea.Msg {
 		auth := codex.NewAuthorizerForCredential(secure.NewDefault(), credential)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
 		if _, err := auth.AuthorizeBrowser(ctx); err != nil {
-			return codexOAuthCompletedMsg{err: err}
+			return codexOAuthCompletedMsg{id: id, err: err}
 		}
-		models := codexCatalogModelIDs(cat)
+		// The plan's own model list, then the shared catalog, then the static list.
+		listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer listCancel()
+		models, err := auth.LiveModelIDs(listCtx)
+		if err != nil {
+			models = codexCatalogModelIDs(cat)
+		}
 		if len(models) == 0 {
 			models = codex.FallbackModelIDs()
 		}
-		return codexOAuthCompletedMsg{models: models}
+		return codexOAuthCompletedMsg{id: id, models: models}
 	}
+}
+
+// grokStartOAuthCmd binds the loopback listener and builds the authorization
+// URL; grokWaitOAuthCmd finishes the sign-in after the browser is opened.
+func grokStartOAuthCmd(id int64, credential string) tea.Cmd {
+	return func() tea.Msg {
+		flow, err := xai.StartBrowserFlow()
+		if err != nil {
+			return grokOAuthStartedMsg{id: id, err: err}
+		}
+		return grokOAuthStartedMsg{id: id, flow: flow, auth: xai.NewAuthorizerForCredential(secure.NewDefault(), credential)}
+	}
+}
+
+func grokWaitOAuthCmd(ctx context.Context, id int64, flow *xai.BrowserFlow, auth *xai.Authorizer) tea.Cmd {
+	return func() tea.Msg {
+		defer flow.Close()
+		if _, err := auth.FinishBrowserFlow(ctx, flow); err != nil {
+			return grokOAuthCompletedMsg{id: id, err: err}
+		}
+		// The plan's own model list, then the static one.
+		listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer listCancel()
+		models, err := auth.LiveModels(listCtx)
+		if err != nil || len(models) == 0 {
+			models = xai.FallbackModels()
+		}
+		return grokOAuthCompletedMsg{id: id, models: models}
+	}
+}
+
+func (m Model) handleGrokOAuthStarted(msg grokOAuthStartedMsg) (Model, tea.Cmd) {
+	var f *providerFormState
+	if m.settingsPanel != nil {
+		f = m.settingsPanel.providerForm
+	}
+	// A form that was dismissed or restarted owns no listener: close it.
+	if f == nil || f.oauthID != msg.id || f.step != providerFormStepOAuth || f.oauthKind != "grok" {
+		if msg.flow != nil {
+			msg.flow.Close()
+		}
+		return m, nil
+	}
+	f.oauthStarting = false
+	if msg.err != nil {
+		f.err = msg.err.Error()
+		m.refreshViewport()
+		return m, nil
+	}
+	f.oauthURL = msg.flow.URL()
+	f.err = ""
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	f.oauthCancel = func() { cancel(); msg.flow.Close() }
+	m.refreshViewport()
+	// A failed open is not fatal: the URL is on screen to open by hand.
+	return m, tea.Batch(
+		func() tea.Msg { _ = xai.OpenBrowser(msg.flow.URL()); return nil },
+		grokWaitOAuthCmd(ctx, msg.id, msg.flow, msg.auth),
+	)
+}
+
+func (m Model) handleGrokOAuthCompleted(msg grokOAuthCompletedMsg) (Model, tea.Cmd) {
+	if m.settingsPanel == nil || m.settingsPanel.providerForm == nil {
+		return m, nil
+	}
+	f := m.settingsPanel.providerForm
+	if f.oauthID != msg.id || f.step != providerFormStepOAuth || f.oauthKind != "grok" {
+		return m, nil
+	}
+	f.oauthStarting = false
+	if msg.err != nil {
+		f.err = gracefulGrokError(msg.err)
+		m.refreshViewport()
+		return m, nil
+	}
+	if err := m.completeGrokOAuthForm(f, msg.models); err != nil {
+		f.err = err.Error()
+		m.refreshViewport()
+		return m, nil
+	}
+	m.settingsPanel.providerForm = nil
+	m.settingsPanel.providerDetailKey = ""
+	if len(msg.models) > 0 {
+		m.settingsPanel.providerSel = providerIndex(m.providerRows(), settings.ProviderKey(settings.ActiveProviderSettings{
+			Kind:       settings.ProviderKindOpenAICompatible,
+			Credential: f.credential,
+			BaseURL:    xai.BaseURL,
+			Model:      msg.models[0].ID,
+		}))
+	}
+	m.refreshModelCommandProviders()
+	m.flashMsg = fmt.Sprintf("%s connected — %d models available", xai.DisplayName, len(msg.models))
+	m.refreshViewport()
+	return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+}
+
+func (m Model) completeGrokOAuthForm(f *providerFormState, models []catalog.ModelInfo) error {
+	if f == nil {
+		return fmt.Errorf("grok: provider form missing")
+	}
+	if f.oauthStarting {
+		return fmt.Errorf("grok: authorization is still running")
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("grok: no models available")
+	}
+	if strings.TrimSpace(f.credential) == "" {
+		f.credential = xai.ProviderID
+	}
+	f.baseURL = xai.BaseURL
+	f.apiKey = ""
+	f.step = providerFormStepAPIKey + 1
+	if m.providers == nil {
+		m.providers = map[string]settings.ActiveProviderSettings{}
+	}
+	for _, model := range models {
+		provider := settings.ActiveProviderSettings{
+			Kind:          settings.ProviderKindOpenAICompatible,
+			Credential:    f.credential,
+			BaseURL:       xai.BaseURL,
+			Model:         model.ID,
+			ContextWindow: xai.ContextWindowForModel(model.ID, model.ContextWindow),
+		}
+		if err := settings.SaveProviderEntry(provider); err != nil {
+			return err
+		}
+		m.providers[settings.ProviderKey(provider)] = provider
+	}
+	return nil
 }
 
 func (m Model) handleCopilotOAuthStarted(msg copilotOAuthStartedMsg) (Model, tea.Cmd) {
@@ -849,7 +1053,7 @@ func (m Model) handleCodexOAuthCompleted(msg codexOAuthCompletedMsg) (Model, tea
 		return m, nil
 	}
 	f := m.settingsPanel.providerForm
-	if f.step != providerFormStepOAuth || f.oauthKind != "codex" {
+	if f.oauthID != msg.id || f.step != providerFormStepOAuth || f.oauthKind != "codex" {
 		return m, nil
 	}
 	f.oauthStarting = false
@@ -1051,6 +1255,13 @@ func gracefulCopilotError(err error) string {
 	return err.Error()
 }
 
+func gracefulGrokError(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return xai.DisplayName + " authorization timed out. Press Esc and try again."
+	}
+	return err.Error()
+}
+
 func gracefulCodexError(err error) string {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "ChatGPT / Codex authorization timed out. Press Esc and try again."
@@ -1171,13 +1382,21 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 		name := "GitHub Copilot"
 		if f.oauthKind == "codex" {
 			name = "ChatGPT / Codex"
+		} else if f.oauthKind == "grok" {
+			name = xai.DisplayName
 		}
 		sb.WriteString(accent.Render("  "+name+" Authorization") + "\n\n")
 		if f.oauthStarting {
 			sb.WriteString(dim.Render("  Preparing " + name + " connection..."))
 			return
 		}
-		if f.oauthKind == "codex" {
+		if f.oauthKind == "grok" {
+			sb.WriteString(dim.Render("  Complete authorization in your browser.") + "\n")
+			if f.oauthURL != "" {
+				sb.WriteString(dim.Render("  If it did not open, visit:") + "\n  " + f.oauthURL + "\n")
+			}
+			sb.WriteString(dim.Render("  Waiting for authorization...") + "\n")
+		} else if f.oauthKind == "codex" {
 			sb.WriteString(dim.Render("  Complete authorization in your browser.") + "\n")
 			sb.WriteString(dim.Render("  Waiting for authorization...") + "\n")
 		} else if f.oauthInfo != nil {
@@ -1234,6 +1453,8 @@ func (m Model) renderProviderForm(sb *strings.Builder, f *providerFormState) {
 		name := "GitHub Copilot"
 		if f.oauthKind == "codex" {
 			name = "ChatGPT / Codex"
+		} else if f.oauthKind == "grok" {
+			name = xai.DisplayName
 		}
 		title := "Add " + name + " Account"
 		footer := "  Enter connect · Esc cancel"
@@ -1387,6 +1608,8 @@ func providerRowLabel(provider settings.ActiveProviderSettings) string {
 			label = "GitHub Copilot"
 		} else if isCodexProvider(provider) {
 			label = "ChatGPT / Codex"
+		} else if isGrokProvider(provider) {
+			label = xai.DisplayName
 		} else if strings.EqualFold(strings.TrimSpace(provider.Credential), "gemini") || strings.Contains(strings.ToLower(provider.BaseURL), "generativelanguage.googleapis.com") {
 			label = "Gemini"
 		}
@@ -1417,7 +1640,7 @@ func providerDetailActionLabels() []string {
 }
 
 func providerDetailActionsFor(provider settings.ActiveProviderSettings) []string {
-	if isCopilotProvider(provider) || isCodexProvider(provider) {
+	if isCopilotProvider(provider) || isCodexProvider(provider) || isGrokProvider(provider) {
 		return []string{"edit", "delete", "back"}
 	}
 	return providerDetailActions()
@@ -1429,6 +1652,9 @@ func providerDetailActionLabelsFor(provider settings.ActiveProviderSettings) []s
 	}
 	if isCodexProvider(provider) {
 		return []string{"Rename ChatGPT / Codex account", "Disconnect ChatGPT / Codex", "Back"}
+	}
+	if isGrokProvider(provider) {
+		return []string{"Rename " + xai.DisplayName + " account", "Disconnect " + xai.DisplayName, "Back"}
 	}
 	return providerDetailActionLabels()
 }
@@ -1499,4 +1725,10 @@ func isCopilotProvider(provider settings.ActiveProviderSettings) bool {
 
 func isCodexProvider(provider settings.ActiveProviderSettings) bool {
 	return strings.HasPrefix(provider.Credential, codex.ProviderID) || strings.Contains(strings.ToLower(provider.BaseURL), "chatgpt.com/backend-api/codex")
+}
+
+// isGrokProvider reports a Grok / xAI OAuth account, recognised by its
+// credential alias prefix.
+func isGrokProvider(provider settings.ActiveProviderSettings) bool {
+	return strings.HasPrefix(provider.Credential, xai.ProviderID)
 }

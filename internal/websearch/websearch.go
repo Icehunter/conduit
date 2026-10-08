@@ -28,6 +28,21 @@ type Query struct {
 	MaxResults int
 }
 
+// Availabler is optionally implemented by a provider that can tell, without a
+// network call, whether it is configured (a key or credential is present).
+// Providers that do not implement it are treated as available.
+type Availabler interface {
+	Available() bool
+}
+
+// Available reports whether p is configured and usable.
+func Available(p SearchProvider) bool {
+	if a, ok := p.(Availabler); ok {
+		return a.Available()
+	}
+	return true
+}
+
 // SearchProvider is implemented by any search backend that can be plugged
 // into the WebSearch tool.
 type SearchProvider interface {

@@ -1,0 +1,18 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4-mini"}}
+
+event: response.web_search_call.in_progress
+data: {"type":"response.web_search_call.in_progress","item_id":"ws_1"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","sources":[{"url":"https://go.dev/blog?utm_source=openai","title":"Go Blog"},{"url":"https://example.com/only-in-action"}]}}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"Go 1.26 is out."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Go 1.26 is out. See the blog.","annotations":[{"type":"url_citation","url":"https://go.dev/blog?utm_source=openai","title":"The Go Blog","start_index":14,"end_index":29},{"type":"url_citation","url":"https://news.example.org/go","title":"News","start_index":0,"end_index":5}]}]}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":5}}}
+

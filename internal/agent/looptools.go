@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/shellsafe"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/tools/skillmanagetool"
 )
 
 // toolTask holds the pre-checked state for one tool ready to execute.
@@ -30,6 +34,9 @@ type toolResult struct {
 	text     string
 	isError  bool
 	stopTurn bool
+	// elapsed is the tool's Execute wall time; zero for denied or missing
+	// tools, which never ran.
+	elapsed time.Duration
 }
 
 // executeTools runs all tool_use blocks in the assistant message sequentially
@@ -40,14 +47,26 @@ type toolResult struct {
 //  2. PreToolUse hooks (if configured).
 //  3. Tool execution.
 //  4. PostToolUse hooks (if configured).
-func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, handler func(LoopEvent)) ([]api.ContentBlock, bool, error) { //nolint:unparam
+//
+// invalid maps the ids of tool_use blocks whose arguments did not parse to the
+// error text for their tool_result. Those calls are answered without running
+// the tool, a permission prompt, or PreToolUse hooks (PostToolUse still fires
+// on the error result), so the model can re-issue them.
+func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBlock, invalid map[string]string, handler func(LoopEvent)) ([]api.ContentBlock, []api.ToolDuration, bool, error) { //nolint:unparam
 	// Tools resolve relative paths and run shell commands under the loop's
 	// working directory so a sub-agent in a worktree stays in its worktree.
 	l.mu.RLock()
 	if l.cfg.Cwd != "" {
 		ctx = tool.WithCwd(ctx, l.cfg.Cwd)
 	}
+	loopCwd := l.cfg.Cwd
+	// The live session id, so tools never rely on one captured at startup.
+	ctx = tool.WithSessionID(ctx, l.cfg.SessionID)
 	l.mu.RUnlock()
+	// A sub-agent's tools keep per-agent state (the REPL's interpreter) apart
+	// from the parent's.
+	ctx = tool.WithScope(ctx, l.wireAgentID())
+	redact := l.redactEnabled()
 	// Phase 1: collect tool_use blocks and run interactive checks serially
 	// (hooks + permission gate may prompt the user — must be sequential).
 	// server_tool_use blocks are intentionally skipped — they are executed
@@ -61,9 +80,16 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if rawInput == nil {
 			rawInput = json.RawMessage("{}")
 		}
-		permInput := toolPermissionInput(block.Name, block.Input)
+		permInput := toolPermissionInput(block.Name, block.Input, loopCwd)
 
 		task := toolTask{block: block, rawInput: rawInput}
+
+		if msg, bad := invalid[block.ID]; bad {
+			task.denied = true
+			task.denyMsg = msg
+			tasks = append(tasks, task)
+			continue
+		}
 
 		// Resolve the tool early so we can check IsReadOnly before the permission gate.
 		t, ok := l.reg.Lookup(block.Name)
@@ -75,8 +101,23 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		}
 		task.tool = t
 
+		// setInput swaps in a rewritten input: the model's arguments after
+		// coercion, or a PreToolUse hook's updatedInput. The assistant message
+		// in the history keeps what the model emitted.
+		setInput := func(in map[string]any) {
+			block.Input = in
+			rawInput, _ = json.Marshal(in)
+			permInput = toolPermissionInput(block.Name, in, loopCwd)
+			task.block, task.rawInput = block, rawInput
+		}
+		// Repair stringly-typed arguments ("42", "true", JSON in a string)
+		// against the tool's schema before anything inspects them.
+		if fixed, changed := tool.CoerceInput(t.InputSchema(), block.Input); changed {
+			setInput(fixed)
+		}
+
 		// --- PreToolUse hooks ---
-		hookApproved := false
+		hookApproved, hookAsk := false, false
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PreToolUse) > 0 {
 			inputMap := block.Input
 			if inputMap == nil {
@@ -94,7 +135,26 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				tasks = append(tasks, task)
 				continue
 			}
-			hookApproved = r.Approved
+			if r.UpdatedInput != nil {
+				fixed, _ := tool.CoerceInput(t.InputSchema(), r.UpdatedInput)
+				if missing := missingRequired(t.InputSchema(), fixed); len(missing) > 0 {
+					task.denied = true
+					task.denyMsg = invalidUpdatedInputMsg(block.Name, missing)
+					tasks = append(tasks, task)
+					continue
+				}
+				setInput(fixed)
+			}
+			// An "ask" outranks an "allow" from another hook.
+			hookAsk = r.Ask
+			hookApproved = r.Approved && !r.Ask
+		}
+
+		if redact && carriesUnknownMask(block.Name, block.Input, l.cfg.Cwd) {
+			task.denied = true
+			task.denyMsg = maskedEditMsg
+			tasks = append(tasks, task)
+			continue
 		}
 
 		// --- Plan-mode file-dump block ---
@@ -114,9 +174,13 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		// --- Permission gate check ---
 		// Read-only tools are auto-approved in default and plan modes — they cannot
 		// modify state, so prompting for every FileRead/Glob/Grep call is noise.
-		readOnly := t.IsReadOnly(rawInput)
+		// A hook "ask" prompts even for a call the rules would let through.
+		readOnly := t.IsReadOnly(rawInput) && !hookAsk
 		if l.cfg.Gate != nil && !readOnly {
 			decision := l.cfg.Gate.Check(block.Name, permInput)
+			if hookAsk && decision == permissions.DecisionAllow {
+				decision = permissions.DecisionAsk
+			}
 			switch decision {
 			case permissions.DecisionDeny:
 				task.denied = true
@@ -128,7 +192,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				askPermission := l.cfg.AskPermission
 				askSubAgent := l.cfg.AskSubAgentPermission
 				l.mu.RUnlock()
-				if !hookApproved {
+				// A PreToolUse hook approval never skips the prompt for a
+				// protected path (git config, shell rc, settings, ...).
+				protected := l.cfg.Gate.IsProtectedWrite(block.Name, permInput)
+				// ...nor does it skip an explicit ask rule.
+				if !hookApproved || protected || l.cfg.Gate.MatchesAskRule(block.Name, permInput) {
 					switch {
 					case askPermission != nil:
 						// This loop has its own direct interactive prompt (the
@@ -140,7 +208,7 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 							tasks = append(tasks, task)
 							continue
 						}
-						if alwaysAllow {
+						if alwaysAllow && !protected {
 							rule := permissions.SuggestRule(block.Name, permInput)
 							l.cfg.Gate.AllowForSession(rule)
 							if l.cfg.Cwd != "" {
@@ -196,7 +264,7 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 	}
 
 	if len(tasks) == 0 {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 
 	// Phase 2: execute tools. Run concurrency-safe tools in parallel (bounded
@@ -241,9 +309,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			go func() {
 				defer wg.Done()
 				defer func() { <-sem }()
+				start := time.Now()
 				res, err := wi.task.tool.Execute(ctx, wi.task.rawInput)
+				elapsed := time.Since(start)
 				if err != nil {
-					taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true}
+					taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true, elapsed: elapsed}
 					return
 				}
 				if !res.IsError {
@@ -253,7 +323,7 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 				if len(res.Content) > 0 {
 					text = res.Content[0].Text
 				}
-				taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError, stopTurn: res.StopTurn}
+				taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError, stopTurn: res.StopTurn, elapsed: elapsed}
 			}()
 		}
 		wg.Wait()
@@ -265,9 +335,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			taskResults[wi.idx] = toolResult{idx: wi.idx, text: wi.task.denyMsg, isError: true}
 			continue
 		}
+		start := time.Now()
 		res, err := wi.task.tool.Execute(ctx, wi.task.rawInput)
+		elapsed := time.Since(start)
 		if err != nil {
-			taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true}
+			taskResults[wi.idx] = toolResult{idx: wi.idx, text: fmt.Sprintf("tool error: %v", err), isError: true, elapsed: elapsed}
 			continue
 		}
 		if !res.IsError {
@@ -277,8 +349,9 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if len(res.Content) > 0 {
 			text = res.Content[0].Text
 		}
-		taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError, stopTurn: res.StopTurn}
+		taskResults[wi.idx] = toolResult{idx: wi.idx, text: text, isError: res.IsError, stopTurn: res.StopTurn, elapsed: elapsed}
 	}
+	durations := toolDurations(tasks, taskResults)
 
 	// Phase 3: assemble results in original order + run PostToolUse hooks.
 	var results []api.ContentBlock
@@ -294,6 +367,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		if l.cfg.Hooks != nil && len(l.cfg.Hooks.PostToolUse) > 0 {
 			hooks.RunPostToolUse(ctx, l.cfg.Hooks.PostToolUse, l.cfg.SessionID, task.block.Name, tr.text)
 		}
+		// Hooks run locally and see the raw result; the model and the
+		// transcript get it with secrets masked.
+		if redact && !returnsFileBytes(task.block.Name, task.block.Input) {
+			tr.text = redactResult(tr.text)
+		}
 		handler(LoopEvent{
 			Type:       EventToolResult,
 			ToolID:     task.block.ID,
@@ -308,20 +386,24 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			ResultContent: tr.text,
 		})
 	}
-	return results, stopTurn, nil
+	return results, durations, stopTurn, nil
 }
 
 // toolPermissionInput extracts the meaningful string to match against permission
 // rules for a given tool. Rules like Bash(git log *) match the shell command,
 // not the raw JSON input blob.
-func toolPermissionInput(toolName string, input map[string]any) string {
+func toolPermissionInput(toolName string, input map[string]any, cwd string) string {
 	switch toolName {
 	case "Bash":
 		if cmd, ok := input["command"].(string); ok {
 			return cmd
 		}
-	case "Edit":
+	case "Edit", "HashEdit":
 		if p, ok := input["file_path"].(string); ok {
+			return p
+		}
+	case "NotebookEdit":
+		if p, ok := input["notebook_path"].(string); ok {
 			return p
 		}
 	case "Write":
@@ -336,8 +418,56 @@ func toolPermissionInput(toolName string, input map[string]any) string {
 		if u, ok := input["url"].(string); ok {
 			return u
 		}
+	case "AstGrep":
+		return astGrepWriteTarget(input, cwd)
+	case "SkillManage":
+		action, _ := input["action"].(string)
+		name, _ := input["name"].(string)
+		scope, _ := input["scope"].(string)
+		return skillmanagetool.TargetPath(cwdOrProcess(cwd), action, name, scope)
 	}
 	return ""
+}
+
+// cwdOrProcess is the loop's working directory, or the process's when the loop
+// has none configured.
+func cwdOrProcess(cwd string) string {
+	if cwd != "" {
+		return cwd
+	}
+	cwd, _ = os.Getwd()
+	return cwd
+}
+
+// astGrepWriteTarget returns the permission input for an AstGrep call: "" for
+// a pure search, otherwise the path a rewrite touches. A rewrite may name
+// several paths and one string stands for them all, so a protected path wins
+// over the others; with none, the first path (or "." for the default).
+func astGrepWriteTarget(input map[string]any, cwd string) string {
+	if rw, _ := input["rewrite"].(string); rw == "" {
+		return ""
+	}
+	if dry, ok := input["dry_run"].(bool); !ok || dry {
+		return "" // dry_run defaults to true and previews without writing
+	}
+	var paths []string
+	if raw, ok := input["paths"].([]any); ok {
+		for _, p := range raw {
+			if s, ok := p.(string); ok && s != "" {
+				paths = append(paths, s)
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return "."
+	}
+	cwd = cwdOrProcess(cwd)
+	for _, p := range paths {
+		if permissions.IsProtectedPath(cwd, p) {
+			return p
+		}
+	}
+	return paths[0]
 }
 
 // notifyFileAccess fires cfg.OnFileAccess for file-mutating and file-reading tools.
@@ -390,7 +520,28 @@ func toolAPIDescription(t tool.Tool) string {
 // reported back to ToolSearch via SetDeferredCount so it can surface an
 // accurate total_deferred_tools value.
 func buildToolDefs(reg *tool.Registry) []api.ToolDef {
+	return buildToolDefsFor(reg, "")
+}
+
+// weakEditModelRe matches model families that misread the anchored HashEdit
+// grammar (Kimi, MiMo, MiniMax, DeepSeek, StepFun, codex-spark, GLM-5.3
+// flash; the list follows oh-my-pi's edit-mode resolver). "step" is matched
+// only as a model name ("step-3", "stepfun/..."), not inside other words.
+var weakEditModelRe = regexp.MustCompile(`kimi|moonshot|mimo|minimax|deepseek|stepfun|(^|[/:])step[-_]\d|codex-spark|glm-5\.3.*flash`)
+
+// modelPrefersPlainEdit reports whether model should be offered the plain
+// string-replace Edit tool instead of HashEdit.
+func modelPrefersPlainEdit(model string) bool {
+	return weakEditModelRe.MatchString(strings.ToLower(model))
+}
+
+// buildToolDefsFor is buildToolDefs for a specific model: models that handle
+// the HashEdit grammar poorly are not shown it, so they use Edit.
+func buildToolDefsFor(reg *tool.Registry, model string) []api.ToolDef {
 	all := reg.All()
+	if modelPrefersPlainEdit(model) {
+		all = slices.DeleteFunc(all, func(t tool.Tool) bool { return t.Name() == "HashEdit" })
+	}
 	if len(all) == 0 {
 		return nil
 	}
@@ -439,4 +590,26 @@ func buildToolDefs(reg *tool.Registry) []api.ToolDef {
 	}
 
 	return defs
+}
+
+// readStateResetter is implemented by tools that hold what the model has read
+// (the Read tool's tracker behind the read-before-write guard).
+type readStateResetter interface{ ResetReadState() }
+
+// resetReadState forgets the files the model has read. The model can no longer
+// be assumed to remember them once the conversation is replaced (/clear,
+// /rewind, a session switch); compaction deliberately keeps them, since the
+// tracker's content hash already proves the file still matches. The tracker is
+// one instance shared by the main loop, sub-agents and teammates, so a reset
+// also makes live background agents re-Read before their next edit; the guard
+// error tells them to, so it costs a Read but never a bad write.
+func (l *Loop) resetReadState() {
+	if l.reg == nil {
+		return
+	}
+	for _, t := range l.reg.All() {
+		if r, ok := t.(readStateResetter); ok {
+			r.ResetReadState()
+		}
+	}
 }

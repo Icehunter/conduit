@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/icehunter/conduit/internal/mcp"
@@ -39,6 +40,12 @@ func New(manager *mcp.Manager, serverName, serverURL string) tool.Tool {
 	}
 }
 
+// IsAuthTool reports whether t is an authenticate pseudo-tool made by New.
+func IsAuthTool(t tool.Tool) bool {
+	_, ok := t.(*authTool)
+	return ok
+}
+
 func (t *authTool) Name() string {
 	return mcp.ToolNamePrefix(t.serverName) + "authenticate"
 }
@@ -47,8 +54,8 @@ func (t *authTool) Description() string {
 	return fmt.Sprintf(
 		"The %q MCP server is installed but requires OAuth authentication. "+
 			"Call this tool to start the flow — the user's browser will open "+
-			"to the authorization page, and once they approve, the server's "+
-			"real tools become available automatically.",
+			"to the authorization page, and once they approve, the server is "+
+			"reconnected and its tools are registered (load them with ToolSearch).",
 		t.serverName,
 	)
 }
@@ -78,37 +85,46 @@ func (t *authTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result,
 	if err := mcp.SaveServerToken(store, t.serverName, tokens); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("MCP OAuth: persist tokens: %v", err)), nil
 	}
-
-	// Reconnect now that we have a bearer. Errors here are surfaced to the
-	// LLM so it can ask the user to retry — the tokens are already saved,
-	// so a future /mcp reconnect will pick them up.
-	// trusted=true: tool execution only reaches here when the workspace is already trusted.
-	cwd := "" // Manager.Reconnect treats "" as user/local scope — correct for HTTP/SSE servers.
-	if err := t.manager.Reconnect(context.Background(), t.serverName, cwd, true); err != nil {
-		return tool.TextResult(fmt.Sprintf(
-			"OAuth complete and tokens saved. Reconnect failed (%v) — try /mcp reconnect %s.",
-			err, t.serverName,
-		)), nil
-	}
-	return tool.TextResult(fmt.Sprintf(
-		"OAuth complete. The %s MCP server is now authenticated and its tools are available.",
-		t.serverName,
-	)), nil
+	return t.reconnect(), nil
 }
 
-// RegisterPending walks manager.PendingNeedsAuth() and registers a
-// pseudo-tool for each. Idempotent — calling twice for the same server
-// just overwrites the previous registration via tool.Registry semantics.
-// Caller passes a name→URL mapping for HTTP/SSE servers.
-func RegisterPending(reg *tool.Registry, manager *mcp.Manager, urls map[string]string) {
-	if reg == nil || manager == nil {
-		return
+// reconnect connects the server with the tokens just saved and reports how
+// that went. Failures come back as text rather than errors so the model can
+// ask the user to retry: the tokens are saved, so a later reconnect from /mcp
+// picks them up.
+func (t *authTool) reconnect() tool.Result {
+	// The manager's own cwd, not the tool call's: configs are scoped to the
+	// session's directory, and an empty or different one drops the
+	// project-scoped (.mcp.json) servers, which then fail as "not found".
+	cwd := t.manager.Cwd()
+	if cwd == "" {
+		cwd, _ = os.Getwd()
 	}
-	for _, name := range manager.PendingNeedsAuth() {
-		url, ok := urls[name]
-		if !ok || url == "" {
-			continue
+	// Background, not the tool call's ctx: a stdio server's process lives as
+	// long as the context it was started with.
+	// trusted=true: tool execution only reaches here when the workspace is already trusted.
+	if err := t.manager.Reconnect(context.Background(), t.serverName, cwd, true); err != nil {
+		return tool.TextResult(fmt.Sprintf(
+			"OAuth complete and tokens saved, but reconnecting failed (%v). Ask the user to reconnect %s from /mcp.",
+			err, t.serverName,
+		))
+	}
+	srv, ok := t.manager.Server(t.serverName)
+	if !ok || srv.Status != mcp.StatusConnected {
+		state := "not connected"
+		if ok {
+			state = string(srv.Status)
+			if srv.Error != "" {
+				state += ": " + srv.Error
+			}
 		}
-		reg.Register(New(manager, name, url))
+		return tool.TextResult(fmt.Sprintf(
+			"OAuth complete and tokens saved, but the %s MCP server is %s. Ask the user to retry from /mcp.",
+			t.serverName, state,
+		))
 	}
+	return tool.TextResult(fmt.Sprintf(
+		"OAuth complete. The %s MCP server is connected and its %d tools are registered under %s; load them with ToolSearch.",
+		t.serverName, len(srv.Tools), mcp.ToolNamePrefix(t.serverName),
+	))
 }

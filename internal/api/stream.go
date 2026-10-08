@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,10 +30,15 @@ type Stream struct {
 
 // Next returns the next non-skipped event, or io.EOF when the stream ends.
 // Sentinel: a *sse.Error means the API surfaced an error event mid-stream.
+// An idle timeout wraps ErrStreamIdleTimeout, and a stream cut off mid-event
+// wraps ErrStreamTruncated.
 func (s *Stream) Next() (sse.Event, error) {
 	ev, err := s.parser.Next()
 	if err != nil && s.idle != nil && s.idle.TimedOut() {
-		return sse.Event{}, fmt.Errorf("api: stream: idle timeout — no data received for %s: %w", streamIdleTimeout, err)
+		return sse.Event{}, fmt.Errorf("api: stream: idle timeout — no data received for %s: %w: %w", streamIdleTimeout, ErrStreamIdleTimeout, err)
+	}
+	if errors.Is(err, sse.ErrTruncated) {
+		return sse.Event{}, fmt.Errorf("%w: %w", ErrStreamTruncated, err)
 	}
 	return ev, err
 }
@@ -89,8 +95,9 @@ func (anthropicMessagesTransport) StreamMessage(ctx context.Context, c *Client, 
 
 	// Pass req.Model (original, pre-sanitize) so filterBetasForModel can see any
 	// conduit-internal suffixes (e.g. "[1m]") and gate beta headers correctly.
+	extra := c.requestHeaders(req)
 	resp, err := c.doWithRetryAndAuth(streamCtx, func() (*http.Response, error) {
-		return c.doStream(streamCtx, body, req.Model)
+		return c.doStream(streamCtx, body, req.Model, req.Hints, extra)
 	})
 	if err != nil {
 		cancel()
@@ -125,13 +132,13 @@ func (anthropicMessagesTransport) StreamMessage(ctx context.Context, c *Client, 
 
 // doStream is the streaming counterpart to do(). It uses the same headers
 // but does not buffer the response body.
-func (c *Client) doStream(ctx context.Context, body []byte, model string) (*http.Response, error) {
+func (c *Client) doStream(ctx context.Context, body []byte, model string, hints *WireHints, extra map[string]string) (*http.Response, error) {
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages?beta=true"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("api: build stream request: %w", err)
 	}
-	c.applyHeaders(httpReq.Header, model)
+	c.applyHeaders(httpReq.Header, model, hints, extra)
 
 	if os.Getenv("CLAUDE_GO_DEBUG_HTTP") == "1" {
 		fmt.Fprintf(os.Stderr, "\n[CLAUDE_GO_DEBUG_HTTP] >>> POST %s\n", url)
@@ -150,7 +157,7 @@ func (c *Client) doStream(ctx context.Context, body []byte, model string) (*http
 		fmt.Fprintf(os.Stderr, "  body bytes: %d\n", len(body))
 	}
 
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.doWithHeaderTimeout(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("api: send stream: %w", err)
 	}

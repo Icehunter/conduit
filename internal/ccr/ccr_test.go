@@ -3,6 +3,7 @@ package ccr
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -182,5 +183,110 @@ func TestCleanupEmptyDir(t *testing.T) {
 	s := &Store{dir: filepath.Join(t.TempDir(), "nonexistent")}
 	if err := s.Cleanup(); err != nil {
 		t.Fatalf("Cleanup on missing dir: %v", err)
+	}
+}
+
+// TestPutPrivate: stored output can hold secrets, so the store directory is
+// 0700 and each file 0600, even when an older version made the directory
+// 0755.
+func TestPutPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits do not apply on Windows")
+	}
+	s := testStore(t)
+	if err := os.Chmod(s.dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := s.Put("secret output")
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	key, _ := parseHandle(handle)
+	for path, want := range map[string]os.FileMode{s.dir: 0o700, s.filePath(key): 0o600} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("mode of %s = %v, want %v", path, got, want)
+		}
+	}
+}
+
+// TestPutReplacesUntrustedFile: a file already at the content key is only
+// reused when it holds exactly that content. A planted or truncated file is
+// replaced, so Get never returns content that does not match its key.
+func TestPutReplacesUntrustedFile(t *testing.T) {
+	content := "the real output"
+	tests := []struct {
+		name  string
+		plant string
+	}{
+		{"different content", "attacker content"},
+		{"truncated content", "the real"},
+		{"same length different bytes", "THE REAL OUTPUT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := testStore(t)
+			path := s.filePath(contentKey(content))
+			if err := os.WriteFile(path, []byte(tt.plant), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			handle, err := s.Put(content)
+			if err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			got, err := s.Get(handle)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got != content {
+				t.Errorf("Get = %q, want %q", got, content)
+			}
+			entries, err := os.ReadDir(s.dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 {
+				t.Errorf("store holds %d entries, want 1 (temp file left behind?)", len(entries))
+			}
+		})
+	}
+}
+
+// TestPutDoesNotFollowSymlink: a symlink at the content key is replaced,
+// never written through, so Put cannot be aimed at a file outside the store.
+func TestPutDoesNotFollowSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privileges on Windows")
+	}
+	s := testStore(t)
+	target := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(target, []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content := "tool output"
+	path := s.filePath(contentKey(content))
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Put(content); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	victim, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(victim) != "untouched" {
+		t.Errorf("symlink target was written: %q", victim)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Errorf("key path mode = %v, want a regular file", info.Mode())
 	}
 }

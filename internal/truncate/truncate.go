@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/icehunter/conduit/internal/sessionstats"
@@ -131,7 +130,7 @@ func Apply(text string, opts Options) (Result, error) {
 	}
 
 	// Save full output to disk
-	outputPath, err := write(text)
+	outputPath, err := Save(text)
 	if err != nil {
 		// Fall back to inline truncation without file
 		previewText := strings.Join(preview, "\n")
@@ -141,18 +140,19 @@ func Apply(text string, opts Options) (Result, error) {
 		}, nil
 	}
 
-	// Build hint
+	// Build hint. It stays neutral about the outcome: tools also truncate
+	// error output, where "succeeded" would mislead the model.
 	var hint string
 	if opts.HasTask {
 		hint = fmt.Sprintf(
-			"The tool call succeeded but the output was truncated. Full output saved to: %s\n"+
+			"The output was truncated. Full output saved to: %s\n"+
 				"Use the Task tool to have explore agent process this file with Grep and Read (with offset/limit). "+
 				"Do NOT read the full file yourself - delegate to save context.",
 			outputPath,
 		)
 	} else {
 		hint = fmt.Sprintf(
-			"The tool call succeeded but the output was truncated. Full output saved to: %s\n"+
+			"The output was truncated. Full output saved to: %s\n"+
 				"Use Grep to search the full content or Read with offset/limit to view specific sections.",
 			outputPath,
 		)
@@ -177,39 +177,46 @@ func Apply(text string, opts Options) (Result, error) {
 	}, nil
 }
 
-// fileCounter generates unique filenames within the same millisecond.
-var (
-	fileCounterMu sync.Mutex
-	fileCounter   int64
-	lastMs        int64
-)
-
-func write(text string) (string, error) {
+// NewFile creates an empty, uniquely named file under Dir() for the caller
+// to write full tool output into, and returns it open for writing.
+//
+// Tool output can hold secrets, so the directory is 0700 and the file 0600.
+// os.CreateTemp picks a random name and opens it with O_EXCL, so the path
+// cannot be predicted ahead of time and an existing file or symlink at it is
+// never followed.
+func NewFile() (*os.File, error) {
 	dir := Dir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create truncate dir: %w", err)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("truncate: create dir: %w", err)
 	}
-
-	// Generate unique filename: tool_<timestamp_ms>_<counter>.txt
-	fileCounterMu.Lock()
-	ms := time.Now().UnixMilli()
-	if ms == lastMs {
-		fileCounter++
-	} else {
-		lastMs = ms
-		fileCounter = 0
+	// MkdirAll leaves an existing directory's mode alone; tighten one made
+	// by an older version with 0755.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("truncate: restrict dir: %w", err)
 	}
-	counter := fileCounter
-	fileCounterMu.Unlock()
-
-	filename := fmt.Sprintf("tool_%d_%d.txt", ms, counter)
-	path := filepath.Join(dir, filename)
-
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		return "", fmt.Errorf("write truncate file: %w", err)
+	f, err := os.CreateTemp(dir, "tool_*.txt")
+	if err != nil {
+		return nil, fmt.Errorf("truncate: create file: %w", err)
 	}
+	return f, nil
+}
 
-	return path, nil
+// Save writes text to a new file from NewFile and returns its path.
+func Save(text string) (string, error) {
+	f, err := NewFile()
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(text); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name()) // best-effort; a partial file is not the full output
+		return "", fmt.Errorf("truncate: write file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name()) // best-effort; a partial file is not the full output
+		return "", fmt.Errorf("truncate: close file: %w", err)
+	}
+	return f.Name(), nil
 }
 
 // Cleanup removes truncation files older than Retention.

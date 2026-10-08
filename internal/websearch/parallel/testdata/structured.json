@@ -1,0 +1,6 @@
+{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ignored"}],"structuredContent":{"search_id":"s1","results":[
+ {"url":"https://go.dev/blog","title":"Go Blog","excerpts":["First excerpt.","Second excerpt."],"publish_date":"2026-01-02"},
+ {"url":"https://example.com/x","title":"","excerpts":[]},
+ {"url":"ftp://bad.example/x","title":"bad scheme","excerpts":["no"]},
+ {"url":"https://go.dev/blog","title":"dup","excerpts":["dup"]}
+]}}}

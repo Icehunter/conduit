@@ -33,6 +33,7 @@ type readResult struct {
 // Kernel is a single long-lived interpreter process.
 // Goroutine-safe: concurrent Execute calls are serialized via mu.
 type Kernel struct {
+	dir     string // working directory for the interpreter; "" = inherit
 	lang    string
 	cmd     string
 	args    []string
@@ -49,7 +50,10 @@ type Kernel struct {
 
 // New spawns a Kernel for lang ("python" or "node").
 // Returns an error if the interpreter is not found on PATH.
-func New(lang string) (*Kernel, error) {
+func New(lang string) (*Kernel, error) { return NewIn(lang, "") }
+
+// NewIn is New with the interpreter started in dir (empty = process directory).
+func NewIn(lang, dir string) (*Kernel, error) {
 	nonce, err := randomNonce()
 	if err != nil {
 		return nil, fmt.Errorf("kernel: generate nonce: %w", err)
@@ -59,6 +63,7 @@ func New(lang string) (*Kernel, error) {
 		return nil, err
 	}
 	k := &Kernel{
+		dir:   dir,
 		lang:  lang,
 		cmd:   cmd,
 		args:  args,
@@ -191,6 +196,7 @@ func (k *Kernel) start() error {
 	// its lifetime is managed via Close/respawn. We use context.Background()
 	// so CommandContext does not kill the process prematurely.
 	c := exec.CommandContext(context.Background(), k.cmd, k.args...) //nolint:gosec // trusted bootstrapForLang
+	c.Dir = k.dir
 	setPgid(c)
 	stdin, err := c.StdinPipe()
 	if err != nil {

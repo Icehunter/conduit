@@ -94,6 +94,7 @@ const (
 	RoleError
 	RoleSystem
 	RoleCouncil
+	RoleThinking // model reasoning; rendered dimmed and collapsed to one line
 )
 
 // Message is one entry in the displayed conversation.
@@ -135,6 +136,12 @@ type (
 	compactDoneMsg struct {
 		newHistory []api.Message
 		summary    string
+		tailLen    int
+		model      string // summarizer model
+		fallback   bool   // the summary is the local fallback
+		// persistErr is the failure to append the compaction to the session
+		// file; the in-memory history is still compacted.
+		persistErr error
 		err        error
 	}
 	localCallDoneMsg struct {
@@ -178,6 +185,9 @@ type (
 		msgs     []api.Message
 		filePath string // source file — used to repoint cfg.Session so new turns append there
 		err      error
+		// model/modelFamily are what the session last recorded (see
+		// session.ReadModel); read in the load Cmd, off the event loop.
+		model, modelFamily string
 	}
 
 	// permissionAskMsg is sent by the agent goroutine when a tool needs
@@ -333,6 +343,23 @@ type Config struct {
 	SetTrusted func() error
 	// UsageStatusEnabled controls the conduit-only plan usage footer.
 	UsageStatusEnabled bool
+	// DisableMouse leaves mouse capture off so the terminal's native selection
+	// works (conduit.json disableMouse).
+	DisableMouse bool
+	// InputHistory seeds up-arrow history from the previous sessions of this
+	// project; PersistInput is called with each submitted prompt.
+	InputHistory []string
+	PersistInput func(string)
+	// Hooks are the configured hooks; shell mode runs PreToolUse for Bash.
+	Hooks *settings.HooksSettings
+	// ExtractMemory runs the memory sub-agent over a conversation summary.
+	ExtractMemory func(ctx context.Context, recent string) error
+	// RunShell overrides how shell mode ("!cmd") executes a command; the
+	// default runs the Bash tool.
+	RunShell func(ctx context.Context, command string) (output string, isErr bool)
+	// RedactSecrets, when it returns false, disables secret masking of
+	// shell-mode output (mirrors the agent loop's setting); nil means on.
+	RedactSecrets func() bool
 	// InitialLocalMode restores the hidden /local-mode compatibility bridge.
 	InitialLocalMode bool
 	// InitialLocalServer is the MCP server normal chat should route to when
@@ -361,12 +388,7 @@ type Config struct {
 	// Set from team.IsActive() in cmd/conduit/mainrepl.go.
 	TeamActive bool
 
-	// ClaudeMd is the concatenated CLAUDE.md + MCP server instructions used to
-	// build the initial system blocks. Stored so output-style rebuilds can
-	// include it rather than passing an empty string.
-	ClaudeMd string
 	// Skills is the skill listing injected into the initial system blocks.
-	// Stored alongside ClaudeMd for the same reason.
 	Skills []agent.SkillEntry
 	// Agents is the agent types listing injected into the initial system blocks.
 	Agents []agent.AgentEntry
@@ -386,6 +408,20 @@ type Model struct {
 	input   textarea.Model
 	vp      viewport.Model
 	working workinganim.Anim
+	// animTicking is true while a spinner StepMsg is in flight. The clock runs
+	// only during a run (see Update) so an idle session does not redraw.
+	animTicking bool
+	shellSeq    int // shell-mode commands issued, for row ids
+	// shellID/shellCtx identify the shell-mode command currently running as a
+	// turn (empty/nil otherwise).
+	shellID  string
+	shellCtx context.Context
+	// recordedModel is the model last written to the session file.
+	recordedModel string
+	// renderCache memoizes rendered transcript rows (shared across Model copies).
+	renderCache *renderCache
+	// locCwd/locBranch cache the footer location so View never reads the disk.
+	locCwd, locBranch string
 
 	viewportLines []string
 	lineToMessage map[int]int // map viewport line index to message index (for click-to-expand)
@@ -399,6 +435,7 @@ type Model struct {
 	cancelled         bool // true after Ctrl+C; cleared when next turn starts
 	cancelTurn        context.CancelFunc
 	streaming         string
+	thinking          string // reasoning streamed this turn; becomes a RoleThinking row when text or a tool starts
 	apiRetryStatus    string
 	turnID            int                      // incremented each turn; agentDoneMsg with stale ID is ignored
 	turnStarted       time.Time                // wall time when the current agent turn started
@@ -562,6 +599,14 @@ type Model struct {
 	// persistedCount tracks how many messages from m.history have already
 	// been written to the session file (avoids duplicating on each turn).
 	persistedCount int
+	// compactUnsaved is set when a compaction could not be written to the
+	// session file; the EventCompacted that follows then keeps persistedCount.
+	compactUnsaved bool
+	// attemptStart is the index in messages where the response being streamed
+	// began, once a tool round has finished (attemptSet); before that it is
+	// derived from the turn's prompt.
+	attemptStart int
+	attemptSet   bool
 
 	// welcomeDismissed is true once the welcome card has been removed.
 	welcomeDismissed bool
@@ -673,6 +718,8 @@ func New(cfg Config) Model {
 	m := Model{
 		cfg:                cfg,
 		input:              ta,
+		renderCache:        newRenderCache(),
+		inputHistory:       cfg.InputHistory,
 		working:            *workinganim.New(14, "Thinking", colorAccent, colorTool, colorDim, colorWindowBg),
 		modelName:          cfg.ModelName,
 		teamActive:         cfg.TeamActive,

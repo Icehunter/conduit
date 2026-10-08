@@ -9,8 +9,8 @@ package tool
 import (
 	"context"
 	"encoding/json"
-	"maps"
 	"strings"
+	"sync"
 )
 
 // Tool is the contract every Claude Code tool implements.
@@ -148,63 +148,163 @@ func ErrorResult(text string) Result {
 
 // Registry holds the set of tools available to the agent loop. It's a
 // thin map; the agent looks up tools by name from `tool_use` events.
+//
+// It is safe for concurrent use: MCP tools are registered and removed while
+// the session runs (servers connect in the background, reconnect, finish
+// OAuth) as the agent loop and ToolSearch read the registry.
+//
+// WithOverrides and Subset return views for sub-agents and teammates. A view
+// holds tools of its own and shows its base registry's tools through as they
+// are at each call, so a tool the base gains or loses later (an MCP server
+// connecting mid-session) reaches a long-lived child too.
 type Registry struct {
+	mu    sync.RWMutex
 	tools map[string]Tool
+
+	// base, when set, makes this registry a view: a name it doesn't hold
+	// itself resolves in base at call time. allow, when non-nil, limits the
+	// names that show through from base (keys lowercased).
+	base  *Registry
+	allow map[string]bool
+}
+
+// RegistryBound is implemented by tools that read the registry they belong to
+// (ToolSearch). A view made by WithOverrides or Subset holds a copy bound to
+// itself, so the tool reports what the view's own loop can call rather than
+// everything the base has.
+type RegistryBound interface {
+	Tool
+	BindRegistry(r *Registry) Tool
 }
 
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry { return &Registry{tools: map[string]Tool{}} }
 
-// Register adds a tool. Replaces any existing tool with the same name.
-func (r *Registry) Register(t Tool) { r.tools[t.Name()] = t }
+// Register adds a tool. Replaces any existing tool with the same name. On a
+// view the tool is the view's own; the base is never changed.
+func (r *Registry) Register(t Tool) {
+	r.mu.Lock()
+	r.tools[t.Name()] = t
+	r.mu.Unlock()
+}
+
+// Unregister removes the tool registered under name and reports whether
+// there was one. On a view it removes only the view's own tool, and a base
+// tool of the same name shows through again.
+func (r *Registry) Unregister(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.tools[name]
+	delete(r.tools, name)
+	return ok
+}
+
+// Reconcile replaces the slice of the registry that owned selects with want,
+// in one step. A tool owned reports true for is removed unless want holds a
+// tool of the same name; every tool in want is registered unless its name is
+// held by a tool owned reports false for, which is never displaced. Readers
+// see the registry from before or after the call, never part-way. On a view
+// it works on the view's own tools only.
+func (r *Registry) Reconcile(owned func(Tool) bool, want []Tool) {
+	keep := make(map[string]Tool, len(want))
+	for _, t := range want {
+		keep[t.Name()] = t
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name, t := range r.tools {
+		if _, wanted := keep[name]; !wanted && owned(t) {
+			delete(r.tools, name)
+		}
+	}
+	for name, t := range keep {
+		if cur, ok := r.tools[name]; ok && !owned(cur) {
+			continue
+		}
+		r.tools[name] = t
+	}
+}
 
 // Lookup returns the tool registered under the given name, if any.
 func (r *Registry) Lookup(name string) (Tool, bool) {
+	r.mu.RLock()
 	t, ok := r.tools[name]
-	return t, ok
+	r.mu.RUnlock()
+	if ok {
+		return t, true
+	}
+	if r.base == nil || !r.showsFromBase(name) {
+		return nil, false
+	}
+	return r.base.Lookup(name)
 }
 
 // All returns the tools in registration order is undefined; callers that
 // need a stable order should sort by Name().
 func (r *Registry) All() []Tool {
+	r.mu.RLock()
 	out := make([]Tool, 0, len(r.tools))
-	for _, t := range r.tools {
+	own := make(map[string]bool, len(r.tools))
+	for name, t := range r.tools {
 		out = append(out, t)
+		own[name] = true
+	}
+	r.mu.RUnlock()
+	if r.base == nil {
+		return out
+	}
+	for _, t := range r.base.All() {
+		if name := t.Name(); !own[name] && r.showsFromBase(name) {
+			out = append(out, t)
+		}
 	}
 	return out
 }
 
-// WithOverrides returns a shallow copy of the Registry with the given tools
-// replacing any same-named existing entries. Used to give sub-agents scoped
-// versions of mode-change tools without mutating the parent registry.
+// WithOverrides returns a view of the Registry in which the given tools
+// replace any same-named ones. Used to give sub-agents scoped versions of
+// mode-change tools without mutating the parent registry.
 func (r *Registry) WithOverrides(tools ...Tool) *Registry {
-	out := &Registry{tools: make(map[string]Tool, len(r.tools))}
-	maps.Copy(out.tools, r.tools)
+	own := make(map[string]Tool, len(tools))
 	for _, t := range tools {
-		out.tools[t.Name()] = t
+		own[t.Name()] = t
 	}
-	return out
+	return r.view(own, nil)
 }
 
-// Subset returns a new Registry containing only the tools whose Name()
+// Subset returns a view of the Registry showing only the tools whose Name()
 // matches one of the provided names. Matching is case-insensitive.
 // names may use the CC plugin convention (e.g. "Read", "Bash") or the
 // internal tool name (e.g. "FileReadTool", "BashTool"); the alias map
 // in internal/tools/agenttool normalises these before calling Subset.
-// An empty or nil names slice returns an empty registry.
+// An empty or nil names slice returns a view showing nothing.
 func (r *Registry) Subset(names []string) *Registry {
-	if len(names) == 0 {
-		return NewRegistry()
-	}
-	want := make(map[string]bool, len(names))
+	allow := make(map[string]bool, len(names))
 	for _, n := range names {
-		want[strings.ToLower(n)] = true
+		allow[strings.ToLower(n)] = true
 	}
-	out := NewRegistry()
-	for name, t := range r.tools {
-		if want[strings.ToLower(name)] {
-			out.Register(t)
+	return r.view(map[string]Tool{}, allow)
+}
+
+// view returns a view of r holding own. Every RegistryBound tool it would
+// show from r is replaced in own by a copy bound to the view.
+func (r *Registry) view(own map[string]Tool, allow map[string]bool) *Registry {
+	v := &Registry{tools: own, base: r, allow: allow}
+	for _, t := range r.All() {
+		b, ok := t.(RegistryBound)
+		if !ok {
+			continue
 		}
+		name := t.Name()
+		if _, overridden := own[name]; overridden || !v.showsFromBase(name) {
+			continue
+		}
+		own[name] = b.BindRegistry(v)
 	}
-	return out
+	return v
+}
+
+// showsFromBase reports whether a view shows its base's tool of that name.
+func (r *Registry) showsFromBase(name string) bool {
+	return r.allow == nil || r.allow[strings.ToLower(name)]
 }

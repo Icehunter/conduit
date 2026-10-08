@@ -86,7 +86,8 @@ func runPrint(args []string) error {
 	reg.Register(agenttool.New(
 		func(ctx context.Context, prompt string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{
-				Mode: permissions.ModeBypassPermissions,
+				Mode:      permissions.ModeBypassPermissions,
+				AgentType: taskAgentType(""),
 			})
 			return r.Text, err
 		},
@@ -97,6 +98,7 @@ func runPrint(args []string) error {
 				Model:        model,
 				Role:         role,
 				Tools:        tools,
+				AgentType:    taskAgentType(systemPrompt),
 			})
 			return r.Text, err
 		},
@@ -109,6 +111,7 @@ func runPrint(args []string) error {
 			Role:         role,
 			Tools:        tools,
 			OutputSchema: schema,
+			AgentType:    taskAgentType(systemPrompt),
 		})
 		if err != nil {
 			return "", err
@@ -128,7 +131,7 @@ func runPrint(args []string) error {
 	defer workflow.Default.KillAll()
 	reg.Register(skilltool.New(
 		plugins.NewSkillLoader(loadedPlugins, cwd),
-		lp.RunBackgroundAgent,
+		lp.RunBackgroundSubAgent,
 		func(ctx context.Context, prompt string, tools []string) (string, error) {
 			r, err := lp.RunSubAgentTyped(ctx, prompt, agent.SubAgentSpec{Tools: tools})
 			return r.Text, err
@@ -159,4 +162,14 @@ func thinkingBudget() int {
 		}
 	}
 	return 0
+}
+
+// taskAgentType is the x-claude-code-agent-type for a Task sub-agent: a
+// registry agent supplies its own system prompt and is "custom"; a plain Task
+// call is CC's built-in general-purpose agent.
+func taskAgentType(systemPrompt string) string {
+	if systemPrompt != "" {
+		return "custom"
+	}
+	return "general-purpose"
 }

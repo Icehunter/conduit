@@ -4,7 +4,6 @@ package iox
 import (
 	"errors"
 	"io"
-	"sync/atomic"
 )
 
 // ErrLimitReached is returned by LimitWriter once the byte limit is exceeded.
@@ -43,31 +42,3 @@ func (l *LimitWriter) Write(p []byte) (int, error) {
 
 // Written returns the total bytes written so far.
 func (l *LimitWriter) Written() int64 { return l.written }
-
-// AtomicLimitWriter is a concurrent-safe version for use with multiple
-// goroutines writing to the same buffer (e.g. cmd.Stdout and cmd.Stderr both
-// pointed at the same writer). Once the limit is reached, Overflow is set to
-// true atomically. If OnOverflow is non-nil it is called exactly once on the
-// first overflow — use it to cancel the subprocess context.
-type AtomicLimitWriter struct {
-	W          io.Writer
-	Limit      int64
-	OnOverflow func() // called once on first overflow; may be nil
-	written    atomic.Int64
-	Overflow   atomic.Bool
-}
-
-// Write implements io.Writer.
-func (a *AtomicLimitWriter) Write(p []byte) (int, error) {
-	if a.Overflow.Load() {
-		return 0, ErrLimitReached
-	}
-	newTotal := a.written.Add(int64(len(p)))
-	if newTotal > a.Limit {
-		if a.Overflow.CompareAndSwap(false, true) && a.OnOverflow != nil {
-			a.OnOverflow()
-		}
-		return 0, ErrLimitReached
-	}
-	return a.W.Write(p)
-}

@@ -14,6 +14,8 @@ import (
 
 // RegisterMiscCommands adds miscellaneous slash commands.
 func RegisterMiscCommands(r *Registry) {
+	registerBtwCommand(r)
+
 	// /add-dir
 	r.Register(Command{
 		Name:        "add-dir",

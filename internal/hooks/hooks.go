@@ -10,6 +10,10 @@
 //
 //	{"decision": "block", "reason": "..."}  — blocks the tool call
 //	{"decision": "approve"}                  — approves without further prompting
+//	{"hookSpecificOutput": {                 — Claude Code PreToolUse form:
+//	  "hookEventName": "PreToolUse",           permissionDecision allow|deny|ask
+//	  "permissionDecision": "ask",             decides the prompt; updatedInput
+//	  "updatedInput": {...}}}                  replaces the model's tool input
 //	(anything else / no JSON)                — no effect, hook is advisory
 package hooks
 
@@ -58,6 +62,13 @@ type HookOutput struct {
 	// hookSpecificOutput carries the Claude Code SessionStart context payload.
 	HookSpecificOutput struct {
 		AdditionalContext string `json:"additionalContext"`
+		// PermissionDecision ("allow" | "deny" | "ask") and its reason are the
+		// Claude Code PreToolUse form; they take precedence over the older
+		// top-level decision.
+		PermissionDecision       string `json:"permissionDecision"`
+		PermissionDecisionReason string `json:"permissionDecisionReason"`
+		// UpdatedInput replaces the model's tool input (PreToolUse only).
+		UpdatedInput map[string]any `json:"updatedInput"`
 	} `json:"hookSpecificOutput"`
 }
 
@@ -70,6 +81,13 @@ type Result struct {
 	// Approved is true if a hook returned decision=approve, bypassing further
 	// permission prompts for this tool call.
 	Approved bool
+	// Ask is true if a hook returned permissionDecision=ask: the user is
+	// prompted even where the permission rules would allow the call.
+	Ask bool
+	// UpdatedInput, when non-nil, replaces the model's tool input before the
+	// permission check and execution (PreToolUse only). With several hooks the
+	// last one to return it wins.
+	UpdatedInput map[string]any
 	// AdditionalContext is text returned by a SessionStart hook to be injected
 	// into the conversation as a system-reminder on the first turn.
 	AdditionalContext string
@@ -163,6 +181,12 @@ func runMatching(ctx context.Context, matchers []settings.HookMatcher, toolName 
 			if r.Blocked {
 				// Block short-circuits all remaining hooks immediately.
 				return r
+			}
+			if r.Ask {
+				result.Ask = true
+			}
+			if r.UpdatedInput != nil {
+				result.UpdatedInput = r.UpdatedInput
 			}
 			if r.Approved {
 				// Approved is sticky but does not stop later matchers — a more
@@ -285,21 +309,45 @@ func runHook(ctx context.Context, command string, timeout time.Duration, input H
 	if err := json.Unmarshal([]byte(out), &directive); err != nil {
 		return Result{} // non-JSON stdout is advisory only
 	}
-	switch strings.ToLower(directive.Decision) {
-	case "block":
-		reason := directive.Reason
+	return directive.result("blocked by hook")
+}
+
+// result converts a parsed hook directive into a Result. blockedDefault is the
+// reason used when a block carries none. The Claude Code
+// hookSpecificOutput.permissionDecision form wins over the older top-level
+// decision; "ask" and updatedInput are only expressible in the former.
+func (d HookOutput) result(blockedDefault string) Result {
+	hso := d.HookSpecificOutput
+	var r Result
+	switch strings.ToLower(hso.PermissionDecision) {
+	case "deny":
+		reason := hso.PermissionDecisionReason
 		if reason == "" {
-			reason = "blocked by hook"
+			reason = blockedDefault
 		}
 		return Result{Blocked: true, Reason: reason}
-	case "approve":
-		return Result{Approved: true}
+	case "allow":
+		r.Approved = true
+	case "ask":
+		r.Ask = true
+	default:
+		switch strings.ToLower(d.Decision) {
+		case "block":
+			reason := d.Reason
+			if reason == "" {
+				reason = blockedDefault
+			}
+			return Result{Blocked: true, Reason: reason}
+		case "approve":
+			r.Approved = true
+		}
 	}
-	// Collect additionalContext from either the top-level field (Copilot/SDK)
-	// or the nested hookSpecificOutput field (Claude Code SessionStart format).
-	addlCtx := directive.HookSpecificOutput.AdditionalContext
-	if addlCtx == "" {
-		addlCtx = directive.AdditionalContext
+	r.UpdatedInput = hso.UpdatedInput
+	// additionalContext comes from the nested hookSpecificOutput field (Claude
+	// Code SessionStart format) or the top-level one (Copilot/SDK).
+	r.AdditionalContext = hso.AdditionalContext
+	if r.AdditionalContext == "" {
+		r.AdditionalContext = d.AdditionalContext
 	}
-	return Result{AdditionalContext: addlCtx}
+	return r
 }

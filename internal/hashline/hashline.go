@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+// BOM is the UTF-8 byte order mark. Compute ignores a leading BOM so the first
+// line hashes the same with or without it; callers that rewrite a file must
+// strip it before addressing lines and put it back on write.
+const BOM = "\ufeff"
+
 // Anchor represents one addressable line in a file.
 type Anchor struct {
 	Line int    // 1-indexed line number at compute time (advisory only)
@@ -21,7 +26,9 @@ type Anchor struct {
 // normalized concatenation of: trimRight(prevLine) + "\n" + trimRight(line) + "\n" + trimRight(nextLine)
 // where prevLine/nextLine are empty strings for the first/last line.
 // Normalization: strings.TrimRight(s, " \t\r") on each line before hashing.
+// A leading UTF-8 BOM is not part of the first line.
 func Compute(src []byte) []Anchor {
+	src = []byte(strings.TrimPrefix(string(src), BOM))
 	if len(src) == 0 {
 		return nil
 	}

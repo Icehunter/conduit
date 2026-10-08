@@ -58,6 +58,10 @@ func TestIsReadOnlyCommand(t *testing.T) {
 		"echo hello > /tmp/evil",
 		"git push origin main",
 		"rm -rf /tmp/x",
+		// The strict classifier refuses every redirect and pipe.
+		"ls 2>/dev/null",
+		"ls | grep foo",
+		"git branch -D main",
 	}
 	for _, cmd := range unsafe {
 		if isReadOnlyCommand(cmd) {
@@ -72,7 +76,6 @@ func TestIsReadOnlyCommand(t *testing.T) {
 		"ls -la",
 		"grep -r foo .",
 		"git log --format='%H %s'",
-		"ls 2>/dev/null",
 		"ls && pwd",
 		"cd src && ls",
 	}

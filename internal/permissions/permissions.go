@@ -12,7 +12,10 @@
 package permissions
 
 import (
+	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -208,8 +211,196 @@ func toolIsReadOnly(toolName, toolInput string) bool {
 // toolIsEdit reports whether the tool performs file-editing operations.
 func toolIsEdit(toolName string) bool {
 	switch toolName {
-	case "Read", "Edit", "Write", "NotebookEdit":
+	case "Read", "Edit", "Write", "NotebookEdit", "HashEdit", "MultiEdit":
 		return true
+	}
+	return false
+}
+
+// Protected write targets: files and directories whose contents later run
+// code or change what the agent runs (git hooks and config, shell startup
+// files, editor tasks, MCP config, agent/command definitions, settings).
+var (
+	protectedFiles = map[string]bool{
+		".gitconfig": true, ".gitmodules": true, ".bashrc": true,
+		".bash_profile": true, ".zshrc": true, ".zshenv": true,
+		".zprofile": true, ".profile": true, ".ripgreprc": true,
+		".mcp.json": true, ".claude.json": true,
+	}
+	protectedDirs = map[string]bool{
+		".git": true, ".vscode": true, ".idea": true,
+		".husky": true, ".githooks": true,
+	}
+	// protectedConfigRoots are config directories whose children below are
+	// protected: agent and command definitions at any depth, and a fixed set
+	// of top-level files.
+	protectedConfigRoots = map[string]struct {
+		subdirs map[string]bool
+		files   map[string]bool
+	}{
+		".claude":  {subdirs: map[string]bool{"commands": true, "agents": true}},
+		".conduit": {subdirs: map[string]bool{"commands": true, "agents": true}, files: map[string]bool{"conduit.json": true, "mcp.json": true}},
+	}
+	// shortNamesApply gates the Windows 8.3 short-name rejection.
+	shortNamesApply = runtime.GOOS == "windows"
+	shortNameRe     = regexp.MustCompile(`~\d`)
+)
+
+// toolIsWrite reports whether the tool writes the file named by its input.
+func toolIsWrite(toolName string) bool {
+	switch toolName {
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "HashEdit",
+		// AstGrep (rewrite) and SkillManage (create/update/promote) only
+		// carry a write target in their permission input; read-only calls
+		// carry none, so the protected-path check never fires for them.
+		"AstGrep", "SkillManage":
+		return true
+	}
+	return false
+}
+
+// normComponent lowercases a path component and trims the trailing dots and
+// spaces Windows ignores, so ".git." and ".git " name the same directory.
+func normComponent(c string) string {
+	return strings.TrimRight(strings.ToLower(c), ". ")
+}
+
+// matchesProtected reports whether the cleaned slash path hits a protected
+// location. Matching is on case-insensitive path components.
+func matchesProtected(slashPath string) bool {
+	parts := strings.Split(slashPath, "/")
+	for i, raw := range parts {
+		part := normComponent(raw)
+		if shortNamesApply && shortNameRe.MatchString(part) {
+			return true
+		}
+		last := i == len(parts)-1
+		if protectedDirs[part] || (last && protectedFiles[part]) {
+			return true
+		}
+		if part == ".config" && i+1 < len(parts) && normComponent(parts[i+1]) == "git" {
+			return true
+		}
+		root, ok := protectedConfigRoots[part]
+		if !ok || i+1 >= len(parts) {
+			continue
+		}
+		next := normComponent(parts[i+1])
+		if root.subdirs[next] {
+			return true
+		}
+		if i+2 == len(parts) && (root.files[next] ||
+			(strings.HasPrefix(next, "settings") && strings.HasSuffix(next, ".json"))) {
+			return true
+		}
+	}
+	return false
+}
+
+// absFor resolves path against cwd and cleans it.
+func absFor(cwd, path string) string {
+	if !filepath.IsAbs(path) && cwd != "" {
+		path = filepath.Join(cwd, path)
+	}
+	return filepath.Clean(path)
+}
+
+// resolveSymlinks evaluates symlinks in path. When the leaf does not exist yet
+// it resolves the deepest existing parent and re-appends the remainder.
+func resolveSymlinks(path string) string {
+	var rest []string
+	p := path
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			for i := len(rest) - 1; i >= 0; i-- {
+				r = filepath.Join(r, rest[i])
+			}
+			return r
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return path
+		}
+		rest = append(rest, filepath.Base(p))
+		p = parent
+	}
+}
+
+// isProtectedWritePath reports whether path (resolved against cwd) targets a
+// protected location, checking both the literal path and its symlink-resolved
+// form so a symlinked directory cannot hide a protected one.
+func isProtectedWritePath(cwd, path string) bool {
+	if path == "" {
+		return false
+	}
+	abs := absFor(cwd, path)
+	if dotDotAfterSymlink(cwd, path) {
+		return true
+	}
+	if matchesProtected(toSlash(filepath.Clean(path))) || matchesProtected(toSlash(abs)) {
+		return true
+	}
+	return matchesProtected(toSlash(resolveSymlinks(abs)))
+}
+
+// dotDotAfterSymlink reports whether the raw (uncleaned) path has a ".."
+// component directly after a symlinked component. The OS resolves "link/.."
+// through the link while a lexical clean drops both, so the gate and the
+// filesystem would disagree about the target; such writes always prompt.
+func dotDotAfterSymlink(cwd, path string) bool {
+	raw := path
+	if !filepath.IsAbs(raw) && cwd != "" {
+		raw = cwd + string(filepath.Separator) + raw
+	}
+	cur := string(filepath.Separator)
+	if vol := filepath.VolumeName(raw); vol != "" {
+		cur = vol + cur
+	}
+	prevLink := false
+	for _, part := range strings.FieldsFunc(raw[len(filepath.VolumeName(raw)):], func(r rune) bool { return r == '/' || r == filepath.Separator }) {
+		switch part {
+		case ".":
+			continue
+		case "..":
+			if prevLink {
+				return true
+			}
+			cur = filepath.Dir(cur)
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		prevLink = err == nil && fi.Mode()&os.ModeSymlink != 0
+	}
+	return false
+}
+
+// IsProtectedPath reports whether a write to path (resolved against cwd)
+// targets a protected location. It is the path-only form of IsProtectedWrite,
+// for callers that must pick the write target out of several candidates.
+func IsProtectedPath(cwd, path string) bool { return isProtectedWritePath(cwd, path) }
+
+// IsProtectedWrite reports whether toolName writing toolInput targets a
+// protected path. Callers use it to keep the prompt even when a hook approved.
+func (g *Gate) IsProtectedWrite(toolName, toolInput string) bool {
+	g.mu.RLock()
+	cwd := g.cwd
+	g.mu.RUnlock()
+	return toolIsWrite(toolName) && isProtectedWritePath(cwd, toolInput)
+}
+
+// underAny reports whether the symlink-resolved path lies inside any of roots
+// (also resolved).
+func underAny(cwd, path string, roots []string) bool {
+	rp := toSlash(resolveSymlinks(absFor(cwd, path)))
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rr := toSlash(resolveSymlinks(absFor(cwd, root)))
+		if rp == rr || strings.HasPrefix(rp, strings.TrimSuffix(rr, "/")+"/") {
+			return true
+		}
 	}
 	return false
 }
@@ -238,6 +429,32 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		return DecisionAllow
 	}
 
+	// For Bash, decompose the command so rules are matched against each command
+	// that actually runs. Matching the raw string alone is not a boundary: a
+	// denied program hidden after `&&` never matches a prefix rule, and a leading
+	// space is enough to dodge one. Empty for non-Bash or unparseable input, in
+	// which case matching falls back to the raw string only.
+	segments := bashSegments(toolName, toolInput)
+
+	// Deny list is checked first (highest priority), before any trust shortcut
+	// below, so a deny rule beats implicit trust and trusted roots. Any segment
+	// is enough.
+	for _, rule := range deny {
+		if matchRuleAnySegment(rule, toolName, toolInput, segments) {
+			return DecisionDeny
+		}
+	}
+
+	// Writes to config files that later execute code (git config, shell rc
+	// files, editor tasks, agent/command definitions, settings) are never
+	// auto-approved by a mode, trusted root, implicit trust or allow rule.
+	if toolIsWrite(toolName) && isProtectedWritePath(cwd, toolInput) {
+		if mode == ModePlan || mode == ModeCouncil {
+			return DecisionDeny
+		}
+		return DecisionAsk
+	}
+
 	// Implicit trust: conduit's own per-project storage never prompts.
 	if isImplicitlyTrustedPath(toolName, toolInput, cwd) {
 		return DecisionAllow
@@ -251,20 +468,6 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 			if normInput == normRoot || strings.HasPrefix(normInput, normRoot+"/") {
 				return DecisionAllow
 			}
-		}
-	}
-
-	// For Bash, decompose the command so rules are matched against each command
-	// that actually runs. Matching the raw string alone is not a boundary: a
-	// denied program hidden after `&&` never matches a prefix rule, and a leading
-	// space is enough to dodge one. Empty for non-Bash or unparseable input, in
-	// which case matching falls back to the raw string only.
-	segments := bashSegments(toolName, toolInput)
-
-	// Deny list is checked first (highest priority). Any segment is enough.
-	for _, rule := range deny {
-		if matchRuleAnySegment(rule, toolName, toolInput, segments) {
-			return DecisionDeny
 		}
 	}
 
@@ -301,7 +504,11 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		return DecisionAllow
 	case ModeAcceptEdits, ModeAcceptEditsLive:
 		if toolIsEdit(toolName) {
-			return DecisionAllow
+			// Edits outside the working directory and trusted roots still
+			// prompt; read-only Read keeps its pre-existing allow.
+			if !toolIsWrite(toolName) || underAny(cwd, toolInput, append([]string{cwd}, trustedRoots...)) {
+				return DecisionAllow
+			}
 		}
 		return DecisionAsk
 	case ModeDefault:
@@ -311,6 +518,25 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		return DecisionAsk
 	}
 	return DecisionAsk
+}
+
+// MatchesAskRule reports whether an explicit ask rule matches the call. A
+// PreToolUse hook's "allow" does not override one: the user asked to be
+// prompted for exactly this.
+func (g *Gate) MatchesAskRule(toolName, toolInput string) bool {
+	g.mu.RLock()
+	ask := g.ask
+	g.mu.RUnlock()
+	if len(ask) == 0 {
+		return false
+	}
+	segments := bashSegments(toolName, toolInput)
+	for _, rule := range ask {
+		if matchRuleAnySegment(rule, toolName, toolInput, segments) {
+			return true
+		}
+	}
+	return false
 }
 
 // bashSegments returns the individual commands a Bash invocation would run.

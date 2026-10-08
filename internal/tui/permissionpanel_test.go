@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/icehunter/conduit/internal/permissions"
 )
 
 // makePermPromptModel builds a minimal Model with an active permission prompt.
@@ -140,5 +142,72 @@ func TestPermission_NoGuard(t *testing.T) {
 		}
 	default:
 		t.Error("no reply sent")
+	}
+}
+
+func TestPermissionChoicesFor(t *testing.T) {
+	tests := []struct {
+		name      string
+		label     string
+		protected bool
+		want      []permChoice
+	}{
+		{"direct", "", false, []permChoice{permAllowOnce, permAlwaysAllow, permDeny}},
+		{"direct protected write hides always allow", "", true, []permChoice{permAllowOnce, permDeny}},
+		{"subagent", "worker", false, []permChoice{permAllowOnce, permSwitchToAuto, permDeny}},
+		{"subagent protected", "worker", true, []permChoice{permAllowOnce, permSwitchToAuto, permDeny}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := permissionChoicesFor(tt.label, tt.protected)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestNewPermissionPromptMarksProtectedWrites(t *testing.T) {
+	cwd := t.TempDir()
+	gate := permissions.New(cwd, nil, permissions.ModeDefault, nil, nil, nil)
+	m := idleModel()
+	m.cfg.Gate = gate
+	tests := []struct {
+		name, tool, input string
+		want              bool
+	}{
+		{"git config write", "Write", ".git/config", true},
+		{"ordinary write", "Write", "main.go", false},
+		{"protected path via read tool", "Read", ".git/config", false},
+		{"bash is not a path write", "Bash", ".git/config", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := m.newPermissionPrompt(permissionAskMsg{toolName: tt.tool, toolInput: tt.input})
+			if p.protected != tt.want {
+				t.Errorf("protected = %v, want %v", p.protected, tt.want)
+			}
+		})
+	}
+}
+
+func TestProtectedPromptEnterOnLastOptionDenies(t *testing.T) {
+	m, reply := makePermPromptModel(t, false)
+	m.permPrompt.protected = true
+	m.permPrompt.selected = 0
+	m, _ = m.handlePermissionKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = m.handlePermissionKey(tea.KeyPressMsg{Code: tea.KeyDown}) // clamps at last option
+	if m.permPrompt.selected != 1 {
+		t.Fatalf("selected = %d, want 1 (only two options)", m.permPrompt.selected)
+	}
+	_, cmd := m.handlePermissionKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd()
+	if r := <-reply; r.allow || r.alwaysAllow {
+		t.Errorf("reply = %+v, want deny", r)
 	}
 }

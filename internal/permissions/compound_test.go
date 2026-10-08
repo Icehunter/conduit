@@ -118,3 +118,28 @@ func TestUnparseableInputStillMatchesRawString(t *testing.T) {
 		t.Errorf("unparseable denied command = %v, want Deny", got)
 	}
 }
+
+// Read-only auto-approval judges the whole command: a chain of read-only
+// parts is allowed, but one mutating part, a pipe, or a redirect (even to
+// /dev/null) sends it to the prompt.
+func TestReadOnlyAutoAllowJudgesEveryPart(t *testing.T) {
+	g := New("/tmp", nil, ModeDefault, nil, nil, nil)
+	tests := []struct {
+		cmd  string
+		want Decision
+	}{
+		{"cd /repo && git status && git log --oneline -5", DecisionAllow},
+		{"git status; ls -la", DecisionAllow},
+		{"(cd sub && rg TODO src) || pwd", DecisionAllow},
+		{"git status && git branch -D main", DecisionAsk},
+		{"ls && env rm -rf /tmp/x", DecisionAsk},
+		{"git log | head", DecisionAsk},
+		{"cat README.md 2>/dev/null", DecisionAsk},
+		{"ls && cd /tmp && ls", DecisionAsk},
+	}
+	for _, tt := range tests {
+		if got := g.Check("Bash", tt.cmd); got != tt.want {
+			t.Errorf("Check(Bash, %q) = %v, want %v", tt.cmd, got, tt.want)
+		}
+	}
+}

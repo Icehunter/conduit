@@ -114,14 +114,6 @@ func (t *MCPTool) Execute(ctx context.Context, input json.RawMessage) (tool.Resu
 	return tool.TextResult(text), nil
 }
 
-// RegisterAll adds every tool from all connected MCP servers to reg.
-// All registered tools are deferrable by default (see MCPTool.Deferrable).
-func RegisterAll(reg *tool.Registry, manager *mcp.Manager) {
-	for _, nt := range manager.AllTools() {
-		reg.Register(New(manager, nt))
-	}
-}
-
 // APIDescription implements the apiDescriber interface checked by buildToolDefs.
 // For always-on tools it returns the first-sentence truncation; for deferrable
 // tools it returns the full description (sent only when the model requests it

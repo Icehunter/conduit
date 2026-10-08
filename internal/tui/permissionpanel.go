@@ -22,18 +22,65 @@ type permissionPromptState struct {
 	// keystroke already in flight (user was typing when the prompt appeared)
 	// cannot auto-accept the tool. Esc/ctrl+c pass through immediately.
 	guardFirstKey bool
+
+	// protected is true for a write to a protected path (see
+	// permissions.Gate.IsProtectedWrite); "Always allow" is not offered.
+	protected bool
+	// onceOnly also hides "Always allow", for prompts whose approval is a
+	// single user-typed action (shell mode) rather than a tool call.
+	onceOnly bool
 }
 
-// permissionOptionsFor returns the option list for the modal. A direct
+// permChoice is what a permission-modal option does when selected.
+type permChoice int
+
+const (
+	permAllowOnce permChoice = iota
+	permAlwaysAllow
+	permSwitchToAuto
+	permDeny
+)
+
+func (c permChoice) label() string {
+	switch c {
+	case permAllowOnce:
+		return "Allow once"
+	case permAlwaysAllow:
+		return "Always allow"
+	case permSwitchToAuto:
+		return "Switch subagent to auto mode"
+	default:
+		return "Deny"
+	}
+}
+
+// permissionChoicesFor returns the option list for the modal. A direct
 // (root-loop) prompt offers Allow once / Always allow / Deny; a prompt
 // bubbled up from a sub-agent instead offers Allow once / Switch subagent to
 // auto mode / Deny — "always allow" (a persisted rule) doesn't fit a one-off
-// sub-agent run the way a session-scoped mode switch does.
-func permissionOptionsFor(subAgentLabel string) []string {
-	if subAgentLabel != "" {
-		return []string{"Allow once", "Switch subagent to auto mode", "Deny"}
+// sub-agent run the way a session-scoped mode switch does. A write to a
+// protected path never offers "Always allow": the gate prompts for it every
+// time, so a persisted rule would promise something it cannot deliver.
+func permissionChoicesFor(subAgentLabel string, protected bool) []permChoice {
+	switch {
+	case subAgentLabel != "":
+		return []permChoice{permAllowOnce, permSwitchToAuto, permDeny}
+	case protected:
+		return []permChoice{permAllowOnce, permDeny}
 	}
-	return []string{"Allow once", "Always allow", "Deny"}
+	return []permChoice{permAllowOnce, permAlwaysAllow, permDeny}
+}
+
+// newPermissionPrompt builds the modal state for a permission request.
+func (m Model) newPermissionPrompt(req permissionAskMsg) *permissionPromptState {
+	return &permissionPromptState{
+		toolName:      req.toolName,
+		toolInput:     req.toolInput,
+		subAgentLabel: req.subAgentLabel,
+		reply:         req.reply,
+		protected:     m.cfg.Gate != nil && m.cfg.Gate.IsProtectedWrite(req.toolName, req.toolInput),
+		guardFirstKey: true,
+	}
 }
 
 // handlePermissionKey routes keys to the permission modal.
@@ -51,21 +98,22 @@ func (m Model) handlePermissionKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	options := permissionOptionsFor(p.subAgentLabel)
+	choices := permissionChoicesFor(p.subAgentLabel, p.protected || p.onceOnly)
 	switch msg.String() {
 	case "up", "left":
 		if p.selected > 0 {
 			p.selected--
 		}
 	case "down", "right":
-		if p.selected < len(options)-1 {
+		if p.selected < len(choices)-1 {
 			p.selected++
 		}
 	case "enter":
+		choice := choices[min(p.selected, len(choices)-1)]
 		reply := permissionReply{
-			allow:        p.selected != 2,
-			alwaysAllow:  p.subAgentLabel == "" && p.selected == 1,
-			switchToAuto: p.subAgentLabel != "" && p.selected == 1,
+			allow:        choice != permDeny,
+			alwaysAllow:  choice == permAlwaysAllow,
+			switchToAuto: choice == permSwitchToAuto,
 		}
 		m.permPrompt = nil
 		m.refreshViewport()
@@ -104,7 +152,24 @@ func (m Model) renderPermissionPrompt() string {
 
 	// Tool + input.
 	label := p.toolName
-	if p.toolInput != "" {
+	if isBashTool(p.toolName) && p.toolInput != "" {
+		// Show the whole command, wrapped, so nothing is hidden from the
+		// person approving it.
+		// A sub-agent may run in another worktree, where a `cd <our cwd>` is
+		// not redundant: show its command exactly as sent.
+		cwd := currentDisplayCwd()
+		if p.subAgentLabel != "" {
+			cwd = ""
+		}
+		cmd := displayBashCommand(p.toolInput, cwd)
+		width := floatingInnerWidth(m.width, floatingModalSpec) - 4
+		sb.WriteString(stylePickerItem.Render(label) + "\n")
+		for _, ln := range wrapBashCommand(cmd, width) {
+			sb.WriteString("  " + ln + "\n")
+		}
+		sb.WriteString("\n")
+		label = ""
+	} else if p.toolInput != "" {
 		short := p.toolInput
 		maxLen := floatingInnerWidth(m.width, floatingModalSpec) - 4
 		if maxLen > 10 && len(short) > maxLen {
@@ -112,9 +177,12 @@ func (m Model) renderPermissionPrompt() string {
 		}
 		label += "(" + short + ")"
 	}
-	sb.WriteString(stylePickerItem.Render(label) + "\n\n")
+	if label != "" {
+		sb.WriteString(stylePickerItem.Render(label) + "\n\n")
+	}
 
-	for i, opt := range permissionOptionsFor(p.subAgentLabel) {
+	for i, choice := range permissionChoicesFor(p.subAgentLabel, p.protected || p.onceOnly) {
+		opt := choice.label()
 		prefix := "  "
 		var rendered string
 		if i == p.selected {

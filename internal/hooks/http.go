@@ -69,17 +69,7 @@ func runHTTPHook(ctx context.Context, hook settings.Hook, input HookInput) Resul
 	if err := json.Unmarshal([]byte(out), &directive); err != nil {
 		return Result{} // non-JSON response is advisory
 	}
-	switch strings.ToLower(directive.Decision) {
-	case "block":
-		reason := directive.Reason
-		if reason == "" {
-			reason = "blocked by http hook"
-		}
-		return Result{Blocked: true, Reason: reason}
-	case "approve":
-		return Result{Approved: true}
-	}
-	return Result{}
+	return directive.result("blocked by http hook")
 }
 
 // interpolateEnv replaces $VAR and ${VAR} references in s with env values,

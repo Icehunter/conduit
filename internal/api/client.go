@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"sort"
@@ -22,10 +23,10 @@ import (
 const AnthropicVersion = "2023-06-01"
 
 // SDKPackageVersion is the @anthropic-ai/sdk version we identify as. The
-// real CLI bundles SDK 0.112.1 (wire-fingerprint 2.1.266); since Anthropic's
+// real CLI bundles SDK 0.128.0 (wire-fingerprint 2.1.292); since Anthropic's
 // API rate-limits clients whose Stainless headers don't look like the official
 // CLI's, we report the same string.
-const SDKPackageVersion = "0.112.1"
+const SDKPackageVersion = "0.128.0"
 
 // StainlessRuntimeVersion is the Node version the real CLI's Bun runtime
 // reports in X-Stainless-Runtime-Version (live-captured 2026-09-09 from
@@ -96,14 +97,66 @@ type Config struct {
 	// OpenAIResponsesStore, when non-nil, sends the Responses store flag.
 	// ChatGPT/Codex requires this to be explicitly false.
 	OpenAIResponsesStore *bool
+	// ExtraBody is merged into the outgoing JSON body for the OpenAI-compatible
+	// chat transport (ProviderKindOpenAICompatible). Use for vendor/model-
+	// specific request fields the core request shape doesn't model, e.g.
+	// llama.cpp/LM Studio's `chat_template_kwargs: {"enable_thinking": false}`
+	// to stop a reasoning model from spending its whole budget on thinking.
+	// It is applied as a JSON merge patch (RFC 7396): objects merge key by
+	// key, any other value replaces the generated one, and null deletes it.
+	ExtraBody map[string]any
+	// RequestHeaders, when set, returns headers computed from the request
+	// being sent (e.g. Copilot's x-initiator). It is evaluated once per
+	// CreateMessage/StreamMessage call, so retries resend the same values,
+	// and applied after every other header on all three transports.
+	RequestHeaders func(*MessageRequest) map[string]string
+	// ReasoningReplay controls when the OpenAI-compatible chat transport sends
+	// an assistant turn's reasoning back as reasoning_content (or reasoning):
+	// ReasoningReplayAuto (the default, also used for unknown values),
+	// ReasoningReplayOn or ReasoningReplayOff. See reasoningPolicy.
+	ReasoningReplay string
+	// ToolCallFormat selects how the OpenAI-compatible chat transport carries
+	// tool calls: ToolCallFormatNative (the default, also used for unknown
+	// values) sends `tools`; ToolCallFormatHermes and ToolCallFormatQwen3 put
+	// the tool schemas in the system prompt and parse <tool_call> blocks out
+	// of the reply; ToolCallFormatAuto is native until the server rejects
+	// tools, then hermes for that model.
+	ToolCallFormat string
+	// ModelVision reports whether model accepts image input; known is false
+	// when the model is not in the caller's catalog. The OpenAI transports
+	// replace images with a text note for a model known to lack vision, and
+	// send them otherwise.
+	ModelVision func(model string) (vision, known bool)
+	// OpenAIResponsesPromptCacheKey sends prompt_cache_key on /responses
+	// requests: the request's WireHints.SessionID, else SessionID.
+	OpenAIResponsesPromptCacheKey bool
+	// OpenAIResponsesReplayReasoning makes a /responses request with
+	// store=false ask for reasoning.encrypted_content, and replays the
+	// encrypted reasoning items of earlier turns (ChatGPT/Codex).
+	OpenAIResponsesReplayReasoning bool
+	// ResponseHeaderTimeout bounds the wait from sending a request to the
+	// first response headers, on every transport. Zero means 5 minutes, or
+	// none for a local or LAN base URL; a negative value disables it.
+	// Separate from the stream idle timeout.
+	ResponseHeaderTimeout time.Duration
 }
 
 // Client sends message requests through the configured wire transport.
 type Client struct {
-	mu        sync.Mutex // guards cfg.AuthToken across refresh
+	mu        sync.Mutex // guards cfg.AuthToken across refresh, and reasoningField
 	cfg       Config
 	http      *http.Client
 	transport messageTransport
+	// reasoningField is the delta field ("reasoning_content" or "reasoning")
+	// this provider last streamed reasoning in; replayed reasoning uses the
+	// same field. Empty until the provider streams any.
+	reasoningField string
+	// noEffort holds models whose server rejected reasoning_effort, so later
+	// requests skip it. Guarded by mu.
+	noEffort map[string]bool
+	// noTools holds models whose server rejected `tools` under tool format
+	// auto, so later requests use in-text tool calling.
+	noTools map[string]bool
 }
 
 type messageTransport interface {
@@ -148,6 +201,47 @@ func (c *Client) SetAuthToken(tok string) {
 	c.mu.Unlock()
 }
 
+// ProviderKind returns the wire dialect the client speaks:
+// ProviderKindOpenAICompatible, ProviderKindOpenAIResponses, or "" for the
+// Anthropic Messages API, which is also what an unrecognised
+// Config.ProviderKind falls back to. A nil client returns "".
+func (c *Client) ProviderKind() string {
+	if c == nil || c.SpeaksAnthropicMessages() {
+		return ""
+	}
+	return c.cfg.ProviderKind
+}
+
+// SpeaksAnthropicMessages reports whether requests go out on the Anthropic
+// Messages API (/v1/messages). That includes non-Anthropic endpoints serving
+// the same API, such as Copilot's Messages shim. False for a nil client.
+func (c *Client) SpeaksAnthropicMessages() bool {
+	if c == nil {
+		return false
+	}
+	_, ok := c.transport.(anthropicMessagesTransport)
+	return ok
+}
+
+// BaseHost returns the host of the client's base URL, "" when unset or
+// unparsable.
+func (c *Client) BaseHost() string {
+	if c == nil {
+		return ""
+	}
+	u, err := url.Parse(c.cfg.BaseURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+// FirstPartyAnthropic reports whether the client speaks the Anthropic Messages
+// API to the first-party endpoint: an empty base URL or api.anthropic.com.
+func (c *Client) FirstPartyAnthropic() bool {
+	return c.SpeaksAnthropicMessages() && isFirstPartyBaseURL(c.cfg.BaseURL)
+}
+
 func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
 	if req == nil {
 		return req
@@ -156,7 +250,7 @@ func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
 	// reaches the wire. These suffixes control context-window and beta-header
 	// behaviour internally but are not valid Anthropic API model identifiers.
 	hasSuffix := strings.HasSuffix(strings.ToLower(req.Model), "[1m]")
-	msgs, msgsChanged := dropUnsignedThinkingBlocks(req.Messages)
+	msgs, msgsChanged := dropNonAnthropicThinkingBlocks(req.Messages)
 	if !cfg.StripCacheControlScope && !hasSuffix && !msgsChanged {
 		return req
 	}
@@ -181,8 +275,10 @@ func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
 	return &out
 }
 
-// dropUnsignedThinkingBlocks removes thinking blocks that carry no signature.
-// The API requires `signature` on every thinking block replayed in history;
+// dropNonAnthropicThinkingBlocks removes thinking blocks Anthropic cannot
+// verify: those with no signature, and those signed by the OpenAI Responses
+// transport (reasoningSignaturePrefix), which reach history when a session
+// moves from Codex to Claude or resumes after a model switch. The API requires `signature` on every thinking block replayed in history;
 // an unsigned one only arises when a stream was cut before its
 // signature_delta arrived, and replaying it 400s the entire conversation
 // rather than just that turn. Messages left with no content are dropped —
@@ -190,11 +286,11 @@ func sanitizeAnthropicRequest(req *MessageRequest, cfg Config) *MessageRequest {
 //
 // The input is returned untouched (changed=false) when every thinking block is
 // signed, which is the common case.
-func dropUnsignedThinkingBlocks(msgs []Message) ([]Message, bool) {
+func dropNonAnthropicThinkingBlocks(msgs []Message) ([]Message, bool) {
 	needsWork := false
 	for _, m := range msgs {
 		for _, cb := range m.Content {
-			if cb.Type == "thinking" && cb.Signature == "" {
+			if isNonAnthropicThinking(cb) {
 				needsWork = true
 				break
 			}
@@ -210,7 +306,7 @@ func dropUnsignedThinkingBlocks(msgs []Message) ([]Message, bool) {
 	for _, m := range msgs {
 		blocks := make([]ContentBlock, 0, len(m.Content))
 		for _, cb := range m.Content {
-			if cb.Type == "thinking" && cb.Signature == "" {
+			if isNonAnthropicThinking(cb) {
 				continue
 			}
 			blocks = append(blocks, cb)
@@ -222,6 +318,12 @@ func dropUnsignedThinkingBlocks(msgs []Message) ([]Message, bool) {
 		out = append(out, m)
 	}
 	return out, true
+}
+
+// isNonAnthropicThinking reports a thinking block that must not be replayed on
+// the Anthropic wire: unsigned, or carrying an OpenAI Responses signature.
+func isNonAnthropicThinking(cb ContentBlock) bool {
+	return cb.Type == "thinking" && (cb.Signature == "" || strings.HasPrefix(cb.Signature, reasoningSignaturePrefix))
 }
 
 // CreateMessage performs a non-streaming message request using the configured
@@ -278,8 +380,9 @@ func (anthropicMessagesTransport) CreateMessage(ctx context.Context, c *Client, 
 	// withRetry handles 429 with exponential backoff, mirroring StreamMessage.
 	// Pass req.Model (original, pre-sanitize) so filterBetasForModel can see any
 	// conduit-internal suffixes (e.g. "[1m]") and gate beta headers correctly.
+	extra := c.requestHeaders(req)
 	resp, err := c.doWithRetryAndAuth(ctx, func() (*http.Response, error) {
-		return c.do(ctx, body, req.Model)
+		return c.do(ctx, body, req.Model, req.Hints, extra)
 	})
 	if err != nil {
 		return nil, err
@@ -298,14 +401,15 @@ func (anthropicMessagesTransport) CreateMessage(ctx context.Context, c *Client, 
 }
 
 // do builds and sends the request. The body is buffered, so retries simply
-// rebuild a fresh reader from the same bytes.
-func (c *Client) do(ctx context.Context, body []byte, model string) (*http.Response, error) {
+// rebuild a fresh reader from the same bytes. extra is the call's
+// requestHeaders result.
+func (c *Client) do(ctx context.Context, body []byte, model string, hints *WireHints, extra map[string]string) (*http.Response, error) {
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages?beta=true"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("api: build request: %w", err)
 	}
-	c.applyHeaders(httpReq.Header, model)
+	c.applyHeaders(httpReq.Header, model, hints, extra)
 
 	if os.Getenv("CLAUDE_GO_DEBUG_HTTP") == "1" {
 		fmt.Fprintf(os.Stderr, "\n[CLAUDE_GO_DEBUG_HTTP] >>> POST %s\n", url)
@@ -325,14 +429,14 @@ func (c *Client) do(ctx context.Context, body []byte, model string) (*http.Respo
 		fmt.Fprintf(os.Stderr, "  body bytes: %d\n", len(body))
 	}
 
-	resp, err := c.http.Do(httpReq)
+	resp, err := c.doWithHeaderTimeout(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("api: send: %w", err)
 	}
 	return resp, nil
 }
 
-func (c *Client) applyHeaders(h http.Header, model string) {
+func (c *Client) applyHeaders(h http.Header, model string, hints *WireHints, extra map[string]string) {
 	c.mu.Lock()
 	tok := c.cfg.AuthToken
 	apiKey := c.cfg.APIKey
@@ -376,13 +480,27 @@ func (c *Client) applyHeaders(h http.Header, model string) {
 		h.Set("x-api-key", apiKey)
 	}
 
-	// Merge caller-supplied extras. Identity/authentication headers are locked
-	// and cannot be overridden by ExtraHeaders to prevent spoofing.
-	for k, v := range c.cfg.ExtraHeaders {
-		if !lockedHeaders[strings.ToLower(k)] {
-			h.Set(k, v)
+	applyWireHints(h, hints, isFirstPartyBaseURL(c.cfg.BaseURL), hintHeadersEnabled(c.cfg.BaseURL))
+
+	// Merge caller-supplied extras, then the per-request ones. Identity and
+	// authentication headers are locked and cannot be overridden by either,
+	// to prevent spoofing.
+	for _, set := range []map[string]string{c.cfg.ExtraHeaders, extra} {
+		for k, v := range set {
+			if !lockedHeaders[strings.ToLower(k)] {
+				h.Set(k, v)
+			}
 		}
 	}
+}
+
+// requestHeaders evaluates Config.RequestHeaders for req, or returns nil when
+// none is configured. Transports call it once per call, before any retry.
+func (c *Client) requestHeaders(req *MessageRequest) map[string]string {
+	if c.cfg.RequestHeaders == nil || req == nil {
+		return nil
+	}
+	return c.cfg.RequestHeaders(req)
 }
 
 // lockedHeaders is the set of header names (lower-cased) that ExtraHeaders
@@ -476,6 +594,9 @@ func newStatusError(resp *http.Response, raw []byte, rl string) *APIStatusError 
 	e := &APIStatusError{
 		Status:           resp.StatusCode,
 		ThinkingMismatch: ParseThinkingMismatch(resp.Header.Get("anthropic-thinking-prefix-mismatch")),
+		RetryAfter:       retryAfterFromHeaders(resp.Header),
+		ResetAt:          resetFromHeaders(resp.Header),
+		ShouldRetry:      strings.ToLower(strings.TrimSpace(resp.Header.Get("x-should-retry"))),
 	}
 	var env APIErrorEnvelope
 	if err := json.Unmarshal(raw, &env); err == nil && env.Error.Type != "" {

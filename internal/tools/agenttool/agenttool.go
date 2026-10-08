@@ -17,12 +17,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/icehunter/conduit/internal/team"
 	"github.com/icehunter/conduit/internal/tool"
+	"github.com/icehunter/conduit/internal/workflow"
+)
+
+// isolationSeq makes worktree names unique across concurrent Task calls.
+var (
+	isolationSeq atomic.Uint64
+	pruneOnce    sync.Once
 )
 
 // staticDescription is returned by Description() unconditionally. The agent
@@ -137,6 +147,11 @@ func (*Tool) InputSchema() json.RawMessage {
 				"type": "string",
 				"description": "Named provider role for this sub-agent (e.g. \"background\", \"planning\", \"implement\"). Determines the model and provider used. Overrides the default background model. Ignored when subagent_type is set (the plugin agent's role takes precedence)."
 			},
+			"isolation": {
+				"type": "string",
+				"enum": ["worktree"],
+				"description": "Isolation mode. \"worktree\" runs the sub-agent in a temporary git worktree so its edits do not touch your checkout. The worktree is removed if the agent made no changes; otherwise its path is returned in the result."
+			},
 			"output_schema": {
 				"type": "object",
 				"description": "Optional JSON Schema the sub-agent's final message must satisfy. The result is validated against it and one retry is allowed, so you get structured data you can act on instead of prose you have to re-parse. Use it whenever you will consume the result programmatically or compare several sub-agents' answers."
@@ -156,6 +171,7 @@ type Input struct {
 	SubagentType string          `json:"subagent_type,omitempty"`
 	Role         string          `json:"role,omitempty"`
 	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	Isolation    string          `json:"isolation,omitempty"`
 }
 
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
@@ -167,8 +183,17 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("agenttool: prompt is required"), nil
 	}
 
+	switch in.Isolation {
+	case "", "none", "worktree":
+	default:
+		return tool.ErrorResult(fmt.Sprintf("agenttool: unknown isolation %q; only \"worktree\" is supported", in.Isolation)), nil
+	}
+
 	// Agent teams: async spawn when active and wired.
 	if team.IsActive() && t.spawnTeammate != nil {
+		if in.Isolation == "worktree" {
+			return tool.ErrorResult("agenttool: isolation is not supported for teammates; re-issue without isolation"), nil
+		}
 		name := in.Name
 		if name == "" {
 			name = fmt.Sprintf("teammate-%d", t.spawnCount.Add(1))
@@ -180,12 +205,51 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.TextResult(fmt.Sprintf("Teammate %q launched (id: %s).", name, id)), nil
 	}
 
+	if in.Isolation == "worktree" {
+		return t.executeIsolated(ctx, in)
+	}
+	return t.dispatch(ctx, in), nil
+}
+
+// executeIsolated runs dispatch inside a fresh git worktree, then removes the
+// worktree if the sub-agent left it unchanged or reports where the changes are.
+func (t *Tool) executeIsolated(ctx context.Context, in Input) (tool.Result, error) {
+	cwd := tool.CwdFromContext(ctx)
+	if cwd == "" {
+		var err error
+		if cwd, err = os.Getwd(); err != nil {
+			return tool.ErrorResult(fmt.Sprintf("agenttool: isolation: %v", err)), nil
+		}
+	}
+	runID := fmt.Sprintf("task-%x", time.Now().UnixNano())
+	pruneOnce.Do(func() { workflow.PruneStale(context.WithoutCancel(ctx), cwd, 24*time.Hour) })
+	wt, err := workflow.NewWorktree(ctx, cwd, runID, int(isolationSeq.Add(1)))
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("agenttool: isolation \"worktree\" requires a git repository: %v", err)), nil
+	}
+	res := t.dispatch(tool.WithIsolatedCwd(ctx, wt.Path), in)
+	kept, ferr := wt.Finish(context.WithoutCancel(ctx))
+	note := ""
+	switch {
+	case ferr != nil:
+		note = fmt.Sprintf("worktree cleanup failed: %v (path: %s)", ferr, wt.Path)
+	case kept != "":
+		note = fmt.Sprintf("The sub-agent made changes. Worktree kept at %s (detached HEAD, name %s).", kept, wt.Branch)
+	}
+	if note != "" {
+		res.Content = append(res.Content, tool.ResultBlock{Type: "text", Text: "\n\n" + note})
+	}
+	return res, nil
+}
+
+// dispatch routes a validated call to the matching runner.
+func (t *Tool) dispatch(ctx context.Context, in Input) tool.Result {
 	// An output contract takes precedence over the plain runners: the caller
 	// asked for validated structure, and quietly returning prose instead would
 	// hand them something that only looks like data.
 	if len(in.OutputSchema) > 0 {
 		if t.runContract == nil {
-			return tool.ErrorResult("agenttool: output_schema was requested but this session has no contract-capable runner; re-issue without output_schema"), nil
+			return tool.ErrorResult("agenttool: output_schema was requested but this session has no contract-capable runner; re-issue without output_schema")
 		}
 		systemPrompt, model, role, tools := "", "", in.Role, []string(nil)
 		if in.SubagentType != "" && t.registry != nil {
@@ -193,15 +257,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			if def == nil {
 				return tool.ErrorResult(fmt.Sprintf(
 					"agenttool: unknown subagent_type %q; available: %s", in.SubagentType, listNames(t.registry.ListAgents()),
-				)), nil
+				))
 			}
 			systemPrompt, model, role, tools = def.SystemPrompt, def.Model, def.Role, resolveToolNames(def.Tools)
 		}
 		result, err := t.runContract(ctx, in.Prompt, systemPrompt, model, role, tools, in.OutputSchema)
 		if err != nil {
-			return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
+			return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err))
 		}
-		return tool.TextResult(result), nil
+		return tool.TextResult(result)
 	}
 
 	if in.SubagentType != "" && t.registry != nil {
@@ -210,15 +274,15 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			available := listNames(t.registry.ListAgents())
 			return tool.ErrorResult(fmt.Sprintf(
 				"agenttool: unknown subagent_type %q; available: %s", in.SubagentType, available,
-			)), nil
+			))
 		}
 		if t.runTyped != nil {
 			resolved := resolveToolNames(def.Tools)
 			result, err := t.runTyped(ctx, in.Prompt, def.SystemPrompt, def.Model, def.Role, resolved)
 			if err != nil {
-				return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
+				return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err))
 			}
-			return tool.TextResult(result), nil
+			return tool.TextResult(result)
 		}
 		// runTyped unavailable — fall through to unrestricted run.
 	}
@@ -227,16 +291,16 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if in.Role != "" && t.runTyped != nil {
 		result, err := t.runTyped(ctx, in.Prompt, "", "", in.Role, nil)
 		if err != nil {
-			return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
+			return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err))
 		}
-		return tool.TextResult(result), nil
+		return tool.TextResult(result)
 	}
 
 	result, err := t.runAgent(ctx, in.Prompt)
 	if err != nil {
-		return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err)), nil
+		return tool.ErrorResult(fmt.Sprintf("agenttool: %v", err))
 	}
-	return tool.TextResult(result), nil
+	return tool.TextResult(result)
 }
 
 // resolveToolNames normalises CC plugin tool names to conduit registry key names.

@@ -268,8 +268,8 @@ const KNOWN_HEADERS = new Set([
   // CCR (Claude Code Remote) bridge headers — not sent by conduit (bridge-only)
   "x-claude-remote-container-id",
   "x-claude-remote-session-id",
-  // Sub-agent tracking headers (v2.1.153+) — sent only when CC spawns child agents;
-  // conduit does not implement multi-agent orchestration yet, safe to suppress.
+  // Sub-agent tracking headers (v2.1.153+) — sent on child-agent requests. Conduit
+  // sends both from its sub-agent loops (internal/api/wirehints.go).
   "x-claude-code-agent-id",
   "x-claude-code-parent-agent-id",
   // Agent-skills beta header (v2.1.153+) — beta for the agent skills plugin feature.
@@ -325,6 +325,36 @@ const KNOWN_HEADERS = new Set([
   // parses it in internal/api (ThinkingMismatch) and heals in the agent loop by
   // stripping thinking blocks from that point, mirroring CC's own recovery.
   "anthropic-thinking-prefix-mismatch",
+  // Client-hint request headers (v2.1.280+, gated by DEn(): on for first-party
+  // OAuth/API-key sessions against api.anthropic.com, or forced by
+  // CLAUDE_CODE_GATEWAY_HINT_HEADERS). Conduit sends all of these
+  // (internal/api/wirehints.go). x-claude-code-prompt-id is new in 2.1.292.
+  "x-claude-code-request-class",
+  "x-claude-code-agent-type",
+  "x-claude-code-prompt-id",
+  "x-claude-code-compaction",
+  "x-claude-code-context-compacted",
+  "x-claude-code-prev-tool-durations",
+  "x-cc-compaction-request",
+  "x-cc-context-compacted",
+  // Response headers read by CC, not part of conduit's request shape (v2.1.280+).
+  "anthropic-cache-keepalive", // experimental cache keep-alive (/v1/messages/cache_touch)
+  "x-claude-code-tunnel-credential-epoch", // remote/tunnel fetches
+  "x-anthropic-attachment-prefetch-seen", // /api/oauth/files/<id>/content
+  // Request headers on endpoints or modes conduit doesn't use (v2.1.280+).
+  "x-anthropic-attachment-prefetch", // file-download endpoint only
+  "x-claude-remote-session-origin", // remote sessions only (CLAUDE_CODE_SESSION_ORIGIN)
+  "anthropic-client-feature", // "ccr" on a bridge tool_hosts call
+  "anthropic-client-version", // desktop-app entrypoint only
+  // NOT wire headers (v2.1.280+) — false positives from the namespace scan: a
+  // marketplace name, a GitHub org, a plugin directory, two font names and an
+  // internal schema key.
+  "anthropic-example",
+  "anthropic-experimental",
+  "anthropic-plugin-directory",
+  "anthropic-sans",
+  "anthropic-serif",
+  "x-claude-code-keep-branch",
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

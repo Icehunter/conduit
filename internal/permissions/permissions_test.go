@@ -90,8 +90,8 @@ func TestMatchRule_BashReadonly(t *testing.T) {
 	readOnly := []string{
 		"git status",
 		"cd /Volumes/Engineering/Icehunter/conduit && wc -l internal/tui/model.go",
-		"cd /Volumes/Engineering/Icehunter/conduit && find internal -type d -maxdepth 2 | sort",
-		`cd /Volumes/Engineering/Icehunter/conduit && cat go.mod | head -50 && echo "done"`,
+		"cd /Volumes/Engineering/Icehunter/conduit && find internal -type d -maxdepth 2",
+		`cd /Volumes/Engineering/Icehunter/conduit && head -50 go.mod && echo "done"`,
 		"rg -n permissions internal/permissions",
 	}
 	for _, input := range readOnly {
@@ -100,14 +100,24 @@ func TestMatchRule_BashReadonly(t *testing.T) {
 		}
 	}
 
-	mutating := []string{
+	// The rule inherits the strict classifier: pipes, redirects (including
+	// discards), expansions and mutating forms of listed commands all fall
+	// outside it.
+	notReadOnly := []string{
 		"cd /tmp && rm -rf x",
 		"cd /tmp && cat a > b",
 		"find . -delete",
 		"sed -i s/a/b/ file",
 		"echo $(rm -rf /tmp/nope)",
+		"cd /Volumes/Engineering/Icehunter/conduit && find internal -type d -maxdepth 2 | sort",
+		`cd /Volumes/Engineering/Icehunter/conduit && cat go.mod | head -50 && echo "done"`,
+		"ls 2>/dev/null",
+		"git branch -D main",
+		"env rm -rf /tmp/x",
+		"sort -o /etc/hosts x",
+		"git config core.fsmonitor x",
 	}
-	for _, input := range mutating {
+	for _, input := range notReadOnly {
 		if matchRule("Bash(readonly:*)", "Bash", input) {
 			t.Errorf("Bash(readonly:*) should not match %q", input)
 		}
@@ -180,7 +190,10 @@ func TestSuggestRule(t *testing.T) {
 		{"Bash", "git log --oneline", "Bash(readonly:*)"},
 		{"Bash", "git status", "Bash(readonly:*)"},
 		{"Bash", "cd /repo && wc -l file.go", "Bash(readonly:*)"},
-		{"Bash", "cd /repo && find internal -type d -maxdepth 2 | sort", "Bash(readonly:*)"},
+		{"Bash", "cd /repo && find internal -type d -maxdepth 2", "Bash(readonly:*)"},
+		// A pipe is not read-only, so the suggestion falls back to the
+		// command prefix.
+		{"Bash", "cd /repo && find internal -type d -maxdepth 2 | sort", "Bash(find:*)"},
 		{"Bash", "npm install", "Bash(npm install:*)"},
 		{"Bash", "foobar --flag", "Bash(foobar:*)"},
 		{"Bash", "", "Bash"},
@@ -301,10 +314,23 @@ func TestGate_ModeSemantics(t *testing.T) {
 		{"default/Read allow", ModeDefault, "Read", "/any/file", DecisionAllow},
 		{"default/Bash git log allow", ModeDefault, "Bash", "git log", DecisionAllow},
 		{"default/Bash npm install ask", ModeDefault, "Bash", "npm install", DecisionAsk},
+		{"default/Bash cd chain allow", ModeDefault, "Bash", "cd /repo && git status", DecisionAllow},
+		// Strict read-only: mutating forms of listed commands, redirects,
+		// pipes and wrapped commands ask instead of auto-allowing.
+		{"default/Bash git branch -D ask", ModeDefault, "Bash", "git branch -D main", DecisionAsk},
+		{"default/Bash git stash drop ask", ModeDefault, "Bash", "git stash drop", DecisionAsk},
+		{"default/Bash env-wrapped rm ask", ModeDefault, "Bash", "env rm -rf /tmp/x", DecisionAsk},
+		{"default/Bash discard redirect ask", ModeDefault, "Bash", "ls 2>/dev/null", DecisionAsk},
+		{"default/Bash pipe ask", ModeDefault, "Bash", "ls | grep go", DecisionAsk},
+		{"default/Bash sort -o ask", ModeDefault, "Bash", "sort -o /etc/hosts x", DecisionAsk},
+		{"plan/Bash git branch -D ask", ModePlan, "Bash", "git branch -D main", DecisionAsk},
+		{"plan/Bash fd -x ask", ModePlan, "Bash", "fd -x rm", DecisionAsk},
+		{"council/Bash git config write deny", ModeCouncil, "Bash", "git config core.fsmonitor x", DecisionDeny},
+		{"council/Bash find exec deny", ModeCouncil, "Bash", "find . '-exec' rm {} +", DecisionDeny},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := New("", nil, tt.mode, nil, nil, nil)
+			g := New("/any", nil, tt.mode, nil, nil, nil)
 			got := g.Check(tt.tool, tt.input)
 			if got != tt.want {
 				t.Errorf("mode=%s tool=%s input=%q: got %v, want %v", tt.mode, tt.tool, tt.input, got, tt.want)
@@ -373,5 +399,29 @@ func TestSuggestRule_UnknownBin(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("SuggestRule(%q, %q) = %q; want %q", tt.tool, tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestGate_MatchesAskRule(t *testing.T) {
+	g := New("", nil, ModeDefault, []string{"Bash(git *)"}, nil, []string{"Bash(git push*)", "Write(*.env)"})
+	tests := []struct {
+		name, tool, input string
+		want              bool
+	}{
+		{"matching ask rule", "Bash", "git push origin main", true},
+		{"ask rule behind &&", "Bash", "cd x && git push", true},
+		{"allowed but not asked", "Bash", "git status", false},
+		{"write ask rule", "Write", "prod.env", true},
+		{"other tool", "Read", "prod.env", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := g.MatchesAskRule(tt.tool, tt.input); got != tt.want {
+				t.Errorf("MatchesAskRule = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	if New("", nil, ModeDefault, nil, nil, nil).MatchesAskRule("Bash", "x") {
+		t.Error("gate without ask rules matched")
 	}
 }

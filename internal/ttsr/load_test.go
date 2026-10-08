@@ -3,6 +3,7 @@ package ttsr
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +111,76 @@ written in the body of the file.
 	want := "This is the correction text\nwritten in the body of the file."
 	if rules[0].Correction != want {
 		t.Errorf("correction: got %q, want %q", rules[0].Correction, want)
+	}
+}
+
+func TestLoad_ExtendedFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	writeTTSRFile(t, dir, "full.md", `---
+name: full
+pattern: TODO
+mode: warn
+scope: text, tool
+tools: Write, Edit
+paths: **/*.go, go.mod
+agents: main, general-*
+repeat: once
+repeat_gap: 3
+max_fires: 2
+---
+Mind the TODOs.
+`)
+	writeTTSRFile(t, dir, "pathonly.md", `---
+name: pathonly
+paths: vendor/**
+correction: do not touch vendor
+---
+`)
+	writeTTSRFile(t, dir, "badmode.md", `---
+name: badmode
+pattern: x
+mode: explode
+---
+`)
+	writeTTSRFile(t, dir, "badscope.md", `---
+name: badscope
+pattern: x
+scope: nowhere
+---
+`)
+	writeTTSRFile(t, dir, "nopattern.md", `---
+name: nopattern
+---
+`)
+	rules, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Rule{}
+	for _, r := range rules {
+		byName[r.Name] = r
+	}
+	if len(byName) != 2 {
+		t.Fatalf("loaded %d rules (%v), want full and pathonly", len(byName), byName)
+	}
+	f := byName["full"]
+	if f.Mode != ModeWarn || f.Scope != ScopeText|ScopeToolArgs || !f.Once || f.Gap != 3 || f.MaxFires != 2 {
+		t.Errorf("full = %+v", f)
+	}
+	if got := strings.Join(f.Tools, "|"); got != "Write|Edit" {
+		t.Errorf("tools = %q", got)
+	}
+	if got := strings.Join(f.Paths, "|"); got != "**/*.go|go.mod" {
+		t.Errorf("paths = %q", got)
+	}
+	if got := strings.Join(f.Agents, "|"); got != "main|general-*" {
+		t.Errorf("agents = %q", got)
+	}
+	if f.Correction != "Mind the TODOs." {
+		t.Errorf("correction = %q", f.Correction)
+	}
+	p := byName["pathonly"]
+	if p.Pattern != nil || len(p.Paths) != 1 || p.scope() != ScopeToolArgs {
+		t.Errorf("pathonly = %+v", p)
 	}
 }

@@ -1,10 +1,12 @@
 package instructions
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // helpers
@@ -558,4 +560,113 @@ func TestLoad_TruncatesLargeFiles(t *testing.T) {
 			t.Errorf("file content exceeds MaxCharCount: %d", len(f.Content))
 		}
 	}
+}
+
+func TestTruncateContent(t *testing.T) {
+	pad := func(n int) string { return strings.Repeat("x", n) }
+	tests := []struct {
+		name     string
+		content  string
+		contains []string
+		absent   []string
+		verbatim bool
+	}{
+		{"under limit unchanged", "# T\nbody", nil, nil, true},
+		{"exactly at limit unchanged", pad(MaxCharCount), nil, nil, true},
+		{
+			name:     "lists dropped headings only",
+			content:  "# Kept\n" + pad(MaxCharCount) + "\n## Dropped One\ntext\n### Dropped Two\n",
+			contains: []string{"[truncated: file exceeds 40000 characters", "Omitted sections: Dropped One; Dropped Two"},
+			absent:   []string{"Kept;"},
+		},
+		{
+			name:     "heading starting exactly at the cut is dropped",
+			content:  pad(MaxCharCount-1) + "\n## At Cut\n",
+			contains: []string{"Omitted sections: At Cut"},
+		},
+		{
+			name:     "ignores hashes in fenced code",
+			content:  pad(MaxCharCount) + "\n```sh\n# a comment\n```\n~~~\n# tilde comment\n~~~\n## Real\n",
+			contains: []string{"Omitted sections: Real"},
+			absent:   []string{"a comment", "tilde comment"},
+		},
+		{
+			name:     "no headings dropped gives plain marker",
+			content:  pad(MaxCharCount) + "\njust prose\n",
+			contains: []string{"[truncated: file exceeds 40000 characters]"},
+			absent:   []string{"Omitted"},
+		},
+		{
+			name:     "non-headings ignored",
+			content:  pad(MaxCharCount) + "\n#nospace\n####### seven\n#\n# \n#hashtag\n## Good\n",
+			contains: []string{"Omitted sections: Good"},
+			absent:   []string{"nospace", "seven", "hashtag"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateContent(tt.content)
+			if tt.verbatim && got != tt.content {
+				t.Fatal("content changed")
+			}
+			for _, c := range tt.contains {
+				if !strings.Contains(got, c) {
+					t.Errorf("missing %q in tail %q", c, got[max(0, len(got)-200):])
+				}
+			}
+			for _, a := range tt.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("unexpected %q", a)
+				}
+			}
+			if !utf8.ValidString(got) {
+				t.Error("result is not valid UTF-8")
+			}
+		})
+	}
+}
+
+func TestTruncateContent_HeadingCap(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString(strings.Repeat("x", MaxCharCount) + "\n")
+	for i := 0; i < maxOmittedHeadings+5; i++ {
+		fmt.Fprintf(&sb, "## H%d\n", i)
+	}
+	got := truncateContent(sb.String())
+	if !strings.Contains(got, "H14; ...]") || strings.Contains(got, "H15") {
+		t.Errorf("cap not applied: %q", got[len(got)-80:])
+	}
+}
+
+// TestTruncateContent_NeverSplitsRune places each byte of a multi-byte rune on
+// the cut boundary.
+func TestTruncateContent_NeverSplitsRune(t *testing.T) {
+	for _, r := range []string{"é", "€", "😀"} {
+		for off := 0; off < len(r); off++ {
+			prefix := strings.Repeat("a", MaxCharCount-off)
+			got := truncateContent(prefix + r + strings.Repeat("b", 100))
+			if !utf8.ValidString(got) {
+				t.Errorf("rune %q at offset %d: invalid UTF-8 result", r, off)
+			}
+			head, _, _ := strings.Cut(got, "\n\n[truncated")
+			if len(head) > MaxCharCount {
+				t.Errorf("rune %q offset %d: kept %d bytes > limit", r, off, len(head))
+			}
+		}
+	}
+}
+
+func FuzzTruncateContent(f *testing.F) {
+	f.Add("# h\n")
+	f.Add(strings.Repeat("é", MaxCharCount) + "\n## x\n")
+	f.Add(strings.Repeat("😀", MaxCharCount/4+10) + "```\n# c\n```\n")
+	f.Fuzz(func(t *testing.T, s string) {
+		got := truncateContent(s)
+		if utf8.ValidString(s) && !utf8.ValidString(got) {
+			t.Fatal("valid input produced invalid UTF-8")
+		}
+		if len(s) <= MaxCharCount && got != s {
+			t.Fatal("short input modified")
+		}
+	})
 }

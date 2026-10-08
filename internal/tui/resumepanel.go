@@ -63,16 +63,7 @@ func (m Model) handleResumeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Loading session…"})
 		m.refreshViewport()
 		filePath := picked.filePath
-		return m, func() tea.Msg {
-			loadPath := filePath
-			if cwd, err := os.Getwd(); err == nil {
-				if writeSession, err := session.ImportForWrite(cwd, filePath); err == nil {
-					loadPath = writeSession.FilePath
-				}
-			}
-			msgs, err := session.LoadMessages(loadPath)
-			return resumeLoadMsg{msgs: msgs, filePath: loadPath, err: err}
-		}
+		return m, func() tea.Msg { return loadResumeMsg(filePath) }
 	case "space":
 		if p.filter != "" {
 			p.filter += " "
@@ -171,4 +162,18 @@ func (m Model) renderResumePicker() string {
 	}
 
 	return sb.String()
+}
+
+// loadResumeMsg imports and loads a session file. It runs in a Cmd: it reads
+// the whole transcript, twice (messages, then the recorded model).
+func loadResumeMsg(filePath string) tea.Msg {
+	loadPath := filePath
+	if cwd, err := os.Getwd(); err == nil {
+		if writeSession, err := session.ImportForWrite(cwd, filePath); err == nil {
+			loadPath = writeSession.FilePath
+		}
+	}
+	msgs, err := session.LoadMessages(loadPath)
+	model, family := session.FromFile(loadPath).ReadModel()
+	return resumeLoadMsg{msgs: msgs, filePath: loadPath, err: err, model: model, modelFamily: family}
 }

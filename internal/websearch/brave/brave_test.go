@@ -248,3 +248,14 @@ func FuzzParseResponse(f *testing.F) {
 		_, _ = parseResponse(data)
 	})
 }
+
+func TestAvailable(t *testing.T) {
+	t.Setenv("BRAVE_API_KEY", "")
+	if newWithClient(secure.NewMemoryStorage(), http.DefaultClient, defaultAPIBase).Available() {
+		t.Error("Available() = true without a key")
+	}
+	t.Setenv("BRAVE_API_KEY", "k")
+	if !newWithClient(secure.NewMemoryStorage(), http.DefaultClient, defaultAPIBase).Available() {
+		t.Error("Available() = false with BRAVE_API_KEY set")
+	}
+}

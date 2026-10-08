@@ -35,6 +35,8 @@ func (h *LoopHost) RunAgent(ctx context.Context, req workflow.AgentRequest) work
 		Model:            req.Model,
 		Mode:             permissions.ModeBypassPermissions,
 		DisableModeTools: true,
+		AgentType:        "general-purpose",
+		Workflow:         true,
 	}
 	if req.AgentType != "" {
 		if h.Agents == nil {
@@ -50,6 +52,7 @@ func (h *LoopHost) RunAgent(ctx context.Context, req workflow.AgentRequest) work
 		}
 		spec.Role = def.Role
 		spec.Tools = def.Tools
+		spec.AgentType = "custom"
 	}
 
 	var wt *workflow.Worktree

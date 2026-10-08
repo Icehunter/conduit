@@ -307,6 +307,61 @@ func TestProviderKey_OpenAICompatibleIncludesCredentialAndModel(t *testing.T) {
 	}
 }
 
+func TestActiveProviderSettings_ExtraBodyJSONRoundTrip(t *testing.T) {
+	value := ActiveProviderSettings{
+		Kind:       ProviderKindOpenAICompatible,
+		Credential: "local-lmstudio",
+		BaseURL:    "http://192.168.0.71:1234/v1",
+		Model:      "qwen3.8-27b",
+		ExtraBody: map[string]any{
+			"chat_template_kwargs": map[string]any{"enable_thinking": false},
+		},
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"extraBody"`) {
+		t.Fatalf("marshaled settings = %s, want extraBody field", raw)
+	}
+	var got ActiveProviderSettings
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	kwargs, ok := got.ExtraBody["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != false {
+		t.Fatalf("ExtraBody after round trip = %#v, want enable_thinking=false", got.ExtraBody)
+	}
+}
+
+func TestActiveProviderSettings_ReasoningReplayJSON(t *testing.T) {
+	var got ActiveProviderSettings
+	if err := json.Unmarshal([]byte(`{"kind":"openai-compatible","credential":"local","baseURL":"http://localhost:8080/v1","reasoningReplay":"off"}`), &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.ReasoningReplay != "off" {
+		t.Fatalf("ReasoningReplay = %q, want off", got.ReasoningReplay)
+	}
+	raw, err := json.Marshal(ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, Credential: "local"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "reasoningReplay") {
+		t.Fatalf("marshaled settings = %s, want no reasoningReplay field when unset", raw)
+	}
+}
+
+func TestActiveProviderSettings_ExtraBodyOmittedWhenEmpty(t *testing.T) {
+	value := ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, Credential: "gemini-personal", BaseURL: "https://example.com/v1"}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "extraBody") {
+		t.Fatalf("marshaled settings = %s, want no extraBody field when unset", raw)
+	}
+}
+
 func TestValidateProviderSettings(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1090,5 +1145,22 @@ func TestLoad_InvalidJSON(t *testing.T) {
 	m := loadPaths(projectPaths(dir))
 	if len(m.Allow) != 0 {
 		t.Error("invalid file should be skipped")
+	}
+}
+
+func TestActiveProviderSettings_ToolCallFormatJSON(t *testing.T) {
+	var got ActiveProviderSettings
+	if err := json.Unmarshal([]byte(`{"kind":"openai-compatible","credential":"local","baseURL":"http://localhost:8080/v1","toolCallFormat":"hermes"}`), &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.ToolCallFormat != "hermes" {
+		t.Fatalf("ToolCallFormat = %q, want hermes", got.ToolCallFormat)
+	}
+	raw, err := json.Marshal(ActiveProviderSettings{Kind: ProviderKindOpenAICompatible, Credential: "local"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "toolCallFormat") {
+		t.Fatalf("marshaled settings = %s, want no toolCallFormat field when unset", raw)
 	}
 }

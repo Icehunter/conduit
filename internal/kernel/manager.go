@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,12 @@ func NewManager() *Manager {
 // Get returns the Kernel for (sessionID, lang), creating one if needed.
 // Returns an error if the interpreter is not available.
 func (m *Manager) Get(sessionID, lang string) (*Kernel, error) {
+	return m.GetIn(sessionID, lang, "")
+}
+
+// GetIn is Get with the working directory a newly created kernel starts in
+// (empty = the process directory). An existing kernel keeps its directory.
+func (m *Manager) GetIn(sessionID, lang, dir string) (*Kernel, error) {
 	key := sessionID + ":" + lang
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -37,7 +44,7 @@ func (m *Manager) Get(sessionID, lang string) (*Kernel, error) {
 		e.lastUsed = time.Now()
 		return e.k, nil
 	}
-	k, err := New(lang)
+	k, err := NewIn(lang, dir)
 	if err != nil {
 		return nil, fmt.Errorf("kernel: manager get(%s, %s): %w", sessionID, lang, err)
 	}
@@ -45,13 +52,15 @@ func (m *Manager) Get(sessionID, lang string) (*Kernel, error) {
 	return k, nil
 }
 
-// DisposeSession closes all kernels for sessionID and removes them from the map.
+// DisposeSession closes all kernels for sessionID, including those of its
+// scoped sub-agent sessions ("<id>/<scope>"), and removes them from the map.
 func (m *Manager) DisposeSession(sessionID string) {
 	prefix := sessionID + ":"
+	scoped := sessionID + "/"
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for key, e := range m.kernels {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+		if strings.HasPrefix(key, prefix) || strings.HasPrefix(key, scoped) {
 			_ = e.k.Close()
 			delete(m.kernels, key)
 		}

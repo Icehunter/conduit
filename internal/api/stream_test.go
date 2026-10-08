@@ -123,8 +123,9 @@ func TestStreamMessage_ContextCancelStops(t *testing.T) {
 }
 
 // TestStreamMessage_IdleTimeout verifies a connection that stays open but
-// goes completely silent is torn down within the idle window, with a clear
-// "idle timeout" error rather than a bare context-cancelled one.
+// goes completely silent is torn down within the idle window, with an error
+// that wraps ErrStreamIdleTimeout and classifies as transient rather than as
+// a cancel.
 func TestStreamMessage_IdleTimeout(t *testing.T) {
 	oldTimeout := streamIdleTimeout
 	streamIdleTimeout = 50 * time.Millisecond
@@ -160,6 +161,12 @@ func TestStreamMessage_IdleTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "idle timeout") {
 		t.Errorf("err = %v, want it to mention idle timeout", err)
+	}
+	if !errors.Is(err, ErrStreamIdleTimeout) {
+		t.Errorf("err = %v, want it to wrap ErrStreamIdleTimeout", err)
+	}
+	if got := Classify(err); got.Class != ClassTransient || got.Reason != ReasonIdleTimeout || !got.Retryable() {
+		t.Errorf("Classify(err) = %+v, want retryable transient/%s", got, ReasonIdleTimeout)
 	}
 }
 
@@ -370,6 +377,61 @@ func TestStreamMessage_OpenAICompatibleConvertsTextStream(t *testing.T) {
 	}
 	if promptTokens != 123 || outputTokens != 4 {
 		t.Fatalf("usage = (%d, %d), want (123, 4)", promptTokens, outputTokens)
+	}
+}
+
+func TestStreamMessage_OpenAICompatibleMergesExtraBody(t *testing.T) {
+	var capturedBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/openai/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl_1\",\"model\":\"qwen3.8-27b\",\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(Config{
+		ProviderKind: ProviderKindOpenAICompatible,
+		BaseURL:      srv.URL + "/openai/",
+		APIKey:       "local",
+		ExtraBody: map[string]any{
+			"chat_template_kwargs": map[string]any{"enable_thinking": false},
+		},
+	}, srv.Client())
+	stream, err := c.StreamMessage(context.Background(), &MessageRequest{
+		Model:     "qwen3.8-27b",
+		MaxTokens: 64,
+		Tools: []ToolDef{{
+			Name:        "Bash",
+			Description: "Run a shell command",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"command": map[string]any{"type": "string"}},
+			},
+		}},
+		Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+	for {
+		if _, err := stream.Next(); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+	}
+
+	kwargs, ok := capturedBody["chat_template_kwargs"].(map[string]any)
+	if !ok || kwargs["enable_thinking"] != false {
+		t.Fatalf("chat_template_kwargs = %#v, want enable_thinking=false", capturedBody["chat_template_kwargs"])
+	}
+	tools, ok := capturedBody["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v, want one OpenAI tool preserved alongside ExtraBody merge", capturedBody["tools"])
 	}
 }
 

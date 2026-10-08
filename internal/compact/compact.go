@@ -10,22 +10,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"regexp"
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/sessionstats"
-	"github.com/icehunter/conduit/internal/truncate"
+	"github.com/icehunter/conduit/internal/sse"
+	"github.com/icehunter/conduit/internal/transcript"
 )
 
-// DefaultModel is the fallback model used for summarization sub-calls.
-// Mirrors getSmallFastModel().
-const DefaultModel = "claude-haiku-4-5-20251001"
-
-// thrashThreshold is the minimum token-savings fraction to not be considered
-// thrashing. If both of the last 2 compactions saved less than this fraction,
-// the next compaction is skipped.
-const thrashThreshold = 0.10
+// DefaultModel is the fallback model used for summarization sub-calls: CC
+// 2.1.293's latest_per_family.haiku (1M context, $0.10/$0.50 per MTok).
+const DefaultModel = "claude-haiku-5-5"
 
 // systemPrompt tells the compaction model exactly what to produce.
 // Structured template inspired by crush's summary.md with opencode's
@@ -87,305 +83,308 @@ Be specific. Don't write "implement authentication" - write:
 Keep every section, preserve exact file paths and identifiers when known, and prefer terse bullets over paragraphs.
 </summary>`
 
-// compactionRecord tracks the savings ratio of a single compaction run.
-type compactionRecord struct {
-	tokensBefore int
-	tokensAfter  int
-}
-
-// savingsFraction returns the fraction of tokens saved (0.0–1.0).
-func (r compactionRecord) savingsFraction() float64 {
-	if r.tokensBefore <= 0 {
-		return 0
-	}
-	saved := r.tokensBefore - r.tokensAfter
-	return float64(saved) / float64(r.tokensBefore)
-}
-
-// Compactor wraps the stateless CompactWithModel call with an anti-thrashing
-// guard (Task 3.5). Create one per session and reuse it across compaction calls.
-type Compactor struct {
-	// history holds the last 2 compaction records for thrash detection.
-	history [2]compactionRecord
-	// count is the number of compactions recorded so far (capped at 2).
-	count int
-}
-
-// NewCompactor returns a ready-to-use Compactor.
-func NewCompactor() *Compactor {
-	return &Compactor{}
-}
-
-// recordResult registers a compaction outcome. tokensBefore and tokensAfter
-// are the approximate token counts of the conversation before and after.
-func (c *Compactor) recordResult(tokensBefore, tokensAfter int) {
-	// Shift history: index 0 = oldest of the two; index 1 = newest.
-	c.history[0] = c.history[1]
-	c.history[1] = compactionRecord{tokensBefore: tokensBefore, tokensAfter: tokensAfter}
-	if c.count < 2 {
-		c.count++
-	}
-}
-
-// isThrashing returns true when both of the last 2 compactions saved <10%.
-// Returns false if fewer than 2 compactions have been recorded.
-func (c *Compactor) isThrashing() bool {
-	if c.count < 2 {
-		return false
-	}
-	for _, r := range c.history {
-		if r.savingsFraction() >= thrashThreshold {
-			return false
-		}
-	}
-	return true
-}
-
-// Compact summarizes messages and updates the thrash guard.
-// tokensBefore should be the caller's estimate of current context size.
-// Pass 0 if unavailable — the thrash guard will use the transcript length.
-func (c *Compactor) Compact(ctx context.Context, client *api.Client, messages []api.Message, customInstructions string, tokensBefore int) (*Result, error) {
-	return c.CompactWithModel(ctx, client, DefaultModel, messages, customInstructions, tokensBefore)
-}
-
-// CompactWithModel is like Compact but lets the caller choose the model.
-func (c *Compactor) CompactWithModel(ctx context.Context, client *api.Client, model string, messages []api.Message, customInstructions string, tokensBefore int) (*Result, error) {
-	// Task 3.5: anti-thrashing guard.
-	if c.isThrashing() {
-		log.Printf("compact: thrashing guard: last 2 compactions saved <%.0f%%; skipping", thrashThreshold*100)
-		return nil, nil //nolint:nilnil // intentional: nil result + nil error means "skipped"
-	}
-
-	result, err := CompactWithModel(ctx, client, model, messages, customInstructions)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update thrash history.
-	tb := tokensBefore
-	if tb <= 0 {
-		// Estimate from transcript length as fallback.
-		tb = estimateTranscriptTokens(messages)
-	}
-	ta := 0
-	if result != nil && len(result.NewHistory) > 0 {
-		ta = estimateTranscriptTokens(result.NewHistory)
-	}
-	c.recordResult(tb, ta)
-
-	return result, nil
-}
-
-// estimateTranscriptTokens returns a rough token count (len/4 heuristic) for
-// all text content in messages.
-func estimateTranscriptTokens(msgs []api.Message) int {
-	total := 0
-	for _, m := range msgs {
-		for _, b := range m.Content {
-			switch b.Type {
-			case "text":
-				total += len(b.Text) / 4
-			case "tool_result":
-				total += len(b.ResultContent) / 4
-			case "tool_use":
-				for _, v := range b.Input {
-					total += len(fmt.Sprintf("%v", v)) / 4
-				}
-			}
-		}
-	}
-	return total
-}
-
 // Result is the output of a successful compaction.
 type Result struct {
-	// Summary is the extracted summary text.
+	// Summary is the model-written (or fallback) summary text, without the
+	// compaction-context sections.
 	Summary string
-	// NewHistory is the replacement conversation history (one user message).
+	// NewHistory is the replacement conversation history: one user message
+	// holding the summary and compaction context, followed by the verbatim
+	// tail. A nil error always means len(NewHistory) >= 1.
 	NewHistory []api.Message
+	// TailLen is how many messages at the end of NewHistory are the verbatim
+	// tail carried over unchanged.
+	TailLen int
+	// Fallback is true when the summarizer returned nothing usable and
+	// Summary came from LocalSummary.
+	Fallback bool
+	// Usage is the summarizer call's token usage.
+	Usage api.Usage
+}
+
+// Options configures CompactWithOptions.
+type Options struct {
+	// Model is the summarizer model; empty uses DefaultModel.
+	Model string
+	// Kind is KindAuto, KindManual or KindReactive; empty means KindManual.
+	Kind string
+	// CustomInstructions are appended to the summarizer prompt.
+	CustomInstructions string
+	// SessionID is sent as WireHints.SessionID and names the session in the
+	// context-recovery footer.
+	SessionID string
+	// SummarizerWindow is the summarizer model's context window in tokens;
+	// zero derives it from Model.
+	SummarizerWindow int
+	// MainWindow is the main model's context window; the verbatim tail is
+	// capped at a fifth of it. Zero means no window cap.
+	MainWindow int
+	// TailTokens is the verbatim tail budget; zero means 20000.
+	TailTokens int
+	// RecoveryTools names the tools available to the model after compaction.
+	// Only session_search and CCRRetrieve are mentioned in the footer, and
+	// only when listed.
+	RecoveryTools []string
+	// RequireTail makes a history with no verbatim tail "nothing to compact".
+	// A history ending in a user message and holding no assistant message has
+	// that message in the part to be summarized: the request that must go out
+	// next would lose it. Reactive compaction sets this.
+	RequireTail bool
+}
+
+// Compaction kinds, sent as x-claude-code-compaction on the summarization
+// request and as x-claude-code-context-compacted on the next main request.
+const (
+	KindAuto   = "auto"
+	KindManual = "manual"
+	// KindReactive is a compaction forced by a context-overflow error. The
+	// summarization request still goes out as KindAuto (CC has no reactive
+	// compaction kind there); the next main request carries "reactive".
+	KindReactive = "reactive"
+)
+
+// FallbackNotice is shown when Result.Fallback is set.
+const FallbackNotice = "Summary model unavailable — used a local summary."
+
+// wireKind is the x-claude-code-compaction value for the summarization request.
+func wireKind(kind string) string {
+	if kind == KindReactive {
+		return KindAuto
+	}
+	return kind
 }
 
 // Compact summarizes messages using the Anthropic API and returns a Result.
 // The caller should replace their history with Result.NewHistory.
 func Compact(ctx context.Context, client *api.Client, messages []api.Message, customInstructions string) (*Result, error) {
-	return CompactWithModel(ctx, client, DefaultModel, messages, customInstructions)
+	return CompactWithModel(ctx, client, DefaultModel, messages, customInstructions, KindManual)
 }
 
-// CompactWithModel summarizes messages using the requested model.
-func CompactWithModel(ctx context.Context, client *api.Client, model string, messages []api.Message, customInstructions string) (*Result, error) {
+// CompactWithModel summarizes messages using the requested model. kind is
+// KindAuto or KindManual. It is CompactWithOptions with default budgets.
+func CompactWithModel(ctx context.Context, client *api.Client, model string, messages []api.Message, customInstructions, kind string) (*Result, error) {
+	return CompactWithOptions(ctx, client, messages, Options{Model: model, Kind: kind, CustomInstructions: customInstructions})
+}
+
+// CompactWithOptions summarizes everything before a verbatim tail of recent
+// messages and returns the replacement history.
+//
+// A nil error guarantees len(Result.NewHistory) >= 1: when the model returns
+// no <summary> tag the rest of its answer (minus <analysis>) is used, and when
+// nothing usable is left a deterministic LocalSummary stands in (Fallback).
+// A stream that ends before message_stop is an error, and so is a history with
+// nothing before the tail to compact (see IsNothingToCompact).
+func CompactWithOptions(ctx context.Context, client *api.Client, messages []api.Message, o Options) (*Result, error) {
 	if len(messages) == 0 {
 		return nil, errors.New("no messages to compact")
 	}
-	if strings.TrimSpace(model) == "" {
-		model = DefaultModel
+	if strings.TrimSpace(o.Model) == "" {
+		o.Model = DefaultModel
+	}
+	if o.Kind == "" {
+		o.Kind = KindManual
 	}
 
-	// Check if the first message contains a previous summary (incremental compaction).
-	previousSummary := extractPreviousSummary(messages)
-
-	// Task 3.7: active-task anchor.
-	// Always include the last user message in the summarization input, regardless
-	// of token math. This prevents the live task from being dropped by compaction.
-	lastUserMsg := findLastUserMessage(messages)
-
-	// Build a readable transcript of the conversation.
-	transcript := buildTranscript(messages, lastUserMsg)
+	// A previous compaction's summary is always messages[0]. It is merged by
+	// the summarizer, not re-summarized as conversation.
+	previousSummary, prevCtx, hasPrev := extractPreviousContext(messages)
+	first := 0
+	if hasPrev {
+		first = 1
+	}
+	split := splitTail(messages, tailBudget(o))
+	if split <= first || (o.RequireTail && split >= len(messages)) {
+		return nil, errNothingToCompact
+	}
+	head, tail := messages[first:split], messages[split:]
 
 	var userMsg strings.Builder
 	if previousSummary != "" {
-		// Include previous summary for incremental merging.
-		userMsg.WriteString("<previous-summary>\n")
-		userMsg.WriteString(previousSummary)
-		userMsg.WriteString("\n</previous-summary>\n\n")
+		userMsg.WriteString("<previous-summary>\n" + previousSummary + "\n</previous-summary>\n\n")
 		userMsg.WriteString("Please update the above summary with the following new conversation:\n\n")
 	} else {
 		userMsg.WriteString("Please summarize the following conversation:\n\n")
 	}
-	userMsg.WriteString(transcript)
-	if customInstructions != "" {
-		userMsg.WriteString("\n\nAdditional instructions: ")
-		userMsg.WriteString(customInstructions)
+	extra := len(previousSummary) + len(o.CustomInstructions)
+	userMsg.WriteString(fitTranscript(head, summarizerCapChars(o, extra)))
+	if o.CustomInstructions != "" {
+		userMsg.WriteString("\n\nAdditional instructions: " + o.CustomInstructions)
 	}
 
 	req := &api.MessageRequest{
-		Model:     model,
-		MaxTokens: 8192,
-		System: []api.SystemBlock{{
-			Type: "text",
-			Text: systemPrompt,
-		}},
+		Model:     o.Model,
+		MaxTokens: summaryOutputTokens,
+		System:    []api.SystemBlock{{Type: "text", Text: systemPrompt}},
 		Messages: []api.Message{{
 			Role:    "user",
 			Content: []api.ContentBlock{{Type: "text", Text: userMsg.String()}},
 		}},
 		Stream: true,
+		Hints:  &api.WireHints{RequestClass: "compaction", Compaction: wireKind(o.Kind), SessionID: o.SessionID},
 	}
-
 	stream, err := client.StreamMessage(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("compact: stream: %w", err)
 	}
 	defer func() { _ = stream.Close() }()
+	out, err := readSummary(stream)
+	if err != nil {
+		return nil, err
+	}
 
-	// Drain text from the stream.
+	summary, fallback := resolveSummary(out.text, out.stopReason, head, o)
+	res := assembleResult(head, tail, prevCtx, o, summary, fallback)
+	res.Usage = out.usage
+	return res, nil
+}
+
+// CompactLocal is CompactWithOptions without the model call: the summary is
+// the deterministic LocalSummary, so it cannot fail on the network. Callers use
+// it when the summarizer is unavailable and compaction cannot wait (a context
+// overflow). Result.Fallback is always true.
+func CompactLocal(messages []api.Message, o Options) (*Result, error) {
+	if len(messages) == 0 {
+		return nil, errors.New("no messages to compact")
+	}
+	if o.Kind == "" {
+		o.Kind = KindManual
+	}
+	previousSummary, prevCtx, hasPrev := extractPreviousContext(messages)
+	first := 0
+	if hasPrev {
+		first = 1
+	}
+	split := splitTail(messages, tailBudget(o))
+	if split <= first || (o.RequireTail && split >= len(messages)) {
+		return nil, errNothingToCompact
+	}
+	head, tail := messages[first:split], messages[split:]
+	summary := LocalSummary(head, o)
+	if previousSummary != "" {
+		summary = previousSummary + "\n\n" + summary
+	}
+	return assembleResult(head, tail, prevCtx, o, summary, true), nil
+}
+
+// assembleResult builds the replacement history: the summary message with its
+// compaction context, then the verbatim tail.
+func assembleResult(head, tail []api.Message, prevCtx prevContext, o Options, summary string, fallback bool) *Result {
+	text := "<summary>\n" + tagEscaper.Replace(summary) + "\n</summary>\n\n"
+	if block := buildContextBlock(head, prevCtx, o); block != "" {
+		text += block + "\n\n"
+	}
+	text += "Above is a summary of our conversation so far. Please continue from here."
+
+	newHistory := make([]api.Message, 0, 1+len(tail))
+	newHistory = append(newHistory, api.Message{
+		Role:    "user",
+		Content: []api.ContentBlock{{Type: "text", Text: text}},
+	})
+	newHistory = append(newHistory, shrinkTail(tail, tailBudget(o))...)
+
+	sessionstats.SessionMetrics.RecordCompact()
+
+	return &Result{
+		Summary:    summary,
+		NewHistory: newHistory,
+		TailLen:    len(tail),
+		Fallback:   fallback,
+	}
+}
+
+// summaryStream is what readSummary collected from the summarizer's stream.
+type summaryStream struct {
+	text       string
+	stopReason string
+	usage      api.Usage
+}
+
+// readSummary drains the stream. A stream that ends without message_stop was
+// cut off and yields an error: a partial summary must not replace the history.
+func readSummary(stream *api.Stream) (summaryStream, error) {
+	var out summaryStream
 	var sb strings.Builder
+	complete := false
 	for {
 		ev, err := stream.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("compact: read: %w", err)
+			return summaryStream{}, fmt.Errorf("compact: read: %w", err)
 		}
-		if ev.Type == "content_block_delta" {
-			cbd, err := ev.AsContentBlockDelta()
-			if err == nil && cbd.Delta.Type == "text_delta" {
+		switch ev.Type {
+		case "message_start":
+			if ms, err := ev.AsMessageStart(); err == nil {
+				out.usage = mergeUsage(out.usage, ms.Message.Usage)
+			}
+		case "content_block_delta":
+			if cbd, err := ev.AsContentBlockDelta(); err == nil && cbd.Delta.Type == "text_delta" {
 				sb.WriteString(cbd.Delta.Text)
 			}
+		case "message_delta":
+			if md, err := ev.AsMessageDelta(); err == nil {
+				if md.Delta.StopReason != "" {
+					out.stopReason = md.Delta.StopReason
+				}
+				out.usage = mergeUsage(out.usage, md.Usage)
+			}
+		case "message_stop":
+			complete = true
 		}
 	}
+	if !complete {
+		return summaryStream{}, fmt.Errorf("compact: read: stream ended before message_stop: %w", api.ErrStreamTruncated)
+	}
+	out.text = sb.String()
+	return out, nil
+}
 
-	raw := sb.String()
-	summary := extractSummary(raw)
-	// Do not fall back to the raw response — it would dump the entire model
-	// output into session storage and leak as the session title.
-	// An empty summary is safe: loop.go only fires OnCompact when summary != "".
+// mergeUsage overlays the non-zero counters of u onto cur: message_start
+// carries the input side and message_delta the final output count.
+func mergeUsage(cur api.Usage, u sse.Usage) api.Usage {
+	if u.InputTokens > 0 {
+		cur.InputTokens = u.InputTokens
+	}
+	if u.OutputTokens > 0 {
+		cur.OutputTokens = u.OutputTokens
+	}
+	if u.CacheCreationInputTokens > 0 {
+		cur.CacheCreationInputTokens = u.CacheCreationInputTokens
+	}
+	if u.CacheReadInputTokens > 0 {
+		cur.CacheReadInputTokens = u.CacheReadInputTokens
+	}
+	return cur
+}
+
+var (
+	analysisRe     = regexp.MustCompile(`(?s)<analysis>.*?</analysis>`)
+	summaryTagsRe  = regexp.MustCompile(`</?summary>`)
+	truncatedNotes = "\n\n[summary truncated]"
+)
+
+// resolveSummary turns the model output into the summary text. fallback is
+// true when LocalSummary had to be used.
+func resolveSummary(raw, stopReason string, head []api.Message, o Options) (summary string, fallback bool) {
+	summary = extractSummary(raw)
 	if summary == "" {
-		return &Result{Summary: "", NewHistory: nil}, nil
+		// No usable <summary> block: drop the <analysis> scratchpad and use
+		// whatever else the model said.
+		rest := analysisRe.ReplaceAllString(raw, "")
+		if i := strings.Index(rest, "<analysis>"); i >= 0 {
+			rest = rest[:i] // unclosed scratchpad: everything after it is analysis
+		}
+		rest = strings.TrimSpace(summaryTagsRe.ReplaceAllString(rest, ""))
+		summary = transcript.Truncate(rest, maxRecoveredSumChars)
 	}
-
-	newHistory := []api.Message{{
-		Role: "user",
-		Content: []api.ContentBlock{{
-			Type: "text",
-			Text: "<summary>\n" + summary + "\n</summary>\n\nAbove is a summary of our conversation so far. Please continue from here.",
-		}},
-	}}
-
-	// Record compaction
-	sessionstats.SessionMetrics.RecordCompact()
-
-	return &Result{Summary: summary, NewHistory: newHistory}, nil
-}
-
-// findLastUserMessage returns a pointer to the last user message that contains
-// meaningful text (not just tool_result blocks). Returns nil if none found.
-func findLastUserMessage(messages []api.Message) *api.Message {
-	for i := len(messages) - 1; i >= 0; i-- {
-		m := messages[i]
-		if m.Role != "user" {
-			continue
-		}
-		for _, b := range m.Content {
-			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-				return &messages[i]
-			}
-		}
+	if summary == "" {
+		return LocalSummary(head, o), true
 	}
-	return nil
-}
-
-// buildTranscript converts messages to a readable text transcript.
-// anchorMsg, when non-nil, is always appended at the end even if it was
-// already included in the normal traversal (deduplication is handled).
-func buildTranscript(messages []api.Message, anchorMsg *api.Message) string {
-	var sb strings.Builder
-
-	// Determine the index of the anchor message so we can mark it.
-	anchorIdx := -1
-	if anchorMsg != nil {
-		for i := range messages {
-			if &messages[i] == anchorMsg {
-				anchorIdx = i
-				break
-			}
-		}
+	if stopReason == "max_tokens" {
+		summary += truncatedNotes
 	}
-
-	for _, msg := range messages {
-		role := "User"
-		if msg.Role == "assistant" {
-			role = "Assistant"
-		}
-		for _, block := range msg.Content {
-			switch block.Type {
-			case "text":
-				if strings.TrimSpace(block.Text) != "" {
-					sb.WriteString(role + ": " + block.Text + "\n\n")
-				}
-			case "tool_use":
-				sb.WriteString(role + " [tool call: " + block.Name + "]\n\n")
-			case "tool_result":
-				// Task 3.6: JSON-aware truncation instead of raw byte-slice.
-				// TruncateJSONStringLeaves handles valid JSON gracefully;
-				// for plain text it falls back to byte truncation. Always
-				// append a marker when the original exceeded the limit so
-				// the summarizer knows context was elided.
-				const resultMaxLen = 500
-				text := block.ResultContent
-				if len(text) > resultMaxLen {
-					truncated := truncate.TruncateJSONStringLeaves([]byte(text), resultMaxLen)
-					text = string(truncated) + "… [truncated]"
-				}
-				sb.WriteString("Tool result: " + text + "\n\n")
-			}
-		}
-	}
-
-	// Task 3.7: if the anchor message was not already the last written message,
-	// append it explicitly so the live task is always visible to the summarizer.
-	if anchorMsg != nil && anchorIdx >= 0 && anchorIdx < len(messages)-1 {
-		// Check whether the anchor was already the final substantive message.
-		// Re-append it with a clear marker so the summarizer notices.
-		sb.WriteString("\n--- Active task (current user request) ---\n")
-		for _, block := range anchorMsg.Content {
-			if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-				sb.WriteString("User: " + block.Text + "\n\n")
-			}
-		}
-	}
-
-	return strings.TrimSpace(sb.String())
+	return summary, false
 }
 
 // extractSummary pulls the text between <summary> and </summary>.
@@ -402,26 +401,10 @@ func extractSummary(s string) string {
 	return strings.TrimSpace(s[start : start+end])
 }
 
-// extractPreviousSummary checks if the first message contains a previous
-// compaction summary (wrapped in <summary> tags), returning it for incremental
-// merging. Returns empty string if no previous summary exists.
+// extractPreviousSummary returns the previous compaction's summary text when
+// the first message is a compaction summary, for incremental merging. Returns
+// empty string if no previous summary exists.
 func extractPreviousSummary(messages []api.Message) string {
-	if len(messages) == 0 {
-		return ""
-	}
-	// Previous summaries are always in the first user message after a compaction.
-	first := messages[0]
-	if first.Role != "user" {
-		return ""
-	}
-	for _, block := range first.Content {
-		if block.Type != "text" {
-			continue
-		}
-		// Look for <summary> block indicating a previous compaction.
-		if strings.Contains(block.Text, "<summary>") {
-			return extractSummary(block.Text)
-		}
-	}
-	return ""
+	summary, _, _ := extractPreviousContext(messages)
+	return summary
 }

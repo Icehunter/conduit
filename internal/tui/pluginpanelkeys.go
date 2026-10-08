@@ -339,42 +339,36 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 			if p.itemIdx < len(p.discoverItems) {
 				pluginID := p.discoverItems[p.itemIdx].pluginID
 				_ = plugins.Uninstall(pluginID, "user", cwd)
-				if m.cfg.MCPManager != nil {
-					m.cfg.MCPManager.SyncPluginServers(context.Background(), cwd, trusted)
-				}
 				m.pluginPanel = p
-				return m, reloadPluginPanelCmd(m.cfg.MCPManager, pluginTabDiscover, p.errors)
+				return m, tea.Sequence(syncPluginMCPCmd(m.cfg.MCPManager, cwd, trusted),
+					reloadPluginPanelCmd(m.cfg.MCPManager, pluginTabDiscover, p.errors))
 			}
 		case pluginTabInstalled:
 			if p.itemIdx < len(p.installedItems) {
 				pluginID := p.installedItems[p.itemIdx].pluginID
 				_ = plugins.Uninstall(pluginID, "user", cwd)
-				if m.cfg.MCPManager != nil {
-					m.cfg.MCPManager.SyncPluginServers(context.Background(), cwd, trusted)
-				}
 				// Reload panel from disk — gets correct descriptions, sort order, etc.
 				m.pluginPanel = p
-				return m, reloadPluginPanelCmd(m.cfg.MCPManager, pluginTabInstalled, p.errors)
+				return m, tea.Sequence(syncPluginMCPCmd(m.cfg.MCPManager, cwd, trusted),
+					reloadPluginPanelCmd(m.cfg.MCPManager, pluginTabInstalled, p.errors))
 			}
 		}
 		p.view = pluginViewList
 		p.selected = 0
-	case "Disable":
+	case "Disable", "Enable":
+		var cmd tea.Cmd
 		if p.itemIdx < len(p.installedItems) {
+			enable := action == "Enable"
 			pluginID := p.installedItems[p.itemIdx].pluginID
-			_ = settings.SetPluginEnabled(pluginID, false)
-			p.installedItems[p.itemIdx].enabled = false
+			_ = settings.SetPluginEnabled(pluginID, enable)
+			p.installedItems[p.itemIdx].enabled = enable
+			// Only enabled plugins contribute MCP servers.
+			cmd = syncPluginMCPCmd(m.cfg.MCPManager, cwd, trusted)
 		}
 		p.view = pluginViewList
 		p.selected = 0
-	case "Enable":
-		if p.itemIdx < len(p.installedItems) {
-			pluginID := p.installedItems[p.itemIdx].pluginID
-			_ = settings.SetPluginEnabled(pluginID, true)
-			p.installedItems[p.itemIdx].enabled = true
-		}
-		p.view = pluginViewList
-		p.selected = 0
+		m.pluginPanel = p
+		return m, cmd
 	case "Update now":
 		p.view = pluginViewList
 		p.selected = 0
@@ -398,49 +392,48 @@ func (m Model) execPluginDetailAction(p *pluginPanelState, action string) (Model
 func (m Model) execMCPOptAction(p *pluginPanelState, action string) (Model, tea.Cmd) {
 	cwd, _ := os.Getwd()
 	trusted := !m.cfg.NeedsTrust
+	var cmd tea.Cmd
 	switch action {
 	case "Back":
 		p.view = pluginViewList
 		p.selected = 0
-	case "Reconnect":
-		if m.cfg.MCPManager != nil {
-			srvName := p.mcpActionTarget
-			mgr := m.cfg.MCPManager
-			go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
-		}
-		p.view = pluginViewList
-		p.selected = 0
-	case "Disable":
-		_ = mcp.SetDisabled(p.mcpActionTarget, cwd, true)
-		if m.cfg.MCPManager != nil {
-			srvName := p.mcpActionTarget
-			go func() { m.cfg.MCPManager.DisconnectServer(srvName) }()
-		}
-		// Update status in installed items.
-		for i, item := range p.installedItems {
-			if item.isMCPSub && item.mcpServerName == p.mcpActionTarget {
-				p.installedItems[i].mcpStatus = "disabled"
+	case "Reconnect", "Disable", "Enable":
+		if action != "Reconnect" {
+			disable := action == "Disable"
+			_ = mcp.SetDisabled(p.mcpActionTarget, cwd, disable)
+			status := "pending"
+			if disable {
+				status = "disabled"
+			}
+			for i, item := range p.installedItems {
+				if item.isMCPSub && item.mcpServerName == p.mcpActionTarget {
+					p.installedItems[i].mcpStatus = status
+				}
 			}
 		}
-		p.view = pluginViewList
-		p.selected = 0
-	case "Enable":
-		_ = mcp.SetDisabled(p.mcpActionTarget, cwd, false)
+		// Reconnecting re-reads the disabled list, so it also carries out
+		// Disable (the server closes and stays listed as disabled) and Enable.
 		if m.cfg.MCPManager != nil {
-			srvName := p.mcpActionTarget
-			mgr := m.cfg.MCPManager
-			go func() { _ = mgr.Reconnect(context.Background(), srvName, cwd, trusted) }()
-		}
-		for i, item := range p.installedItems {
-			if item.isMCPSub && item.mcpServerName == p.mcpActionTarget {
-				p.installedItems[i].mcpStatus = "pending"
-			}
+			cmd = mcpReconnectCmd(m.cfg.MCPManager, p.mcpActionTarget, cwd, trusted, nil)
 		}
 		p.view = pluginViewList
 		p.selected = 0
 	}
 	m.pluginPanel = p
-	return m, nil
+	return m, cmd
+}
+
+// syncPluginMCPCmd reconciles plugin MCP servers with the installed, enabled
+// plugins off the event loop. The manager's change hook keeps the tool
+// registry in step.
+func syncPluginMCPCmd(mgr *mcp.Manager, cwd string, trusted bool) tea.Cmd {
+	if mgr == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		mgr.SyncPluginServers(context.Background(), cwd, trusted)
+		return nil
+	}
 }
 
 // splitPluginID splits "name@marketplace" into components.

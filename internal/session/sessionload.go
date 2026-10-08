@@ -51,6 +51,15 @@ func transcriptMessagesFromJSONL(data []byte) []api.Message {
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
+		if entry.Type == EntryTypeCompactBoundary || entry.Type == EntryTypeReset {
+			// Everything before the boundary was folded into the summary
+			// that precedes it; the messages after it are the live history.
+			records = nil
+			legacy = nil
+			byUUID = make(map[string]transcriptRecord)
+			bridges = make(map[string]string)
+			continue
+		}
 		if !isLoadableTranscriptEntry(entry.Type) || len(entry.Message) == 0 {
 			addTranscriptBridge(bridges, entry)
 			continue

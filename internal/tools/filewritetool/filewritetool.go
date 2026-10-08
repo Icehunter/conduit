@@ -16,13 +16,15 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/pendingedits"
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
 // Tool implements the Write tool. When stager is non-nil writes are routed
 // through the diff-first review gate instead of touching disk directly.
 type Tool struct {
-	stager pendingedits.Stager
+	stager  pendingedits.Stager
+	tracker *readtracker.Tracker
 }
 
 // New returns a fresh FileWrite tool that writes directly to disk. Used by
@@ -32,6 +34,14 @@ func New() *Tool { return &Tool{} }
 // NewWithStager returns a Write tool that stages writes through s. When s is
 // nil the tool behaves identically to New().
 func NewWithStager(s pendingedits.Stager) *Tool { return &Tool{stager: s} }
+
+// WithTracker makes the tool refuse to overwrite an existing file the model
+// has not read, or that changed since it was read. Creating a new file needs
+// no prior read. It returns t.
+func (t *Tool) WithTracker(rt *readtracker.Tracker) *Tool {
+	t.tracker = rt
+	return t
+}
 
 // Name implements tool.Tool.
 func (*Tool) Name() string { return "Write" }
@@ -93,6 +103,14 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	default:
 	}
 
+	if t.tracker != nil {
+		if disk, err := os.ReadFile(in.FilePath); err == nil {
+			if err := t.tracker.Check(in.FilePath, disk); err != nil {
+				return tool.ErrorResult(err.Error()), nil
+			}
+		}
+	}
+
 	// Stage path: capture original content (if any) and hand off to the table.
 	// We don't create parent dirs here — flush will mkdir at apply time.
 	if t.stager != nil {
@@ -111,6 +129,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			ToolName:    "Write",
 		})
 		if err == nil {
+			t.tracker.RecordStaged(in.FilePath, []byte(in.Content))
 			return tool.TextResult(fmt.Sprintf("Staged: %s — awaiting review", displayPath(in.FilePath))), nil
 		}
 		if !errors.Is(err, pendingedits.ErrNotStaging) {
@@ -148,6 +167,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult(fmt.Sprintf("cannot rename temp file to %s: %v", in.FilePath, err)), nil
 	}
 
+	t.tracker.RecordWrite(in.FilePath, []byte(in.Content))
 	return tool.TextResult(fmt.Sprintf("File written successfully at: %s", in.FilePath)), nil
 }
 

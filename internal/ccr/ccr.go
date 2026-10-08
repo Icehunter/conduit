@@ -69,26 +69,61 @@ func NewStore(dir string) *Store {
 // Put stores content under its SHA-256-derived key and returns a handle
 // like "ccr:<key>". If identical content was already stored the existing
 // file is left on disk; the same handle is returned (idempotent).
+//
+// Stored output can hold secrets, so the directory is 0700 and files 0600.
+// A file already at the key is reused only when it is a regular file
+// holding exactly this content; anything else there (a symlink, or a file
+// left truncated or planted under the key) is replaced by an atomic rename,
+// which swaps the directory entry instead of writing through it.
 func (s *Store) Put(content string) (string, error) {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return "", fmt.Errorf("ccr: mkdir: %w", err)
+	}
+	// MkdirAll leaves an existing directory's mode alone; tighten one made
+	// by an older version with 0755.
+	if err := os.Chmod(s.dir, 0o700); err != nil {
+		return "", fmt.Errorf("ccr: chmod dir: %w", err)
 	}
 
 	key := contentKey(content)
 	path := s.filePath(key)
 
-	// If the file already exists we only need to touch its mtime so the
-	// retention clock resets — the content is identical by construction.
-	if _, err := os.Stat(path); err == nil {
+	if holds(path, content) {
+		// Only the mtime changes, so the retention clock resets.
 		now := time.Now()
 		_ = os.Chtimes(path, now, now) // best-effort; idempotency is the goal
 		return handlePrefix + key, nil
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	tmp, err := os.CreateTemp(s.dir, "ccr_tmp_*")
+	if err != nil {
+		return "", fmt.Errorf("ccr: create: %w", err)
+	}
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name()) // best-effort cleanup of the partial file
 		return "", fmt.Errorf("ccr: write: %w", err)
 	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name()) // best-effort cleanup of the partial file
+		return "", fmt.Errorf("ccr: close: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name()) // best-effort cleanup of the orphaned file
+		return "", fmt.Errorf("ccr: rename: %w", err)
+	}
 	return handlePrefix + key, nil
+}
+
+// holds reports whether path is a regular file (not a symlink) whose content
+// is exactly content.
+func holds(path, content string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(content)) {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	return err == nil && string(data) == content
 }
 
 // Get retrieves the full stored content for handle.

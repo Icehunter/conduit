@@ -14,14 +14,24 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
 // Tool implements the NotebookEdit tool.
-type Tool struct{}
+type Tool struct {
+	tracker *readtracker.Tracker
+}
 
 // New returns a fresh NotebookEdit tool.
 func New() *Tool { return &Tool{} }
+
+// WithTracker makes the tool refuse to edit a notebook the model has not
+// read, or that changed since it was read. It returns t.
+func (t *Tool) WithTracker(rt *readtracker.Tracker) *Tool {
+	t.tracker = rt
+	return t
+}
 
 func (*Tool) Name() string { return "NotebookEdit" }
 
@@ -93,7 +103,7 @@ type notebookCell struct {
 }
 
 // Execute edits a Jupyter notebook cell.
-func (*Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var in Input
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("invalid input: %v", err)), nil
@@ -129,6 +139,10 @@ func (*Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, err
 		return tool.ErrorResult(fmt.Sprintf("cannot read notebook: %v", err)), nil
 	}
 
+	if err := t.tracker.Check(in.NotebookPath, data); err != nil {
+		return tool.ErrorResult(err.Error()), nil
+	}
+
 	var nb notebookFile
 	if err := json.Unmarshal(data, &nb); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot parse notebook JSON: %v", err)), nil
@@ -136,16 +150,16 @@ func (*Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, err
 
 	switch editMode {
 	case "replace":
-		return replaceCell(&nb, in)
+		return t.replaceCell(&nb, in)
 	case "insert":
-		return insertCell(&nb, in)
+		return t.insertCell(&nb, in)
 	case "delete":
-		return deleteCell(&nb, in)
+		return t.deleteCell(&nb, in)
 	}
 	return tool.ErrorResult(fmt.Sprintf("unknown edit_mode %q", editMode)), nil
 }
 
-func replaceCell(nb *notebookFile, in Input) (tool.Result, error) {
+func (t *Tool) replaceCell(nb *notebookFile, in Input) (tool.Result, error) {
 	if in.CellID == "" {
 		return tool.ErrorResult("`cell_id` is required for replace mode"), nil
 	}
@@ -158,13 +172,13 @@ func replaceCell(nb *notebookFile, in Input) (tool.Result, error) {
 	if in.CellType != "" {
 		cell.CellType = in.CellType
 	}
-	if err := writeNotebook(in.NotebookPath, nb); err != nil {
+	if err := t.writeNotebook(in.NotebookPath, nb); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write notebook: %v", err)), nil
 	}
 	return tool.TextResult(fmt.Sprintf("Replaced cell %q in %s.", in.CellID, in.NotebookPath)), nil
 }
 
-func insertCell(nb *notebookFile, in Input) (tool.Result, error) {
+func (t *Tool) insertCell(nb *notebookFile, in Input) (tool.Result, error) {
 	cellType := in.CellType
 	if cellType == "" {
 		cellType = "code"
@@ -190,13 +204,13 @@ func insertCell(nb *notebookFile, in Input) (tool.Result, error) {
 		nb.Cells = append(nb.Cells[:idx+1], append([]notebookCell{newCell}, nb.Cells[idx+1:]...)...)
 	}
 
-	if err := writeNotebook(in.NotebookPath, nb); err != nil {
+	if err := t.writeNotebook(in.NotebookPath, nb); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write notebook: %v", err)), nil
 	}
 	return tool.TextResult(fmt.Sprintf("Inserted %s cell %q in %s.", cellType, newCell.ID, in.NotebookPath)), nil
 }
 
-func deleteCell(nb *notebookFile, in Input) (tool.Result, error) {
+func (t *Tool) deleteCell(nb *notebookFile, in Input) (tool.Result, error) {
 	if in.CellID == "" {
 		return tool.ErrorResult("`cell_id` is required for delete mode"), nil
 	}
@@ -205,7 +219,7 @@ func deleteCell(nb *notebookFile, in Input) (tool.Result, error) {
 		return tool.ErrorResult(fmt.Sprintf("cell %q not found", in.CellID)), nil
 	}
 	nb.Cells = append(nb.Cells[:idx], nb.Cells[idx+1:]...)
-	if err := writeNotebook(in.NotebookPath, nb); err != nil {
+	if err := t.writeNotebook(in.NotebookPath, nb); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write notebook: %v", err)), nil
 	}
 	return tool.TextResult(fmt.Sprintf("Deleted cell %q from %s.", in.CellID, in.NotebookPath)), nil
@@ -237,7 +251,7 @@ func splitSource(s string) []string {
 	return out
 }
 
-func writeNotebook(path string, nb *notebookFile) error {
+func (t *Tool) writeNotebook(path string, nb *notebookFile) error {
 	data, err := json.MarshalIndent(nb, "", " ")
 	if err != nil {
 		return err
@@ -247,5 +261,9 @@ func writeNotebook(path string, nb *notebookFile) error {
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	t.tracker.RecordWrite(path, data)
+	return nil
 }

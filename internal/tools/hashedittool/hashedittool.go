@@ -4,6 +4,7 @@
 package hashedittool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,13 +16,15 @@ import (
 
 	"github.com/icehunter/conduit/internal/hashline"
 	"github.com/icehunter/conduit/internal/pendingedits"
+	"github.com/icehunter/conduit/internal/readtracker"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/pmezard/go-difflib/difflib"
 )
 
 // Tool implements the HashEdit tool.
 type Tool struct {
-	stager pendingedits.Stager
+	stager  pendingedits.Stager
+	tracker *readtracker.Tracker
 }
 
 type pendingLookup interface {
@@ -34,6 +37,14 @@ func New() *Tool { return &Tool{} }
 // NewWithStager returns a HashEdit tool that stages writes through s.
 func NewWithStager(s pendingedits.Stager) *Tool { return &Tool{stager: s} }
 
+// WithTracker makes the tool refuse to edit a file the model has not read,
+// or that changed since it was read, and reject anchors for lines no anchored
+// Read displayed. It returns t.
+func (t *Tool) WithTracker(rt *readtracker.Tracker) *Tool {
+	t.tracker = rt
+	return t
+}
+
 func (*Tool) Name() string { return "HashEdit" }
 
 func (*Tool) Description() string {
@@ -41,14 +52,19 @@ func (*Tool) Description() string {
 		"- Read the file with anchors:true to obtain 7-char anchor hashes for each line\n" +
 		"- Each edit targets a line by its anchor hash — stable across line-number drift\n" +
 		"- Multiple edits are applied bottom-to-top so earlier edits do not shift later targets\n" +
-		"- Use delete:true to remove the anchored line entirely"
+		"- Use delete:true to remove the anchored line entirely\n" +
+		"- Set end_anchor to make an edit cover the inclusive range anchor..end_anchor\n" +
+		"- Set insert:\"before\" or \"after\" to add new_lines next to the anchored line without replacing it\n" +
+		"- Anchors must come from a Read with anchors:true; lines that Read never showed are rejected"
 }
 
 // EditOp is one anchored edit operation.
 type EditOp struct {
-	Anchor   string `json:"anchor"`
-	NewLines string `json:"new_lines,omitempty"`
-	Delete   bool   `json:"delete,omitempty"`
+	Anchor    string `json:"anchor"`
+	EndAnchor string `json:"end_anchor,omitempty"` // inclusive range end for replace/delete
+	NewLines  string `json:"new_lines,omitempty"`
+	Delete    bool   `json:"delete,omitempty"`
+	Insert    string `json:"insert,omitempty"` // "before" | "after": add new_lines beside the anchored line
 }
 
 // Input is the typed view of the JSON input.
@@ -80,9 +96,18 @@ func (*Tool) InputSchema() json.RawMessage {
 							"type": "string",
 							"description": "Replacement text for the target line (may be multi-line). Empty string inserts a blank line. Use delete:true to remove the line entirely."
 						},
+						"end_anchor": {
+							"type": "string",
+							"description": "Optional anchor of the last line of an inclusive range starting at anchor. The whole range is replaced by new_lines, or removed with delete:true."
+						},
 						"delete": {
 							"type": "boolean",
-							"description": "If true, remove the anchored line entirely (new_lines ignored)"
+							"description": "If true, remove the anchored line (or range) entirely (new_lines ignored)"
+						},
+						"insert": {
+							"type": "string",
+							"enum": ["before", "after"],
+							"description": "Insert new_lines before or after the anchored line instead of replacing it. Cannot be combined with delete or end_anchor."
 						}
 					},
 					"required": ["anchor"]
@@ -110,6 +135,9 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("`file_path` is required"), nil
 	}
 	in.FilePath = tool.ResolvePath(ctx, in.FilePath)
+	if !filepath.IsAbs(in.FilePath) {
+		return tool.ErrorResult(fmt.Sprintf("`file_path` must be absolute, got: %s", in.FilePath)), nil
+	}
 	if len(in.Edits) == 0 {
 		return tool.ErrorResult("`edits` must not be empty"), nil
 	}
@@ -130,61 +158,49 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if err != nil {
 		return tool.ErrorResult(err.Error()), nil
 	}
-
-	// Resolve all anchors first (before mutating content).
-	type resolved struct {
-		op      EditOp
-		lineIdx int
-	}
-	var ops []resolved
-	for _, edit := range in.Edits {
-		lineIdx, count := hashline.Find(content, edit.Anchor)
-		switch {
-		case count == 0:
-			return tool.ErrorResult(fmt.Sprintf(
-				"stale anchor %q — re-read the file with anchors:true to get fresh anchors", edit.Anchor,
-			)), nil
-		case count > 1 && expectUnique:
-			return tool.ErrorResult(fmt.Sprintf(
-				"ambiguous anchor %q (%d matches) — re-read the file with anchors:true to narrow your edit", edit.Anchor, count,
-			)), nil
-			// When expect_unique is false and count > 1, we use the first matching line.
-			// Callers that need exact targeting should leave expect_unique=true (default).
+	if origExisted {
+		if err := t.tracker.Check(in.FilePath, origContent); err != nil {
+			return tool.ErrorResult(err.Error()), nil
 		}
-		ops = append(ops, resolved{op: edit, lineIdx: lineIdx})
 	}
 
-	// Sort descending by lineIdx so bottom edits are applied first (line
-	// numbers don't shift for earlier targets).
-	sort.Slice(ops, func(i, j int) bool {
-		return ops[i].lineIdx > ops[j].lineIdx
-	})
+	// Address lines on the content without its BOM; it is restored on write.
+	hasBOM := bytes.HasPrefix(content, []byte(hashline.BOM))
+	content = bytes.TrimPrefix(content, []byte(hashline.BOM))
+	// Edit on LF-normalised text and convert back, so a CRLF file keeps its
+	// line endings. Files with mixed endings are treated as LF-only text.
+	crlf := bytes.Contains(content, []byte("\r\n")) && !bytes.Contains(bytes.ReplaceAll(content, []byte("\r\n"), nil), []byte("\n"))
+	if crlf {
+		content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+	}
 
-	// Apply edits to a line slice.
+	ops, errMsg := t.resolveOps(in.FilePath, content, in.Edits, expectUnique)
+	if errMsg != "" {
+		return tool.ErrorResult(errMsg), nil
+	}
+
+	// Apply bottom-to-top so earlier targets keep their line numbers.
 	lines := splitLines(string(content))
 	for _, r := range ops {
-		if r.lineIdx < 0 || r.lineIdx >= len(lines) {
-			return tool.ErrorResult(fmt.Sprintf("resolved line index %d out of range", r.lineIdx)), nil
-		}
-		if r.op.Delete {
-			lines = append(lines[:r.lineIdx], lines[r.lineIdx+1:]...)
-		} else {
-			// Replace the single line with the new_lines content (may be multi-line).
-			// new_lines == "" inserts a blank line (not a delete); use delete:true to remove the line
-			newParts := splitLines(r.op.NewLines)
-			var next []string
-			next = append(next, lines[:r.lineIdx]...)
-			next = append(next, newParts...)
-			next = append(next, lines[r.lineIdx+1:]...)
-			lines = next
-		}
+		next := make([]string, 0, len(lines)-(r.end-r.start)+len(r.lines))
+		next = append(next, lines[:r.start]...)
+		next = append(next, r.lines...)
+		next = append(next, lines[r.end:]...)
+		lines = next
 	}
 
 	updated := strings.Join(lines, "\n")
-	// Restore trailing newline if original had one.
+	// Restore trailing newline if original had one (an emptied file stays empty).
 	orig := string(content)
-	if len(orig) > 0 && orig[len(orig)-1] == '\n' && (len(updated) == 0 || updated[len(updated)-1] != '\n') {
+	if len(lines) > 0 && len(orig) > 0 && orig[len(orig)-1] == '\n' && (len(updated) == 0 || updated[len(updated)-1] != '\n') {
 		updated += "\n"
+	}
+	toWrite := updated
+	if crlf {
+		toWrite = strings.ReplaceAll(updated, "\n", "\r\n")
+	}
+	if hasBOM {
+		toWrite = hashline.BOM + toWrite
 	}
 
 	if t.stager != nil {
@@ -192,11 +208,12 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 			Path:        in.FilePath,
 			OrigContent: origContent,
 			OrigExisted: origExisted,
-			NewContent:  []byte(updated),
+			NewContent:  []byte(toWrite),
 			Op:          pendingedits.OpEdit,
 			ToolName:    "HashEdit",
 		})
 		if err == nil {
+			t.tracker.RecordStaged(in.FilePath, []byte(toWrite))
 			return tool.TextResult(stagedMessage(in.FilePath, orig, updated, len(ops))), nil
 		}
 		if !errors.Is(err, pendingedits.ErrNotStaging) {
@@ -205,10 +222,116 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		// ErrNotStaging → fall through to direct write.
 	}
 
-	if err := writeAtomic(in.FilePath, updated); err != nil {
+	if err := writeAtomic(in.FilePath, toWrite); err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot write file: %v", err)), nil
 	}
+	t.tracker.RecordWrite(in.FilePath, []byte(toWrite))
 	return tool.TextResult(editSummary(in.FilePath, orig, updated, len(ops))), nil
+}
+
+// lineEdit replaces lines[start:end] with lines; start == end is a pure insert.
+type lineEdit struct {
+	start, end int
+	lines      []string
+}
+
+// resolveOps turns the requested edits into non-overlapping line edits ordered
+// so they can be applied one after another without shifting later targets. On
+// failure it returns a message for the model.
+func (t *Tool) resolveOps(path string, content []byte, edits []EditOp, expectUnique bool) ([]lineEdit, string) {
+	var anchors []hashline.Anchor
+	locate := func(anchor string) (int, string) {
+		idx, count := hashline.Find(content, anchor)
+		switch {
+		case count == 0:
+			return 0, fmt.Sprintf("stale anchor %q — re-read the file with anchors:true to get fresh anchors", anchor)
+		case count > 1 && expectUnique:
+			return 0, fmt.Sprintf("ambiguous anchor %q (%d matches) — re-read the file with anchors:true to narrow your edit", anchor, count)
+			// When expect_unique is false and count > 1, the first matching line is used.
+		}
+		return idx, ""
+	}
+	// checkShown rejects ranges that cover a line no anchored Read displayed.
+	checkShown := func(from, to int) string {
+		if anchors == nil {
+			anchors = hashline.Compute(content)
+		}
+		for i := from; i <= to && i < len(anchors); i++ {
+			if !t.tracker.Shown(path, anchors[i].Hash) {
+				return fmt.Sprintf("line %d (anchor %q) was never shown to you — Read the file with anchors:true (covering that line) before editing it", i+1, anchors[i].Hash)
+			}
+		}
+		return ""
+	}
+
+	ops := make([]lineEdit, 0, len(edits))
+	for _, e := range edits {
+		first, msg := locate(e.Anchor)
+		if msg != "" {
+			return nil, msg
+		}
+		last := first
+		if e.EndAnchor != "" {
+			if last, msg = locate(e.EndAnchor); msg != "" {
+				return nil, msg
+			}
+			if last < first {
+				return nil, fmt.Sprintf("end_anchor %q (line %d) is above anchor %q (line %d)", e.EndAnchor, last+1, e.Anchor, first+1)
+			}
+		}
+		if msg := checkShown(first, last); msg != "" {
+			return nil, msg
+		}
+		switch e.Insert {
+		case "":
+			var repl []string
+			if !e.Delete {
+				// new_lines == "" is a blank line, not a delete; use delete:true to remove lines.
+				repl = splitLines(e.NewLines)
+			}
+			ops = append(ops, lineEdit{start: first, end: last + 1, lines: repl})
+		case "before", "after":
+			if e.Delete || e.EndAnchor != "" {
+				return nil, fmt.Sprintf("insert:%q cannot be combined with delete or end_anchor", e.Insert)
+			}
+			at := first
+			if e.Insert == "after" {
+				at = first + 1
+			}
+			ops = append(ops, lineEdit{start: at, end: at, lines: splitLines(e.NewLines)})
+		default:
+			return nil, fmt.Sprintf("invalid insert %q; must be \"before\" or \"after\"", e.Insert)
+		}
+	}
+
+	// Bottom first. At equal starts a replacement goes before an insertion
+	// (it spans lines from start, the insertion lands just before them), and
+	// among equal inserts the later request goes first so they read in order.
+	order := make([]int, len(ops))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		x, y := ops[order[a]], ops[order[b]]
+		if x.start != y.start {
+			return x.start > y.start
+		}
+		if x.end != y.end {
+			return x.end > y.end
+		}
+		return order[a] > order[b]
+	})
+	sorted := make([]lineEdit, len(ops))
+	for i, o := range order {
+		sorted[i] = ops[o]
+	}
+	for i := 1; i < len(sorted); i++ {
+		// sorted[i-1] sits at or below sorted[i]; they must not share lines.
+		if sorted[i-1].start < sorted[i].end {
+			return nil, fmt.Sprintf("edits overlap near line %d — merge them into one edit", sorted[i].start+1)
+		}
+	}
+	return sorted, ""
 }
 
 func (t *Tool) readEditBase(path string) (content, origContent []byte, origExisted bool, err error) {

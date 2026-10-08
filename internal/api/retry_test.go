@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -271,5 +273,299 @@ func TestStreamMessage_HTTPProxy(t *testing.T) {
 
 	if !proxyCalled {
 		t.Error("HTTPS_PROXY was not honoured — proxy server not called")
+	}
+}
+
+func TestBackoffDelay(t *testing.T) {
+	tests := []struct {
+		name    string
+		attempt int
+		hint    time.Duration
+		lo, hi  time.Duration
+	}{
+		{"first retry", 0, 0, 750 * time.Millisecond, 1250 * time.Millisecond},
+		{"second retry doubles", 1, 0, 1500 * time.Millisecond, 2500 * time.Millisecond},
+		{"fifth retry", 4, 0, 12 * time.Second, 20 * time.Second},
+		{"capped at 32s plus jitter", 10, 0, 24 * time.Second, 40 * time.Second},
+		{"negative attempt counts as first", -3, 0, 750 * time.Millisecond, 1250 * time.Millisecond},
+		{"a server hint is used exactly", 3, 1500 * time.Millisecond, 1500 * time.Millisecond, 1500 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for range 50 {
+				if got := BackoffDelay(tt.attempt, tt.hint); got < tt.lo || got > tt.hi {
+					t.Fatalf("BackoffDelay(%d, %v) = %v, want within [%v, %v]", tt.attempt, tt.hint, got, tt.lo, tt.hi)
+				}
+			}
+		})
+	}
+}
+
+func TestShouldRetryStatus(t *testing.T) {
+	tests := []struct {
+		code   int
+		header string
+		want   bool
+	}{
+		{408, "", true}, {409, "", true}, {429, "", true}, {500, "", true}, {502, "", true},
+		{503, "", true}, {529, "", true},
+		{400, "", false}, {401, "", false}, {403, "", false}, {404, "", false}, {413, "", false}, {200, "", false},
+		{500, "false", false}, {429, "false", false}, {529, " False ", false},
+		{400, "true", true}, {401, "true", true},
+		{503, "garbage", true}, {400, "garbage", false},
+	}
+	for _, tt := range tests {
+		if got := shouldRetryStatus(tt.code, tt.header); got != tt.want {
+			t.Errorf("shouldRetryStatus(%d, %q) = %v, want %v", tt.code, tt.header, got, tt.want)
+		}
+	}
+}
+
+// statusResp is a canned response for driving withRetry directly.
+func statusResp(code int, hdr http.Header, body string) *http.Response {
+	if hdr == nil {
+		hdr = http.Header{}
+	}
+	return &http.Response{StatusCode: code, Status: http.StatusText(code), Header: hdr, Body: io.NopCloser(strings.NewReader(body))}
+}
+
+func TestWithRetry(t *testing.T) {
+	rateBody := `{"type":"error","error":{"type":"rate_limit_error","message":"slow"}}`
+	apiBody := `{"type":"error","error":{"type":"api_error","message":"boom"}}`
+	badBody := `{"type":"error","error":{"type":"invalid_request_error","message":"bad field"}}`
+	overflowBody := `{"type":"error","error":{"type":"api_error","message":"request exceeds the available context size (n_ctx)"}}`
+	netErr := &net.OpError{Op: "read", Err: errors.New("connection reset by peer")}
+
+	tests := []struct {
+		name       string
+		steps      []func() (*http.Response, error)
+		wantCalls  int
+		wantSleeps []time.Duration // zero entries only check the count
+		wantStatus int             // status of the response returned, 0 when an error is
+		wantErr    string
+	}{
+		{
+			name: "network error then ok",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return nil, netErr },
+				func() (*http.Response, error) { return statusResp(200, nil, ""), nil },
+			},
+			wantCalls: 2, wantSleeps: []time.Duration{0}, wantStatus: 200,
+		},
+		{
+			name: "network error forever stops after 5 retries",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return nil, netErr },
+			},
+			wantCalls: 6, wantSleeps: []time.Duration{0, 0, 0, 0, 0}, wantErr: "connection reset",
+		},
+		{
+			name: "a tls error is not retried",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) {
+					return nil, errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority")
+				},
+			},
+			wantCalls: 1, wantErr: "x509",
+		},
+		{
+			name: "500 502 then 200",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return statusResp(500, nil, apiBody), nil },
+				func() (*http.Response, error) { return statusResp(502, nil, apiBody), nil },
+				func() (*http.Response, error) { return statusResp(200, nil, ""), nil },
+			},
+			wantCalls: 3, wantSleeps: []time.Duration{0, 0}, wantStatus: 200,
+		},
+		{
+			name: "400 is returned for the caller to decode",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return statusResp(400, nil, badBody), nil },
+			},
+			wantCalls: 1, wantStatus: 400,
+		},
+		{
+			name: "401 is returned for the caller to refresh",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return statusResp(401, nil, badBody), nil },
+			},
+			wantCalls: 1, wantStatus: 401,
+		},
+		{
+			name: "retry-after-ms wins over retry-after",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) {
+					return statusResp(429, http.Header{"Retry-After-Ms": {"2500"}, "Retry-After": {"9"}}, rateBody), nil
+				},
+				func() (*http.Response, error) { return statusResp(200, nil, ""), nil },
+			},
+			wantCalls: 2, wantSleeps: []time.Duration{2500 * time.Millisecond}, wantStatus: 200,
+		},
+		{
+			name: "x-should-retry false is returned undecoded",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) {
+					return statusResp(503, http.Header{"X-Should-Retry": {"false"}}, apiBody), nil
+				},
+			},
+			wantCalls: 1, wantStatus: 503,
+		},
+		{
+			name: "a 500 that is really an overflow is not retried",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return statusResp(500, nil, overflowBody), nil },
+			},
+			wantCalls: 1, wantErr: "context size",
+		},
+		{
+			name: "a wait over two minutes is surfaced without sleeping",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) {
+					return statusResp(429, http.Header{"Retry-After": {"300"}}, rateBody), nil
+				},
+			},
+			wantCalls: 1, wantErr: "rate_limit_error",
+		},
+		{
+			name: "a 408 is retried",
+			steps: []func() (*http.Response, error){
+				func() (*http.Response, error) { return statusResp(408, nil, apiBody), nil },
+				func() (*http.Response, error) { return statusResp(200, nil, ""), nil },
+			},
+			wantCalls: 2, wantSleeps: []time.Duration{0}, wantStatus: 200,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var slept []time.Duration
+			ctx := WithSleep(context.Background(), func(_ context.Context, d time.Duration) error {
+				slept = append(slept, d)
+				return nil
+			})
+			calls := 0
+			resp, err := withRetry(ctx, func() (*http.Response, error) {
+				step := tt.steps[min(calls, len(tt.steps)-1)]
+				calls++
+				return step()
+			})
+			if calls != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", calls, tt.wantCalls)
+			}
+			if len(slept) != len(tt.wantSleeps) {
+				t.Fatalf("sleeps = %v, want %d", slept, len(tt.wantSleeps))
+			}
+			for i, want := range tt.wantSleeps {
+				if want != 0 && slept[i] != want {
+					t.Errorf("sleep %d = %v, want %v", i, slept[i], want)
+				}
+			}
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("withRetry: %v", err)
+			}
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestWithRetry_EventCarriesReasonAndStatus(t *testing.T) {
+	var events []RetryEvent
+	ctx := WithSleep(WithRetryHandler(context.Background(), func(ev RetryEvent) bool {
+		events = append(events, ev)
+		return true
+	}), func(context.Context, time.Duration) error { return nil })
+
+	steps := []func() (*http.Response, error){
+		func() (*http.Response, error) {
+			return nil, &net.OpError{Op: "read", Err: errors.New("connection reset")}
+		},
+		func() (*http.Response, error) {
+			return statusResp(529, nil, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`), nil
+		},
+		func() (*http.Response, error) {
+			return statusResp(502, nil, `{"type":"error","error":{"type":"api_error","message":"bad gateway"}}`), nil
+		},
+		func() (*http.Response, error) { return statusResp(200, nil, ""), nil },
+	}
+	n := 0
+	if _, err := withRetry(ctx, func() (*http.Response, error) { s := steps[n]; n++; return s() }); err != nil {
+		t.Fatalf("withRetry: %v", err)
+	}
+	want := []struct {
+		reason string
+		status int
+	}{{ReasonNetwork, 0}, {ReasonOverloaded, 529}, {ReasonServerError, 502}}
+	if len(events) != len(want) {
+		t.Fatalf("events = %d, want %d", len(events), len(want))
+	}
+	for i, w := range want {
+		ev := events[i]
+		if ev.Reason != w.reason || ev.Status != w.status || ev.Attempt != i+1 || ev.MaxAttempts != retryMaxCount {
+			t.Errorf("event %d = %+v, want reason %q status %d attempt %d", i, ev, w.reason, w.status, i+1)
+		}
+	}
+}
+
+func TestWithRetry_CancelDuringSleep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = WithSleep(ctx, func(ctx context.Context, _ time.Duration) error {
+		cancel()
+		return ctx.Err()
+	})
+	calls := 0
+	_, err := withRetry(ctx, func() (*http.Response, error) {
+		calls++
+		return statusResp(503, nil, `{"type":"error","error":{"type":"api_error","message":"x"}}`), nil
+	})
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Errorf("err = %v after %d calls, want context.Canceled after 1", err, calls)
+	}
+}
+
+func TestWithRetry_CancelledContextStopsNetworkRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	_, err := withRetry(ctx, func() (*http.Response, error) {
+		calls++
+		return nil, &net.OpError{Op: "read", Err: errors.New("connection reset")}
+	})
+	if err == nil || calls != 1 {
+		t.Errorf("err = %v after %d calls, want one failed call", err, calls)
+	}
+}
+
+func TestSleepContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := SleepContext(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Errorf("SleepContext on a cancelled ctx = %v, want context.Canceled", err)
+	}
+	if err := SleepContext(context.Background(), 0); err != nil {
+		t.Errorf("SleepContext(0) = %v, want nil", err)
+	}
+	if err := SleepContext(context.Background(), time.Millisecond); err != nil {
+		t.Errorf("SleepContext(1ms) = %v, want nil", err)
+	}
+}
+
+func TestWithRetry_ShouldRetryHeaderIgnoredForSuccessAndAuth(t *testing.T) {
+	for _, code := range []int{200, 201, 401} {
+		calls := 0
+		resp, err := withRetry(WithSleep(context.Background(), func(context.Context, time.Duration) error { return nil }),
+			func() (*http.Response, error) {
+				calls++
+				return statusResp(code, http.Header{"X-Should-Retry": {"true"}}, `{"ok":true}`), nil
+			})
+		if err != nil || calls != 1 || resp.StatusCode != code {
+			t.Errorf("status %d: err=%v calls=%d resp=%v; want the response returned untouched", code, err, calls, resp)
+		}
 	}
 }

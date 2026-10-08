@@ -21,11 +21,39 @@ type blockMeta struct {
 	thoughtSignature string // Gemini thought_signature from content_block_start (OpenAI-compat path)
 }
 
-// drainStream reads all SSE events from the stream and returns the accumulated
-// assistant content blocks, the stop reason, and the API-reported usage
-// (input + output + cache fields) summed across all turns in the stream.
-// Auto-compact uses Usage.PromptInputTokens to gauge context pressure; the TUI
-// uses the full Usage to surface real billable token counts to the user.
+// startedTool is a tool_use block whose row the UI opened (EventToolStart).
+type startedTool struct {
+	ID, Name string
+}
+
+// streamResult is what drainStream collected from one response, also when it
+// returns an error (the partial state, for recovery and cleanup).
+type streamResult struct {
+	// Blocks are the assistant content blocks. An invalid or truncated
+	// tool_use is kept with an empty input and listed in InvalidTools.
+	Blocks     []api.ContentBlock
+	StopReason string
+	// Usage is the API-reported usage (input + output + cache fields) summed
+	// across all turns in the stream. Auto-compact uses Usage.PromptInputTokens
+	// to gauge context pressure; the TUI uses the full Usage for real token
+	// counts.
+	Usage api.Usage
+	// InvalidTools maps the id of each tool_use whose arguments were not valid
+	// JSON to the error text its tool_result carries.
+	InvalidTools map[string]string
+	// StartedTools lists every tool_use row opened during the stream, in order.
+	StartedTools []startedTool
+}
+
+// Error texts for tool calls whose arguments did not parse. The model reads
+// them as the tool_result, so they say what to do next.
+const (
+	toolArgsTruncatedMsg = "The tool call was cut off because the response hit the output token limit, so its arguments were incomplete and the tool did not run. Re-issue the call with smaller arguments, for example by splitting a large write into several smaller steps."
+	toolArgsInvalidMsg   = "The tool call arguments were not valid JSON, so the tool did not run. Re-issue the call with valid arguments."
+)
+
+// drainStream reads all SSE events from the stream and returns what it
+// collected as a streamResult.
 //
 // EventUsage is emitted via handler on each message_stop so the TUI can
 // update token counts incrementally when multiple turns arrive in one stream.
@@ -33,7 +61,7 @@ type blockMeta struct {
 // watcher is an optional TTSR watcher. When non-nil and a rule fires,
 // drainStream returns early with a *ttsr.ErrMatch error so the caller can
 // inject the correction and restart the turn. Pass nil to disable TTSR.
-func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent), watcher *ttsr.Watcher) ([]api.ContentBlock, string, api.Usage, error) {
+func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func(LoopEvent), watcher *ttsr.Watcher) (streamResult, error) {
 	// blockTexts accumulates text/input_json across deltas per block index.
 	blockTexts := map[int]*strings.Builder{}
 	metas := map[int]blockMeta{}
@@ -44,12 +72,29 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 	stopReason := "end_turn"
 	var totalUsage api.Usage // sum across all turns in this stream
 	var turnUsage api.Usage  // usage for the current turn (reset at message_start)
-	var gotMessageStart bool
 	var gotMessageStop bool
+	var started []startedTool
+
+	// result snapshots the state so far; error paths return it as the partial.
+	result := func() streamResult {
+		blocks, invalid := buildBlocks(metas, blockTexts, blockSignatures)
+		r := streamResult{Blocks: blocks, StopReason: stopReason, Usage: totalUsage, StartedTools: started}
+		if len(invalid) > 0 {
+			msg := toolArgsInvalidMsg
+			if stopReason == "max_tokens" {
+				msg = toolArgsTruncatedMsg
+			}
+			r.InvalidTools = make(map[string]string, len(invalid))
+			for _, id := range invalid {
+				r.InvalidTools[id] = msg
+			}
+		}
+		return r
+	}
 
 	for {
 		if ctx.Err() != nil {
-			return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, ctx.Err()
+			return result(), ctx.Err()
 		}
 
 		ev, err := stream.Next()
@@ -57,9 +102,9 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			break
 		}
 		if err != nil {
-			// Conversation recovery: build whatever blocks we accumulated
+			// Conversation recovery: hand back whatever blocks we accumulated
 			// before the error so the caller can persist them.
-			return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, err
+			return result(), err
 		}
 
 		switch ev.Type {
@@ -67,7 +112,6 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			// message_start opens a new turn — reset per-turn accumulator.
 			// input_tokens + cache fields live here; output_tokens is 0 here
 			// and finalized in the subsequent message_delta.
-			gotMessageStart = true
 			gotMessageStop = false
 			turnUsage = api.Usage{}
 			if ms, err := ev.AsMessageStart(); err == nil {
@@ -100,6 +144,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 					thoughtSignature: raw.ThoughtSignature,
 				}
 				if raw.Type == "tool_use" {
+					started = append(started, startedTool{ID: raw.ID, Name: raw.Name})
 					handler(LoopEvent{
 						Type:     EventToolStart,
 						ToolName: raw.Name,
@@ -126,15 +171,20 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 				handler(LoopEvent{Type: EventText, Text: cbd.Delta.Text})
 				if watcher != nil {
 					if rule, fired := watcher.Feed(cbd.Delta.Text); fired {
-						return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, &ttsr.ErrMatch{Rule: rule}
+						return result(), &ttsr.ErrMatch{Rule: rule}
 					}
 				}
 			case "thinking_delta":
 				// Accumulate thinking text into the block builder (preserved for
-				// the API round-trip) and surface it to the TUI via EventText
-				// so the working indicator and thinking display can show it.
+				// the API round-trip) and surface it as EventThinking so the
+				// TUI shows it apart from the answer text.
 				sb.WriteString(cbd.Delta.Thinking)
-				handler(LoopEvent{Type: EventText, Text: cbd.Delta.Thinking})
+				handler(LoopEvent{Type: EventThinking, Text: cbd.Delta.Thinking})
+				if watcher != nil {
+					if rule, fired := watcher.FeedThinking(cbd.Delta.Thinking); fired {
+						return result(), &ttsr.ErrMatch{Rule: rule}
+					}
+				}
 			case "signature_delta":
 				// The thinking block signature must be round-tripped to the API
 				// verbatim. Store it keyed by block index.
@@ -196,7 +246,7 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 			}
 			if meta.blockType == "tool_use" {
 				rawInput := json.RawMessage("{}")
-				if sb, ok := blockTexts[cbs.Index]; ok && sb.Len() > 0 {
+				if sb, ok := blockTexts[cbs.Index]; ok && sb.Len() > 0 && json.Valid([]byte(sb.String())) {
 					rawInput = json.RawMessage(sb.String())
 				}
 				handler(LoopEvent{
@@ -205,28 +255,34 @@ func (l *Loop) drainStream(ctx context.Context, stream *api.Stream, handler func
 					ToolID:    meta.toolID,
 					ToolInput: rawInput,
 				})
+				if watcher != nil {
+					if rule, fired := watcher.CheckToolCall(meta.toolName, string(rawInput)); fired {
+						return result(), &ttsr.ErrMatch{Rule: rule}
+					}
+				}
 			}
 		}
 	}
 
-	// If the connection closed (io.EOF) after message_start but before
-	// message_stop arrived, the server dropped the stream prematurely.
-	// Surface an error so the agent loop doesn't silently treat a truncated
-	// response as a completed turn.
-	if gotMessageStart && !gotMessageStop {
-		return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage,
-			fmt.Errorf("sse: stream closed before message_stop")
+	// The connection closed without a message_stop: the server dropped the
+	// stream (or never started one). Surface it so the loop does not treat a
+	// truncated response as a completed turn.
+	if !gotMessageStop {
+		return result(), fmt.Errorf("agent: stream closed before message_stop: %w", api.ErrStreamTruncated)
 	}
 
-	return buildContentBlocks(metas, blockTexts, blockSignatures), stopReason, totalUsage, nil
+	return result(), nil
 }
 
-// buildContentBlocks materializes accumulated stream state into api.ContentBlocks.
+// buildBlocks materializes accumulated stream state into api.ContentBlocks.
 // Used both for the success path and for partial-block recovery on stream error.
 // metas is keyed by block index; blockTexts holds the accumulated text/json;
-// blockSignatures holds the signature for thinking blocks.
-func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Builder, blockSignatures map[int]string) []api.ContentBlock {
-	blocks := make([]api.ContentBlock, 0, len(metas))
+// blockSignatures holds the signature for thinking blocks. A tool_use whose
+// arguments are not a JSON object is kept with an empty input and its id is
+// returned in invalid, so the loop can answer it with an error tool_result
+// rather than losing the call.
+func buildBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Builder, blockSignatures map[int]string) (blocks []api.ContentBlock, invalid []string) {
+	blocks = make([]api.ContentBlock, 0, len(metas))
 	for i := 0; i < len(metas); i++ {
 		meta, ok := metas[i]
 		if !ok {
@@ -269,10 +325,13 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 			}
 			var inputMap map[string]any
 			if err := json.Unmarshal([]byte(inputStr), &inputMap); err != nil {
-				// Partial JSON — drop. A truncated tool_use can't be replayed
-				// safely; conversation recovery on /resume would have to drop
-				// it anyway via FilterUnresolvedToolUses.
-				continue
+				// Truncated or malformed arguments: keep the call with an
+				// empty input so it can be answered with an error result.
+				inputMap = nil
+				invalid = append(invalid, meta.toolID)
+			}
+			if inputMap == nil {
+				inputMap = map[string]any{}
 			}
 			block := api.ContentBlock{
 				Type:  "tool_use",
@@ -307,5 +366,5 @@ func buildContentBlocks(metas map[int]blockMeta, blockTexts map[int]*strings.Bui
 			})
 		}
 	}
-	return blocks
+	return blocks, invalid
 }

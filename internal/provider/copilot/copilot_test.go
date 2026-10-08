@@ -57,7 +57,7 @@ func TestPollTokenExchangesGitHubTokenForCopilotToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	withTestEndpoints(t, "", server.URL+"/access_token", server.URL+"/copilot_token", "")
+	withTestEndpoints(t, server.URL+"/access_token", server.URL+"/copilot_token", "")
 
 	auth := NewAuthorizer(store)
 	res, err := auth.PollToken(context.Background(), "device-code", 1)
@@ -98,7 +98,7 @@ func TestFetchModelsDecodesOpenAIStyleList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	withTestEndpoints(t, "", "", "", server.URL)
+	withTestEndpoints(t, "", "", server.URL)
 
 	models, err := NewAuthorizer(store).FetchModels(context.Background())
 	if err != nil {
@@ -192,17 +192,13 @@ func TestRuntimeRouteMappingMatchesOpenCode(t *testing.T) {
 	}
 }
 
-func withTestEndpoints(t *testing.T, deviceURL, pollURL, tokenURL, modelURL string) {
+func withTestEndpoints(t *testing.T, pollURL, tokenURL, modelURL string) {
 	t.Helper()
 	oldHTTPClient := httpClient
-	oldDevice := deviceAuthURLFunc
 	oldPoll := tokenPollURLFunc
 	oldToken := tokenAPIURLFunc
 	oldModels := modelsURLFunc
 	httpClient = &http.Client{Timeout: 2 * time.Second}
-	if deviceURL != "" {
-		deviceAuthURLFunc = func() string { return deviceURL }
-	}
 	if pollURL != "" {
 		tokenPollURLFunc = func() string { return pollURL }
 	}
@@ -214,7 +210,6 @@ func withTestEndpoints(t *testing.T, deviceURL, pollURL, tokenURL, modelURL stri
 	}
 	t.Cleanup(func() {
 		httpClient = oldHTTPClient
-		deviceAuthURLFunc = oldDevice
 		tokenPollURLFunc = oldPoll
 		tokenAPIURLFunc = oldToken
 		modelsURLFunc = oldModels

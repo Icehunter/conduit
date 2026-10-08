@@ -2,13 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-
-	"github.com/icehunter/conduit/internal/session"
 )
 
 type searchResult struct {
@@ -45,16 +42,7 @@ func (m Model) handleSearchPanelKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Loading session…"})
 		m.refreshViewport()
 		filePath := picked.filePath
-		return m, func() tea.Msg {
-			loadPath := filePath
-			if cwd, err := os.Getwd(); err == nil {
-				if writeSession, err := session.ImportForWrite(cwd, filePath); err == nil {
-					loadPath = writeSession.FilePath
-				}
-			}
-			msgs, err := session.LoadMessages(loadPath)
-			return resumeLoadMsg{msgs: msgs, filePath: loadPath, err: err}
-		}
+		return m, func() tea.Msg { return loadResumeMsg(filePath) }
 	case "esc", "ctrl+c":
 		m.searchPanel = nil
 		m.refreshViewport()

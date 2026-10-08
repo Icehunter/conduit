@@ -71,6 +71,7 @@ var (
 // RebuildStyles regenerates every package-level style from theme.Active().
 // Called at init() and after every theme switch via theme.OnChange.
 func RebuildStyles() {
+	styleGeneration.Add(1)
 	p := theme.Active()
 
 	colorAccent = lipgloss.Color(p.Accent)

@@ -2,25 +2,40 @@ package tui
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 )
 
-// copyToClipboard writes text to the system clipboard. OSC 52 is still emitted
-// for remote/terminal-native copy support, but native clipboard commands are
-// attempted first because some terminals disable OSC 52 writes by default.
-func copyToClipboard(text string) {
-	_ = copyToNativeClipboard(text)
-	encoded := base64.StdEncoding.EncodeToString([]byte(text))
-	// OSC 52 sequence: ESC ] 52 ; c ; <base64> BEL
-	seq := fmt.Sprintf("\x1b]52;c;%s\x07", encoded)
-	_, _ = os.Stdout.Write([]byte(seq))
+// copyResultMsg reports the outcome of a clipboard write started by copyCmd.
+type copyResultMsg struct {
+	what string // flash suffix, e.g. "selection"
+	err  error
+}
+
+// copyCmd copies text to the clipboard without blocking Update. The terminal
+// clipboard (OSC 52) is written through the renderer via tea.SetClipboard so
+// it cannot interleave with a frame; the native tool runs in its own Cmd and
+// its real outcome comes back as a copyResultMsg.
+func copyCmd(text, what string) tea.Cmd {
+	return tea.Batch(tea.SetClipboard(text), func() tea.Msg {
+		return copyResultMsg{what: what, err: copyToNativeClipboard(text)}
+	})
+}
+
+// copyFlash is the status line for a finished copy. OSC 52 has no
+// acknowledgement, so a native failure is reported as such rather than as a
+// confirmed copy.
+func copyFlash(r copyResultMsg) string {
+	if r.err == nil {
+		return "✓ Copied " + r.what
+	}
+	return fmt.Sprintf("⚠ Native clipboard failed (%v); sent %s to terminal clipboard only", r.err, r.what)
 }
 
 func copyToNativeClipboard(text string) error {

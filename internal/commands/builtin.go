@@ -531,6 +531,8 @@ func normalizeProviderRole(role string) string {
 		return settings.RolePlanning
 	case settings.RoleImplement, "implementation":
 		return settings.RoleImplement
+	case settings.RoleReview:
+		return settings.RoleReview
 	default:
 		return settings.RoleDefault
 	}

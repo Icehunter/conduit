@@ -1112,3 +1112,23 @@ func TestRewindCommand_WithCallback_ExplicitN(t *testing.T) {
 		t.Errorf("expected Rewind(3) called; got Rewind(%d)", removed)
 	}
 }
+
+func TestNormalizeProviderRole(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"default", settings.RoleDefault},
+		{"main", settings.RoleMain},
+		{"bg", settings.RoleBackground},
+		{"plan", settings.RolePlanning},
+		{"implementation", settings.RoleImplement},
+		{"review", settings.RoleReview},
+		{" Review ", settings.RoleReview},
+		{"bogus", settings.RoleDefault},
+	}
+	for _, tt := range tests {
+		if got := normalizeProviderRole(tt.in); got != tt.want {
+			t.Errorf("normalizeProviderRole(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

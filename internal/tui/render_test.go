@@ -1467,3 +1467,18 @@ func TestRenderMessage_ToolResultFallbackSummary(t *testing.T) {
 		t.Fatalf("tool fallback summary should not expand successful output: %q", out)
 	}
 }
+
+func TestModelPickerHeaderFitsOnOneLine(t *testing.T) {
+	for _, width := range []int{100, 129, 160} {
+		m := Model{
+			width:  width,
+			height: 40,
+			picker: &pickerState{kind: "model", role: settings.RoleReview},
+		}
+		headerW := floatingInnerWidth(m.width, floatingModelPickerSpec) - floatingHeaderPadX*2
+		header := strings.Split(plainText(m.renderModelPicker()), "\n")[0]
+		if got := lipgloss.Width(header); got > headerW {
+			t.Errorf("width %d: header width = %d > %d: %q", width, got, headerW, header)
+		}
+	}
+}

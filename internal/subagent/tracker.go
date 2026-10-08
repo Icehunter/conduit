@@ -45,6 +45,14 @@ type Tracker struct {
 // Default is the process-wide sub-agent tracker.
 var Default = &Tracker{}
 
+// Running counts every active agent, including hidden background work. It is
+// used by completion gates; UI snapshots intentionally hide those agents.
+func (t *Tracker) Running() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.active)
+}
+
 // Add registers a new sub-agent entry.
 func (t *Tracker) Add(e Entry) {
 	t.mu.Lock()

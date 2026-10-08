@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "recorded": "2026-10-08T08:31:00.224Z",
+  "lesson": "Treat repository and home path substitutions as redaction: any post-call change to model-visible text invalidates exact-context training eligibility.",
+  "anchor": "go test ./internal/episodes -run ^TestPrivacyPathTransformationMarksEpisodeRedacted$ -count=1",
+  "anchorExitCode": 0,
+  "anchorDurationMs": 439,
+  "anchorTail": "ok  \tgithub.com/icehunter/conduit/internal/episodes\t0.289s",
+  "anchorStdoutTail": "ok  \tgithub.com/icehunter/conduit/internal/episodes\t0.289s",
+  "anchorStderrTail": "",
+  "evidence": null,
+  "cwd": "/Users/icehunter/.codex/worktrees/verified-local-coding/conduit"
+}

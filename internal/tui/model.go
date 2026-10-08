@@ -363,6 +363,9 @@ type Config struct {
 	RedactSecrets func() bool
 	// InitialLocalMode restores the hidden /local-mode compatibility bridge.
 	InitialLocalMode bool
+	// VerifiedCoding keeps orchestration on the API-backed main/planning role;
+	// CodingTask owns local implementation, verification and repair.
+	VerifiedCoding bool
 	// InitialLocalServer is the MCP server normal chat should route to when
 	// InitialLocalMode is enabled.
 	InitialLocalServer string
@@ -531,10 +534,11 @@ type Model struct {
 
 	// localMode/local* are compatibility fields for the hidden /local-mode and
 	// /local debug commands while provider routing settles.
-	localMode          bool
-	localModeServer    string
-	localDirectTool    string
-	localImplementTool string
+	localMode           bool
+	verifiedProviderErr error
+	localModeServer     string
+	localDirectTool     string
+	localImplementTool  string
 
 	// modelName is the currently active model (can be changed via /model).
 	modelName string

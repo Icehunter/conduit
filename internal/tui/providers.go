@@ -151,7 +151,43 @@ func (m Model) applySystemOverlay() {
 
 func (m *Model) applyEffectiveProviderForMode() {
 	provider, ok := m.providerForCurrentMode()
+	m.verifiedProviderErr = nil
+	if m.cfg.VerifiedCoding {
+		role := m.currentProviderRole()
+		if role == settings.RoleMain && m.roles[role] == "" {
+			role = settings.RoleDefault
+		}
+		if ref := m.roles[role]; ref != "" {
+			if _, exists := m.providers[ref]; !exists {
+				m.verifiedProviderErr = fmt.Errorf("role %s references missing provider %s", role, ref)
+				m.messages = append(m.messages, Message{Role: RoleError, Content: m.verifiedProviderErr.Error()})
+				return
+			}
+		}
+	}
 	if !ok || m.cfg.Loop == nil {
+		return
+	}
+	if m.cfg.VerifiedCoding {
+		if m.cfg.NewProviderAPIClient == nil {
+			m.verifiedProviderErr = fmt.Errorf("verified coding provider client factory is unavailable")
+		} else {
+			client, err := m.cfg.NewProviderAPIClient(provider)
+			if err != nil {
+				m.verifiedProviderErr = err
+			} else if client == nil {
+				m.verifiedProviderErr = fmt.Errorf("verified coding provider returned no client")
+			} else {
+				m.cfg.Loop.SetClient(client)
+				m.cfg.Loop.SetModel(provider.Model)
+				m.cfg.Loop.SetContextWindow(provider.ContextWindow)
+				m.localMode = false
+				m.localModeServer = ""
+			}
+		}
+		if m.verifiedProviderErr != nil {
+			m.messages = append(m.messages, Message{Role: RoleError, Content: "Verified coding provider unavailable: " + m.verifiedProviderErr.Error()})
+		}
 		return
 	}
 	switch provider.Kind {
@@ -228,6 +264,9 @@ func (m *Model) applyEffectiveProviderForMode() {
 }
 
 func (m Model) currentProviderRole() string {
+	if m.cfg.VerifiedCoding && m.permissionMode != permissions.ModePlan && m.permissionMode != permissions.ModeCouncil {
+		return settings.RoleMain
+	}
 	switch m.permissionMode {
 	case permissions.ModePlan:
 		return settings.RolePlanning
@@ -288,6 +327,12 @@ func (m Model) compactClientAndModel() (*api.Client, string, error) {
 }
 
 func (m Model) providerForCurrentMode() (settings.ActiveProviderSettings, bool) {
+	if m.cfg.VerifiedCoding && m.currentProviderRole() == settings.RoleMain {
+		if p, ok := m.providerForRole(settings.RoleMain); ok {
+			return p, true
+		}
+		return m.providerForRole(settings.RoleDefault)
+	}
 	return m.providerForRole(m.currentProviderRole())
 }
 
@@ -307,6 +352,11 @@ func (m Model) providerForRole(role string) (settings.ActiveProviderSettings, bo
 }
 
 func (m Model) providerAvailable(provider settings.ActiveProviderSettings) bool {
+	if m.cfg.VerifiedCoding {
+		// Preserve explicit selection: client construction must surface an
+		// invalid provider instead of falling back to another model.
+		return true
+	}
 	switch provider.Kind {
 	case settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI:
 		return m.accountProviderAvailable(provider)
@@ -423,6 +473,9 @@ func (m Model) anyAccountForProviderKind(kind string) bool {
 }
 
 func (m Model) activeMCPProvider() (settings.ActiveProviderSettings, bool) {
+	if m.cfg.VerifiedCoding {
+		return settings.ActiveProviderSettings{}, false
+	}
 	if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == settings.ProviderKindMCP {
 		if provider.Server == "" {
 			provider.Server = "local-router"

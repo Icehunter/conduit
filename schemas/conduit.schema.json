@@ -23,6 +23,10 @@
           "description": "MCP tool used for direct prompts (mcp).",
           "type": "string"
         },
+        "endpointId": {
+          "description": "Stable local endpoint identity; when set it separates registrations that share a credential and model.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
         "extraBody": {
           "description": "Vendor-specific request fields merged into every request as a JSON merge patch: objects merge, other values replace, null deletes (openai-compatible).",
           "type": "object"
@@ -96,6 +100,63 @@
         "reserved": {
           "default": 20000,
           "description": "Token budget reserved for model output when computing usable context.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DefinitionOfDoneSettings": {
+      "description": "Opt-in repository completion checks; each settings layer replaces this entire object.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/VerificationCheck"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxRepairAttempts": {
+          "type": "integer"
+        },
+        "protectedPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requireReview": {
+          "type": "boolean"
+        },
+        "totalTimeoutSeconds": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "EpisodeSettings": {
+      "description": "Opt-in private episode recording; content recording requires includeContent.",
+      "properties": {
+        "allowedPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "excludedPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "includeContent": {
+          "type": "boolean"
+        },
+        "retentionDays": {
           "type": "integer"
         }
       },
@@ -360,6 +421,27 @@
       },
       "type": "object"
     },
+    "ProviderPoolSettings": {
+      "description": "Provider references sharing load-aware scheduling; distinct from providerChains failover.",
+      "properties": {
+        "maxConcurrent": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "members": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "TTSRConfig": {
       "properties": {
         "repetitionGuard": {
@@ -380,6 +462,23 @@
         "maxLines": {
           "default": 2000,
           "description": "Lines before output is truncated to disk.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "VerificationCheck": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
           "type": "integer"
         }
       },
@@ -500,6 +599,9 @@
       "description": "max_tokens for the synthesis call.",
       "type": "integer"
     },
+    "definitionOfDone": {
+      "$ref": "#/$defs/DefinitionOfDoneSettings"
+    },
     "disableMouse": {
       "description": "Turn off terminal mouse capture so native selection works (tmux/ssh). Wheel scroll and click-to-expand are unavailable; use the keyboard bindings.",
       "type": "boolean"
@@ -535,6 +637,9 @@
       },
       "description": "Extra environment variables for tool execution.",
       "type": "object"
+    },
+    "episodes": {
+      "$ref": "#/$defs/EpisodeSettings"
     },
     "hooks": {
       "$ref": "#/$defs/HooksSettings",
@@ -584,6 +689,12 @@
       "description": "Maps a role to an ordered list of provider keys to fail over to on 429/503/529.",
       "type": "object"
     },
+    "providerPools": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ProviderPoolSettings"
+      },
+      "type": "object"
+    },
     "providers": {
       "additionalProperties": {
         "$ref": "#/$defs/ActiveProviderSettings"
@@ -596,11 +707,17 @@
       "description": "Mask secrets (API keys, tokens, private keys, password assignments) in tool results. Unset means on.",
       "type": "boolean"
     },
+    "rolePools": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
     "roles": {
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Maps a role (default, main, planning, background, implement) to a provider key.",
+      "description": "Maps a role (default, main, planning, background, implement, review) to a provider key.",
       "type": "object"
     },
     "schemaVersion": {

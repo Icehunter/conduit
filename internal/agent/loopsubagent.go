@@ -140,6 +140,11 @@ func (l *Loop) resolveModelAlias(alias string) string {
 }
 
 func (l *Loop) runSubAgentOnce(ctx context.Context, prompt string, spec SubAgentSpec) (SubAgentResult, error) {
+	var resolveErr error
+	spec, resolveErr = l.resolveExplicitRole(spec)
+	if resolveErr != nil {
+		return SubAgentResult{}, resolveErr
+	}
 	child, model := l.buildChildLoop(spec)
 	childGate := child.cfg.Gate
 
@@ -363,6 +368,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt string, client *
 	// or re-trigger memory extraction / session-memory updates.
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
+	childCfg.Completion = nil
 	childCfg.OnToolBatchComplete = nil
 	childCfg.OnFileAccess = nil
 	childCfg.OnSubAgentUsage = nil    // child sub-agents report to their own parent

@@ -18,6 +18,11 @@ var conduitConfigMu sync.Mutex
 // owns Conduit runtime preferences so Claude Code's settings are only an import
 // source, not a live dependency after first load.
 type ConduitConfig struct {
+	ProviderPools    map[string]ProviderPoolSettings `json:"providerPools,omitempty"`
+	RolePools        map[string]string               `json:"rolePools,omitempty"`
+	DefinitionOfDone *DefinitionOfDoneSettings       `json:"definitionOfDone,omitempty"`
+	Episodes         *EpisodeSettings                `json:"episodes,omitempty"`
+
 	// SchemaURL is the editor-hint "$schema" URL; kept so typed saves do not drop it.
 	SchemaURL string `json:"$schema,omitempty"`
 
@@ -153,9 +158,10 @@ func conduitConfigFromSettings(s Settings) ConduitConfig {
 		DisabledMcpjsonServers:     s.DisabledMcpjsonServers,
 		EnableAllProjectMcpServers: s.EnableAllProjectMcpServers,
 
-		Model:     s.Model,
-		Providers: s.Providers,
-		Roles:     s.Roles,
+		Model:         s.Model,
+		Providers:     s.Providers,
+		Roles:         s.Roles,
+		ProviderPools: s.ProviderPools, RolePools: s.RolePools, DefinitionOfDone: s.DefinitionOfDone, Episodes: s.Episodes,
 
 		OutputStyle:        s.OutputStyle,
 		Theme:              s.Theme,
@@ -175,6 +181,9 @@ func LoadConduitConfig() (ConduitConfig, error) {
 	}
 	if len(data) == 0 {
 		return ConduitConfig{}, nil
+	}
+	if err := validateCodingFields(data); err != nil {
+		return ConduitConfig{}, fmt.Errorf("conduit config: %w", err)
 	}
 	var cfg ConduitConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {

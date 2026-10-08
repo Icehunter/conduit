@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "recorded": "2026-10-08T06:46:55.077Z",
+  "lesson": "Derive candidate postimages from validated edits and bind verification workspace fingerprints to them; a fresh disk read does not establish model authorship.",
+  "anchor": "go test ./internal/coding",
+  "anchorExitCode": 0,
+  "anchorDurationMs": 397,
+  "anchorTail": "ok  \tgithub.com/icehunter/conduit/internal/coding\t0.236s",
+  "anchorStdoutTail": "ok  \tgithub.com/icehunter/conduit/internal/coding\t0.236s",
+  "anchorStderrTail": "",
+  "evidence": null,
+  "cwd": "/Users/icehunter/.codex/worktrees/verified-local-coding/conduit"
+}

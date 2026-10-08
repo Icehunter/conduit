@@ -15,6 +15,10 @@ import (
 
 // MessageRequest is the body of POST /v1/messages.
 type MessageRequest struct {
+	// RequireCompleted is an opt-in guard for bounded no-tools coding requests.
+	// It rejects absent/unknown terminal reasons without changing legacy callers.
+	RequireCompleted bool `json:"-"`
+
 	Model     string         `json:"model"`
 	MaxTokens int            `json:"max_tokens"`
 	System    []SystemBlock  `json:"system,omitempty"`

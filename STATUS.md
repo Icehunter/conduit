@@ -1,6 +1,6 @@
 # Conduit — Capability Matrix
 
-Last updated: 2026-09-03
+Last updated: 2026-10-08
 
 This document answers product questions about Conduit: what works, what's
 coming, and what's intentionally out of scope.
@@ -19,6 +19,18 @@ coming, and what's intentionally out of scope.
 ---
 
 ## Providers & Accounts
+
+### Optional verified local coding (Conduit extension)
+
+| Capability | Status | Notes |
+|-----------|--------|-------|
+| Repository definition of done and bounded local repair | ✅ | `internal/verification`, `internal/coding`, `internal/app/coding.go`; opt-in TUI/print completion gate and `conduit code`; frozen checks, explicit permissions, stale-source/workspace checks, independent optional review; single-endpoint Qwen3.8-27B MCP failure→repair smoke passed 2026-10-08 ([evidence](docs/verified-local-live-smoke.md)) |
+| Endpoint pools and review role | ✅ | Stable endpoint IDs, SQLite session/role affinity and expiring request leases for bounded implement/review; streaming role pools and external-router load telemetry are unsupported |
+| Privacy-controlled episodes and SFT/DPO export | ✅ | Separate append-only JSONL; explicit source/content opt-in; strict provenance and human labeling; incomplete/redacted/evaluation traces excluded. Opt-in local-router v1 traces capture actual expanded messages/parameters; strict input/output/model binding and upstream endpoint identity; legacy MCP context stays ineligible. Live Qwen trace→SFT export smoke passed 2026-10-08 ([details](docs/mcp-request-traces.md)) |
+| Held-out evaluation | ✅ | Pinned local checkout, immutable fixtures, authorized checks, enforced wall time and validated external-runner usage; not an OS sandbox |
+| Offline QLoRA and adapter merge | 🔶 | Pinned-artifact Python pipeline and stdlib validation tests; GPU training/export execution has not been run; no automatic training/promotion |
+
+Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-local-coding.md), [`docs/training.md`](docs/training.md).
 
 | Capability | Status | Notes |
 |-----------|--------|-------|

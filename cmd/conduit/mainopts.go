@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
@@ -19,12 +20,15 @@ import (
 	"github.com/icehunter/conduit/internal/bgjobs"
 	"github.com/icehunter/conduit/internal/compact"
 	"github.com/icehunter/conduit/internal/globalconfig"
+	"github.com/icehunter/conduit/internal/hooks"
 	"github.com/icehunter/conduit/internal/instructions"
 	"github.com/icehunter/conduit/internal/lsp"
+	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/memdir"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
+	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/session"
 	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/team"
@@ -45,12 +49,55 @@ func runPrint(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	p, err := app.LoadAuth(ctx)
-	if err != nil {
-		return fmt.Errorf("authentication: %w (use /login inside the REPL to sign in)", err)
-	}
-
 	cwd, _ := os.Getwd()
+	policies, err := settings.LoadCodingPolicies(cwd)
+	if err != nil {
+		return err
+	}
+	merged, err := settings.Load(cwd)
+	if err != nil {
+		return err
+	}
+	store := secure.NewDefault()
+	verifiedCoding := policies.DefinitionOfDone != nil && policies.DefinitionOfDone.Enabled
+	if verifiedCoding {
+		previous := hooks.GetDefaultAsyncGroup()
+		group := hooks.NewAsyncGroup(ctx)
+		hooks.SetDefaultAsyncGroup(group)
+		defer func() { group.Shutdown(2 * time.Second); hooks.SetDefaultAsyncGroup(previous) }()
+	}
+	sessionID := api.NewUUID()
+	var p auth.PersistedTokens
+	var c *api.Client
+	modelName := internalmodel.Resolve()
+	var provider *settings.ActiveProviderSettings
+	configured := false
+	for _, role := range []string{settings.RoleMain, settings.RoleDefault} {
+		if !verifiedCoding {
+			break
+		}
+		if ref := merged.Roles[role]; ref != "" {
+			value, exists := merged.Providers[ref]
+			if !exists {
+				return fmt.Errorf("role %s references missing provider %s", role, ref)
+			}
+			provider = &value
+			configured = true
+			break
+		}
+	}
+	if configured {
+		c, err = app.NewExecutionClient(*provider, store, Version)
+		modelName = provider.Model
+	} else {
+		p, err = app.LoadAuth(ctx)
+		if err == nil {
+			c = app.NewAPIClient(p, Version)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("authentication/provider: %w", err)
+	}
 	loadedPlugins, _ := plugins.LoadAll(cwd)
 	skillEntries := app.BuildSkillEntries(loadedPlugins)
 	agentEntries := app.BuildAgentEntries(loadedPlugins)
@@ -58,14 +105,28 @@ func runPrint(args []string) error {
 	mem := memdir.BuildPrompt(cwd)
 	claudeMdFiles, _ := instructions.Load(cwd)
 	claudeMdPrompt := instructions.BuildPrompt(claudeMdFiles)
-	c := app.NewAPIClient(p, Version)
-	reg := app.BuildRegistry(c, nil, lsp.NewManager(), nil, nil)
-	modelName := internalmodel.Resolve()
+	var manager *mcp.Manager
+	if policies.DefinitionOfDone != nil && policies.DefinitionOfDone.Enabled {
+		manager = mcp.NewManager()
+		manager.SetSecureStore(store)
+		defer manager.Close()
+		trusted, trustErr := globalconfig.IsTrusted(cwd)
+		if trustErr != nil {
+			return trustErr
+		}
+		if err := manager.ConnectAll(ctx, cwd, trusted); err != nil {
+			return err
+		}
+	}
+	reg := app.BuildRegistry(c, manager, lsp.NewManager(), nil, nil)
 
 	// Non-interactive mode: create a gate with default mode and no trusted roots.
 	// AskPermission auto-denies anything that is not on an allow list — there is
 	// no user present to respond to a prompt.
 	gate := permissions.New(cwd, nil, permissions.ModeDefault, nil, nil, nil)
+	if verifiedCoding {
+		gate = permissions.New(cwd, nil, permissions.ModeDefault, merged.Allow, merged.Deny, merged.Ask)
+	}
 
 	// Print mode runs no tool hooks, but a UserPromptSubmit hook still gates
 	// the prompt. Project-local hooks need the workspace to be trusted.
@@ -90,11 +151,21 @@ func runPrint(args []string) error {
 		Gate:                gate,
 		Hooks:               promptHooks,
 		Cwd:                 cwd,
-		SessionID:           api.NewUUID(),
+		SessionID:           sessionID,
 		AskPermission:       func(_ context.Context, _, _ string) (bool, bool) { return false, false },
 		BackgroundModel:     func() string { return compact.DefaultModel },
 		IsOAuthSubscription: auth.InferAccountKind(p) == auth.AccountKindClaudeAI,
 	})
+	runtime, err := app.NewCodingRuntime(app.CodingOptions{Root: cwd, SessionID: sessionID, Settings: merged, Policies: &policies, Gate: gate, MCP: manager, Secure: store, Client: c, Model: modelName, WireVersion: Version, HasActiveWriters: codingHasActiveWriters})
+	if err != nil {
+		return err
+	}
+	if runtime != nil {
+		defer func() { _ = runtime.Close() }()
+		runtime.Register(reg)
+		lp.SetCompletion(runtime.Completion(nil, nil))
+		lp.SetResolveRole(runtime.ResolveRole)
+	}
 	agentRegistry := plugins.NewAgentRegistry(loadedPlugins)
 	agentRegistry.AddFS(cwd)
 	reg.Register(agenttool.New(

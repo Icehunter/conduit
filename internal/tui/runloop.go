@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/settings"
 )
 
 // runLoopCmd returns the command that runs the agent loop over a copy of
@@ -22,6 +24,16 @@ import (
 // runs UserPromptSubmit hooks (on prompt.Raw). Turns the TUI starts itself,
 // such as injected notifications, pass none.
 func (m Model) runLoopCmd(ctx context.Context, turnID int, prompt ...agent.UserPrompt) tea.Cmd {
+	if m.cfg.VerifiedCoding {
+		if m.verifiedProviderErr != nil {
+			return func() tea.Msg { return agentDoneMsg{turnID: turnID, history: m.history, err: m.verifiedProviderErr} }
+		}
+		if provider, ok := m.providerForCurrentMode(); ok && provider.Kind == settings.ProviderKindMCP {
+			return func() tea.Msg {
+				return agentDoneMsg{turnID: turnID, history: m.history, err: errors.New("verified coding requires an API-backed main/planning provider; use the Implement role for local MCP")}
+			}
+		}
+	}
 	var typed agent.UserPrompt
 	if len(prompt) > 0 {
 		typed = prompt[0]

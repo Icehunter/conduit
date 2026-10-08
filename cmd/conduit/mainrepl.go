@@ -68,6 +68,17 @@ import (
 func runREPL(continueMode bool, resumeID string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		return fmt.Errorf("working directory: %w", cwdErr)
+	}
+	// Snapshot strict executable policies before any legacy loader/migration
+	// can skip malformed settings or rewrite provider configuration.
+	codingPolicies, codingPolicyErr := settings.LoadCodingPolicies(cwd)
+	if codingPolicyErr != nil {
+		return codingPolicyErr
+	}
+	codingEnabled := codingPolicies.DefinitionOfDone != nil && codingPolicies.DefinitionOfDone.Enabled
 	var startupWarnings []string
 	warnf := func(format string, args ...any) {
 		startupWarnings = append(startupWarnings, fmt.Sprintf(format, args...))
@@ -127,7 +138,6 @@ func runREPL(continueMode bool, resumeID string) error {
 	app.RefreshClaudeAccountProfiles(ctx)
 
 	// Session persistence — create or resume.
-	cwd, _ := os.Getwd()
 	sessionID := app.NewSessionID()
 	var resumedHistory []api.Message
 	resumeSourcePath := ""
@@ -311,6 +321,13 @@ func runREPL(continueMode bool, resumeID string) error {
 	initialLocalDirectTool := ""
 	initialLocalImplementTool := ""
 	defaultProvider, _ := s.ProviderForRole(settings.RoleDefault)
+	if codingEnabled {
+		var providerErr error
+		defaultProvider, providerErr = configuredCodingMain(s)
+		if providerErr != nil {
+			return providerErr
+		}
+	}
 	implementProvider, _ := s.ProviderForRole(settings.RoleImplement)
 	if defaultProvider != nil && defaultProvider.Kind == "mcp" {
 		initialLocalMode = true
@@ -411,6 +428,14 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 
 	c := app.NewAPIClient(tok, Version)
+	if codingEnabled && defaultProvider != nil {
+		var clientErr error
+		c, clientErr = app.NewExecutionClient(*defaultProvider, secure.NewDefault(), Version)
+		if clientErr != nil {
+			return fmt.Errorf("verified coding main provider: %w", clientErr)
+		}
+		initialLocalMode = false
+	}
 
 	// Kernel manager: one long-lived Python/Node interpreter per (session, lang).
 	// The reaper goroutine closes kernels that have been idle for 10+ minutes.
@@ -644,7 +669,7 @@ func runREPL(continueMode bool, resumeID string) error {
 			// overlay and block until the user approves or reverts each file.
 			// This runs synchronously before memory extraction so the agent
 			// doesn't start a new turn while the user is reviewing.
-			if pendingTable.Len() > 0 && diffReviewHook.AskReview != nil {
+			if !codingEnabled && pendingTable.Len() > 0 && diffReviewHook.AskReview != nil {
 				ctx2, cancel2 := context.WithTimeout(bgCtx, 10*time.Minute)
 				result := diffReviewHook.AskReview(ctx2)
 				cancel2()
@@ -731,6 +756,11 @@ func runREPL(continueMode bool, resumeID string) error {
 
 		},
 		OnToolBatchComplete: func(pendingEdits int) bool {
+			// Verified coding reviews/flushed edits inside PrepareCompletion,
+			// whose cancellable context and error result are authoritative.
+			if codingEnabled {
+				return false
+			}
 			// In acceptEditsLive mode, pause for mid-turn hunk review when
 			// the staged-edit count hits the configured threshold.
 			if gate.Mode() != permissions.ModeAcceptEditsLive {
@@ -776,6 +806,26 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 		IsOAuthSubscription: auth.InferAccountKind(tok) == auth.AccountKindClaudeAI,
 	})
+	codingRuntime, codingErr := app.NewCodingRuntime(app.CodingOptions{
+		Root: cwd, SessionID: sessionID, WireVersion: Version, Model: modelName,
+		Settings: s, Policies: &codingPolicies, Gate: gate, MCP: mcpManager,
+		Secure: secure.NewDefault(), Client: c, AskPermission: lp.RequestToolPermission,
+		CurrentRoot:      func() string { root, _ := os.Getwd(); return root },
+		HasActiveWriters: codingHasActiveWriters,
+	})
+	if codingErr != nil {
+		return fmt.Errorf("verified coding: %w", codingErr)
+	}
+	if codingRuntime != nil {
+		defer func() {
+			if closeErr := codingRuntime.Close(); closeErr != nil {
+				fmt.Fprintln(os.Stderr, "conduit: coding runtime:", closeErr)
+			}
+		}()
+		codingRuntime.Register(reg)
+		lp.SetResolveRole(codingRuntime.ResolveRole)
+		lp.SetCompletion(codingRuntime.Completion(func(ctx context.Context) error { return prepareVerifiedEdits(ctx, pendingTable, diffReviewHook, sess) }, func() bool { return gate.Mode() != permissions.ModePlan && gate.Mode() != permissions.ModeCouncil }))
+	}
 
 	// Install TTSR rules loaded from .conduit/ttsr/*.md.
 	if len(ttsrRules) > 0 {
@@ -999,6 +1049,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		InitialOutputStyle:        s.OutputStyle,
 		InitialUsageStatusEnabled: usageStatusEnabled,
 		InitialLocalMode:          initialLocalMode,
+		VerifiedCoding:            codingEnabled,
 		InitialLocalServer:        initialLocalServer,
 		InitialLocalDirectTool:    initialLocalDirectTool,
 		InitialLocalImplementTool: initialLocalImplementTool,
@@ -1035,6 +1086,9 @@ func runREPL(continueMode bool, resumeID string) error {
 			return app.NewAPIClient(tok, Version)
 		},
 		NewProviderAPIClient: func(provider settings.ActiveProviderSettings) (*api.Client, error) {
+			if codingEnabled {
+				return app.NewExecutionClient(provider, secure.NewDefault(), Version)
+			}
 			return app.NewProviderAPIClient(provider, secure.NewDefault(), Version)
 		},
 		NeedsTrust: needsTrust,

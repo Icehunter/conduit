@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,6 +14,7 @@ type AsyncGroup struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	active atomic.Int64
 
 	// SubAgentRunner is an optional function injected by the agent loop that
 	// can execute a sub-agent prompt. When non-nil, prompt/agent hooks invoke
@@ -35,11 +37,16 @@ func NewAsyncGroup(parent context.Context) *AsyncGroup {
 // group's context, which is cancelled by Shutdown.
 func (g *AsyncGroup) Go(f func(ctx context.Context)) {
 	g.wg.Add(1)
+	g.active.Add(1)
 	go func() {
 		defer g.wg.Done()
+		defer g.active.Add(-1)
 		f(g.ctx)
 	}()
 }
+
+// Running counts queued and executing hooks, including work awaiting a model.
+func (g *AsyncGroup) Running() int { return int(g.active.Load()) }
 
 // Shutdown cancels the group's context and waits up to d for all goroutines to
 // finish. Goroutines still running after d are abandoned (not killed).

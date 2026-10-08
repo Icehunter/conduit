@@ -73,8 +73,9 @@ type ResourceContent struct {
 
 // CallResult is the shape returned by tools/call.
 type CallResult struct {
-	Content []ContentBlock `json:"content"`
-	IsError bool           `json:"isError,omitempty"`
+	Content           []ContentBlock  `json:"content"`
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
+	IsError           bool            `json:"isError,omitempty"`
 }
 
 // ContentBlock is a single block in a tools/call result.

@@ -23,6 +23,10 @@
           "description": "MCP tool used for direct prompts (mcp).",
           "type": "string"
         },
+        "endpointId": {
+          "description": "Stable local endpoint identity; when set it separates registrations that share a credential and model.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
         "extraBody": {
           "description": "Vendor-specific request fields merged into every request as a JSON merge patch: objects merge, other values replace, null deletes (openai-compatible).",
           "type": "object"
@@ -73,6 +77,63 @@
           ],
           "pattern": "^(|[nN][aA][tT][iI][vV][eE]|[hH][eE][rR][mM][eE][sS]|[qQ][wW][eE][nN]3|[aA][uU][tT][oO])$",
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "DefinitionOfDoneSettings": {
+      "description": "Opt-in repository completion checks; each settings layer replaces this entire object.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/VerificationCheck"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxRepairAttempts": {
+          "type": "integer"
+        },
+        "protectedPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requireReview": {
+          "type": "boolean"
+        },
+        "totalTimeoutSeconds": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "EpisodeSettings": {
+      "description": "Opt-in private episode recording; content recording requires includeContent.",
+      "properties": {
+        "allowedPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "excludedPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "includeContent": {
+          "type": "boolean"
+        },
+        "retentionDays": {
+          "type": "integer"
         }
       },
       "type": "object"
@@ -308,6 +369,44 @@
         }
       },
       "type": "object"
+    },
+    "ProviderPoolSettings": {
+      "description": "Provider references sharing load-aware scheduling; distinct from providerChains failover.",
+      "properties": {
+        "maxConcurrent": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "members": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VerificationCheck": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
     }
   },
   "$id": "https://raw.githubusercontent.com/icehunter/conduit/main/schemas/settings.schema.json",
@@ -318,6 +417,9 @@
     "$schema": {
       "description": "URL of the JSON Schema this file follows (editor hint; ignored at load).",
       "type": "string"
+    },
+    "definitionOfDone": {
+      "$ref": "#/$defs/DefinitionOfDoneSettings"
     },
     "disabledMcpjsonServers": {
       "description": "Project .mcp.json servers that never connect.",
@@ -354,6 +456,9 @@
         "null"
       ]
     },
+    "episodes": {
+      "$ref": "#/$defs/EpisodeSettings"
+    },
     "hooks": {
       "$ref": "#/$defs/HooksSettings",
       "description": "Lifecycle hooks, keyed by event name."
@@ -374,6 +479,12 @@
       "$ref": "#/$defs/Permissions",
       "description": "Tool permission rules and default mode."
     },
+    "providerPools": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ProviderPoolSettings"
+      },
+      "type": "object"
+    },
     "providers": {
       "additionalProperties": {
         "$ref": "#/$defs/ActiveProviderSettings"
@@ -381,11 +492,17 @@
       "description": "Named provider registry (conduit only); roles reference these keys.",
       "type": "object"
     },
+    "rolePools": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
     "roles": {
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Maps a role (default, main, planning, background, implement) to a provider key.",
+      "description": "Maps a role (default, main, planning, background, implement, review) to a provider key.",
       "type": "object"
     },
     "theme": {

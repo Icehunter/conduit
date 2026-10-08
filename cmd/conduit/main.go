@@ -64,6 +64,12 @@ func run() error {
 		return runMCPCmd(args[1:])
 	case "config":
 		return runConfigCmd(args[1:], os.Stdout, os.Stderr)
+	case "code":
+		return runCode(args[1:])
+	case "episodes":
+		return runEpisodes(args[1:])
+	case "evaluate":
+		return runEvaluate(args[1:])
 	default:
 		flag.Usage()
 		return fmt.Errorf("unknown subcommand: %s", args[0])

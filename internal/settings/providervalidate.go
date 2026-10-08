@@ -3,12 +3,19 @@ package settings
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
 // ValidateProviderSettings checks that a provider has enough information to be
 // persisted and shown in provider selection surfaces.
+var endpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
 func ValidateProviderSettings(p ActiveProviderSettings) error {
+	if p.EndpointID != "" && !endpointIDPattern.MatchString(p.EndpointID) {
+		return fmt.Errorf("settings: endpointId must be 1-64 letters, digits, underscores or hyphens")
+	}
+
 	switch p.Kind {
 	case ProviderKindClaudeSubscription:
 		if p.Account == "" {

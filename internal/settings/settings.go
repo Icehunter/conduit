@@ -115,7 +115,12 @@ type Settings struct {
 	// keys so main/planning/background/implement can choose independently.
 	Providers map[string]ActiveProviderSettings `json:"providers,omitempty"`
 	// Roles maps role names such as "default" or "implement" to provider keys.
-	Roles map[string]string `json:"roles,omitempty"`
+	Roles            map[string]string               `json:"roles,omitempty"`
+	ProviderPools    map[string]ProviderPoolSettings `json:"providerPools,omitempty"`
+	RolePools        map[string]string               `json:"rolePools,omitempty"`
+	DefinitionOfDone *DefinitionOfDoneSettings       `json:"definitionOfDone,omitempty"`
+	Episodes         *EpisodeSettings                `json:"episodes,omitempty"`
+
 	// OutputStyle is the active output style name, persisted across sessions.
 	OutputStyle string `json:"outputStyle,omitempty"`
 	// Theme is the active palette name (dark|light|dark-daltonized|
@@ -160,7 +165,11 @@ type Merged struct {
 	Roles map[string]string
 	// ProviderChains maps role names to ordered provider-key slices for
 	// automatic failover when a provider returns 429/503/529.
-	ProviderChains map[string][]string
+	ProviderPools    map[string]ProviderPoolSettings
+	RolePools        map[string]string
+	DefinitionOfDone *DefinitionOfDoneSettings
+	Episodes         *EpisodeSettings
+	ProviderChains   map[string][]string
 	// OutputStyle is the active output style name (last layer wins).
 	OutputStyle string
 	// Theme is the active palette name (last layer wins).
@@ -278,6 +287,7 @@ func DiffReviewMidTurnThreshold() int {
 
 // ActiveProviderSettings stores conduit's provider routing selector.
 type ActiveProviderSettings struct {
+	EndpointID    string `json:"endpointId,omitempty"`
 	Kind          string `json:"kind"`
 	Model         string `json:"model,omitempty"`
 	Account       string `json:"account,omitempty"`
@@ -321,6 +331,7 @@ const (
 	RolePlanning   = "planning"
 	RoleBackground = "background"
 	RoleImplement  = "implement"
+	RoleReview     = "review"
 )
 
 // Load reads and merges settings from all layers for the given cwd.
@@ -328,6 +339,7 @@ func Load(cwd string) (*Merged, error) {
 	_ = ensureConduitConfigImported()
 	_ = RepairConduitProviderRegistry()
 	merged := loadPaths(settingsFiles(cwd))
+	canonicalizePoolRefs(merged.Providers, merged.ProviderPools)
 	merged.Providers, merged.Roles, _ = CanonicalizeProviderRegistry(merged.Providers, merged.Roles)
 	// Overlay conduit-only fields from ConduitConfig — these are not part of
 	// the CC-compatible Settings struct so loadPaths never sees them.
@@ -392,10 +404,12 @@ func applyConduitProjectState(merged *Merged, cwd string) {
 // loadPaths merges settings from an explicit list of file paths (testable).
 func loadPaths(paths []string) *Merged {
 	merged := &Merged{
-		DefaultMode: "default",
-		Env:         make(map[string]string),
-		Providers:   make(map[string]ActiveProviderSettings),
-		Roles:       make(map[string]string),
+		DefaultMode:   "default",
+		Env:           make(map[string]string),
+		Providers:     make(map[string]ActiveProviderSettings),
+		Roles:         make(map[string]string),
+		ProviderPools: make(map[string]ProviderPoolSettings),
+		RolePools:     make(map[string]string),
 	}
 	for _, path := range paths {
 		s, err := readFile(path)
@@ -419,6 +433,14 @@ func loadPaths(paths []string) *Merged {
 		}
 		maps.Copy(merged.Providers, s.Providers)
 		maps.Copy(merged.Roles, s.Roles)
+		maps.Copy(merged.ProviderPools, s.ProviderPools)
+		maps.Copy(merged.RolePools, s.RolePools)
+		if s.DefinitionOfDone != nil {
+			merged.DefinitionOfDone = s.DefinitionOfDone
+		}
+		if s.Episodes != nil {
+			merged.Episodes = s.Episodes
+		}
 		if s.OutputStyle != "" {
 			merged.OutputStyle = s.OutputStyle
 		}
@@ -477,6 +499,9 @@ func settingsFiles(cwd string) []string {
 func readFile(path string) (*Settings, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateCodingFields(data); err != nil {
 		return nil, err
 	}
 	var s Settings

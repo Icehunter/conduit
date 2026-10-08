@@ -572,6 +572,7 @@ var providerRoleOrder = []string{
 	settings.RoleBackground,
 	settings.RolePlanning,
 	settings.RoleImplement,
+	settings.RoleReview,
 	roleCouncil,
 }
 
@@ -608,6 +609,7 @@ func renderProviderRoleTabs(active string) string {
 		settings.RoleBackground: "Background",
 		settings.RolePlanning:   "Planning",
 		settings.RoleImplement:  "Implement",
+		settings.RoleReview:     "Review",
 		roleCouncil:             "Council",
 	}
 	activeIdx := 0
@@ -631,6 +633,8 @@ func providerRolePrompt(role string) string {
 		return "Choose a provider for planning and architecture tasks"
 	case settings.RoleImplement:
 		return "Choose a provider for bounded implementation offload tasks"
+	case settings.RoleReview:
+		return "Choose an independent provider for coding review"
 	case roleCouncil:
 		return "Council Members — toggle providers with Space"
 	default:

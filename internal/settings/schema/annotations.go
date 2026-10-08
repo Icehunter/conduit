@@ -21,6 +21,10 @@ var mcpTransports = []string{"", "stdio", "sse", "http", "ws", "websocket", "sse
 // sharedAnnotations decorate types that appear in more than one document.
 func sharedAnnotations() Annotations {
 	return Annotations{
+		"DefinitionOfDoneSettings": {Description: "Opt-in repository completion checks; each settings layer replaces this entire object."},
+		"EpisodeSettings":          {Description: "Opt-in private episode recording; content recording requires includeContent."},
+		"ProviderPoolSettings":     {Description: "Provider references sharing load-aware scheduling; distinct from providerChains failover."},
+
 		"Permissions.Allow":          {Description: "Permission rules that run without prompting, e.g. \"Bash(git status:*)\"."},
 		"Permissions.Deny":           {Description: "Permission rules that are always refused."},
 		"Permissions.Ask":            {Description: "Permission rules that always prompt, even where an allow rule matches."},
@@ -55,6 +59,7 @@ func sharedAnnotations() Annotations {
 
 		"ActiveProviderSettings":                       {Description: "One named provider in the registry."},
 		"ActiveProviderSettings.Kind":                  {Description: "Provider kind.", Enum: Strings(settings.ProviderKindClaudeSubscription, settings.ProviderKindAnthropicAPI, settings.ProviderKindOpenAICompatible, settings.ProviderKindMCP)},
+		"ActiveProviderSettings.EndpointID":            {Description: "Stable local endpoint identity; when set it separates registrations that share a credential and model.", Schema: map[string]any{"pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}},
 		"ActiveProviderSettings.Model":                 {Description: "Model identifier sent to the provider."},
 		"ActiveProviderSettings.Account":               {Description: "Account key or email (claude-subscription, anthropic-api)."},
 		"ActiveProviderSettings.Credential":            {Description: "Credential alias (openai-compatible, anthropic-api). An alias, never the API key itself."},
@@ -93,7 +98,7 @@ func SettingsAnnotations() Annotations {
 		"Settings.EnableAllProjectMcpServers": {Description: "Approve every server in the project .mcp.json."},
 		"Settings.Model":                      {Description: "Preferred model name."},
 		"Settings.Providers":                  {Description: "Named provider registry (conduit only); roles reference these keys."},
-		"Settings.Roles":                      {Description: "Maps a role (default, main, planning, background, implement) to a provider key."},
+		"Settings.Roles":                      {Description: "Maps a role (default, main, planning, background, implement, review) to a provider key."},
 		"Settings.OutputStyle":                {Description: "Active output style name; built-ins are default, Explanatory and Learning, and custom styles come from output-style files."},
 		"Settings.Theme":                      {Description: "Active palette name: dark, light, dark-daltonized, light-daltonized, dark-ansi, light-ansi, or a custom name from themes."},
 		"Settings.UsageStatusEnabled":         {Description: "Show the Claude plan usage footer (conduit only)."},
@@ -119,7 +124,7 @@ func ConduitAnnotations() Annotations {
 		"ConduitConfig.EnableAllProjectMcpServers":  {Description: "Approve every server in the project .mcp.json."},
 		"ConduitConfig.Model":                       {Description: "Preferred model name."},
 		"ConduitConfig.Providers":                   {Description: "Named provider registry; roles reference these keys."},
-		"ConduitConfig.Roles":                       {Description: "Maps a role (default, main, planning, background, implement) to a provider key."},
+		"ConduitConfig.Roles":                       {Description: "Maps a role (default, main, planning, background, implement, review) to a provider key."},
 		"ConduitConfig.ProviderChains":              {Description: "Maps a role to an ordered list of provider keys to fail over to on 429/503/529."},
 		"ConduitConfig.CouncilProviders":            {Description: "Provider keys that take part in council-mode debates. Empty disables council mode."},
 		"ConduitConfig.CouncilMaxRounds":            {Description: "Maximum debate rounds before synthesis.", Default: 4},

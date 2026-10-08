@@ -192,6 +192,19 @@ func SaveRoleProvider(role string, value ActiveProviderSettings) error {
 	if existing := raw["roles"]; len(existing) > 0 {
 		_ = json.Unmarshal(existing, &roles)
 	}
+	var pools map[string]ProviderPoolSettings
+	if existing := raw["providerPools"]; len(existing) > 0 {
+		if err := json.Unmarshal(existing, &pools); err != nil {
+			return err
+		}
+		if canonicalizePoolRefs(providers, pools) {
+			encoded, err := json.Marshal(pools)
+			if err != nil {
+				return err
+			}
+			raw["providerPools"] = encoded
+		}
+	}
 	providers, roles, _ = CanonicalizeProviderRegistry(providers, roles)
 	key := ProviderKey(value)
 	providers[key] = value
@@ -224,6 +237,7 @@ func SaveProviderEntry(value ActiveProviderSettings) error {
 		if cfg.Providers == nil {
 			cfg.Providers = map[string]ActiveProviderSettings{}
 		}
+		canonicalizePoolRefs(cfg.Providers, cfg.ProviderPools)
 		cfg.Providers, cfg.Roles, _ = CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
 		cfg.Providers[ProviderKey(value)] = value
 	})
@@ -245,6 +259,7 @@ func SaveDiscoveredProviderModels(base ActiveProviderSettings, models []string) 
 		if cfg.Providers == nil {
 			cfg.Providers = map[string]ActiveProviderSettings{}
 		}
+		canonicalizePoolRefs(cfg.Providers, cfg.ProviderPools)
 		cfg.Providers, cfg.Roles, _ = CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
 		for _, model := range models {
 			model = strings.TrimSpace(model)
@@ -297,7 +312,9 @@ func RepairConduitProviderRegistry() error {
 	if len(cfg.Providers) == 0 && len(cfg.Roles) == 0 {
 		return nil
 	}
+	poolChanged := canonicalizePoolRefs(cfg.Providers, cfg.ProviderPools)
 	providers, roles, changed := CanonicalizeProviderRegistry(cfg.Providers, cfg.Roles)
+	changed = changed || poolChanged
 	cfg.Providers = providers
 	cfg.Roles = roles
 	if migrated := migrateLegacyProviderKinds(&cfg); migrated {
@@ -345,6 +362,13 @@ func ProviderKey(value ActiveProviderSettings) string {
 	kind := value.Kind
 	if kind == "" {
 		kind = "provider"
+	}
+	if value.EndpointID != "" {
+		key := kind + ".endpoint." + value.EndpointID
+		if value.Model != "" {
+			key += "." + value.Model
+		}
+		return key
 	}
 	switch value.Kind {
 	case ProviderKindMCP:

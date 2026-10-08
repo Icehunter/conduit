@@ -7,6 +7,19 @@ import (
 	"time"
 )
 
+func TestAsyncGroup_RunningCountsUntilDrained(t *testing.T) {
+	t.Parallel()
+	grp := NewAsyncGroup(context.Background())
+	grp.Go(func(ctx context.Context) { <-ctx.Done() })
+	if grp.Running() != 1 {
+		t.Fatal("queued async work was not counted")
+	}
+	grp.Shutdown(time.Second)
+	if grp.Running() != 0 {
+		t.Fatal("drained async work remains counted")
+	}
+}
+
 // TestAsyncGroup_Shutdown verifies that goroutines submitted to an AsyncGroup
 // receive a cancelled context when Shutdown is called, and that Shutdown blocks
 // until all goroutines have exited (within the grace window).

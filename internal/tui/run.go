@@ -51,6 +51,7 @@ type runOptions struct {
 
 // RunOptions carries optional TUI startup parameters passed from main.
 type RunOptions struct {
+	VerifiedCoding bool
 	// RunShell executes shell-mode ("!cmd") commands; nil uses a bare Bash tool.
 	RunShell func(ctx context.Context, command string) (string, bool)
 	// RedactSecrets mirrors the agent loop's secret-masking setting.
@@ -527,6 +528,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		InputHistory:              inputHistory,
 		PersistInput:              historyStore.Add,
 		InitialLocalMode:          runOpts.InitialLocalMode,
+		VerifiedCoding:            runOpts.VerifiedCoding,
 		InitialLocalServer:        runOpts.InitialLocalServer,
 		InitialLocalDirectTool:    runOpts.InitialLocalDirectTool,
 		InitialLocalImplementTool: runOpts.InitialLocalImplementTool,
@@ -820,12 +822,13 @@ func askDiffReview(
 	send(entries, reply)
 	select {
 	case r := <-reply:
+		r.Original = entries
 		return r
 	case <-ctx.Done():
 		// The table has already been drained into the overlay message. If the
 		// request is cancelled before the TUI replies, preserve those entries by
 		// approving the drained snapshot instead of draining the now-empty table.
-		return DiffReviewResult{Approved: entries}
+		return DiffReviewResult{Approved: entries, Original: entries, Cancelled: true}
 	}
 }
 

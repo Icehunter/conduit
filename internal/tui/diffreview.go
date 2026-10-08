@@ -62,6 +62,12 @@ type DiffReviewResult struct {
 	Approved        []pendingedits.Entry
 	Requested       []pendingedits.Entry
 	FollowupMessage string
+	// ExplicitDecision distinguishes Enter/Apply/Revert from dismiss/cancel.
+	// Legacy dismissal still applies entries; verified coding must reject it.
+	ExplicitDecision bool
+	Cancelled        bool
+	Rejected         bool
+	Original         []pendingedits.Entry
 }
 
 // diffReviewAskMsg is sent by the end-of-turn wiring to open the overlay.
@@ -243,6 +249,8 @@ func (m Model) handleDiffReviewKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	close := func(result DiffReviewResult) (Model, tea.Cmd) {
+		result.ExplicitDecision = msg.String() != "esc" && msg.String() != "ctrl+c"
+		result.Cancelled = msg.String() == "ctrl+c"
 		reply := dr.reply
 		m.diffReview = nil
 		m.refreshViewport()
@@ -409,6 +417,9 @@ func buildDiffReviewResult(dr *diffReviewState) DiffReviewResult {
 		anyRequested := false
 		hunks := make([]pendingedits.Hunk, len(e.hunks))
 		for i, hr := range e.hunks {
+			if hr.action == diffReviewReverted || hr.action == diffReviewRequested {
+				result.Rejected = true
+			}
 			hunks[i] = hr.hunk
 			// Treat any still-pending hunk as approved (Enter/Esc fall-through).
 			if hr.action == diffReviewApproved || hr.action == diffReviewPending {

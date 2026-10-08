@@ -337,7 +337,11 @@ func isNonAnthropicThinking(cb ContentBlock) bool {
 // the error type and message, so callers can `errors.As` against APIError
 // for finer control once we add typed errors in M2.
 func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
-	return c.transport.CreateMessage(ctx, c, req)
+	out, err := c.transport.CreateMessage(ctx, c, req)
+	if err == nil && req != nil && req.RequireCompleted && (out == nil || out.StopReason != "end_turn") {
+		return nil, fmt.Errorf("api: bounded request did not finish normally")
+	}
+	return out, err
 }
 
 func (c *Client) doWithRetryAndAuth(ctx context.Context, send func() (*http.Response, error)) (*http.Response, error) {

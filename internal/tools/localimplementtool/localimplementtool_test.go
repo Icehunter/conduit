@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/icehunter/conduit/internal/mcp"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
@@ -213,5 +214,59 @@ func TestDynamicConfigResolverIsUsedForDescriptionAndExecute(t *testing.T) {
 	}
 	if caller.name != "mcp__second_router__local_implement" {
 		t.Fatalf("called %q, want updated implement target", caller.name)
+	}
+}
+
+func TestExecuteNegotiatesTask(t *testing.T) {
+	for _, tc := range []struct {
+		name, task string
+		supported  []string
+		want       string
+		fail       bool
+	}{
+		{"implement default", "", []string{"implement", "fix"}, "implement", false},
+		{"repair", "fix", []string{"implement", "fix"}, "fix", false},
+		{"unsupported", "fix", []string{"implement"}, "", true},
+		{"legacy", "fix", nil, "", false},
+		{"invalid", "review", []string{"implement", "fix"}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller := &fakeCaller{res: mcp.CallResult{Content: []mcp.ContentBlock{{Type: "text", Text: "draft"}}}}
+			lt := New(caller, Config{Server: "coder", SupportedTasks: tc.supported})
+			raw, _ := json.Marshal(map[string]string{"prompt": "change it", "task": tc.task})
+			res, err := lt.Execute(context.Background(), raw)
+			if err != nil || res.IsError != tc.fail {
+				t.Fatalf("result=%+v err=%v", res, err)
+			}
+			if tc.fail {
+				if caller.name != "" {
+					t.Fatal("called unsupported task")
+				}
+				return
+			}
+			if got, _ := caller.input["task"].(string); got != tc.want {
+				t.Fatalf("task=%q want %q", got, tc.want)
+			}
+			if _, ok := caller.input["targets"]; ok {
+				t.Fatal("read-only tool requested writes")
+			}
+		})
+	}
+}
+func TestResolveTaskLimitedServer(t *testing.T) {
+	manager := mcp.NewManagerWithServers(map[string]*mcp.ConnectedServer{
+		"helper": {Name: "helper", Status: mcp.StatusConnected, Config: mcp.ServerConfig{Env: map[string]string{"LOCAL_LLM_TIER": "coder"}}, Tools: []mcp.ToolDef{{Name: defaultImplementTool, InputSchema: json.RawMessage(`{"properties":{"task":{"enum":["summarize"]}}}`)}}},
+		"writer": {Name: "writer", Status: mcp.StatusConnected, Tools: []mcp.ToolDef{{Name: defaultImplementTool, InputSchema: json.RawMessage(`{"properties":{"task":{"enum":["implement","fix"]}}}`)}}},
+	})
+	cfg, ok := ResolveConfig(manager, nil)
+	if !ok || cfg.Server != "writer" || len(cfg.SupportedTasks) != 2 {
+		t.Fatalf("config=%+v ok=%v", cfg, ok)
+	}
+}
+
+func TestConfiguredUnavailableTargetNeverFallsBack(t *testing.T) {
+	manager := mcp.NewManagerWithServers(map[string]*mcp.ConnectedServer{"other": {Name: "other", Status: mcp.StatusConnected, Tools: []mcp.ToolDef{implementToolDef()}}})
+	if cfg, ok := ResolveConfig(manager, &settings.ActiveProviderSettings{Kind: "mcp", Server: "pinned"}); ok {
+		t.Fatalf("silently routed pinned provider to %+v", cfg)
 	}
 }

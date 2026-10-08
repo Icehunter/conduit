@@ -83,11 +83,14 @@ const (
 	EventNotice                            // informational message for the user; Notice carries the text
 	EventThinking                          // a reasoning/thinking delta; Text carries it (never part of the answer)
 	EventSessionTitle                      // a UserPromptSubmit hook renamed the session; Notice carries the title
+	EventCompletion                        // optional verified-coding lifecycle; CompletionStatus carries the outcome
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
 type LoopEvent struct {
-	Type EventType
+	Type              EventType
+	CompletionStatus  CompletionStatus
+	CompletionAttempt int
 
 	// EventText, EventThinking
 	Text string
@@ -266,6 +269,9 @@ type LoopConfig struct {
 	// this synchronously before returning so the caller can choose between
 	// blocking or detaching to a goroutine.
 	OnEndTurn func(history []api.Message)
+	// Completion is an optional machine-enforced completion gate. Nil retains
+	// legacy streaming and completion behavior. Never inherited by helpers.
+	Completion *CompletionConfig
 
 	// OnToolBatchComplete fires after each batch of tool results is appended
 	// to history, before the next API request. pendingEdits is the number of
@@ -312,6 +318,10 @@ type LoopConfig struct {
 	// parent's client is reused. Returns ok=false when the role is not
 	// configured; the caller falls back to BackgroundModel().
 	RoleResolver func(role string) (model string, client *api.Client, ok bool)
+	// ResolveRole is strict role resolution, preferred over RoleResolver for
+	// explicit child roles. Errors prevent dispatch rather than inheriting a
+	// different provider's client. A successful result requires model+client.
+	ResolveRole func(role string) (model string, client *api.Client, err error)
 	// RoleContextWindow returns the context window configured for the role's
 	// provider, 0 when unknown. It sizes the summarizer's input when the
 	// background role's own client writes the summary.
@@ -835,6 +845,20 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
 	msgs = session.FilterUnresolvedToolUses(msgs)
+	ctx, completionCancel, completion, completionErr := l.beginCompletion(ctx)
+	defer completionCancel()
+	if completionErr != nil {
+		return msgs, completionErr
+	}
+	defer func() {
+		if completion != nil && !completion.finished {
+			status := CompletionIncomplete
+			if ctx.Err() != nil {
+				status = CompletionCancelled
+			}
+			completion.emit(handler, status, "")
+		}
+	}()
 
 	l.mu.RLock()
 	waitForTools := l.cfg.WaitForTools
@@ -1162,7 +1186,20 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 			ttsrWatcher = turnWatcher
 		}
 
-		res, err := l.drainStream(ctx, stream, handler, ttsrWatcher)
+		// Enabled completion keeps text provisional until its stopping reason
+		// and verification result are known. Other events still stream normally.
+		var candidateText strings.Builder
+		streamHandler := handler
+		if completion != nil {
+			streamHandler = func(ev LoopEvent) {
+				if ev.Type == EventText {
+					candidateText.WriteString(ev.Text)
+				} else {
+					handler(ev)
+				}
+			}
+		}
+		res, err := l.drainStream(ctx, stream, streamHandler, ttsrWatcher)
 		inputTokens := res.Usage.PromptInputTokens()
 		if inputTokens > 0 {
 			lastInputTokens = inputTokens
@@ -1225,6 +1262,9 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 			userTurn = false
 			continue
 		case stopContinue:
+			if completion != nil {
+				completion.text.WriteString(candidateText.String())
+			}
 			userTurn = false
 			continue
 		}
@@ -1232,6 +1272,24 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 		reminderPending = false
 
 		if act == stopEnd {
+			if completion != nil {
+				if res.StopReason != "end_turn" || !hasContent(res.Blocks) {
+					return msgs, completion.incomplete(handler, CompletionIncomplete, "The model stopped without a natural completion candidate.")
+				}
+				var retry bool
+				completion.text.WriteString(candidateText.String())
+				msgs, retry, err = completion.check(ctx, msgs, handler)
+				if err != nil {
+					return msgs, err
+				}
+				if retry {
+					userTurn = false
+					continue
+				}
+				if completion.text.Len() > 0 {
+					handler(LoopEvent{Type: EventText, Text: completion.text.String()})
+				}
+			}
 			// end_turn or unknown — we're done.
 			// Auto-compact check: if context is approaching capacity, compact
 			// so future turns don't hit the limit. Non-fatal if it fails.
@@ -1257,6 +1315,13 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 		}
 
 		// Execute tools, build a user message with all tool_results.
+		if completion != nil {
+			completion.text.WriteString(candidateText.String())
+			if completion.text.Len() > 0 {
+				handler(LoopEvent{Type: EventText, Text: completion.text.String()})
+			}
+			completion.text.Reset()
+		}
 		toolResults, toolDurations, stopTurn, err := l.executeTools(ctx, res.Blocks, res.InvalidTools, handler)
 		prevToolDurations = api.FormatToolDurations(toolDurations)
 		if err != nil {
@@ -1272,6 +1337,9 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 		// assistant tool_use + user tool_result are both in history, so the
 		// conversation is valid. The TUI re-submits with the user's next message.
 		if stopTurn {
+			if completion != nil {
+				return msgs, completion.incomplete(handler, CompletionYielded, "Turn yielded to the user before verification.")
+			}
 			// Mirror the end_turn notification: StopTurn hands the turn back to the
 			// user, so the "ready" signal is equally applicable here.
 			if l.cfg.NotifyOnComplete {
@@ -1294,6 +1362,9 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 		// table and reads Len() itself; the arg is reserved for future use.
 		if l.cfg.OnToolBatchComplete != nil {
 			if pause := l.cfg.OnToolBatchComplete(0); pause {
+				if completion != nil {
+					return msgs, completion.incomplete(handler, CompletionYielded, "Edits require review before verification.")
+				}
 				if l.cfg.OnEndTurn != nil {
 					l.cfg.OnEndTurn(msgs)
 				}

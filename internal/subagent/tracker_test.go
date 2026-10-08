@@ -21,6 +21,18 @@ func TestTracker_AddRemove(t *testing.T) {
 	}
 }
 
+func TestTracker_RunningIncludesBackground(t *testing.T) {
+	tr := &subagent.Tracker{}
+	tr.Add(subagent.Entry{ID: "background", Background: true})
+	if tr.Running() != 1 || len(tr.Snapshot()) != 0 {
+		t.Fatal("completion accounting must include hidden background agents")
+	}
+	tr.Remove("background")
+	if tr.Running() != 0 {
+		t.Fatal("completed agent remains running")
+	}
+}
+
 func TestTracker_UpdateMode(t *testing.T) {
 	tr := &subagent.Tracker{}
 	tr.Add(subagent.Entry{ID: "x", Mode: permissions.ModeDefault, StartedAt: time.Now()})

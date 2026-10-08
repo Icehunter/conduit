@@ -212,6 +212,9 @@ func (openAIChatTransport) CreateMessage(ctx context.Context, c *Client, req *Me
 		return nil, fmt.Errorf("api: openai-compatible response: %w",
 			&sse.Error{Type: out.Error.anthropicType(), Message: out.Error.describe()})
 	}
+	if req.RequireCompleted && (len(out.Choices) != 1 || out.Choices[0].FinishReason != "stop") {
+		return nil, fmt.Errorf("api: bounded request requires explicit stop finish_reason")
+	}
 	var blocks []ContentBlock
 	stopReason := "end_turn"
 	if len(out.Choices) > 0 {

@@ -39,7 +39,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 | Dependencies | Node.js + Bun runtime | None (static binary) |
 | Multi-account | Restart required | `/account` panel, live switch |
 | Providers | Claude-focused | Claude subscription, Anthropic API, OpenAI-compatible, local MCP |
-| Role routing | Single active model | Default, main, background, planning, implement |
+| Role routing | Single active model | Default, main, background, planning, implement, review |
 | Token savings | External `rtk` subprocess | In-process RTK filter |
 
 ---
@@ -52,6 +52,7 @@ The goal is simple: keep the Claude Code ergonomics, make the runtime fast and h
 - **Provider-aware routing** — assign models per role from `/models`
 - **OpenAI-compatible providers** — use API-key providers such as Gemini through a local credential alias
 - **Local model support** — route turns to MCP-backed local providers, including model servers on another machine
+- **Optional verified local coding** — per-repository checks, bounded local repair, independent review, endpoint affinity and private episode data; see [setup and limitations](docs/verified-local-coding.md) and [offline evaluation/training](docs/training.md)
 - **Streaming SSE** — real-time token-by-token output with cost tracking
 - **Auto-compact** — context window managed automatically; manual `/compact`
 - **Thinking mode** — extended reasoning via `/effort low|normal|high|max`

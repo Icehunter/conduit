@@ -64,6 +64,7 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	// Strip side-effect callbacks — children must not chain-trigger parent events.
 	childCfg.NotifyOnComplete = false
 	childCfg.OnEndTurn = nil
+	childCfg.Completion = nil
 	childCfg.OnToolBatchComplete = nil
 	childCfg.OnFileAccess = nil
 	childCfg.OnSubAgentUsage = nil
@@ -181,6 +182,11 @@ func runDeliveryPump(child *Loop, inbox <-chan team.Message, done <-chan struct{
 // the completion message, not as a Go error. Returns the teammate's subagent ID
 // and any registration error (duplicate name, shut-down team, etc.).
 func (l *Loop) SpawnTeammate(ctx context.Context, name, prompt string, spec SubAgentSpec, tm *team.Team) (string, error) {
+	var resolveErr error
+	spec, resolveErr = l.resolveExplicitRole(spec)
+	if resolveErr != nil {
+		return "", resolveErr
+	}
 	tmCtx, cancel := context.WithCancel(ctx)
 	member, err := tm.Register(name, cancel)
 	if err != nil {

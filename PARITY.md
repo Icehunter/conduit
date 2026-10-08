@@ -16,6 +16,10 @@
 
 ## Milestone completions (2026-05)
 
+**Intentional Conduit extension (2026-10-07):** optional `definitionOfDone`, `CodingTask`, completion verification/repair, isolated episode recording/export, bounded endpoint pools, independent `review` role and offline evaluation/training. These have no v2.1.126 source counterpart. Disabled mode preserves the existing completion and draft-tool behavior; enabled mode buffers candidate final text and requires explicit staged-edit confirmation before verification. See `docs/verified-local-coding.md` and `STATUS.md` for scope and limitations.
+
+**MCP trace extension (2026-10-08):** preserve optional MCP `structuredContent` and consume local-router version-1 normalized request traces only for enabled coding-content recording. Existing text tool output is unchanged. Strict prompt/model/answer and endpoint provenance checks gate training eligibility; any redaction, including identity-path substitution, excludes export. See `docs/mcp-request-traces.md`.
+
 | Milestone | Status | Key deliverables |
 |-----------|--------|-----------------|
 | M-A CLAUDE.md loading | ✅ | Directory walk, @include, TypeUser/Project/Local, system block injection |

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -35,6 +36,10 @@ type Config struct {
 	// declares "files" and "root" properties, meaning the MCP server reads
 	// files itself instead of requiring the caller to inline their content.
 	SupportsFiles bool
+	// SupportsTrace requires the explicitly advertised boolean include_trace.
+	SupportsTrace bool
+	// SupportedTasks is nil for legacy tools without a task property.
+	SupportedTasks []string
 }
 
 // ConfigResolver returns the current local implementation target.
@@ -95,6 +100,7 @@ func (*Tool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+ "task": {"type":"string","enum":["implement","fix"],"description":"Implementation or repair draft; defaults to implement."},
 			"prompt": {
 				"type": "string",
 				"description": "Specific implementation request and acceptance criteria for the local model."
@@ -117,6 +123,7 @@ func (*Tool) IsReadOnly(json.RawMessage) bool        { return true }
 func (*Tool) IsConcurrencySafe(json.RawMessage) bool { return false }
 
 type input struct {
+	Task    string   `json:"task,omitempty"`
 	Prompt  string   `json:"prompt"`
 	Context string   `json:"context,omitempty"`
 	Files   []string `json:"files,omitempty"`
@@ -138,9 +145,21 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		return tool.ErrorResult("LocalImplement unavailable: no connected MCP server exposes local_implement."), nil
 	}
 
+	if in.Task == "" {
+		in.Task = "implement"
+	}
+	if in.Task != "implement" && in.Task != "fix" {
+		return tool.ErrorResult("task must be implement or fix"), nil
+	}
+	if cfg.SupportedTasks != nil && !slices.Contains(cfg.SupportedTasks, in.Task) {
+		return tool.ErrorResult("local implement target does not support task " + in.Task), nil
+	}
 	args := map[string]any{
 		"output_format":           "diff",
 		"include_review_reminder": false,
+	}
+	if cfg.SupportedTasks != nil {
+		args["task"] = in.Task
 	}
 	if cfg.SupportsFiles && len(in.Files) > 0 {
 		root, err := tool.Cwd(ctx)
@@ -256,16 +275,24 @@ func ResolveConfig(manager *mcp.Manager, provider *settings.ActiveProviderSettin
 				cfg.Model = srv.Config.Env["LOCAL_LLM_MODEL"]
 			}
 			cfg.SupportsFiles = toolSupportsFiles(srv, cfg.ImplementTool)
+			cfg.SupportsTrace = toolSupportsTrace(srv, cfg.ImplementTool)
+			cfg.SupportedTasks = toolTasks(srv, cfg.ImplementTool)
+			if cfg.SupportedTasks != nil && !slices.Contains(cfg.SupportedTasks, "implement") {
+				return Config{}, false
+			}
 			return cfg, true
 		}
+		return Config{}, false
 	}
 
 	if srv, ok := bestImplementServer(manager); ok {
 		return Config{
-			Server:        srv.Name,
-			ImplementTool: defaultImplementTool,
-			Model:         srv.Config.Env["LOCAL_LLM_MODEL"],
-			SupportsFiles: toolSupportsFiles(srv, defaultImplementTool),
+			Server:         srv.Name,
+			ImplementTool:  defaultImplementTool,
+			Model:          srv.Config.Env["LOCAL_LLM_MODEL"],
+			SupportsFiles:  toolSupportsFiles(srv, defaultImplementTool),
+			SupportsTrace:  toolSupportsTrace(srv, defaultImplementTool),
+			SupportedTasks: toolTasks(srv, defaultImplementTool),
 		}, true
 	}
 	return Config{}, false
@@ -282,7 +309,9 @@ func bestImplementServer(manager *mcp.Manager) (*mcp.ConnectedServer, bool) {
 	var candidates []*mcp.ConnectedServer
 	for _, srv := range manager.Servers() {
 		if srv != nil && srv.Status == mcp.StatusConnected && serverHasTool(srv, defaultImplementTool) {
-			candidates = append(candidates, srv)
+			if tasks := toolTasks(srv, defaultImplementTool); tasks == nil || slices.Contains(tasks, "implement") {
+				candidates = append(candidates, srv)
+			}
 		}
 	}
 	if len(candidates) == 0 {
@@ -344,4 +373,50 @@ func toolSupportsFiles(srv *mcp.ConnectedServer, toolName string) bool {
 	_, hasFiles := schema.Properties["files"]
 	_, hasRoot := schema.Properties["root"]
 	return hasFiles && hasRoot
+}
+
+func toolSupportsTrace(srv *mcp.ConnectedServer, name string) bool {
+	td, ok := toolDef(srv, name)
+	if !ok {
+		return false
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal(td.InputSchema, &schema) != nil {
+		return false
+	}
+	var property struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(schema.Properties["include_trace"], &property) == nil && property.Type == "boolean"
+}
+
+// toolTasks reads the published task vocabulary. An unconstrained task accepts
+// both draft operations; a malformed schema fails closed instead of selecting it.
+func toolTasks(srv *mcp.ConnectedServer, name string) []string {
+	td, ok := toolDef(srv, name)
+	if !ok || len(td.InputSchema) == 0 {
+		return nil
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal(td.InputSchema, &schema) != nil {
+		return []string{}
+	}
+	raw, ok := schema.Properties["task"]
+	if !ok {
+		return nil
+	}
+	var task struct {
+		Enum []string `json:"enum"`
+	}
+	if json.Unmarshal(raw, &task) != nil {
+		return []string{}
+	}
+	if task.Enum == nil {
+		return []string{"implement", "fix"}
+	}
+	return task.Enum
 }

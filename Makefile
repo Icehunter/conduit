@@ -1,4 +1,4 @@
-.PHONY: all build install test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
+.PHONY: schema all build install test test-race lint vet fuzz tidy clean tools fmt fmt-check verify \
         version version-patch version-minor version-major help \
         wire wire-strict wire-claude wire-claude-fast wire-claude-fresh wire-all
 
@@ -24,6 +24,15 @@ build:
 install: build
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/conduit
+
+# Regenerate the committed JSON schemas under schemas/.
+schema:
+	@mkdir -p schemas
+	@for k in settings conduit mcp; do \
+		$(GO) run ./cmd/conduit config schema $$k > schemas/$$k.schema.json.tmp \
+			&& mv schemas/$$k.schema.json.tmp schemas/$$k.schema.json \
+			|| { rm -f schemas/$$k.schema.json.tmp; exit 1; }; \
+	done
 
 # Run all tests.
 test:

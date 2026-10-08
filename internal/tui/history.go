@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/settings"
 )
 
@@ -50,6 +51,15 @@ func historyToDisplayMessages(msgs []api.Message) []Message {
 		for _, block := range apiMsg.Content {
 			switch block.Type {
 			case "text":
+				if apiMsg.Role == "user" && isSystemReminderText(block.Text) {
+					continue // conduit's own context (hook output, reminders), not the user's words
+				}
+				if apiMsg.Role == "user" && coordinator.IsTaskNotification(block.Text) {
+					// A queued background-job message, shown as it was live.
+					flushText()
+					out = append(out, Message{Role: RoleSystem, Content: injectedRow(block.Text)})
+					continue
+				}
 				appendText(block.Text)
 			case "thinking":
 				flushText()
@@ -83,12 +93,25 @@ func historyToDisplayMessages(msgs []api.Message) []Message {
 	return out
 }
 
+// isSystemReminderText reports whether s is a whole <system-reminder> block,
+// which conduit appends to user messages (UserPromptSubmit hook context,
+// ultracode notices) for the model and the transcript must not show.
+func isSystemReminderText(s string) bool {
+	s = strings.TrimSpace(s)
+	return strings.HasPrefix(s, "<system-reminder>") && strings.HasSuffix(s, "</system-reminder>")
+}
+
 // historyToDisplayMessage converts an api.Message back into a display Message.
-func historyToDisplayMessage(msg api.Message) Message {
+// ok is false for a user message with nothing to show (only conduit's own
+// reminder blocks), which has no row.
+func historyToDisplayMessage(msg api.Message) (_ Message, ok bool) {
 	var text strings.Builder
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
+			if msg.Role == "user" && isSystemReminderText(block.Text) {
+				continue
+			}
 			if block.Text != "" {
 				if text.Len() > 0 {
 					text.WriteString("\n")
@@ -102,21 +125,24 @@ func historyToDisplayMessage(msg api.Message) Message {
 					input = string(raw)
 				}
 			}
-			return Message{Role: RoleTool, ToolName: block.Name, ToolID: block.ID, ToolInput: input, Content: ""}
+			return Message{Role: RoleTool, ToolName: block.Name, ToolID: block.ID, ToolInput: input, Content: ""}, true
 		case "tool_result":
-			return Message{Role: RoleTool, ToolName: "result", ToolID: block.ToolUseID, Content: block.ResultContent, ToolError: block.IsError}
+			return Message{Role: RoleTool, ToolName: "result", ToolID: block.ToolUseID, Content: block.ResultContent, ToolError: block.IsError}, true
 		}
 	}
 	if msg.Role == "user" {
-		return Message{Role: RoleUser, Content: text.String()}
+		if text.Len() == 0 {
+			return Message{}, false
+		}
+		return Message{Role: RoleUser, Content: text.String()}, true
 	}
 	// Strip companion markers ([Name: ...]) stored from previous sessions.
 	content := text.String()
 	content = stripCompanionMarkerGlobal(content)
 	if msg.ProviderKind == settings.ProviderKindMCP {
-		return Message{Role: RoleLocal, Content: content, ToolName: msg.Provider}
+		return Message{Role: RoleLocal, Content: content, ToolName: msg.Provider}, true
 	}
-	return Message{Role: RoleAssistant, Content: content, AssistantLabel: assistantLabelForProviderMetadata(msg.ProviderKind, msg.Provider, content)}
+	return Message{Role: RoleAssistant, Content: content, AssistantLabel: assistantLabelForProviderMetadata(msg.ProviderKind, msg.Provider, content)}, true
 }
 
 func assistantLabelForProviderMetadata(kind, provider, content string) string {

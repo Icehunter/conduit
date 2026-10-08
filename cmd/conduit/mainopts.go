@@ -16,7 +16,9 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/app"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/bgjobs"
 	"github.com/icehunter/conduit/internal/compact"
+	"github.com/icehunter/conduit/internal/globalconfig"
 	"github.com/icehunter/conduit/internal/instructions"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/memdir"
@@ -65,6 +67,15 @@ func runPrint(args []string) error {
 	// no user present to respond to a prompt.
 	gate := permissions.New(cwd, nil, permissions.ModeDefault, nil, nil, nil)
 
+	// Print mode runs no tool hooks, but a UserPromptSubmit hook still gates
+	// the prompt. Project-local hooks need the workspace to be trusted.
+	var promptHooks *settings.HooksSettings
+	if merged, err := settings.Load(cwd); err == nil && merged != nil {
+		trusted, trustErr := globalconfig.IsTrusted(cwd)
+		all := settings.FilterUntrustedHooks(plugins.MergeHooksFrom(loadedPlugins, &merged.Hooks), cwd, trustErr == nil && trusted)
+		promptHooks = &settings.HooksSettings{UserPromptSubmit: all.UserPromptSubmit}
+	}
+
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
@@ -77,6 +88,9 @@ func runPrint(args []string) error {
 		},
 		MaxTurns:            50,
 		Gate:                gate,
+		Hooks:               promptHooks,
+		Cwd:                 cwd,
+		SessionID:           api.NewUUID(),
 		AskPermission:       func(_ context.Context, _, _ string) (bool, bool) { return false, false },
 		BackgroundModel:     func() string { return compact.DefaultModel },
 		IsOAuthSubscription: auth.InferAccountKind(p) == auth.AccountKindClaudeAI,
@@ -129,6 +143,11 @@ func runPrint(args []string) error {
 		Ultracode: workflow.Ultracode.Load,
 	}))
 	defer workflow.Default.KillAll()
+	// Print mode has no idle session to wake: finished jobs are queued for
+	// the run's next delivery point.
+	bgjobs.Default.SetHeadless(true)
+	bgjobs.Default.SetOnDone(func(j bgjobs.Job) { lp.InjectMessage(bgjobs.Default.Notification(j)) })
+	defer bgjobs.Default.KillAll()
 	reg.Register(skilltool.New(
 		plugins.NewSkillLoader(loadedPlugins, cwd),
 		lp.RunBackgroundSubAgent,
@@ -138,15 +157,19 @@ func runPrint(args []string) error {
 		},
 	))
 
-	_, err = lp.Run(ctx, []api.Message{{
+	_, err = lp.RunPrompt(ctx, agent.UserPrompt{Raw: prompt}, []api.Message{{
 		Role:    "user",
 		Content: []api.ContentBlock{{Type: "text", Text: prompt}},
 	}}, func(ev agent.LoopEvent) {
-		if ev.Type == agent.EventText {
+		switch ev.Type {
+		case agent.EventText:
 			fmt.Print(ev.Text)
+		case agent.EventNotice:
+			fmt.Fprintln(os.Stderr, ev.Notice) // hook messages and warnings
 		}
 	})
-	if err != nil {
+	var blocked *agent.PromptBlockedError
+	if err != nil && !errors.As(err, &blocked) {
 		fmt.Println()
 	}
 	return err

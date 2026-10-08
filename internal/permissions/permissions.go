@@ -200,7 +200,7 @@ func toolIsReadOnly(toolName, toolInput string) bool {
 	switch toolName {
 	case "Read", "Glob", "Grep", "LS", "LSP",
 		"WebSearch", "WebFetch", "ToolSearch",
-		"TaskList", "TaskGet", "TaskOutput":
+		"TaskList", "TaskGet", "TaskOutput", "BashOutput":
 		return true
 	case "Bash":
 		return shellsafe.IsReadOnly(toolInput)

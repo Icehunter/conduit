@@ -1,0 +1,650 @@
+{
+  "$defs": {
+    "ActiveProviderSettings": {
+      "description": "One named provider in the registry.",
+      "properties": {
+        "account": {
+          "description": "Account key or email (claude-subscription, anthropic-api).",
+          "type": "string"
+        },
+        "baseURL": {
+          "description": "Absolute http(s) base URL (openai-compatible).",
+          "type": "string"
+        },
+        "contextWindow": {
+          "description": "Context window size in tokens, when the server does not report it.",
+          "type": "integer"
+        },
+        "credential": {
+          "description": "Credential alias (openai-compatible, anthropic-api). An alias, never the API key itself.",
+          "type": "string"
+        },
+        "directTool": {
+          "description": "MCP tool used for direct prompts (mcp).",
+          "type": "string"
+        },
+        "extraBody": {
+          "description": "Vendor-specific request fields merged into every request as a JSON merge patch: objects merge, other values replace, null deletes (openai-compatible).",
+          "type": "object"
+        },
+        "implementTool": {
+          "description": "MCP tool used for implementation tasks (mcp).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Provider kind.",
+          "enum": [
+            "claude-subscription",
+            "anthropic-api",
+            "openai-compatible",
+            "mcp"
+          ],
+          "type": "string"
+        },
+        "model": {
+          "description": "Model identifier sent to the provider.",
+          "type": "string"
+        },
+        "reasoningReplay": {
+          "description": "When an assistant turn's reasoning is sent back as reasoning_content (openai-compatible). Empty means auto: local/LAN servers and model families that require it.",
+          "examples": [
+            "auto",
+            "on",
+            "off"
+          ],
+          "pattern": "^(|[aA][uU][tT][oO]|[oO][nN]|[oO][fF][fF])$",
+          "type": "string"
+        },
+        "responseHeaderTimeout": {
+          "description": "Seconds an openai-compatible provider may take to send response headers. 0 or unset means no limit.",
+          "type": "integer"
+        },
+        "server": {
+          "description": "MCP server name (mcp).",
+          "type": "string"
+        },
+        "toolCallFormat": {
+          "description": "How tool calls are carried (openai-compatible). native uses the tools request field; hermes and qwen3 put schemas in the system prompt and parse <tool_call> blocks; auto is native until the server rejects tools. Empty means native.",
+          "examples": [
+            "native",
+            "hermes",
+            "qwen3",
+            "auto"
+          ],
+          "pattern": "^(|[nN][aA][tT][iI][vV][eE]|[hH][eE][rR][mM][eE][sS]|[qQ][wW][eE][nN]3|[aA][uU][tT][oO])$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CompactionConfig": {
+      "properties": {
+        "auto": {
+          "default": true,
+          "description": "Enable auto-compaction.",
+          "type": "boolean"
+        },
+        "keepRecent": {
+          "default": 5,
+          "description": "Recent tool results preserved during micro-compaction.",
+          "type": "integer"
+        },
+        "maxTriggerTokens": {
+          "description": "Cap on the input-token count at which auto-compaction fires. 0 or negative means no cap; unset uses the built-in cap.",
+          "type": "integer"
+        },
+        "reserved": {
+          "default": 20000,
+          "description": "Token budget reserved for model output when computing usable context.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Hook": {
+      "properties": {
+        "allowedEnvVars": {
+          "description": "Environment variables that may be interpolated into headers (type \"http\").",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "async": {
+          "description": "Fire and forget; do not wait for the hook.",
+          "type": "boolean"
+        },
+        "command": {
+          "description": "Shell command (type \"command\").",
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra request headers (type \"http\").",
+          "type": "object"
+        },
+        "if": {
+          "description": "Permission-rule expression that gates whether the hook fires.",
+          "type": "string"
+        },
+        "model": {
+          "description": "Model override (type \"prompt\" or \"agent\").",
+          "type": "string"
+        },
+        "once": {
+          "description": "Remove the hook after its first execution.",
+          "type": "boolean"
+        },
+        "prompt": {
+          "description": "LLM prompt, may contain $ARGUMENTS (type \"prompt\" or \"agent\").",
+          "type": "string"
+        },
+        "statusMessage": {
+          "description": "Spinner text shown while the hook runs.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Per-hook timeout override, in seconds.",
+          "type": "integer"
+        },
+        "type": {
+          "description": "How the hook runs. An empty or missing type means command. mcp_tool is a Claude Code type that conduit does not run.",
+          "enum": [
+            "",
+            "command",
+            "http",
+            "prompt",
+            "agent",
+            "mcp_tool"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "description": "POST target (type \"http\").",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HookMatcher": {
+      "description": "A tool-name matcher and the hooks it triggers.",
+      "properties": {
+        "hooks": {
+          "description": "Hooks to run when the matcher applies.",
+          "items": {
+            "$ref": "#/$defs/Hook"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "matcher": {
+          "description": "Tool name or glob; alternatives separated by \"|\". Empty matches everything.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HooksSettings": {
+      "properties": {
+        "PostToolUse": {
+          "description": "Run after a tool call completes.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "PreToolUse": {
+          "description": "Run before a tool call; can allow, deny, ask or rewrite its input.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "SessionStart": {
+          "description": "Run when a session starts, resumes, clears or compacts.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "Stop": {
+          "description": "Run when the agent finishes responding.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "TaskCompleted": {
+          "description": "Run when a task is completed.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "TaskCreated": {
+          "description": "Run when a task is created.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "TeammateIdle": {
+          "description": "Run when an agent-team teammate goes idle.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "UserPromptSubmit": {
+          "description": "Run before a prompt reaches the model; can block it, add context or rewrite it. Matchers are ignored.",
+          "items": {
+            "$ref": "#/$defs/HookMatcher"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "LSPServerOverride": {
+      "properties": {
+        "args": {
+          "description": "Server arguments.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cmd": {
+          "description": "Server executable.",
+          "type": "string"
+        },
+        "disabled": {
+          "description": "Do not start this language server.",
+          "type": "boolean"
+        },
+        "env": {
+          "description": "Extra environment entries, in KEY=value form.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Permissions": {
+      "properties": {
+        "additionalDirectories": {
+          "description": "Extra directories file tools may operate in without prompting.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "allow": {
+          "description": "Permission rules that run without prompting, e.g. \"Bash(git status:*)\".",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "ask": {
+          "description": "Permission rules that always prompt, even where an allow rule matches.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "defaultMode": {
+          "description": "Permission mode a session starts in.",
+          "enum": [
+            "",
+            "default",
+            "acceptEdits",
+            "acceptEditsLive",
+            "bypassPermissions",
+            "plan",
+            "council",
+            "auto",
+            "dontAsk"
+          ],
+          "type": "string"
+        },
+        "deny": {
+          "description": "Permission rules that are always refused.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TTSRConfig": {
+      "properties": {
+        "repetitionGuard": {
+          "default": true,
+          "description": "Interrupt output that has degenerated into a repeating loop. Unset means on.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ToolOutputConfig": {
+      "properties": {
+        "maxBytes": {
+          "default": 51200,
+          "description": "Bytes before output is truncated to disk.",
+          "type": "integer"
+        },
+        "maxLines": {
+          "default": 2000,
+          "description": "Lines before output is truncated to disk.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "WebSearchConfig": {
+      "properties": {
+        "keyless": {
+          "default": "auto",
+          "description": "Keyless search tier (Parallel, DuckDuckGo, Mojeek), which sends the query to third parties. auto uses it only when no other provider is usable; always also falls back to it when a configured provider fails; never disables it.",
+          "examples": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "pattern": "^(|[aA][uU][tT][oO]|[aA][lL][wW][aA][yY][sS]|[nN][eE][vV][eE][rR])$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "accountEntrySettings": {
+      "properties": {
+        "added_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "organization_name": {
+          "type": "string"
+        },
+        "subscription_type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "accountStoreSettings": {
+      "properties": {
+        "accounts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/accountEntrySettings"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "active": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/icehunter/conduit/main/schemas/conduit.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "Conduit-owned user config at ~/.conduit/conduit.json. Keys conduit does not model are allowed.",
+  "properties": {
+    "$schema": {
+      "description": "URL of the JSON Schema this file follows (editor hint; ignored at load).",
+      "type": "string"
+    },
+    "accounts": {
+      "$ref": "#/$defs/accountStoreSettings",
+      "description": "Signed-in accounts, maintained by conduit."
+    },
+    "agentTeams": {
+      "description": "Enable agent teams.",
+      "type": "boolean"
+    },
+    "compaction": {
+      "$ref": "#/$defs/CompactionConfig",
+      "description": "Conversation compaction behavior."
+    },
+    "councilConvergenceThreshold": {
+      "description": "Minimum Jaccard similarity (0-1) that ends a debate early. Zero or negative disables it.",
+      "type": "number"
+    },
+    "councilMaxRounds": {
+      "default": 4,
+      "description": "Maximum debate rounds before synthesis.",
+      "type": "integer"
+    },
+    "councilMemberTimeoutSec": {
+      "description": "Seconds each council member call may run. 0 means no timeout.",
+      "type": "integer"
+    },
+    "councilProviders": {
+      "description": "Provider keys that take part in council-mode debates. Empty disables council mode.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "councilRoles": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Maps a provider key to a council role such as architect, skeptic or perf-reviewer.",
+      "type": "object"
+    },
+    "councilSynthesizer": {
+      "description": "Provider key used for synthesis. Empty uses the parent loop's background model.",
+      "type": "string"
+    },
+    "councilSynthesizerMaxTokens": {
+      "default": 8192,
+      "description": "max_tokens for the synthesis call.",
+      "type": "integer"
+    },
+    "disableMouse": {
+      "description": "Turn off terminal mouse capture so native selection works (tmux/ssh). Wheel scroll and click-to-expand are unavailable; use the keyboard bindings.",
+      "type": "boolean"
+    },
+    "disabledMcpjsonServers": {
+      "description": "Project .mcp.json servers that never connect.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "enableAllProjectMcpServers": {
+      "description": "Approve every server in the project .mcp.json.",
+      "type": "boolean"
+    },
+    "enabledMcpjsonServers": {
+      "description": "Project .mcp.json servers approved to connect.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "enabledPlugins": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "description": "Plugins to enable, keyed \"pluginName@marketplace\".",
+      "type": "object"
+    },
+    "env": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Extra environment variables for tool execution.",
+      "type": "object"
+    },
+    "hooks": {
+      "$ref": "#/$defs/HooksSettings",
+      "description": "Lifecycle hooks, keyed by event name."
+    },
+    "lspServers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/LSPServerOverride"
+      },
+      "description": "Per-language-server overrides keyed by language key, e.g. \"go\" or \"typescript\".",
+      "type": "object"
+    },
+    "model": {
+      "description": "Preferred model name.",
+      "type": "string"
+    },
+    "numStartups": {
+      "description": "Number of times conduit has started, maintained by conduit.",
+      "type": "integer"
+    },
+    "onboardingComplete": {
+      "description": "Set once the first-run welcome screen has been dismissed.",
+      "type": "boolean"
+    },
+    "outputStyle": {
+      "description": "Active output style name; built-ins are default, Explanatory and Learning, and custom styles come from output-style files.",
+      "type": "string"
+    },
+    "permissions": {
+      "$ref": "#/$defs/Permissions",
+      "description": "Tool permission rules and default mode."
+    },
+    "projects": {
+      "additionalProperties": {
+        "type": "object"
+      },
+      "description": "Per-project state keyed by absolute path, maintained by conduit.",
+      "type": "object"
+    },
+    "providerChains": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "description": "Maps a role to an ordered list of provider keys to fail over to on 429/503/529.",
+      "type": "object"
+    },
+    "providers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ActiveProviderSettings"
+      },
+      "description": "Named provider registry; roles reference these keys.",
+      "type": "object"
+    },
+    "redactSecrets": {
+      "default": true,
+      "description": "Mask secrets (API keys, tokens, private keys, password assignments) in tool results. Unset means on.",
+      "type": "boolean"
+    },
+    "roles": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Maps a role (default, main, planning, background, implement) to a provider key.",
+      "type": "object"
+    },
+    "schemaVersion": {
+      "description": "Config format version, maintained by conduit.",
+      "type": "integer"
+    },
+    "theme": {
+      "description": "Active palette name: dark, light, dark-daltonized, light-daltonized, dark-ansi, light-ansi, or a custom name from themes.",
+      "type": "string"
+    },
+    "themeOverrides": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Per-field color tweaks on top of the named theme: lowercase palette field name to #RRGGBB or ANSI 0-15.",
+      "type": "object"
+    },
+    "themes": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "description": "Custom themes: theme name to a field map shaped like themeOverrides.",
+      "type": "object"
+    },
+    "toolOutput": {
+      "$ref": "#/$defs/ToolOutputConfig",
+      "description": "Tool output truncation limits."
+    },
+    "ttsr": {
+      "$ref": "#/$defs/TTSRConfig",
+      "description": "Mid-stream rule settings beyond the rule files themselves."
+    },
+    "usageStatusEnabled": {
+      "description": "Show the Claude plan usage footer.",
+      "type": "boolean"
+    },
+    "webSearch": {
+      "$ref": "#/$defs/WebSearchConfig",
+      "description": "WebSearch tool provider chain."
+    }
+  },
+  "title": "Conduit conduit.json",
+  "type": "object"
+}

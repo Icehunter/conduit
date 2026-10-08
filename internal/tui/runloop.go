@@ -17,7 +17,15 @@ import (
 // before its event is sent. Update therefore sees the event only after the
 // file holds the compacted history, and a /resume after a crash restores the
 // summary and its verbatim tail instead of the pre-compaction conversation.
-func (m Model) runLoopCmd(ctx context.Context, turnID int) tea.Cmd {
+//
+// A turn the user started by typing passes that prompt, and only such a turn
+// runs UserPromptSubmit hooks (on prompt.Raw). Turns the TUI starts itself,
+// such as injected notifications, pass none.
+func (m Model) runLoopCmd(ctx context.Context, turnID int, prompt ...agent.UserPrompt) tea.Cmd {
+	var typed agent.UserPrompt
+	if len(prompt) > 0 {
+		typed = prompt[0]
+	}
 	prog := *m.cfg.Program
 	lp := m.cfg.Loop
 	hist := make([]api.Message, len(m.history))
@@ -26,7 +34,7 @@ func (m Model) runLoopCmd(ctx context.Context, turnID int) tea.Cmd {
 	contextInputTokens := 0
 	handler := m.loopEventHandler(prog.Send, &usage, &contextInputTokens)
 	return tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
-		newHist, err := lp.Run(ctx, hist, handler)
+		newHist, err := lp.RunPrompt(ctx, typed, hist, handler)
 		return agentDoneMsg{turnID: turnID, history: newHist, err: err, cancelled: ctx.Err() != nil, usage: usage, contextInputTokens: contextInputTokens}
 	})
 }

@@ -50,6 +50,13 @@ func (m Model) userTextContent(text string) []api.ContentBlock {
 // queued images/PDFs are prepended, and @-mentions are resolved. It returns
 // the number of attachments included so callers can surface it.
 func (m Model) takeUserContent(text string) (Model, []api.ContentBlock, int) {
+	m, content, attachments, _ := m.takeUserContentIdx(text)
+	return m, content, attachments
+}
+
+// takeUserContentIdx is takeUserContent that also returns the index of the
+// content block holding the typed text, which UserPromptSubmit hooks rewrite.
+func (m Model) takeUserContentIdx(text string) (Model, []api.ContentBlock, int, int) {
 	apiText := m.expandPastePlaceholders(text)
 	m.pastedBlocks = nil
 
@@ -78,6 +85,7 @@ func (m Model) takeUserContent(text string) (Model, []api.ContentBlock, int) {
 	m.pendingImages = nil
 	m.pendingPDFs = nil
 	content = append(content, m.userTextContent(apiText)...)
+	typed := len(content) - 1 // userTextContent ends with the typed text
 	// The Workflow tool is gated on explicit opt-in; the reminder is how the
 	// model learns the gate is open for this turn (or the whole session).
 	switch {
@@ -86,7 +94,7 @@ func (m Model) takeUserContent(text string) (Model, []api.ContentBlock, int) {
 	case workflow.Ultracode.Load():
 		content = append(content, api.ContentBlock{Type: "text", Text: commands.UltracodeSessionReminder})
 	}
-	return m, content, attachments
+	return m, content, attachments, typed
 }
 
 func (m Model) atMentionContent(text string) []api.ContentBlock {

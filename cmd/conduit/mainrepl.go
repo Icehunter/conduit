@@ -19,6 +19,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/app"
 	"github.com/icehunter/conduit/internal/auth"
+	"github.com/icehunter/conduit/internal/bgjobs"
 	"github.com/icehunter/conduit/internal/bgreview"
 	"github.com/icehunter/conduit/internal/buddy"
 	"github.com/icehunter/conduit/internal/catalog"
@@ -854,15 +855,24 @@ func runREPL(continueMode bool, resumeID string) error {
 	reg.Register(agentTool)
 	// Workflow tool: JS-scripted multi-agent orchestration. Runs live in the
 	// background and report back through InjectMessage as task-notifications.
+	// An idle session has no turn to deliver the queue, so a notification also
+	// wakes the TUI to start one.
+	notify := func(text string) {
+		lp.InjectMessage(text)
+		tui.Wake()
+	}
 	workflowTool := workflowtool.New(workflowtool.Config{
 		Host:      &workflowtool.LoopHost{Loop: lp, Agents: agentRegistry, Cwd: func() string { return cwd }},
-		Notify:    lp.InjectMessage,
+		Notify:    notify,
 		Cwd:       func() string { return cwd },
 		RunsDir:   filepath.Join(projectDir, "workflows"),
 		Ultracode: workflow.Ultracode.Load,
 	})
 	reg.Register(workflowTool)
 	defer workflow.Default.KillAll()
+	// Background Bash jobs report their end the same way.
+	bgjobs.Default.SetOnDone(func(j bgjobs.Job) { notify(bgjobs.Default.Notification(j)) })
+	defer bgjobs.Default.KillAll()
 	skillLoader := plugins.NewSkillLoader(loadedPlugins, cwd)
 	reg.Register(skilltool.New(
 		skillLoader,

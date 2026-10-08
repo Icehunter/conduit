@@ -28,12 +28,12 @@ var httpHookClient = &http.Client{
 // the JSON response as a HookOutput directive. Mirrors execHttpHook.ts.
 func runHTTPHook(ctx context.Context, hook settings.Hook, input HookInput) Result {
 	if hook.URL == "" {
-		return Result{Blocked: true, Reason: "http hook has no url"}
+		return failed(input, "http hook has no url")
 	}
 
 	payload, err := json.Marshal(input)
 	if err != nil {
-		return Result{Blocked: true, Reason: fmt.Sprintf("http hook: marshal: %v", err)}
+		return failed(input, fmt.Sprintf("http hook: marshal: %v", err))
 	}
 
 	hctx, cancel := context.WithTimeout(ctx, hookTimeout(hook.TimeoutSecs))
@@ -41,7 +41,7 @@ func runHTTPHook(ctx context.Context, hook settings.Hook, input HookInput) Resul
 
 	req, err := http.NewRequestWithContext(hctx, http.MethodPost, hook.URL, bytes.NewReader(payload))
 	if err != nil {
-		return Result{Blocked: true, Reason: fmt.Sprintf("http hook: build request: %v", err)}
+		return failed(input, fmt.Sprintf("http hook: build request: %v", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -52,12 +52,12 @@ func runHTTPHook(ctx context.Context, hook settings.Hook, input HookInput) Resul
 
 	resp, err := httpHookClient.Do(req)
 	if err != nil {
-		return Result{Blocked: true, Reason: fmt.Sprintf("http hook: request failed: %v", err)}
+		return failed(input, fmt.Sprintf("http hook: request failed: %v", err))
 	}
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Result{Blocked: true, Reason: fmt.Sprintf("http hook: server returned %d", resp.StatusCode)}
+		return failed(input, fmt.Sprintf("http hook: server returned %d", resp.StatusCode))
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

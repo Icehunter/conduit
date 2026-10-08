@@ -477,7 +477,16 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 					// queue and silently attach to the next unrelated message.
 					var content []api.ContentBlock
 					var attachments int
-					m, content, attachments = m.takeUserContent(text)
+					images, pdfs := m.pendingImages, m.pendingPDFs
+					raw := m.expandPastePlaceholders(text)
+					var typed int
+					m, content, attachments, typed = m.takeUserContentIdx(text)
+					if m.promptHooksActive() {
+						// UserPromptSubmit hooks gate steering like any prompt;
+						// the verdict arrives as a promptScreenedMsg.
+						m.flashMsg = "[screening prompt…]"
+						return m, m.screenPromptCmd(routeSteer, raw, content, typed+1, images, pdfs), true
+					}
 					m.cfg.SteerContent(content)
 					m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 					m.refreshViewport()
@@ -521,6 +530,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m = m.resetInput()
 			m.dismissWelcome()
 			if m.cfg.Commands != nil {
+				m.slashInput = "/" + selected.Name
 				if res, ok := m.cfg.Commands.Dispatch("/" + selected.Name); ok {
 					m2, cmd := m.applyCommandResult(res)
 					return m2, cmd, true
@@ -562,6 +572,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.dismissWelcome()
 			m = m.resetInput()
 			if m.cfg.Commands != nil {
+				m.slashInput = text
 				if res, ok := m.cfg.Commands.Dispatch(text); ok {
 					m2, cmd := m.applyCommandResult(res)
 					return m2, cmd, true
@@ -585,14 +596,39 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 
+		// Council and local MCP prompts bypass the agent loop, so their
+		// UserPromptSubmit hooks run here, before anything is sent. The input
+		// stays as typed until the verdict arrives and the submit is replayed.
+		if routeScreened := usingMCPProvider || (m.permissionMode == permissions.ModeCouncil && !isCouncilTrivial(text)); routeScreened && !isAutoPrompt && m.promptHooksActive() {
+			expanded := m.expandPastePlaceholders(text)
+			if sp := m.screened; sp != nil && sp.raw == expanded {
+				m.screened = nil
+				text = sp.text
+			} else {
+				m.screened = nil
+				if m.screening {
+					m.flashMsg = "[waiting for UserPromptSubmit hooks…]"
+					return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+				}
+				route := routeCouncil
+				if usingMCPProvider {
+					route = routeMCP
+				}
+				m.screening = true
+				return m, m.screenPromptCmd(route, expanded, []api.ContentBlock{{Type: "text", Text: expanded}}, 1, nil, nil), true
+			}
+		}
+
 		m.dismissWelcome()
 		m.todoStripHidden = true // collapse the task strip on send so the conversation is visible
 		m = m.resetInput()
 		if isAutoPrompt {
 			// Don't pollute input history or show raw instruction text.
+			m.promptRow = 0
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "↻ Continuing unfinished tasks…"})
 		} else {
 			m.rememberInput(text)
+			m.promptRow = len(m.messages) + 1
 			m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
 		}
 
@@ -666,7 +702,13 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// images/PDFs prepended (accumulated on ctrl+v, sent on Enter), and
 		// @-mentions resolved.
 		var userContent []api.ContentBlock
-		m, userContent, _ = m.takeUserContent(text)
+		rawPrompt := agent.UserPrompt{Raw: m.expandPastePlaceholders(text)}
+		if isAutoPrompt {
+			rawPrompt = agent.UserPrompt{} // a nudge conduit wrote, not a prompt the user typed
+		}
+		var typedIdx int
+		m, userContent, _, typedIdx = m.takeUserContentIdx(text)
+		rawPrompt.Block = typedIdx + 1
 		m.history = append(m.history, api.Message{
 			Role:    "user",
 			Content: userContent,
@@ -686,7 +728,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.attemptSet = false
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelTurn = cancel
-		return m, m.runLoopCmd(ctx, m.turnID), true
+		return m, m.runLoopCmd(ctx, m.turnID, rawPrompt), true
 	}
 	return m, nil, false
 }

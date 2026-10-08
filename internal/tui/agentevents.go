@@ -166,6 +166,9 @@ func (m Model) applyAgentEvent(ev agent.LoopEvent) Model {
 		m.messages = append(m.messages, Message{Role: RoleSystem, Content: ev.Notice})
 		m.refreshViewport()
 
+	case agent.EventSessionTitle:
+		// Persisted by Update, which returns the command that does the I/O.
+
 	case agent.EventProviderFailover:
 		m.streaming = "" // the new provider restarts the response
 		m.thinking = ""

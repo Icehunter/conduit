@@ -356,8 +356,15 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		m.history = nil
 		m.persistedCount = 0
 		m.pendingMessages = nil
+		m.wakePending = false
+		m.promptRow = 0
+		m.screening, m.screened, m.replayingSubmit = false, nil, false
 		if m.cfg.Loop != nil {
 			m.cfg.Loop.ForgetContextCompacted()
+			// Notifications queued for the old conversation must not start a
+			// turn in the new one.
+			m.cfg.Loop.DrainInjected()
+			m.cfg.Loop.ClearSteer()
 		}
 		m.refreshViewport()
 		// The session keeps appending to the same file: mark where the
@@ -411,6 +418,8 @@ func (m Model) applyCommandResult(res commands.Result) (Model, tea.Cmd) {
 		return m, nil
 	case "plugin-panel":
 		return m.applyPluginPanel(res)
+	case "bashes-view":
+		return m, bashesViewCmd(res.Text)
 	case "workflow-panel":
 		m = m.openWorkflowPanel()
 		return m, tickWorkflowPanel()

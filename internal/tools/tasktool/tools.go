@@ -1,11 +1,13 @@
 package tasktool
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/icehunter/conduit/internal/bgjobs"
 	"github.com/icehunter/conduit/internal/tool"
 )
 
@@ -238,28 +240,94 @@ func (t *TaskOutputTool) Execute(_ context.Context, raw json.RawMessage) (tool.R
 
 // ── TaskStop ──────────────────────────────────────────────────────────────────
 
-type TaskStopTool struct{ store *Store }
+// TaskStopTool stops a background Bash job, or cancels a todo task when the ID
+// is not a job's. It is also registered as KillShell and KillBash, the names
+// Claude Code used for stopping background shells.
+type TaskStopTool struct {
+	store  *Store
+	jobs   *bgjobs.Registry
+	legacy bool // registered under a legacy name; see LegacyStopTool
+}
 
-func NewStop() *TaskStopTool       { return &TaskStopTool{store: globalStore} }
-func (*TaskStopTool) Name() string { return "TaskStop" }
-func (*TaskStopTool) Description() string {
-	return "Cancel a running task and mark it as cancelled."
+func NewStop() *TaskStopTool {
+	return &TaskStopTool{store: globalStore, jobs: bgjobs.Default}
+}
+
+// LegacyStopTool is TaskStop registered under a legacy name. It is a separate
+// type so TaskStopTool.Name returns a literal the wire check can read.
+type LegacyStopTool struct {
+	*TaskStopTool
+	name string
+}
+
+func (t *LegacyStopTool) Name() string { return t.name }
+
+// NewKillShell returns TaskStop under its legacy name KillShell.
+func NewKillShell() *LegacyStopTool {
+	return &LegacyStopTool{TaskStopTool: &TaskStopTool{store: globalStore, jobs: bgjobs.Default, legacy: true}, name: "KillShell"}
+}
+
+// NewKillBash returns TaskStop under its legacy name KillBash.
+func NewKillBash() *LegacyStopTool {
+	return &LegacyStopTool{TaskStopTool: &TaskStopTool{store: globalStore, jobs: bgjobs.Default, legacy: true}, name: "KillBash"}
+}
+
+func (t *TaskStopTool) Name() string { return "TaskStop" }
+func (t *TaskStopTool) Description() string {
+	if t.legacy {
+		return "Legacy name for TaskStop: stops a background shell by its ID (`shell_id`)."
+	}
+	return "Stop a running background shell (the ID Bash returned for `run_in_background`) or cancel a todo task. " +
+		"Takes `task_id`; an optional `reason` is recorded on todo tasks."
 }
 func (*TaskStopTool) InputSchema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"taskId":{"type":"string"},"reason":{"type":"string"}},"required":["taskId"]}`)
+	return json.RawMessage(`{"type":"object","properties":{` +
+		`"task_id":{"type":"string","description":"ID of the background shell or task to stop"},` +
+		`"taskId":{"type":"string","description":"Alias of task_id"},` +
+		`"shell_id":{"type":"string","description":"Deprecated alias of task_id"},` +
+		`"reason":{"type":"string"}}}`)
 }
 func (*TaskStopTool) IsReadOnly(json.RawMessage) bool        { return false }
 func (*TaskStopTool) IsConcurrencySafe(json.RawMessage) bool { return true }
 
+// Deferrable keeps the legacy names out of every request; TaskStop itself
+// is always sent.
+func (t *TaskStopTool) Deferrable() bool { return t.legacy }
+
 func (t *TaskStopTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var in struct {
-		TaskID string `json:"taskId"`
-		Reason string `json:"reason,omitempty"`
+		TaskID      string `json:"task_id"`
+		TaskIDCamel string `json:"taskId"`
+		ShellID     string `json:"shell_id"`
+		Reason      string `json:"reason,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return tool.ErrorResult("invalid input"), nil
 	}
-	err := t.store.Update(in.TaskID, func(task *Task) {
+	id := cmp.Or(in.TaskID, in.TaskIDCamel, in.ShellID)
+	if id == "" {
+		return tool.ErrorResult("`task_id` is required"), nil
+	}
+
+	if _, ok := t.jobs.Get(id); ok {
+		job, err := t.jobs.Kill(id)
+		if err != nil {
+			return tool.ErrorResult(err.Error()), nil
+		}
+		result := map[string]any{
+			"success": true,
+			"task_id": job.ID,
+			"command": job.Command,
+			"status":  job.Status,
+		}
+		if job.Status != bgjobs.StatusKilled {
+			result["exit_code"] = job.ExitCode
+		}
+		out, _ := json.Marshal(result)
+		return tool.TextResult(string(out)), nil
+	}
+
+	err := t.store.Update(id, func(task *Task) {
 		task.Status = StatusCancelled
 		if in.Reason != "" {
 			if task.Output != "" {

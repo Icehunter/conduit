@@ -20,6 +20,7 @@ import (
 // internal-only tools (SyntheticOutput, SendMessage, TeamCreate, TeamDelete).
 var WorkerTools = []string{
 	"Bash",
+	"BashOutput",
 	"Edit",
 	"EnterPlanMode",
 	"EnterWorktree",

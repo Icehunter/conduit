@@ -82,6 +82,7 @@ const (
 	EventTTSR                              // a TTSR rule fired; TTSRRule and TTSRCorrection carry details
 	EventNotice                            // informational message for the user; Notice carries the text
 	EventThinking                          // a reasoning/thinking delta; Text carries it (never part of the answer)
+	EventSessionTitle                      // a UserPromptSubmit hook renamed the session; Notice carries the title
 )
 
 // LoopEvent is emitted to the caller's handler on each significant event.
@@ -210,6 +211,10 @@ type LoopConfig struct {
 
 	// SessionID is used when invoking hooks (passed as session_id in hook input).
 	SessionID string
+
+	// TranscriptPath, when set, returns the session file path for the
+	// transcript_path field of hook input.
+	TranscriptPath func() string
 
 	// AutoCompact enables automatic history compaction when input token usage
 	// exceeds 80% of MaxTokens. Mirrors the auto-compact behavior in
@@ -410,6 +415,9 @@ type Loop struct {
 	// and cleared by Run (loop goroutine) via atomic.Pointer so no extra lock
 	// is needed. Semantics: last-write-wins (earlier messages are superseded).
 	steerMsg atomic.Pointer[[]api.ContentBlock]
+	// child marks a loop built for a sub-agent, teammate or side question. It
+	// never runs UserPromptSubmit hooks: its prompt is not the user's.
+	child bool
 	// msgQueue is a per-loop ordered queue for programmatic injection (e.g.
 	// agent team mailbox delivery). All messages are preserved in insertion
 	// order and delivered together at the next turn boundary. Guarded by
@@ -476,6 +484,24 @@ func (l *Loop) InjectMessage(text string) {
 	l.msgMu.Lock()
 	l.msgQueue = append(l.msgQueue, text)
 	l.msgMu.Unlock()
+}
+
+// DrainInjected removes and returns the messages InjectMessage queued that no
+// turn has delivered yet. A host calls it when the loop is idle to start a
+// turn for notifications that arrived after the last delivery point.
+func (l *Loop) DrainInjected() []string {
+	l.msgMu.Lock()
+	defer l.msgMu.Unlock()
+	queued := l.msgQueue
+	l.msgQueue = nil
+	return queued
+}
+
+// HasInjected reports whether InjectMessage has queued messages waiting.
+func (l *Loop) HasInjected() bool {
+	l.msgMu.Lock()
+	defer l.msgMu.Unlock()
+	return len(l.msgQueue) > 0
 }
 
 // SetBackgroundReviewer wires a background review scheduler into the loop.
@@ -660,6 +686,14 @@ func (l *Loop) SetAskSubAgentPermission(fn func(ctx context.Context, label, tool
 	l.cfg.AskSubAgentPermission = fn
 }
 
+// SetTranscriptPath sets the callback that reports the session file for hook
+// input; it follows the active session after /resume.
+func (l *Loop) SetTranscriptPath(fn func() string) {
+	l.mu.Lock()
+	l.cfg.TranscriptPath = fn
+	l.mu.Unlock()
+}
+
 // SetSessionID updates the active session identifier. When it changes, reset
 // the one-time SessionStart reminder state so startup context is recomputed
 // once for the new session.
@@ -789,6 +823,15 @@ func recoverToolUseHistory(msgs []api.Message) ([]api.Message, bool) {
 // before the failure. Callers should replace their history slice with the
 // returned messages to correctly track multi-turn tool use.
 func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(LoopEvent)) ([]api.Message, error) {
+	return l.RunPrompt(ctx, UserPrompt{}, messages, handler)
+}
+
+// RunPrompt is Run for a turn that starts with a prompt the user typed:
+// prompt names that text, and the UserPromptSubmit hooks screen it once the
+// SessionStart context is settled and before any request. A zero prompt runs
+// no hooks. A hook that blocks or stops the prompt ends the run with a
+// *PromptBlockedError and a history without the prompt.
+func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.Message, handler func(LoopEvent)) ([]api.Message, error) {
 	msgs := make([]api.Message, len(messages))
 	copy(msgs, messages)
 	msgs = session.FilterUnresolvedToolUses(msgs)
@@ -852,6 +895,9 @@ func (l *Loop) Run(ctx context.Context, messages []api.Message, handler func(Loo
 
 	sessionReminderBlock, err := l.sessionStartReminderBlock(ctx)
 	if err != nil {
+		return msgs, err
+	}
+	if msgs, err = l.screenLastMessage(ctx, prompt, msgs, handler); err != nil {
 		return msgs, err
 	}
 	defer func() {

@@ -52,6 +52,7 @@ func (m Model) dispatchKeybindingAction(action string, msg tea.KeyPressMsg) (Mod
 		if m.cfg.Commands == nil {
 			return m, nil, false
 		}
+		m.slashInput = "/" + cmdName
 		if res, ok := m.cfg.Commands.Dispatch("/" + cmdName); ok {
 			m2, cmd := m.applyCommandResult(res)
 			return m2, cmd, true

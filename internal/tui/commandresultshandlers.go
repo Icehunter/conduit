@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/icehunter/conduit/internal/agent"
 	"os"
 	"strings"
 	"time"
@@ -355,6 +356,7 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.dismissWelcome()
+	m.promptRow = len(m.messages) + 1
 	m.messages = append(m.messages, Message{Role: RoleUser, Content: res.Text})
 	m.history = append(m.history, api.Message{
 		Role:    "user",
@@ -372,7 +374,10 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 	m.attemptSet = false
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelTurn = cancel
-	return m, m.runLoopCmd(ctx, m.turnID)
+	// The hook sees what the user typed, "/cmd args", not the expanded prompt.
+	prompt := agent.UserPrompt{Raw: m.slashInput, Text: res.Text, Block: 1}
+	m.slashInput = ""
+	return m, m.runLoopCmd(ctx, m.turnID, prompt)
 }
 
 // applyCoordinatorToggle handles the "coordinator-toggle" command result.

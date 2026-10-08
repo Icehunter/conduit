@@ -84,6 +84,9 @@ type HooksSettings struct {
 	TeammateIdle  []HookMatcher `json:"TeammateIdle"`
 	TaskCreated   []HookMatcher `json:"TaskCreated"`
 	TaskCompleted []HookMatcher `json:"TaskCompleted"`
+	// UserPromptSubmit hooks run before a prompt reaches the model and can
+	// block it, add context or rewrite it. Matchers are ignored.
+	UserPromptSubmit []HookMatcher `json:"UserPromptSubmit"`
 }
 
 // Settings is the parsed content of one settings file.
@@ -491,6 +494,7 @@ func mergeHooks(dst, src *HooksSettings) {
 	dst.TeammateIdle = append(dst.TeammateIdle, src.TeammateIdle...)
 	dst.TaskCreated = append(dst.TaskCreated, src.TaskCreated...)
 	dst.TaskCompleted = append(dst.TaskCompleted, src.TaskCompleted...)
+	dst.UserPromptSubmit = append(dst.UserPromptSubmit, src.UserPromptSubmit...)
 }
 
 // tagHookSource sets SourceFile on every HookMatcher in h to path.
@@ -508,6 +512,7 @@ func tagHookSource(h *HooksSettings, path string) {
 	h.TeammateIdle = tag(h.TeammateIdle)
 	h.TaskCreated = tag(h.TaskCreated)
 	h.TaskCompleted = tag(h.TaskCompleted)
+	h.UserPromptSubmit = tag(h.UserPromptSubmit)
 }
 
 // FilterUntrustedHooks returns a copy of h with project-local matchers removed
@@ -528,12 +533,13 @@ func FilterUntrustedHooks(h *HooksSettings, cwd string, trusted bool) *HooksSett
 		return out
 	}
 	return &HooksSettings{
-		PreToolUse:    filter(h.PreToolUse),
-		PostToolUse:   filter(h.PostToolUse),
-		SessionStart:  filter(h.SessionStart),
-		Stop:          filter(h.Stop),
-		TeammateIdle:  filter(h.TeammateIdle),
-		TaskCreated:   filter(h.TaskCreated),
-		TaskCompleted: filter(h.TaskCompleted),
+		PreToolUse:       filter(h.PreToolUse),
+		PostToolUse:      filter(h.PostToolUse),
+		SessionStart:     filter(h.SessionStart),
+		Stop:             filter(h.Stop),
+		TeammateIdle:     filter(h.TeammateIdle),
+		TaskCreated:      filter(h.TaskCreated),
+		TaskCompleted:    filter(h.TaskCompleted),
+		UserPromptSubmit: filter(h.UserPromptSubmit),
 	}
 }

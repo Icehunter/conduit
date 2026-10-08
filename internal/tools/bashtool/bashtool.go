@@ -2,11 +2,9 @@
 // Bash tool. It executes a shell command via `bash -c` and returns the
 // combined stdout/stderr.
 //
-// This is a deliberately minimal port. The real BashTool ships ~10k LOC
-// of pathValidation, bashSecurity, bashPermissions, sandbox routing, and
-// run_in_background plumbing; that surface lands in M5 alongside the
-// permission system. M2's BashTool is enough to round-trip a tool call
-// through the agent loop with real subprocess execution.
+// Commands run in the foreground by default; run_in_background hands them to
+// internal/bgjobs, which keeps them running across turns and reports their end
+// as a <task-notification>. BashOutput reads a background job's output.
 //
 // Reference: src/tools/BashTool/BashTool.tsx (~157 KB), src/tools/BashTool/toolName.ts.
 package bashtool
@@ -23,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/icehunter/conduit/internal/bgjobs"
+	"github.com/icehunter/conduit/internal/procgroup"
 	"github.com/icehunter/conduit/internal/rtk"
 	"github.com/icehunter/conduit/internal/rtk/track"
 	"github.com/icehunter/conduit/internal/sessionstats"
@@ -79,9 +79,18 @@ func (*Tool) Name() string { return "Bash" }
 
 // Description is the prompt text the model sees.
 func (*Tool) Description() string {
+	follow := "If waiting for a background task you started with `run_in_background`, you will be notified when it completes — do not poll. "
+	if bgjobs.Default.Headless() {
+		follow = "If a background command exits while you are still working you will be notified, but it is terminated when you give your final response and no notification can follow that — so do not end your turn to wait for it; if you need its result, wait for it before giving your final response. "
+	}
 	return "Executes a given bash command in a fresh shell and returns the combined stdout and stderr. " +
 		"Provide the command in the `command` argument. Optional `timeout` (ms, default 120000, max 600000). " +
-		"Optional `description` (one-line active-voice summary)."
+		"Optional `description` (one-line active-voice summary).\n" +
+		"- `run_in_background` runs the command detached: it keeps running across turns and re-invokes you when it exits. " +
+		"With it, `timeout` is how long the command may run in the background (default 120000, max 600000); at that limit it is stopped and you are re-invoked. " +
+		"No `&` needed. A sub-agent's background commands are stopped when the sub-agent finishes, and it is not re-invoked.\n" +
+		"- " + follow +
+		"Use BashOutput to read its output so far and TaskStop to stop it."
 }
 
 // InputSchema is the JSON Schema sent to the model.
@@ -91,7 +100,8 @@ func (*Tool) InputSchema() json.RawMessage {
 		"properties": {
 			"command":     {"type": "string", "description": "The command to execute"},
 			"timeout":     {"type": "number", "description": "Optional timeout in milliseconds (max 600000)"},
-			"description": {"type": "string", "description": "One-line active-voice summary of what this does"}
+			"description": {"type": "string", "description": "One-line active-voice summary of what this does"},
+			"run_in_background": {"type": "boolean", "description": "Run the command in the background; you are notified when it finishes"}
 		},
 		"required": ["command"]
 	}`)
@@ -122,6 +132,9 @@ type Input struct {
 	Command     string `json:"command"`
 	Timeout     int    `json:"timeout,omitempty"` // milliseconds
 	Description string `json:"description,omitempty"`
+	// RunInBackground starts the command as a detached background job and
+	// returns at once.
+	RunInBackground bool `json:"run_in_background,omitempty"`
 }
 
 // Execute runs the command and returns its output.
@@ -148,6 +161,10 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 		timeout = MaxTimeout
 	}
 
+	if in.RunInBackground {
+		return t.startBackground(ctx, in, timeout), nil
+	}
+
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -155,7 +172,7 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	// whole process group so the command's children die with it.
 	// `bash -c` matches the real tool's shell-out behavior.
 	cmd := exec.CommandContext(cctx, "bash", "-c", in.Command)
-	setProcessGroup(cmd)
+	procgroup.Set(cmd)
 	// A backgrounded child (`server &`) inherits the output pipe and keeps it
 	// open after bash exits; without a WaitDelay, Run waits for that child
 	// and neither the timeout nor a cancel can end the call.
@@ -294,3 +311,35 @@ func formatSize(n int64) string {
 	}
 	return fmt.Sprintf("%d bytes", n)
 }
+
+// startBackground launches in as a background job and describes it to the model.
+func (t *Tool) startBackground(ctx context.Context, in Input, timeout time.Duration) tool.Result {
+	env := make([]string, 0, len(t.env))
+	for k, v := range t.env {
+		env = append(env, k+"="+v)
+	}
+	owner := tool.ScopeFromContext(ctx)
+	job, err := bgjobs.Default.StartOwned(owner, in.Command, in.Description, timeout, tool.CwdFromContext(ctx), env)
+	if err != nil {
+		return tool.ErrorResult(fmt.Sprintf("failed to start background command: %v", err))
+	}
+	var follow string
+	switch {
+	case owner != "":
+		// A sub-agent or teammate has no way to be re-invoked by the job.
+		follow = "It is terminated when you give your final response and nothing will notify you when it exits — " +
+			"so do not end your turn to wait for it; if you need its result, check it with BashOutput before giving your final response."
+	case bgjobs.Default.Headless():
+		follow = "If it exits while you are still working you will be notified, but it is terminated when you give your final response " +
+			"and no notification can follow that — so do not end your turn to wait for it; " +
+			"if you need its result, wait for it before giving your final response."
+	default:
+		follow = "You will be notified when it completes — do not poll."
+	}
+	return tool.TextResult(fmt.Sprintf("Command running in background with ID: %s. Output is being written to: %s. %s",
+		job.ID, job.OutputPath, follow))
+}
+
+// ReleaseScope implements tool.ScopeReleaser: the background commands a
+// sub-agent or teammate started are stopped, unannounced, when it finishes.
+func (*Tool) ReleaseScope(scope string) { bgjobs.Default.KillOwned(scope) }

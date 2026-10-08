@@ -62,6 +62,8 @@ func run() error {
 		return runUpdate()
 	case "mcp":
 		return runMCPCmd(args[1:])
+	case "config":
+		return runConfigCmd(args[1:], os.Stdout, os.Stderr)
 	default:
 		flag.Usage()
 		return fmt.Errorf("unknown subcommand: %s", args[0])

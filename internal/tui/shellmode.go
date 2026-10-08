@@ -238,7 +238,7 @@ func (m Model) applyShellDone(msg shellDoneMsg) (Model, tea.Cmd) {
 		next := m.pendingMessages[0]
 		m.pendingMessages = m.pendingMessages[1:]
 		m.input.SetValue(next)
-		cmd = func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} }
+		cmd = m.replaySubmit()
 	}
 	return m, cmd
 }

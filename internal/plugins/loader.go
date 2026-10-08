@@ -489,6 +489,10 @@ func loadHooks(pluginDir string) settings.HooksSettings {
 	f.Hooks.PostToolUse = tag(f.Hooks.PostToolUse)
 	f.Hooks.SessionStart = tag(f.Hooks.SessionStart)
 	f.Hooks.Stop = tag(f.Hooks.Stop)
+	f.Hooks.TeammateIdle = tag(f.Hooks.TeammateIdle)
+	f.Hooks.TaskCreated = tag(f.Hooks.TaskCreated)
+	f.Hooks.TaskCompleted = tag(f.Hooks.TaskCompleted)
+	f.Hooks.UserPromptSubmit = tag(f.Hooks.UserPromptSubmit)
 	return f.Hooks
 }
 

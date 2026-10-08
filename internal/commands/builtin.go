@@ -609,7 +609,7 @@ func RegisterPermissionsCommand(r *Registry, gate *permissions.Gate) {
 func RegisterHooksCommand(r *Registry, hooksConfig *settings.HooksSettings) {
 	r.Register(Command{
 		Name:        "hooks",
-		Description: "Show configured PreToolUse/PostToolUse/SessionStart/Stop hooks",
+		Description: "Show configured PreToolUse/PostToolUse/SessionStart/Stop/UserPromptSubmit hooks",
 		Handler: func(_ string) Result {
 			if hooksConfig == nil {
 				return Result{Type: "text", Text: "Hooks: no hooks configured"}
@@ -637,6 +637,7 @@ func RegisterHooksCommand(r *Registry, hooksConfig *settings.HooksSettings) {
 			printMatchers("PostToolUse", hooksConfig.PostToolUse)
 			printMatchers("SessionStart", hooksConfig.SessionStart)
 			printMatchers("Stop", hooksConfig.Stop)
+			printMatchers("UserPromptSubmit", hooksConfig.UserPromptSubmit)
 
 			return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 		},

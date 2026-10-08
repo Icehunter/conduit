@@ -187,6 +187,28 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	// live is a thread-safe bag updated by Model.syncLive() on every relevant
 	// state change; command callbacks read from it so they see current values.
 	live := &LiveState{}
+	// renameSession persists a session title to the JSONL. It uses
+	// live.SessionFile() so it follows the active session after /resume.
+	renameSession := func(title string) error {
+		if path := live.SessionFile(); path != "" {
+			return session.FromFile(path).SetTitle(title)
+		}
+		if runOpts.Session == nil {
+			return fmt.Errorf("no active session")
+		}
+		return runOpts.Session.SetTitle(title)
+	}
+	if loop != nil {
+		loop.SetTranscriptPath(func() string {
+			if path := live.SessionFile(); path != "" {
+				return path
+			}
+			if runOpts.Session != nil {
+				return runOpts.Session.FilePath
+			}
+			return ""
+		})
+	}
 	live.SetModelName(modelName) // seed with startup value
 	live.SetLocalMode(runOpts.InitialLocalMode, runOpts.InitialLocalServer)
 	usageStatusEnabled := runOpts.InitialUsageStatusEnabled
@@ -243,6 +265,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	commands.RegisterBundledSkillCommands(reg)
 	commands.RegisterFSSkillCommands(reg, cwd)
 	commands.RegisterWorkflowCommands(reg, cwd)
+	commands.RegisterBashesCommands(reg)
 	commands.RegisterUltracodeCommand(reg, workflow.Ultracode.Load, workflow.Ultracode.Store)
 	commands.RegisterPluginBrowserCommand(reg, loadedPlugins)
 	commands.RegisterSkillsCommand(reg, loadedPlugins)
@@ -376,16 +399,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 			loop.SetThinkingBudget(budget)
 		},
 		// /rename — persist a title to the session JSONL.
-		// Uses live.SessionFile() so it follows the active session after /resume.
-		RenameSession: func(title string) error {
-			if path := live.SessionFile(); path != "" {
-				return session.FromFile(path).SetTitle(title)
-			}
-			if runOpts.Session == nil {
-				return fmt.Errorf("no active session")
-			}
-			return runOpts.Session.SetTitle(title)
-		},
+		RenameSession: renameSession,
 		// /tag — persist a tag to the session JSONL ("" clears).
 		TagSession: func(tag string) error {
 			if path := live.SessionFile(); path != "" {
@@ -523,6 +537,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 		Skills:                    runOpts.Skills,
 		Agents:                    runOpts.Agents,
 		SteerContent:              runOpts.SteerContent,
+		RenameSession:             renameSession,
 		BackgroundModel: func() string {
 			if loop != nil {
 				return loop.BackgroundModel()
@@ -572,6 +587,8 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 	modelPtr = &m
 	// AltScreen now lives on the View struct (bubbletea v2) — see Model.View.
 	prog = tea.NewProgram(m)
+	activeProgram.Store(prog)
+	defer activeProgram.Store(nil)
 
 	// Wire interactive permission prompts — the callback runs in the agent
 	// goroutine, sends permissionAskMsg to Bubble Tea, then blocks on the

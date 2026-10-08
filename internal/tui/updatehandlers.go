@@ -234,10 +234,18 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		m.messages = append(m.messages, m.assistantMessage(m.streaming))
 		m.streaming = ""
 	}
-	if msg.cancelled || isCancelError(msg.err) {
+	var blocked *agent.PromptBlockedError
+	if errors.As(msg.err, &blocked) {
+		m = m.dropBlockedPrompt(blocked)
+	} else if msg.cancelled || isCancelError(msg.err) {
 		// Context was cancelled. The loop may still have built resolved
 		// cleanup history (for example interrupted tool_result blocks), so
 		// adopt it when it extends the TUI's current history.
+		if n := len(m.history); len(msg.history) == n && n > 0 && msg.history[n-1].Role == "user" && m.history[n-1].Role == "user" {
+			// A UserPromptSubmit hook may have rewritten the prompt; the next
+			// turn must send the rewrite, not the text the user typed.
+			m.history = append(m.history[:n-1:n-1], msg.history[n-1])
+		}
 		if len(msg.history) > len(m.history) {
 			cleaned := session.FilterUnresolvedToolUses(msg.history)
 			m.history = m.annotateTurnProvider(cleaned)
@@ -326,6 +334,7 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		}
 		m.appendAssistantInfo(turnCostDelta)
 	}
+	m.promptRow = 0
 	// Final assistant message just committed — refreshViewport's
 	// sticky-bottom honors a scrolled-up user. They explicitly
 	// scrolled away while results were streaming; don't yank them
@@ -351,6 +360,14 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		}
 	}
 
+	// Notifications that arrived after the loop's last delivery point (a
+	// background command finishing during the final response) start a turn of
+	// their own, also after a failed turn. Update starts it once this
+	// handler's commands (title reset, flash) are queued.
+	if !msg.cancelled && !isCancelError(msg.err) && m.cfg.Loop != nil && m.cfg.Loop.HasInjected() {
+		m.wakePending = true
+	}
+
 	// Drain pending messages: if the user typed a complete message while we
 	// were running, auto-submit the first queued message now. Only drain when
 	// the input is empty — if the user is mid-typing, leave their draft and
@@ -360,10 +377,14 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		next := m.pendingMessages[0]
 		m.pendingMessages = m.pendingMessages[1:]
 		m.input.SetValue(next)
-		cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
+		cmds = append(cmds, m.replaySubmit())
 	}
 
-	cmds = append(cmds, clearWindowTitleCmd())
+	if m.wakePending {
+		m.titleClearDeferred = true // Update resets it, or the wake turn's own title replaces it
+	} else {
+		cmds = append(cmds, clearWindowTitleCmd())
+	}
 
 	// Flash only for agents that completed during THIS turn (not old ones).
 	var newLogs int
@@ -830,6 +851,104 @@ func isPromptMessage(m api.Message) bool {
 	}
 	return true
 }
+
+// dropBlockedPrompt undoes a prompt a UserPromptSubmit hook refused. The loop
+// made no request and persisted nothing, so the prompt is only in m.history
+// and the transcript. Both lose it; the typed text (the original "/cmd args"
+// for a slash command) and its attachments go back to the input for editing,
+// ahead of any draft typed meanwhile, and a system row says why.
+func (m Model) dropBlockedPrompt(blocked *agent.PromptBlockedError) Model {
+	if n := len(m.history); n > 0 && isPromptMessage(m.history[n-1]) {
+		for _, b := range m.history[n-1].Content {
+			switch {
+			case b.Type == "image" && b.Source != nil:
+				m.pendingImages = append(m.pendingImages, &attach.Image{Data: b.Source.Data, MediaType: b.Source.MediaType})
+			case b.Type == "document" && b.Source != nil && b.Source.MediaType == "application/pdf":
+				m.pendingPDFs = append(m.pendingPDFs, &attach.PDF{Data: b.Source.Data, MediaType: b.Source.MediaType})
+			}
+		}
+		m.history = m.history[:n-1]
+	}
+	// Remove the prompt's own row, found by the index recorded at submit; a
+	// steering message screened while the hooks ran has a row of its own after
+	// it, and the last user row is that one.
+	if i := m.promptRow - 1; i >= 0 && i < len(m.messages) && m.messages[i].Role == RoleUser {
+		m.messages = append(m.messages[:i], m.messages[i+1:]...)
+	} else {
+		m.removeLastUserRow()
+	}
+	m.promptRow = 0
+	// A steer accepted for the turn that never ran would leak into the next
+	// one. Take it back and return its text to the input, after the prompt.
+	if steer := m.cfg.Loop.ClearSteer(); len(steer) > 0 {
+		var parts []string
+		for _, b := range steer {
+			switch {
+			case b.Type == "text" && !isSystemReminderText(b.Text):
+				parts = append(parts, b.Text)
+			case b.Type == "image" && b.Source != nil:
+				m.pendingImages = append(m.pendingImages, &attach.Image{Data: b.Source.Data, MediaType: b.Source.MediaType})
+			case b.Type == "document" && b.Source != nil && b.Source.MediaType == "application/pdf":
+				m.pendingPDFs = append(m.pendingPDFs, &attach.PDF{Data: b.Source.Data, MediaType: b.Source.MediaType})
+			}
+		}
+		text := strings.Join(parts, "\n")
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleUser && m.messages[i].Content == text {
+				m.messages = append(m.messages[:i], m.messages[i+1:]...)
+				break
+			}
+		}
+		m.restoreInput(text)
+	}
+	m.restoreInput(blocked.Prompt)
+	m.messages = append(m.messages, Message{Role: RoleSystem, Content: blockedRow(blocked)})
+	return m
+}
+
+// removeLastUserRow drops the newest "You" row from the transcript.
+func (m *Model) removeLastUserRow() {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == RoleUser {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			return
+		}
+	}
+}
+
+// restoreInput puts text back into the input box, ahead of a draft the user
+// has typed since so neither is lost.
+func (m *Model) restoreInput(text string) {
+	if draft := m.input.Value(); strings.TrimSpace(draft) != "" {
+		text += "\n" + draft
+	}
+	m.input.SetValue(text)
+}
+
+// blockedRow is the system row for a refused or stopped prompt.
+func blockedRow(blocked *agent.PromptBlockedError) string {
+	switch {
+	case blocked.Stopped && blocked.Reason == "":
+		return "UserPromptSubmit hook stopped the turn"
+	case blocked.Stopped:
+		return blocked.Reason
+	case blocked.Reason == "":
+		return "UserPromptSubmit blocked: no reason given"
+	}
+	return "UserPromptSubmit blocked: " + blocked.Reason
+}
+
+// renameSessionCmd persists a hook-chosen session title off the event loop.
+func (m Model) renameSessionCmd(title string) tea.Cmd {
+	rename := m.cfg.RenameSession
+	if rename == nil {
+		return nil
+	}
+	return func() tea.Msg { return sessionRenamedMsg{err: rename(title)} }
+}
+
+// sessionRenamedMsg is the result of renameSessionCmd.
+type sessionRenamedMsg struct{ err error }
 
 // sessionResetDoneMsg is the result of writing the /clear marker.
 type sessionResetDoneMsg struct{ err error }

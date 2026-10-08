@@ -31,6 +31,7 @@ var helpSections = []helpSection{
 			{"Esc", "Clear attachments / cancel"},
 			{"/? (command)", "Show keyboard shortcuts"},
 			{"/workflows", "Watch, kill or save workflow runs"},
+			{"/bashes", "List, view or kill background shells (alias /jobs)"},
 			{"ctrl+o", "Toggle verbose tool output"},
 			{"ctrl+t", "Toggle todo task strip"},
 			{"ctrl+g", "Toggle agent strip (team mode)"},

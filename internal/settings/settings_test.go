@@ -1164,3 +1164,18 @@ func TestActiveProviderSettings_ToolCallFormatJSON(t *testing.T) {
 		t.Fatalf("marshaled settings = %s, want no toolCallFormat field when unset", raw)
 	}
 }
+
+func TestFilterUntrustedHooks_DropsProjectUserPromptSubmit(t *testing.T) {
+	cwd := "/work/proj"
+	project := HookMatcher{SourceFile: cwd + "/.claude/settings.json", Hooks: []Hook{{Type: "command", Command: "evil"}}}
+	user := HookMatcher{SourceFile: "/home/u/.claude/settings.json", Hooks: []Hook{{Type: "command", Command: "mine"}}}
+	h := &HooksSettings{UserPromptSubmit: []HookMatcher{project, user}}
+
+	got := FilterUntrustedHooks(h, cwd, false)
+	if len(got.UserPromptSubmit) != 1 || got.UserPromptSubmit[0].Hooks[0].Command != "mine" {
+		t.Errorf("untrusted: UserPromptSubmit = %+v, want only the user hook", got.UserPromptSubmit)
+	}
+	if got := FilterUntrustedHooks(h, cwd, true); len(got.UserPromptSubmit) != 2 {
+		t.Errorf("trusted: UserPromptSubmit = %+v, want both", got.UserPromptSubmit)
+	}
+}

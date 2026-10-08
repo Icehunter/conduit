@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "ServerConfig": {
+      "description": "How to connect to one MCP server.",
+      "properties": {
+        "args": {
+          "description": "Arguments for the command (stdio).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Executable to launch (stdio).",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables for the server process (stdio).",
+          "type": "object"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra request headers (sse, http, ws).",
+          "type": "object"
+        },
+        "type": {
+          "description": "Transport. Empty or missing means stdio. Matched case-insensitively.",
+          "examples": [
+            "stdio",
+            "sse",
+            "http",
+            "ws",
+            "websocket",
+            "sse-ide",
+            "ws-ide",
+            "sdk",
+            "claudeai-proxy"
+          ],
+          "pattern": "^(|[sS][tT][dD][iI][oO]|[sS][sS][eE]|[hH][tT][tT][pP]|[wW][sS]|[wW][eE][bB][sS][oO][cC][kK][eE][tT]|[sS][sS][eE]-[iI][dD][eE]|[wW][sS]-[iI][dD][eE]|[sS][dD][kK]|[cC][lL][aA][uU][dD][eE][aA][iI]-[pP][rR][oO][xX][yY])$",
+          "type": "string"
+        },
+        "url": {
+          "description": "Server endpoint (sse, http, ws).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/icehunter/conduit/main/schemas/mcp.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "MCP server definitions in .mcp.json.",
+  "properties": {
+    "$schema": {
+      "description": "URL of the JSON Schema this file follows (editor hint; ignored at load).",
+      "type": "string"
+    },
+    "mcpServers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ServerConfig"
+      },
+      "description": "MCP servers keyed by name.",
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "title": "Conduit .mcp.json",
+  "type": "object"
+}

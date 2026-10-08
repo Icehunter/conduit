@@ -30,7 +30,7 @@ func SetActive(on bool) {
 // coordinator.WorkerTools and adds SendMessage (always injected via ExtraTools
 // in SpawnTeammate so the sender identity is baked correctly).
 var TeammateTools = []string{
-	"Bash", "Edit", "EnterPlanMode", "EnterWorktree",
+	"Bash", "BashOutput", "Edit", "EnterPlanMode", "EnterWorktree",
 	"ExitPlanMode", "ExitWorktree", "Glob", "Grep",
 	"ListMcpResources", "NotebookEdit", "Read", "ReadMcpResource",
 	"REPL", "SendMessage", "SkillTool", "Sleep",

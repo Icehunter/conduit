@@ -397,6 +397,10 @@ type Config struct {
 	// attached images/documents) into the running agent loop between
 	// tool-call batches instead of cancelling the current turn.
 	SteerContent func([]api.ContentBlock)
+
+	// RenameSession persists a session title (UserPromptSubmit hooks can set
+	// one). nil means no session to rename.
+	RenameSession func(title string) error
 }
 
 // Model is the Bubble Tea model.
@@ -431,26 +435,33 @@ type Model struct {
 	height int
 	panelH int
 
-	running           bool
-	cancelled         bool // true after Ctrl+C; cleared when next turn starts
-	cancelTurn        context.CancelFunc
-	streaming         string
-	thinking          string // reasoning streamed this turn; becomes a RoleThinking row when text or a tool starts
-	apiRetryStatus    string
-	turnID            int                      // incremented each turn; agentDoneMsg with stale ID is ignored
-	turnStarted       time.Time                // wall time when the current agent turn started
-	turnAssistant     string                   // display label captured for the provider answering the current turn
-	turnProvider      string                   // provider/model captured for transcript display metadata
-	turnProviderKind  string                   // provider kind captured for transcript display metadata
-	pendingMessages   []string                 // messages typed while agent is running; drained after turn ends
-	questionAsk       *questionAskState        // non-nil when AskUserQuestion is waiting for user input
-	pendingQuestion   *questionAskMsg          // non-nil when a question arrived while user has unsent text
-	pendingPermission *permissionAskMsg        // non-nil when a permission prompt arrived while user has unsent text
-	planApproval      *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
-	diffReview        *diffReviewState         // non-nil when diff-first review gate is open
-	todoStripHidden   bool                     // ctrl+t toggles; strip is shown by default when todos present
-	todoAutoContinues int                      // bounded auto-nudges when a turn ends with unfinished todos
-	unlimitedTurns    bool                     // ctrl+l toggles turn cap off (0 = unlimited) vs DefaultMainMaxTurns
+	running            bool
+	cancelled          bool // true after Ctrl+C; cleared when next turn starts
+	cancelTurn         context.CancelFunc
+	streaming          string
+	thinking           string // reasoning streamed this turn; becomes a RoleThinking row when text or a tool starts
+	apiRetryStatus     string
+	replayingSubmit    bool                     // a synthetic Enter is in flight to submit a queued or screened prompt
+	promptRow          int                      // 1 + index in messages of the running turn's prompt row; 0 when none
+	titleClearDeferred bool                     // handleAgentDone left the title reset for the Update tail, which may start a wake turn
+	screening          bool                     // a prompt is waiting on its UserPromptSubmit hooks
+	screened           *screenedPrompt          // a prompt the hooks accepted, being resubmitted
+	slashInput         string                   // "/cmd args" being dispatched; the raw prompt of a "prompt" result
+	wakePending        bool                     // a notification arrived while busy; start its turn when idle
+	turnID             int                      // incremented each turn; agentDoneMsg with stale ID is ignored
+	turnStarted        time.Time                // wall time when the current agent turn started
+	turnAssistant      string                   // display label captured for the provider answering the current turn
+	turnProvider       string                   // provider/model captured for transcript display metadata
+	turnProviderKind   string                   // provider kind captured for transcript display metadata
+	pendingMessages    []string                 // messages typed while agent is running; drained after turn ends
+	questionAsk        *questionAskState        // non-nil when AskUserQuestion is waiting for user input
+	pendingQuestion    *questionAskMsg          // non-nil when a question arrived while user has unsent text
+	pendingPermission  *permissionAskMsg        // non-nil when a permission prompt arrived while user has unsent text
+	planApproval       *planApprovalPickerState // non-nil when ExitPlanMode is waiting for user decision
+	diffReview         *diffReviewState         // non-nil when diff-first review gate is open
+	todoStripHidden    bool                     // ctrl+t toggles; strip is shown by default when todos present
+	todoAutoContinues  int                      // bounded auto-nudges when a turn ends with unfinished todos
+	unlimitedTurns     bool                     // ctrl+l toggles turn cap off (0 = unlimited) vs DefaultMainMaxTurns
 
 	// slash command picker state
 	cmdMatches  []commands.Command // currently matching commands

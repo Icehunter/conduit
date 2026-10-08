@@ -321,8 +321,9 @@ func resolveToolNames(names []string) []string {
 		// CC-only tools without a direct conduit equivalent — map to closest.
 		"ls":           "Glob",
 		"notebookread": "Read",
-		"killshell":    "Bash",
-		"bashoutput":   "Bash",
+		"killshell":    "TaskStop",
+		"killbash":     "TaskStop",
+		"bashoutput":   "BashOutput",
 		"shell":        "Bash",
 	}
 	out := make([]string, 0, len(names))

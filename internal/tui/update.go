@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
@@ -18,6 +19,22 @@ import (
 // does no per-frame work.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
+	if nm, ok := next.(Model); ok && nm.wakePending && !nm.busy() {
+		// Whatever kept the model busy has ended: deliver the notifications
+		// that arrived meanwhile. A finishing turn leaves its title reset to
+		// us (titleClearDeferred) so it cannot land on top of the new turn's.
+		nm.wakePending = false
+		var wake tea.Cmd
+		nm, wake = nm.startInjectedTurn()
+		if wake == nil && nm.titleClearDeferred {
+			wake = clearWindowTitleCmd()
+		}
+		nm.titleClearDeferred = false
+		next = nm
+		if wake != nil {
+			cmd = tea.Batch(cmd, wake)
+		}
+	}
 	if nm, ok := next.(Model); ok && !nm.animTicking && nm.needsAnimation() {
 		nm.animTicking = true
 		return nm, tea.Batch(cmd, nm.working.Step())
@@ -80,6 +97,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Otherwise fall through to sub-component propagation for the main viewport.
 
 	case tea.KeyPressMsg:
+		if msg.Code == tea.KeyEnter {
+			m.replayingSubmit = false // the Enter a replay was waiting for has arrived
+		}
 		m2, cmd, consumed := m.handleKey(msg)
 		m = m2
 		if cmd != nil {
@@ -115,7 +135,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					next := m.pendingMessages[0]
 					m.pendingMessages = m.pendingMessages[1:]
 					m.input.SetValue(next)
-					cmds = append(cmds, func() tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEnter} })
+					cmds = append(cmds, m.replaySubmit())
 				}
 			}
 			return m, tea.Batch(cmds...)
@@ -124,6 +144,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentMsg:
 		m = m.applyAgentEvent(msg.event)
+		if msg.event.Type == agent.EventSessionTitle {
+			return m, m.renameSessionCmd(msg.event.Notice)
+		}
+		return m, nil
+
+	case promptScreenedMsg:
+		return m.handlePromptScreened(msg)
+
+	case sessionRenamedMsg:
+		if msg.err != nil {
+			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "UserPromptSubmit hook could not rename the session: " + msg.err.Error()})
+			m.refreshViewport()
+		}
 		return m, nil
 
 	case compactSaveFailedMsg:
@@ -577,6 +610,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 		}
 		return m, nil
+
+	case bashesViewMsg:
+		return m.applyCommandResult(msg.res)
+
+	case injectedWakeMsg:
+		return m.startInjectedTurn()
 
 	case workflowPanelRefreshMsg:
 		if m.workflowPanel == nil {

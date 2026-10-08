@@ -18,6 +18,9 @@ var conduitConfigMu sync.Mutex
 // owns Conduit runtime preferences so Claude Code's settings are only an import
 // source, not a live dependency after first load.
 type ConduitConfig struct {
+	// SchemaURL is the editor-hint "$schema" URL; kept so typed saves do not drop it.
+	SchemaURL string `json:"$schema,omitempty"`
+
 	SchemaVersion int `json:"schemaVersion,omitempty"`
 	NumStartups   int `json:"numStartups,omitempty"`
 

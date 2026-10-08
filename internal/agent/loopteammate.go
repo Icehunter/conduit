@@ -122,7 +122,7 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	childCfg.Gate = childGate
 	childCfg.AskPermission = nil
 
-	child = &Loop{client: childClient, reg: childReg, cfg: childCfg, parentPromptID: l.currentPromptID()}
+	child = &Loop{client: childClient, reg: childReg, cfg: childCfg, child: true, parentPromptID: l.currentPromptID()}
 	return child, model
 }
 

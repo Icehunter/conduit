@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"github.com/icehunter/conduit/internal/bgjobs"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/subagent"
 	"github.com/icehunter/conduit/internal/theme"
@@ -292,7 +293,7 @@ func (m Model) renderWorkingRow() string {
 	case m.running:
 		m.working.SetLabel("Thinking")
 		entries := subagent.Default.Snapshot()
-		tasksHint := m.hiddenTasksHint()
+		tasksHint := shellsHint() + m.hiddenTasksHint()
 		wfLines := workflowWorkingLines()
 		if len(entries) == 0 {
 			var main string
@@ -345,7 +346,7 @@ func (m Model) renderWorkingRow() string {
 		if m.unlimitedTurns {
 			suffix = stylePickerDesc.Render("  ∞ no turn cap")
 		}
-		if hint := m.hiddenTasksHint(); hint != "" {
+		if hint := shellsHint() + m.hiddenTasksHint(); hint != "" {
 			suffix = hint + suffix
 		}
 		if suffix != "" {
@@ -353,6 +354,20 @@ func (m Model) renderWorkingRow() string {
 		}
 		return styleStatus.Width(m.width).Render("")
 	}
+}
+
+// shellsHint returns a right-aligned hint naming the background Bash jobs
+// still running, or "" when there are none.
+func shellsHint() string {
+	n := bgjobs.Default.Running()
+	if n == 0 {
+		return ""
+	}
+	noun := "shell"
+	if n > 1 {
+		noun = "shells"
+	}
+	return stylePickerDesc.Render(fmt.Sprintf("  ⟳ %d %s · /bashes", n, noun))
 }
 
 // hiddenTasksHint returns a right-aligned hint string when tasks exist but the

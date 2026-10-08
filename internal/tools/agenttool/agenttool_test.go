@@ -180,8 +180,9 @@ func TestResolveToolNames(t *testing.T) {
 		{"NotebookEdit", "NotebookEdit"},
 		{"LS", "Glob"}, // CC LS → nearest conduit equivalent
 		{"ls", "Glob"},
-		{"KillShell", "Bash"},
-		{"BashOutput", "Bash"},
+		{"KillShell", "TaskStop"},
+		{"KillBash", "TaskStop"},
+		{"BashOutput", "BashOutput"},
 		{"unknown-tool", "unknown-tool"}, // pass-through
 	}
 	for _, tt := range tests {

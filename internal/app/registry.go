@@ -156,6 +156,7 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		reg.Register(winshelltool.New(sessionEnv))
 	} else {
 		reg.Register(bashtool.New(sessionEnv))
+		reg.Register(bashtool.NewOutput())
 	}
 	// One read tracker per registry (so per session) backs the
 	// read-before-write guard. Sub-agent registries are views over this one
@@ -182,6 +183,8 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 	reg.Register(tasktool.NewUpdate())
 	reg.Register(tasktool.NewOutput())
 	reg.Register(tasktool.NewStop())
+	reg.Register(tasktool.NewKillShell())
+	reg.Register(tasktool.NewKillBash())
 	reg.Register(todowritetool.New())
 	reg.Register(decisiontool.New())
 	reg.Register(toolsearchtool.New(reg))

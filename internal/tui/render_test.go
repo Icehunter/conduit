@@ -1362,7 +1362,7 @@ func TestRenderMessage_ToolErrorShowsDetails(t *testing.T) {
 }
 
 func TestHistoryToDisplayMessage_ToolUsePreservesInput(t *testing.T) {
-	msg := historyToDisplayMessage(api.Message{
+	msg, _ := historyToDisplayMessage(api.Message{
 		Role: "assistant",
 		Content: []api.ContentBlock{{
 			Type:  "tool_use",

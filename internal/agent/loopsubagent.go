@@ -437,7 +437,7 @@ func (l *Loop) runSubAgentWithModel(ctx context.Context, prompt string, client *
 	}
 	childReg := l.reg.WithOverrides(childEnterPlan, childExitPlan, childEnterAuto, childExitAuto)
 
-	child := &Loop{client: childClient, reg: childReg, cfg: childCfg, subAgentLabel: label, parentPromptID: l.currentPromptID()}
+	child := &Loop{client: childClient, reg: childReg, cfg: childCfg, subAgentLabel: label, child: true, parentPromptID: l.currentPromptID()}
 	child.setWireIdentity(childID, l.wireAgentID(), "", class)
 	defer child.reg.ReleaseScope(childID) // close the REPL kernels this child started
 	if strings.TrimSpace(model) != "" {

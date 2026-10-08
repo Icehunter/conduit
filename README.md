@@ -298,6 +298,22 @@ Key settings:
 }
 ```
 
+### Editor support (JSON Schema)
+
+JSON Schemas for the config files live in [`schemas/`](schemas/). Add a `$schema` key (conduit ignores it at load and keeps it on save) to get completion and validation in editors that support JSON Schema:
+
+```json
+{ "$schema": "https://raw.githubusercontent.com/icehunter/conduit/main/schemas/conduit.schema.json" }
+```
+
+| File | Schema |
+|------|--------|
+| `~/.conduit/conduit.json` | `.../schemas/conduit.schema.json` |
+| `settings.json`, `settings.local.json` | `.../schemas/settings.schema.json` |
+| `.mcp.json` | `.../schemas/mcp.schema.json` |
+
+Print one locally with `conduit config schema [settings|conduit|mcp]`. Schemas are generated from the Go types (`internal/settings/schema`); run `make schema` after changing a config struct.
+
 ### CLAUDE.md
 
 Place a `CLAUDE.md` in any directory — conduit reads from the file's directory up to the repo root and your home directory, injecting each as a system context block. Use `@path/to/file` inside to include another file inline.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,6 +33,10 @@ type promptScreenedMsg struct {
 	route screenRoute
 	raw   string // the typed text, paste placeholders expanded
 	text  string // the typed text after any updatedPrompt
+	// hookContext is the hook's additionalContext as system-reminder blocks,
+	// joined; only the council and MCP routes use it, since steering carries
+	// the blocks in content.
+	hookContext string
 	// content is the steering message after the hooks, context included.
 	content []api.ContentBlock
 	events  []agent.LoopEvent
@@ -43,7 +48,7 @@ type promptScreenedMsg struct {
 
 // screenedPrompt remembers a prompt the hooks accepted while its submit is
 // replayed, so the replay neither screens it again nor loses a rewrite.
-type screenedPrompt struct{ raw, text string }
+type screenedPrompt struct{ raw, text, hookContext string }
 
 // busy reports whether the model is occupied with a turn or about to be: a
 // running turn, a prompt waiting on its hooks, an accepted prompt being
@@ -84,6 +89,13 @@ func (m Model) screenPromptCmd(route screenRoute, raw string, content []api.Cont
 			if i := typedBlock - 1; i >= 0 && i < len(out) {
 				msg.text = out[i].Text
 			}
+			// ScreenPrompt only ever appends blocks after the content it was given.
+			added := out[min(len(content), len(out)):]
+			extra := make([]string, 0, len(added))
+			for _, b := range added {
+				extra = append(extra, b.Text)
+			}
+			msg.hookContext = strings.Join(extra, "\n\n")
 		}
 		return msg
 	}
@@ -149,7 +161,7 @@ func (m Model) handlePromptScreened(msg promptScreenedMsg) (Model, tea.Cmd) {
 	}
 
 	// Council and MCP prompts: replay the submit, which now skips screening.
-	m.screened = &screenedPrompt{raw: msg.raw, text: msg.text}
+	m.screened = &screenedPrompt{raw: msg.raw, text: msg.text, hookContext: msg.hookContext}
 	cmds = append(cmds, m.replaySubmit())
 	return m, tea.Batch(cmds...)
 }

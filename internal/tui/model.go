@@ -243,7 +243,8 @@ type (
 	// Unlike councilStartMsg (which goes through ExitPlanMode), this fires
 	// immediately when the user submits a message while in council mode.
 	councilChatMsg struct {
-		question string
+		question    string
+		hookContext string // UserPromptSubmit additionalContext; sent to members, never recorded as the question
 	}
 
 	// councilMemberResponseMsg carries one council member's response.

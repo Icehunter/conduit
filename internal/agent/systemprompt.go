@@ -36,7 +36,7 @@ import (
 // verbatim for Vertex accounts, and the API has accepted it from conduit
 // since 2.1.200, so that is what we send.
 // CLAUDE_GO_BILLING_HEADER overrides the entire header at runtime.
-const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.293; cc_entrypoint=sdk-cli; cch=00000;\n"
+const BillingHeader = "x-anthropic-billing-header: cc_version=2.1.294; cc_entrypoint=sdk-cli; cch=00000;\n"
 
 const (
 	billingSalt = "59cf53e54c78" // stable per-salt in upstream source (decoded-2.1.200/1470.js)
@@ -46,7 +46,7 @@ const (
 	// (confirmed live 2026-09-03: this constant was missed in an earlier
 	// Version bump this session and broke every request until caught here).
 	// scripts/wire-check/verify.mjs now checks the two together.
-	BillingVersion = "2.1.293"
+	BillingVersion = "2.1.294"
 )
 
 // computeBillingSuffix implements the upstream ox8() formula from decoded-2.1.200/1470.js:

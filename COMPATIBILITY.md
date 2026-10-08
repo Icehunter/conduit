@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.293` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.294` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.128.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -80,6 +80,12 @@ regression appears.
 ---
 
 ## Wire sync log
+
+### 2.1.293 → 2.1.294 (2026-10-08)
+
+| Item | Action |
+|------|--------|
+| `Version` / `BillingVersion` / `BillingHeader` | Bumped to `2.1.294`. The fingerprint differs only in the version strings; SDK, client ID, OAuth, betas, headers, tools and model IDs are unchanged (`make wire-claude`: 0 NEW). |
 
 ### 2.1.292 → 2.1.293 (2026-10-08)
 

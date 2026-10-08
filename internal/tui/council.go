@@ -524,6 +524,40 @@ func (m Model) handleCouncilFlow(msg councilStartMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// withHookContext appends a UserPromptSubmit hook's context to a prompt. The
+// context is kept apart from the question so the transcript and decision log
+// record only what the user asked.
+func withHookContext(prompt, hookContext string) string {
+	if hookContext == "" {
+		return prompt
+	}
+	return prompt + "\n\n" + hookContext
+}
+
+func councilChatProposePrompt(preamble, question, hookContext string) string {
+	return withHookContext(fmt.Sprintf(
+		"%sAnswer the following question concisely and directly:\n\n%s",
+		preamble, question,
+	), hookContext)
+}
+
+func councilChatCritiquePrompt(preamble, question, hookContext, debateCtx string) string {
+	return withHookContext(fmt.Sprintf(
+		"%sThe question was: %q", preamble, question,
+	), hookContext) + fmt.Sprintf(
+		"\n\nHere are the other council members' answers:\n\n%s\n\n"+
+			"Critique the answers, identify the strongest points, and either propose "+
+			"a better synthesis or signal agreement by including <council-agree/> if "+
+			"you are satisfied with the current direction.",
+		debateCtx,
+	)
+}
+
+func councilChatSynthPreamble(question, hookContext string) string {
+	return withHookContext(fmt.Sprintf("Multiple AI models were asked: %q", question), hookContext) +
+		"\n\nHere are their responses:\n"
+}
+
 // handleCouncilChat runs the council debate for a direct user chat message.
 func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 	providerKeys := append([]string(nil), m.councilProviders...)
@@ -531,7 +565,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 	accountProviders := configuredAccountProviders()
 	loop := m.cfg.Loop
 	prog := *m.cfg.Program
-	question := msg.question
+	question, hookContext := msg.question, msg.hookContext
 	newAPIClient := m.cfg.NewAPIClient
 	newProviderClient := m.cfg.NewProviderAPIClient
 
@@ -584,10 +618,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 		// Round 0: parallel propose.
 		prog.Send(councilRoundStartMsg{round: 0, total: maxRounds, active: countActive(members)})
 		proposePromptFn := func(m councilMember) string {
-			return fmt.Sprintf(
-				"%sAnswer the following question concisely and directly:\n\n%s",
-				rolePreamble(m.role), question,
-			)
+			return councilChatProposePrompt(rolePreamble(m.role), question, hookContext)
 		}
 		runRoundParallel(ctx, loop, members, proposePromptFn,
 			[]string{"Read", "Glob", "Grep", "WebFetch", "WebSearch"}, memberTimeout, prog)
@@ -605,13 +636,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 				prog.Send(councilRoundStartMsg{round: round, total: maxRounds, active: countActive(members)})
 				debateCtx := buildDebateContext(members)
 				critiquePromptFn := func(m councilMember) string {
-					return fmt.Sprintf(
-						"%sThe question was: %q\n\nHere are the other council members' answers:\n\n%s\n\n"+
-							"Critique the answers, identify the strongest points, and either propose "+
-							"a better synthesis or signal agreement by including <council-agree/> if "+
-							"you are satisfied with the current direction.",
-						rolePreamble(m.role), question, debateCtx,
-					)
+					return councilChatCritiquePrompt(rolePreamble(m.role), question, hookContext, debateCtx)
 				}
 				allAgreed, atLeastOne := runRoundParallel(ctx, loop, members, critiquePromptFn,
 					[]string{"Read", "Glob", "Grep"}, memberTimeout, prog)
@@ -657,7 +682,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 
 		// Synthesis.
 		prog.Send(councilSynthesisStartMsg{})
-		synthPreamble := fmt.Sprintf("Multiple AI models were asked: %q\n\nHere are their responses:\n", question)
+		synthPreamble := councilChatSynthPreamble(question, hookContext)
 		synthPrompt := buildSynthesisPrompt(synthPreamble, members) +
 			"Synthesise the above responses into a single comprehensive answer. " +
 			"Incorporate the strongest points from each perspective. " +

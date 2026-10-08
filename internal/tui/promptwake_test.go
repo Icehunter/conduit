@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -92,16 +94,81 @@ func TestAgentDone_TitleResetDeferredToWake(t *testing.T) {
 		t.Errorf("running=%v cmd=%v deferred=%v, want the wake turn started and the deferral consumed", nm.running, cmd != nil, nm.titleClearDeferred)
 	}
 	nm.cancelTurn()
+}
 
-	// Without a wake the title reset is not lost.
-	m2 := idleModel()
-	m2.running = true
-	m2.turnID = 1
-	m2.wakePending = true
-	m2.titleClearDeferred = true
-	next2, cmd2 := m2.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	if next2.(Model).titleClearDeferred || cmd2 == nil {
-		t.Log("busy model keeps the deferral") // still running: nothing to flush
+// runCmdCapturingStdout runs cmd, unwrapping batches, and returns what the
+// commands wrote to stdout: the title commands emit an OSC 2 escape there.
+func runCmdCapturingStdout(t *testing.T, cmd tea.Cmd) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	restored := false
+	restore := func() {
+		if !restored {
+			os.Stdout = orig
+			restored = true
+		}
+	}
+	t.Cleanup(restore)
+	var run func(tea.Cmd)
+	run = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		if batch, ok := c().(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				run(sub)
+			}
+		}
+	}
+	run(cmd)
+	restore()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// When the wake cannot start, the title reset the finished turn deferred must
+// still be emitted, and the deferral consumed.
+func TestUpdate_FlushesDeferredTitleResetWhenWakeCannotStart(t *testing.T) {
+	m, lp := wakeModel(t) // nothing queued: startInjectedTurn returns no command
+	if lp.HasInjected() {
+		t.Fatal("setup: loop has queued messages")
+	}
+	m.wakePending = true
+	m.titleClearDeferred = true
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	nm := next.(Model)
+	if nm.running || nm.titleClearDeferred || nm.wakePending {
+		t.Errorf("running=%v deferred=%v pending=%v, want all cleared", nm.running, nm.titleClearDeferred, nm.wakePending)
+	}
+	if got, want := runCmdCapturingStdout(t, cmd), "\x1b]2;conduit\x07"; !strings.Contains(got, want) {
+		t.Errorf("output = %q, want the title reset %q", got, want)
+	}
+}
+
+// A model still busy keeps the deferral for the Update that finds it idle.
+func TestUpdate_BusyModelKeepsDeferredTitleReset(t *testing.T) {
+	m, _ := wakeModel(t)
+	m.running = true
+	m.turnID = 1
+	m.wakePending = true
+	m.titleClearDeferred = true
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if !next.(Model).titleClearDeferred || !next.(Model).wakePending {
+		t.Error("busy model dropped the deferral")
+	}
+	if got := runCmdCapturingStdout(t, cmd); strings.Contains(got, "\x1b]2;") {
+		t.Errorf("output = %q, want no title write while busy", got)
 	}
 }
 

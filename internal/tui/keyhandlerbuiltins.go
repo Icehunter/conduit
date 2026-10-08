@@ -598,12 +598,18 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 
 		// Council and local MCP prompts bypass the agent loop, so their
 		// UserPromptSubmit hooks run here, before anything is sent. The input
-		// stays as typed until the verdict arrives and the submit is replayed.
-		if routeScreened := usingMCPProvider || (m.permissionMode == permissions.ModeCouncil && !isCouncilTrivial(text)); routeScreened && !isAutoPrompt && m.promptHooksActive() {
+		// stays as typed until the verdict arrives and the submit is replayed,
+		// so a block leaves the text and its attachments where they were.
+		// Triviality is judged on what was typed: a hook's rewrite must not
+		// route the replayed Enter differently from the one that was screened.
+		councilTrivial := isCouncilTrivial(text)
+		var hookContext string
+		if routeScreened := usingMCPProvider || (m.permissionMode == permissions.ModeCouncil && !councilTrivial); routeScreened && !isAutoPrompt && m.promptHooksActive() {
 			expanded := m.expandPastePlaceholders(text)
 			if sp := m.screened; sp != nil && sp.raw == expanded {
 				m.screened = nil
 				text = sp.text
+				hookContext = sp.hookContext
 			} else {
 				m.screened = nil
 				if m.screening {
@@ -636,11 +642,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// members directly. The synthesis becomes the assistant response.
 		// Trivial inputs (greetings, single-word acks) fall through to the
 		// normal agent loop to avoid unnecessary latency and cost.
-		if m.permissionMode == permissions.ModeCouncil && !usingMCPProvider && !isCouncilTrivial(text) {
-			m.history = append(m.history, api.Message{
-				Role:    "user",
-				Content: []api.ContentBlock{{Type: "text", Text: m.expandPastePlaceholders(text)}},
-			})
+		if m.permissionMode == permissions.ModeCouncil && !usingMCPProvider && !councilTrivial {
+			councilContent := []api.ContentBlock{{Type: "text", Text: m.expandPastePlaceholders(text)}}
+			if hookContext != "" {
+				councilContent = append(councilContent, api.ContentBlock{Type: "text", Text: hookContext})
+			}
+			m.history = append(m.history, api.Message{Role: "user", Content: councilContent})
 			m.running = true
 			m.cancelled = false
 			m.streaming = ""
@@ -649,7 +656,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.turnStarted = time.Now()
 			m.refreshViewport()
 			m.vp.GotoBottom()
-			return m, func() tea.Msg { return councilChatMsg{question: text} }, true
+			return m, func() tea.Msg { return councilChatMsg{question: text, hookContext: hookContext} }, true
 		}
 		if usingMCPProvider {
 			apiText := m.expandPastePlaceholders(text)
@@ -657,6 +664,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.pendingImages = nil
 			m.pendingPDFs = nil
 			userContent := m.userTextContent(apiText)
+			if hookContext != "" {
+				userContent = append(userContent, api.ContentBlock{Type: "text", Text: hookContext})
+			}
 			m.history = append(m.history, api.Message{
 				Role:    "user",
 				Content: userContent,

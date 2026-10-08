@@ -1,8 +1,8 @@
 {
-  "extracted_at": "2026-10-08T01:00:24.722Z",
-  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.293",
-  "binary_version": "2.1.293",
-  "version": "2.1.293",
+  "extracted_at": "2026-10-08T05:32:13.336Z",
+  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.294",
+  "binary_version": "2.1.294",
+  "version": "2.1.294",
   "cch": "<<bun-macro>>",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   "oauth_beta_header": "oauth-2025-04-20",
@@ -90,5 +90,5 @@
   ],
   "discovered_headers": [],
   "cch_note": "Per-request native substitution — not reproducible from the decoded bundle; source literal is 00000 (Vertex value). API accepts 00000 from conduit (see COMPATIBILITY.md).",
-  "billing_template": "x-anthropic-billing-header: cc_version=2.1.293.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.293\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
+  "billing_template": "x-anthropic-billing-header: cc_version=2.1.294.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.294\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
 }

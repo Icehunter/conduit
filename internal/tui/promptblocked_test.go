@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/attach"
@@ -276,4 +278,129 @@ func TestEnter_ScreensPromptsThatBypassTheLoop(t *testing.T) {
 			t.Fatalf("msg = %+v, want the rewritten text", msg)
 		}
 	})
+}
+
+// A council or MCP prompt stays in the input, attachments included, while its
+// hooks run; a block must leave all of it for editing.
+func TestEnter_BlockedCouncilPromptKeepsAttachments(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hook command runner uses sh")
+	}
+	m := idleModel()
+	m.cfg.Loop = hookedLoop("cat >/dev/null; echo no >&2; exit 2")
+	m.permissionMode = permissions.ModeCouncil
+	m.input.SetValue("should we use redis for the session cache")
+	m.pendingImages = []*attach.Image{{Data: "AAAA", MediaType: "image/png"}}
+	m.pendingPDFs = []*attach.PDF{{Data: "BBBB", MediaType: "application/pdf"}}
+
+	m2, cmd, handled := m.handleKeyBuiltins(keyPress("enter"))
+	if !handled || cmd == nil {
+		t.Fatalf("handled=%v cmd=%v, want a screening command", handled, cmd != nil)
+	}
+	m3, _ := m2.handlePromptScreened(cmd().(promptScreenedMsg))
+	if m3.input.Value() != "should we use redis for the session cache" || len(m3.pendingImages) != 1 || len(m3.pendingPDFs) != 1 {
+		t.Errorf("input=%q images=%d pdfs=%d, want the prompt and both attachments kept", m3.input.Value(), len(m3.pendingImages), len(m3.pendingPDFs))
+	}
+	if m3.running || len(m3.history) != 0 {
+		t.Errorf("running=%v history=%d, want nothing sent", m3.running, len(m3.history))
+	}
+}
+
+// additionalContext reaches the council and the MCP provider as a
+// system-reminder block, as it does on the main loop.
+func TestEnter_ScreenedRoutesCarryHookContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hook command runner uses sh")
+	}
+	const hook = `cat >/dev/null; printf '{"hookSpecificOutput":{"additionalContext":"use the staging db"}}'`
+	const reminder = "<system-reminder>\nUserPromptSubmit hook additional context: use the staging db\n</system-reminder>"
+
+	screen := func(t *testing.T, m Model) (Model, tea.Cmd) {
+		t.Helper()
+		m.cfg.Loop = hookedLoop(hook)
+		m2, cmd, _ := m.handleKeyBuiltins(keyPress("enter"))
+		m3, replay := m2.handlePromptScreened(cmd().(promptScreenedMsg))
+		if m3.screened == nil || replay == nil {
+			t.Fatalf("screened=%+v, want an accepted prompt", m3.screened)
+		}
+		m4, cmd, _ := m3.handleKeyBuiltins(keyPress("enter"))
+		return m4, cmd
+	}
+	lastBlocks := func(t *testing.T, m Model) []api.ContentBlock {
+		t.Helper()
+		if len(m.history) == 0 {
+			t.Fatal("history is empty")
+		}
+		return m.history[len(m.history)-1].Content
+	}
+
+	t.Run("council", func(t *testing.T) {
+		m := idleModel()
+		m.permissionMode = permissions.ModeCouncil
+		m.input.SetValue("should we use redis for the session cache")
+		m4, cmd := screen(t, m)
+		msg, ok := cmd().(councilChatMsg)
+		if !ok || msg.question != "should we use redis for the session cache" || msg.hookContext != reminder {
+			t.Fatalf("msg = %+v, want the clean question and the hook context apart", msg)
+		}
+		blocks := lastBlocks(t, m4)
+		if len(blocks) != 2 || blocks[1].Text != reminder {
+			t.Errorf("history blocks = %+v, want the reminder as a second block", blocks)
+		}
+	})
+	t.Run("mcp provider", func(t *testing.T) {
+		m := idleModel()
+		m.localMode = true
+		m.localModeServer = "local-router"
+		m.input.SetValue("summarise the diff")
+		m4, _ := screen(t, m)
+		blocks := lastBlocks(t, m4)
+		if len(blocks) == 0 || blocks[len(blocks)-1].Text != reminder {
+			t.Fatalf("history blocks = %+v, want the reminder last", blocks)
+		}
+		if prompt := localChatPromptFromContent(blocks, "m"); !strings.Contains(prompt, "summarise the diff") || !strings.Contains(prompt, "use the staging db") {
+			t.Errorf("local prompt = %q, want the hook context sent to the provider", prompt)
+		}
+	})
+}
+
+// Members get the hook context; the question that is persisted does not.
+func TestCouncilChatPrompts_HookContextKeptOutOfQuestion(t *testing.T) {
+	const q, ctx = "should we use redis", "<system-reminder>staging db</system-reminder>"
+	tests := []struct {
+		name string
+		got  string
+	}{
+		{"propose", councilChatProposePrompt("", q, ctx)},
+		{"critique", councilChatCritiquePrompt("", q, ctx, "debate")},
+		{"synthesis", councilChatSynthPreamble(q, ctx)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(tt.got, ctx) || !strings.Contains(tt.got, q) {
+				t.Errorf("prompt = %q, want question and context", tt.got)
+			}
+			if strings.Contains(tt.got, fmt.Sprintf("%q", q+"\n\n"+ctx)) {
+				t.Errorf("prompt = %q, context leaked inside the quoted question", tt.got)
+			}
+		})
+	}
+	if got := councilChatProposePrompt("", q, ""); strings.Contains(got, "system-reminder") {
+		t.Errorf("no context should add nothing: %q", got)
+	}
+}
+
+// A hook rewrite that turns a real question into a trivial one must still send
+// it to the council with its context, and not screen it a second time.
+func TestEnter_CouncilTrivialRewriteStillRoutesToCouncil(t *testing.T) {
+	m := idleModel()
+	m.permissionMode = permissions.ModeCouncil
+	m.input.SetValue("should we use redis for the session cache")
+	m.screened = &screenedPrompt{raw: m.input.Value(), text: "ok", hookContext: "<system-reminder>ctx</system-reminder>"}
+	m.cfg.Loop = hookedLoop("exit 2") // would block if screened again
+	m2, cmd, _ := m.handleKeyBuiltins(keyPress("enter"))
+	msg, ok := cmd().(councilChatMsg)
+	if !ok || msg.question != "ok" || msg.hookContext == "" || m2.screening {
+		t.Errorf("msg = %#v screening=%v, want a council chat with its context", msg, m2.screening)
+	}
 }

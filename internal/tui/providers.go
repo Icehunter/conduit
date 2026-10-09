@@ -135,6 +135,25 @@ func systemOverlayBlocks(styleName, stylePrompt string, mode permissions.Mode) [
 	return blocks
 }
 
+// implementRouteBlock tells the agent where implementation work goes when the
+// implement role names an MCP provider. That provider never runs the agent
+// loop (see currentProviderRole), so without this the agent cannot tell the
+// role is configured and writes the code itself.
+func (m Model) implementRouteBlock() (api.SystemBlock, bool) {
+	p, ok := m.providerForRole(settings.RoleImplement)
+	if !ok || p.Kind != settings.ProviderKindMCP {
+		return api.SystemBlock{}, false
+	}
+	target := p.Server
+	if p.Model != "" {
+		target = p.Model + " on " + p.Server
+	}
+	return api.SystemBlock{Type: "text", Text: "# Implement role\n\n" +
+		"The implement role is set to " + target + ". Draft code changes through the LocalImplement tool, " +
+		"then review and apply the draft yourself. Write code directly only when the change is too small to " +
+		"be worth a draft or the user asks you to."}, true
+}
+
 // applySystemOverlay installs the system overlay for the current permission
 // mode and output style. It runs synchronously (a mutex-guarded assignment) so
 // rapid mode toggles apply in order. Council mode appends a directive telling
@@ -144,7 +163,11 @@ func (m Model) applySystemOverlay() {
 	if m.cfg.Loop == nil {
 		return
 	}
-	m.cfg.Loop.SetSystemOverlay(systemOverlayBlocks(m.outputStyleName, m.outputStylePrompt, m.permissionMode))
+	blocks := systemOverlayBlocks(m.outputStyleName, m.outputStylePrompt, m.permissionMode)
+	if block, ok := m.implementRouteBlock(); ok {
+		blocks = append(blocks, block)
+	}
+	m.cfg.Loop.SetSystemOverlay(blocks)
 	// Children inherit only the mode directive, never the output style.
 	m.cfg.Loop.SetModeDirective(systemOverlayBlocks("", "", m.permissionMode))
 }
@@ -180,6 +203,7 @@ func (m *Model) applyEffectiveProviderForMode() {
 			} else {
 				m.cfg.Loop.SetClient(client)
 				m.cfg.Loop.SetModel(provider.Model)
+				m.modelName = provider.Model
 				m.cfg.Loop.SetContextWindow(provider.ContextWindow)
 				m.localMode = false
 				m.localModeServer = ""
@@ -228,6 +252,7 @@ func (m *Model) applyEffectiveProviderForMode() {
 			m.cfg.Loop.SetClient(m.cfg.APIClient)
 		}
 		m.cfg.Loop.SetModel(provider.Model)
+		m.modelName = provider.Model
 		m.cfg.Loop.SetContextWindow(provider.ContextWindow)
 		// Leaving MCP/local mode — restore direct API routing.
 		if m.localMode {
@@ -255,6 +280,7 @@ func (m *Model) applyEffectiveProviderForMode() {
 		}
 		m.cfg.Loop.SetClient(client)
 		m.cfg.Loop.SetModel(provider.Model)
+		m.modelName = provider.Model
 		m.cfg.Loop.SetContextWindow(provider.ContextWindow)
 		if m.localMode {
 			m.localMode = false
@@ -274,7 +300,9 @@ func (m Model) currentProviderRole() string {
 		return settings.RolePlanning
 	case permissions.ModeAcceptEdits, permissions.ModeBypassPermissions:
 		// Use the dedicated implement role if configured; fall back to main.
-		if _, ok := m.providerForRole(settings.RoleImplement); ok {
+		// An MCP provider cannot run the agent loop: it is reached through
+		// local_implement, so the agent stays on main.
+		if p, ok := m.providerForRole(settings.RoleImplement); ok && p.Kind != settings.ProviderKindMCP {
 			return settings.RoleImplement
 		}
 		return settings.RoleMain

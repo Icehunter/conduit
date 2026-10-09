@@ -237,3 +237,15 @@ func TestRunSubAgentTyped_IsolatedCwdFromContext(t *testing.T) {
 		t.Errorf("child system should mention the worktree, got %q", reqs)
 	}
 }
+
+func TestLoop_AnnounceModelNamesLiveModel(t *testing.T) {
+	l := NewLoop(nil, nil, LoopConfig{Model: "m1", AnnounceModel: true, System: []api.SystemBlock{{Type: "text", Text: "base"}}})
+	l.SetModel("m2")
+	l.mu.RLock()
+	system := l.composeSystemLocked()
+	l.mu.RUnlock()
+	last := system[len(system)-1].Text
+	if len(system) != 2 || !strings.Contains(last, "model m2.") {
+		t.Fatalf("system = %+v", system)
+	}
+}

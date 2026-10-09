@@ -183,6 +183,9 @@ type LoopConfig struct {
 	Model     string
 	MaxTokens int
 	System    []api.SystemBlock
+	// AnnounceModel appends a system block naming the live model to every
+	// request, so the model reports the ID the provider switch actually chose.
+	AnnounceModel bool
 	// RebuildSystem regenerates System from current on-disk state (memory,
 	// skills, CLAUDE.md). Optional; when nil the blocks never change.
 	//

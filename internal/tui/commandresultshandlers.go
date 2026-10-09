@@ -728,9 +728,7 @@ func (m Model) applyOutputStyle(res commands.Result) (Model, tea.Cmd) {
 	// Max-subscription wire fingerprint requires system[0..3] to be
 	// billing/identity/agent/output-guidance in exact order, and the loop
 	// rebuilds the base itself every Run.
-	if m.cfg.Loop != nil {
-		m.cfg.Loop.SetSystemOverlay(systemOverlayBlocks(res.Model, res.Text, m.permissionMode))
-	}
+	m.applySystemOverlay()
 	// Persist to settings so the style survives restarts.
 	_ = settings.SaveOutputStyle(res.Model)
 	msg := "Output style cleared."

@@ -228,7 +228,7 @@ func Run(version, modelName string, loop *agent.Loop, extras ...any) error {
 				}
 				return "local:" + server
 			}
-			return internalmodel.Resolve()
+			return loop.Model()
 		},
 		func(name string) { loop.SetModel(name) },
 		configuredAccountProviders,

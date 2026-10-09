@@ -60,12 +60,17 @@ func (rs *runState) requestMaxTokens(configured int) int {
 	return configured
 }
 
-// composeSystemLocked returns the base system blocks followed by the overlay.
-// The caller holds l.mu.
+// composeSystemLocked returns the base system blocks followed by the overlay
+// and a line naming the model the request goes to. The model line is last so a
+// provider switch does not invalidate the cached prefix. The caller holds l.mu.
 func (l *Loop) composeSystemLocked() []api.SystemBlock {
 	system := l.cfg.System
 	if len(l.systemOverlay) > 0 {
 		system = append(append([]api.SystemBlock(nil), system...), l.systemOverlay...)
+	}
+	if l.cfg.AnnounceModel && l.cfg.Model != "" {
+		system = append(append([]api.SystemBlock(nil), system...), api.SystemBlock{Type: "text", Text: "# Model\n\nThis conversation is served by model " +
+			l.cfg.Model + ". Give that ID if asked which model you are."})
 	}
 	return system
 }

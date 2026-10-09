@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/icehunter/conduit/internal/agent"
@@ -64,5 +65,42 @@ func TestReviewRoleIsSelectable(t *testing.T) {
 	}
 	if providerRolePrompt(settings.RoleReview) == providerRolePrompt("") {
 		t.Fatal("missing review prompt")
+	}
+}
+
+func TestMCPImplementRoleDoesNotReplaceAgent(t *testing.T) {
+	m := Model{providers: map[string]settings.ActiveProviderSettings{"local": {Kind: settings.ProviderKindMCP, Server: "coder"}}, roles: map[string]string{settings.RoleImplement: "local"}}
+	for _, mode := range []permissions.Mode{permissions.ModeAcceptEdits, permissions.ModeBypassPermissions} {
+		m.permissionMode = mode
+		if got := m.currentProviderRole(); got != settings.RoleMain {
+			t.Fatalf("mode=%s role=%s", mode, got)
+		}
+	}
+}
+
+func TestProviderSwitchUpdatesModelName(t *testing.T) {
+	m := Model{modelName: "claude-fable-5", cfg: Config{VerifiedCoding: true, Loop: agent.NewLoop(nil, nil, agent.LoopConfig{Model: "claude-fable-5"}), NewProviderAPIClient: func(settings.ActiveProviderSettings) (*api.Client, error) {
+		return &api.Client{}, nil
+	}}, providers: map[string]settings.ActiveProviderSettings{
+		"main": {Kind: settings.ProviderKindOpenAICompatible, Model: "gpt-main", BaseURL: "http://localhost:8000/v1"},
+	}, roles: map[string]string{settings.RoleMain: "main"}}
+	m.applyEffectiveProviderForMode()
+	if m.cfg.Loop.Model() != "gpt-main" || m.modelName != "gpt-main" {
+		t.Fatalf("loop=%s modelName=%s", m.cfg.Loop.Model(), m.modelName)
+	}
+}
+
+func TestImplementRouteBlockOnlyForMCP(t *testing.T) {
+	m := Model{cfg: Config{VerifiedCoding: true}, providers: map[string]settings.ActiveProviderSettings{
+		"local": {Kind: settings.ProviderKindMCP, Server: "local-coder", Model: "qwen"},
+		"gpt":   {Kind: settings.ProviderKindOpenAICompatible, Model: "gpt-main", BaseURL: "http://localhost:8000/v1"},
+	}, roles: map[string]string{settings.RoleImplement: "local"}}
+	block, ok := m.implementRouteBlock()
+	if !ok || !strings.Contains(block.Text, "qwen on local-coder") || !strings.Contains(block.Text, "LocalImplement") {
+		t.Fatalf("ok=%v block=%q", ok, block.Text)
+	}
+	m.roles[settings.RoleImplement] = "gpt"
+	if _, ok := m.implementRouteBlock(); ok {
+		t.Fatal("non-MCP implement provider produced a route block")
 	}
 }

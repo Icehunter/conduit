@@ -118,8 +118,6 @@ func runPrint(args []string) error {
 			return err
 		}
 	}
-	reg := app.BuildRegistry(c, manager, lsp.NewManager(), nil, nil)
-
 	// Non-interactive mode: create a gate with default mode and no trusted roots.
 	// AskPermission auto-denies anything that is not on an allow list — there is
 	// no user present to respond to a prompt.
@@ -127,6 +125,21 @@ func runPrint(args []string) error {
 	if verifiedCoding {
 		gate = permissions.New(cwd, nil, permissions.ModeDefault, merged.Allow, merged.Deny, merged.Ask)
 	}
+
+	implGuard := newImplementGuard(cwd, gate, verifiedCoding)
+	// LocalImplement writes through the same guard and permission gate as the
+	// REPL. Print mode has no prompt, so a write that needs approval is refused.
+	reg := app.BuildRegistry(c, manager, lsp.NewManager(), &app.RegistryOpts{
+		ImplGuard: implGuard,
+		Gate:      gate,
+	}, func() *settings.ActiveProviderSettings {
+		latest, err := settings.Load(cwd)
+		if err != nil {
+			return nil
+		}
+		provider, _ := latest.ProviderForRole(settings.RoleImplement)
+		return provider
+	})
 
 	// Print mode runs no tool hooks, but a UserPromptSubmit hook still gates
 	// the prompt. Project-local hooks need the workspace to be trusted.
@@ -138,6 +151,7 @@ func runPrint(args []string) error {
 	}
 
 	lp := agent.NewLoop(c, reg, agent.LoopConfig{
+		ImplGuard: implGuard,
 		Model:     modelName,
 		MaxTokens: internalmodel.MaxTokens,
 		System:    agent.BuildSystemBlocks(mem, claudeMdPrompt, memdir.Path(cwd), agentEntries, skillEntries...),
@@ -156,7 +170,7 @@ func runPrint(args []string) error {
 		BackgroundModel:     func() string { return compact.DefaultModel },
 		IsOAuthSubscription: auth.InferAccountKind(p) == auth.AccountKindClaudeAI,
 	})
-	runtime, err := app.NewCodingRuntime(app.CodingOptions{Root: cwd, SessionID: sessionID, Settings: merged, Policies: &policies, Gate: gate, MCP: manager, Secure: store, Client: c, Model: modelName, WireVersion: Version, HasActiveWriters: codingHasActiveWriters})
+	runtime, err := app.NewCodingRuntime(app.CodingOptions{ImplGuard: implGuard, Root: cwd, SessionID: sessionID, Settings: merged, Policies: &policies, Gate: gate, MCP: manager, Secure: store, Client: c, Model: modelName, WireVersion: Version, HasActiveWriters: codingHasActiveWriters})
 	if err != nil {
 		return err
 	}

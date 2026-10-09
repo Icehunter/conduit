@@ -23,6 +23,7 @@ import (
 	"github.com/icehunter/conduit/internal/coding"
 	"github.com/icehunter/conduit/internal/episodes"
 	"github.com/icehunter/conduit/internal/globalconfig"
+	"github.com/icehunter/conduit/internal/implguard"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/routing"
@@ -45,6 +46,9 @@ type CodingOptions struct {
 	Policies         *settings.CodingPolicies
 	CurrentRoot      func() string
 	HasActiveWriters func() bool
+	// ImplGuard is the session's implement-role guard; CodingTask records
+	// the files its implementer writes on it.
+	ImplGuard *implguard.Guard
 }
 
 type CodingRuntime struct {
@@ -283,6 +287,7 @@ func (r *CodingRuntime) Run(ctx context.Context, task coding.Task) (coding.Outco
 	provider.OnResponse = journal.response
 	run := coding.Runner{Root: r.opts.Root, MaxRepairAttempts: r.policies.DefinitionOfDone.MaxRepairAttempts, TotalTimeout: time.Duration(r.policies.DefinitionOfDone.TotalTimeoutSeconds) * time.Second, Generate: provider.Generate, Verify: r.verify, AuthorizeWrite: func(ctx context.Context, path string) error { return r.authorize(ctx, "Edit", path) }, Observe: journal.observe}
 	run.AuthorizeRead = func(ctx context.Context, path string) error { return r.authorize(ctx, "Read", path) }
+	run.OnWrite = func(path string) { r.opts.ImplGuard.Record(path) }
 	run.Snapshot = func(ctx context.Context) (string, error) { return verification.WorkspaceFingerprint(ctx, r.opts.Root) }
 	run.AuthorizeWrite = func(ctx context.Context, path string) error {
 		rel, err := filepath.Rel(r.opts.Root, path)

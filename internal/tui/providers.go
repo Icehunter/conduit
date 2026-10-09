@@ -149,9 +149,9 @@ func (m Model) implementRouteBlock() (api.SystemBlock, bool) {
 		target = p.Model + " on " + p.Server
 	}
 	return api.SystemBlock{Type: "text", Text: "# Implement role\n\n" +
-		"The implement role is set to " + target + ". Draft code changes through the LocalImplement tool, " +
-		"then review and apply the draft yourself. Write code directly only when the change is too small to " +
-		"be worth a draft or the user asks you to."}, true
+		"The implement role is set to " + target + ". Every code change goes through LocalImplement or CodingTask; " +
+		"they write the files. You may fix files the implementer already touched, but edit tools and file-writing " +
+		"Bash are blocked on any other file. There is no size exception."}, true
 }
 
 // applySystemOverlay installs the system overlay for the current permission

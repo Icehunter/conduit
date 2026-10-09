@@ -94,3 +94,45 @@ func TestReadSourcesRejectsSymlinksAndPolicy(t *testing.T) {
 		t.Fatal("accepted symlink")
 	}
 }
+
+func TestApplyDraftCheckedReportsWrittenPaths(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "main.go"), []byte("return false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := ReadSources(root, []string{"main.go", "new.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := `{"edits":[{"path":"main.go","old":"false","new":"true"},{"path":"new.go","old":"","new":"package x\n"}]}`
+	allow := func(context.Context, string) error { return nil }
+
+	var got []string
+	if _, _, err = ApplyDraftChecked(context.Background(), root, sources, draft, allow, func(p string) { got = append(got, p) }); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(root, "main.go"), filepath.Join(root, "new.go")}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("written = %v, want %v", got, want)
+	}
+}
+
+func TestApplyDraftCheckedDeniedWriteReportsNothing(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, err := ReadSources(root, []string{"new.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny := func(context.Context, string) error { return os.ErrPermission }
+	called := false
+	_, _, err = ApplyDraftChecked(context.Background(), root, sources, `{"edits":[{"path":"new.go","old":"","new":"package x\n"}]}`, deny, func(string) { called = true })
+	if err == nil || called {
+		t.Fatalf("err=%v called=%v, want denial without callback", err, called)
+	}
+}

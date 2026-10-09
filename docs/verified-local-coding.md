@@ -1,6 +1,6 @@
 # Verified local coding
 
-This optional Conduit extension keeps a cloud model in the planner role and sends bounded implementation tasks to the configured local implementer. `LocalImplement` still returns drafts. The new `CodingTask` tool owns application, verification, bounded repair and optional independent review.
+This optional Conduit extension keeps a cloud model in the planner role and sends bounded implementation tasks to the configured local implementer. `LocalImplement` applies changes itself (see below). The new `CodingTask` tool owns application, verification, bounded repair and optional independent review.
 
 ## Enable in one repository
 
@@ -38,6 +38,20 @@ conduit code --file internal/example/example.go "Implement this bounded change"
 ```
 
 `--file` repeats, includes new files, and is relative to the Git worktree root. Tasks accept at most 32 UTF-8 files, 64 KiB of initial source and a 16 KiB task prompt. The normal TUI and enabled `--print` path expose the same tool and completion enforcement. `code` exits nonzero for blocked/incomplete work.
+
+## LocalImplement and the implement guard
+
+`LocalImplement` no longer returns drafts. It takes a required `targets` list (1-20 repository-relative files to create or modify) and calls the local-router `local_implement` tool in apply mode: the server asks the model for edit blocks, writes only those files, and returns `[local-router] APPLIED: wrote N file(s) ...` plus the diff. Review the diff; you may fix only those target files afterward.
+
+Requirements: the local-router instance must advertise `targets` (it does so only when `writeRoots` is configured) and `root`. If it does not, the call fails with an explicit error; there is no draft fallback. Router errors (for example `writeRoots` missing) are returned verbatim. Each target is permission-checked as `Edit` on its absolute path before the server is called, so deny rules, protected paths and approval prompts apply as for `CodingTask`.
+
+When the implement provider differs from the provider the agent is running on (an MCP implement provider always does), the implement guard is active:
+
+- The main model may edit only files the implementer touched in this session: `LocalImplement` targets that were APPLIED and files written by `CodingTask`.
+- Bash commands that write files are denied.
+- The guard holds in every permission mode (including auto and accept-edits) and in sub-agents.
+
+When the implement provider is the one the agent runs on, or no implement role is configured, the guard is inactive.
 
 ## Completion contract
 

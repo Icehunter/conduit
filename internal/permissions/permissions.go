@@ -170,10 +170,10 @@ func sanitizeCWD(p string) string {
 	).Replace(p)
 }
 
-// isImplicitlyTrustedPath returns true for file operations on conduit's own
+// IsImplicitlyTrustedPath returns true for file operations on conduit's own
 // per-project storage directories. These paths are picked by conduit itself
 // (never by the model), so prompting for them is meaningless.
-func isImplicitlyTrustedPath(toolName, toolInput, cwd string) bool {
+func IsImplicitlyTrustedPath(toolName, toolInput, cwd string) bool {
 	switch toolName {
 	case "Read", "Write", "Edit", "NotebookEdit":
 	default:
@@ -456,7 +456,7 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 	}
 
 	// Implicit trust: conduit's own per-project storage never prompts.
-	if isImplicitlyTrustedPath(toolName, toolInput, cwd) {
+	if IsImplicitlyTrustedPath(toolName, toolInput, cwd) {
 		return DecisionAllow
 	}
 
@@ -479,10 +479,12 @@ func (g *Gate) Check(toolName, toolInput string) Decision {
 		if toolIsReadOnly(toolName, toolInput) {
 			return DecisionAllow
 		}
-		if mode == ModeCouncil {
-			return DecisionDeny
+		// Sub-agent children are capped at plan mode (Gate.Clone/maxMode), so
+		// spawning one cannot escape the read-only boundary.
+		if mode == ModePlan && toolName == "Task" {
+			return DecisionAllow
 		}
-		return DecisionAsk
+		return DecisionDeny
 	}
 
 	// Allow lists. Session-level ("always allow" prompts) and settings rules are

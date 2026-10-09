@@ -181,7 +181,13 @@ func TestSubAgent_ModeDirectiveInheritance(t *testing.T) {
 				return err
 			},
 			[]string{"base"}},
-		{"typed child switched to bypass", permissions.ModePlan, PlanModeDirective,
+		{"typed child asks for bypass but is clamped to plan", permissions.ModePlan, PlanModeDirective,
+			func(l *Loop) error {
+				_, err := l.RunSubAgentTyped(context.Background(), "go", SubAgentSpec{Mode: permissions.ModeBypassPermissions})
+				return err
+			},
+			[]string{"base", PlanModeDirective}},
+		{"typed child switched to bypass under a default parent", permissions.ModeDefault, PlanModeDirective,
 			func(l *Loop) error {
 				_, err := l.RunSubAgentTyped(context.Background(), "go", SubAgentSpec{Mode: permissions.ModeBypassPermissions})
 				return err

@@ -171,10 +171,31 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			}
 		}
 
+		// --- Implement-role guard ---
+		// When another provider owns code changes, the main model may not
+		// write files the implementer has not touched. Checked ahead of the
+		// gate so bypassPermissions cannot skip it.
+		if msg := l.implGuardDenial(t, block.Name, task.rawInput, block.Input, loopCwd); msg != "" {
+			task.denied = true
+			task.denyMsg = msg
+			tasks = append(tasks, task)
+			continue
+		}
+
 		// --- Permission gate check ---
 		// Read-only tools are auto-approved in default and plan modes — they cannot
 		// modify state, so prompting for every FileRead/Glob/Grep call is noise.
 		// A hook "ask" prompts even for a call the rules would let through.
+		//
+		// Plan and council modes never prompt: a hook "ask" there is denied
+		// outright instead of upgrading the call to a prompt.
+		planLike := l.cfg.Gate != nil && (l.cfg.Gate.Mode() == permissions.ModePlan || l.cfg.Gate.Mode() == permissions.ModeCouncil)
+		if hookAsk && planLike {
+			task.denied = true
+			task.denyMsg = planModeDenyMsg(block.Name)
+			tasks = append(tasks, task)
+			continue
+		}
 		readOnly := t.IsReadOnly(rawInput) && !hookAsk
 		if l.cfg.Gate != nil && !readOnly {
 			decision := l.cfg.Gate.Check(block.Name, permInput)
@@ -185,6 +206,9 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 			case permissions.DecisionDeny:
 				task.denied = true
 				task.denyMsg = "Tool denied by permission rules"
+				if planLike {
+					task.denyMsg = planModeDenyMsg(block.Name)
+				}
 				tasks = append(tasks, task)
 				continue
 			case permissions.DecisionAsk:
@@ -235,15 +259,6 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 						case SubAgentPermAllowOnce:
 							// Allow just this call.
 						}
-					case l.cfg.Gate.Mode() == permissions.ModePlan:
-						// No interactive prompt anywhere in the ancestor chain.
-						// In plan mode writes must not proceed silently — deny
-						// so the model reports it cannot write rather than
-						// bypassing user intent.
-						task.denied = true
-						task.denyMsg = fmt.Sprintf("%s denied: writes are not permitted in plan mode", block.Name)
-						tasks = append(tasks, task)
-						continue
 					default:
 						// No interactive session anywhere (e.g. headless/print
 						// mode, or a background reviewer). Allow writes without
@@ -387,6 +402,11 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		})
 	}
 	return results, durations, stopTurn, nil
+}
+
+// planModeDenyMsg is the denial shown when plan or council mode refuses a call.
+func planModeDenyMsg(name string) string {
+	return name + " not run: plan mode is read-only. Use read-only tools or commands, or call ExitPlanMode."
 }
 
 // toolPermissionInput extracts the meaningful string to match against permission

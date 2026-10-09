@@ -16,6 +16,7 @@ import (
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/coding"
 	"github.com/icehunter/conduit/internal/episodes"
+	"github.com/icehunter/conduit/internal/implguard"
 	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/secure"
 	"github.com/icehunter/conduit/internal/settings"
@@ -151,5 +152,20 @@ func TestCodingRuntimeDisabledHasNoSideEffects(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal(fmt.Sprintf("disabled runtime created state: %v", err))
+	}
+}
+
+func TestCodingRuntimeRecordsWrittenFilesOnImplGuard(t *testing.T) {
+	rt, _, root := codingFixture(t, false)
+	guard := implguard.New(func() (bool, string) { return true, "local" })
+	rt.opts.ImplGuard = guard
+	if _, err := rt.Run(context.Background(), coding.Task{Prompt: "make answer correct", Files: []string{"answer.txt"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !guard.Allowed(filepath.Join(root, "answer.txt")) {
+		t.Fatalf("answer.txt not recorded: %v", guard.Touched())
+	}
+	if guard.Allowed(filepath.Join(root, "expected.txt")) {
+		t.Fatal("untouched file recorded")
 	}
 }

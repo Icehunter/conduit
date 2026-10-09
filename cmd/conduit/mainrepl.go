@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -462,7 +463,19 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build interactive-tool stubs with nil callbacks; the TUI wires the real
 	// callbacks after prog.Start() via the same send-to-channel pattern used
 	// by SetAskPermission. Nil callbacks produce graceful error results.
+	implGuard := newImplementGuard(cwd, gate, codingEnabled)
+	// implAsk is bound to the loop's permission prompt once the loop exists;
+	// LocalImplement reads it at call time.
+	var implAsk func(context.Context, string, string) (bool, error)
 	rOpts := &app.RegistryOpts{
+		ImplGuard: implGuard,
+		Gate:      gate,
+		AskPermission: func(ctx context.Context, name, input string) (bool, error) {
+			if implAsk == nil {
+				return false, errors.New("approval unavailable")
+			}
+			return implAsk(ctx, name, input)
+		},
 		EnterPlan: &planmodetool.EnterPlanMode{},
 		ExitPlan:  &planmodetool.ExitPlanMode{},
 		AskUser:   &askusertool.AskUserQuestion{},
@@ -572,6 +585,7 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	var lp *agent.Loop
 	lp = agent.NewLoop(c, reg, agent.LoopConfig{
+		ImplGuard:     implGuard,
 		Model:         modelName,
 		MaxTokens:     internalmodel.MaxTokens,
 		System:        systemBlocks,
@@ -807,8 +821,10 @@ func runREPL(continueMode bool, resumeID string) error {
 		},
 		IsOAuthSubscription: auth.InferAccountKind(tok) == auth.AccountKindClaudeAI,
 	})
+	implAsk = lp.RequestToolPermission
 	codingRuntime, codingErr := app.NewCodingRuntime(app.CodingOptions{
-		Root: cwd, SessionID: sessionID, WireVersion: Version, Model: modelName,
+		ImplGuard: implGuard,
+		Root:      cwd, SessionID: sessionID, WireVersion: Version, Model: modelName,
 		Settings: s, Policies: &codingPolicies, Gate: gate, MCP: mcpManager,
 		Secure: secure.NewDefault(), Client: c, AskPermission: lp.RequestToolPermission,
 		CurrentRoot:      func() string { root, _ := os.Getwd(); return root },

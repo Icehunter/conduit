@@ -119,13 +119,15 @@ func ReadSources(root string, files []string) ([]Source, error) {
 // On a later I/O conflict it reports the partial application; it never restores
 // over potentially concurrent user edits. The caller must not mark it verified.
 func ApplyDraft(ctx context.Context, root string, sources []Source, response string, authorize func(context.Context, string) error) (string, error) {
-	patch, _, err := ApplyDraftChecked(ctx, root, sources, response, authorize)
+	patch, _, err := ApplyDraftChecked(ctx, root, sources, response, authorize, nil)
 	return patch, err
 }
 
 // ApplyDraftChecked returns the intended postimage derived from validated edits,
 // not a later disk read that could accidentally attribute another writer's edit.
-func ApplyDraftChecked(ctx context.Context, root string, sources []Source, response string, authorize func(context.Context, string) error) (string, []Source, error) {
+// written, when non-nil, is called with the absolute path of each file after it
+// is written to disk.
+func ApplyDraftChecked(ctx context.Context, root string, sources []Source, response string, authorize func(context.Context, string) error, written func(path string)) (string, []Source, error) {
 	if authorize == nil {
 		return "", nil, fmt.Errorf("%w: authorization is required", ErrWriteDenied)
 	}
@@ -228,6 +230,9 @@ func ApplyDraftChecked(ctx context.Context, root string, sources []Source, respo
 		}
 		if err := pendingedits.FlushOne(e); err != nil {
 			return patch.String(), nil, fmt.Errorf("%w: patch application incomplete: %w", ErrWorkspaceChanged, err)
+		}
+		if written != nil {
+			written(e.Path)
 		}
 	}
 	return patch.String(), intended, nil

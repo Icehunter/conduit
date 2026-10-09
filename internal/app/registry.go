@@ -1,16 +1,20 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/icehunter/conduit/internal/agent"
 	"github.com/icehunter/conduit/internal/api"
+	"github.com/icehunter/conduit/internal/implguard"
 	"github.com/icehunter/conduit/internal/kernel"
 	"github.com/icehunter/conduit/internal/lsp"
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/pendingedits"
+	"github.com/icehunter/conduit/internal/permissions"
 	"github.com/icehunter/conduit/internal/plugins"
 	"github.com/icehunter/conduit/internal/provider/codex"
 	"github.com/icehunter/conduit/internal/readtracker"
@@ -134,6 +138,15 @@ type RegistryOpts struct {
 	// variables persist across calls. Bash always uses subprocess-per-call.
 	KernelManager *kernel.Manager
 	SessionID     string
+
+	// ImplGuard is the session's implement-role guard. LocalImplement
+	// records the files it writes on it.
+	ImplGuard *implguard.Guard
+	// Gate and AskPermission authorize LocalImplement's per-file writes the
+	// same way CodingTask does. AskPermission is read at call time, so it may
+	// be wired after the registry is built; nil denies instead of asking.
+	Gate          *permissions.Gate
+	AskPermission func(ctx context.Context, toolName, toolInput string) (bool, error)
 }
 
 // BuildRegistry builds the tool registry, including MCP server tools. With a
@@ -229,7 +242,7 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		}
 	}
 	if mcpManager != nil {
-		followMCPTools(reg, mcpManager, implementProvider)
+		followMCPTools(reg, mcpManager, implementProvider, implementOptions(rOpts)...)
 	}
 	return reg
 }
@@ -240,9 +253,40 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 // change. The hook goes in before the first sync so no change can land
 // between them unseen. This makes reg the registry that follows mgr; it
 // replaces any change hook mgr already had.
-func followMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings) {
-	mgr.SetOnChange(func() { SyncMCPTools(reg, mgr, implementProvider) })
-	SyncMCPTools(reg, mgr, implementProvider)
+func followMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings, implOpts ...localimplementtool.Option) {
+	mgr.SetOnChange(func() { SyncMCPTools(reg, mgr, implementProvider, implOpts...) })
+	SyncMCPTools(reg, mgr, implementProvider, implOpts...)
+}
+
+// implementOptions wires LocalImplement to the session's guard and permission
+// gate. Protected paths and deny rules apply through Gate.Check("Edit", path).
+func implementOptions(rOpts *RegistryOpts) []localimplementtool.Option {
+	if rOpts == nil {
+		return nil
+	}
+	opts := []localimplementtool.Option{localimplementtool.WithGuard(rOpts.ImplGuard)}
+	if rOpts.Gate != nil {
+		opts = append(opts, localimplementtool.WithAuthorizer(func(ctx context.Context, path string) error {
+			switch rOpts.Gate.Check("Edit", path) {
+			case permissions.DecisionAllow:
+				return nil
+			case permissions.DecisionDeny:
+				return errors.New("Edit denied by permission policy")
+			}
+			if rOpts.AskPermission == nil {
+				return errors.New("Edit requires approval; unavailable in noninteractive mode")
+			}
+			ok, err := rOpts.AskPermission(ctx, "Edit", path)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("Edit permission declined")
+			}
+			return nil
+		}))
+	}
+	return opts
 }
 
 // mcpSyncMu serializes SyncMCPTools. Each call reads the manager while
@@ -260,7 +304,7 @@ var mcpSyncMu sync.Mutex
 // MCP tools are deferred behind ToolSearch, so their churn leaves the request's
 // tool list unchanged; the authenticate and Local* tools are always sent, and
 // adding or removing one changes the cached prompt prefix.
-func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings) {
+func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings, implOpts ...localimplementtool.Option) {
 	if reg == nil || mgr == nil {
 		return
 	}
@@ -282,7 +326,7 @@ func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func()
 		return localimplementtool.ResolveConfig(mgr, resolveImplementProvider(implementProvider))
 	}
 	if _, ok := resolveImplement(); ok {
-		want = append(want, localimplementtool.NewDynamic(mgr, resolveImplement))
+		want = append(want, localimplementtool.NewDynamic(mgr, resolveImplement, implOpts...))
 	}
 	resolveHelper := func() (localhelpertool.Config, bool) { return localhelpertool.ResolveConfig(mgr) }
 	if _, ok := resolveHelper(); ok {

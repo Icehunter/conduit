@@ -33,6 +33,7 @@ import (
 	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/healthcheck"
 	"github.com/icehunter/conduit/internal/hooks"
+	"github.com/icehunter/conduit/internal/implguard"
 	"github.com/icehunter/conduit/internal/microcompact"
 	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/permissions"
@@ -180,6 +181,10 @@ const (
 
 // LoopConfig controls the loop's behaviour.
 type LoopConfig struct {
+	// ImplGuard, when active, denies file-writing tool calls on files the
+	// implement-role provider has not touched. Shared by pointer with every
+	// child loop (LoopConfig is copied), so sub-agents are bound too.
+	ImplGuard *implguard.Guard
 	Model     string
 	MaxTokens int
 	System    []api.SystemBlock

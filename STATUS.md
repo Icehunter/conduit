@@ -101,6 +101,7 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | Council mode | ✅ | Parallel multi-model debate, synthesis, convergence detection, roles, voting |
 | Agent Teams (experimental) | ✅ | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` or `conduit.json` `agentTeams: true`; in-process goroutine teammates (divergence: no tmux/OS-process); lead+teammate multi-pane compositor layout; task store with Assignee/Dependencies + Claim/NextClaimable/auto-unblock; plan-approval handshake via PlanReply channel; shutdown-request/approve/reject protocol; lead inbox pump goroutines; live EventText streaming to TUI panes; `internal/team/`, `internal/agent/loopteammate.go` |
 | Plan mode / ExitPlanMode approval | ✅ | Scrollable modal; auto/accept-edits/live-review/default/chat options; "chat about this" (Discuss:true) yields the turn — agent stops and waits for user input |
+| Plan mode tool gating | ✅ | In plan mode non-read-only tools are auto-denied with no prompt; Task (sub-agents) is allowed (`internal/permissions/`) |
 | System overlay (output style, plan/council directive) | ✅ | `Loop.SetSystemOverlay` blocks are appended after the per-Run rebuilt base; child loops clear `RebuildSystem` and inherit the parent overlay, so typed sub-agent prompts and the plan directive survive |
 | Protected write paths | ✅ | Write/Edit/MultiEdit/NotebookEdit/HashEdit to `.git`, `.husky`, `.githooks`, shell rc files, `.vscode`/`.idea`, `.mcp.json`, `.claude.json`, `.config/git`, `.claude/{commands,agents,settings*}`, `.conduit/{conduit.json,mcp.json,commands,agents,settings*}` always Ask (Deny in plan/council), also through symlinks; hook approval and "always allow" do not bypass. acceptEdits auto-approves writes only inside cwd or trusted roots. Deny rules precede trust shortcuts. Config tool can no longer set permissions/env. AstGrep rewrite (any of its `paths`) and SkillManage create/update/promote targets are gated the same way. Gap: the prompt still offers "always allow" for protected paths (ignored) |
 | Diff-first review gate | ✅ | Hunk-level Myers diff; per-hunk approve/reject/note; `acceptEditsLive` mid-turn pause |
@@ -155,7 +156,8 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | LSPTool | ✅ | hover, definition, references, diagnostics, documentSymbol, workspaceSymbol, implementation, callHierarchy; `internal/tools/lsp/lsp_test.go` |
 | ToolSearchTool | ✅ | Live registry search |
 | SyntheticOutputTool | ✅ | Coordinator signalling |
-| LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation offload |
+| LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation. Apply mode: required `targets` (1-20 files), local-router writes them (needs `writeRoots`) and returns the diff; each target is gated as `Edit`; no draft fallback (`internal/tools/localimplementtool/`) |
+| Implement-role guard | ✅ | When the implement provider differs from the active one, the main model may Write/Edit only files recorded by LocalImplement (APPLIED) or CodingTask; file-writing Bash is denied; enforced in every permission mode and in sub-agents (`internal/implguard/`, `internal/shellsafe/writes.go`, `cmd/conduit/implguard.go`) |
 | RecordDecision | ✅ | Conduit-original; decision journal |
 | CCRRetrieve | ✅ | Conduit-original; retrieves content-addressed originals from the CCR store; supports offset/limit line-range and pattern grep; output re-truncated via `truncate.Apply` |
 

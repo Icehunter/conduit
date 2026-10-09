@@ -67,7 +67,9 @@ type Runner struct {
 	Review            func(context.Context, Request) (Review, error)
 	AuthorizeWrite    func(context.Context, string) error
 	AuthorizeRead     func(context.Context, string) error
-	Observe           func(Event) error
+	// OnWrite is called with the absolute path of each file written to disk.
+	OnWrite func(path string)
+	Observe func(Event) error
 }
 
 func (r *Runner) emit(e Event) error {
@@ -159,7 +161,7 @@ func (r *Runner) Run(ctx context.Context, task Task) (out Outcome, err error) {
 		if err = r.emit(Event{Kind: "response", Attempt: attempt, Draft: response, BaseDigest: baseDigest}); err != nil {
 			return out, err
 		}
-		_, intended, e := ApplyDraftChecked(ctx, r.Root, sources, response, r.AuthorizeWrite)
+		_, intended, e := ApplyDraftChecked(ctx, r.Root, sources, response, r.AuthorizeWrite, r.OnWrite)
 		if e != nil {
 			out.Feedback = e.Error()
 			if err = r.emit(Event{Kind: "application_failed", Attempt: attempt, Draft: response, Outcome: &out, BaseDigest: baseDigest}); err != nil {

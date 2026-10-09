@@ -292,12 +292,17 @@ func TestGate_ModeSemantics(t *testing.T) {
 		{"acceptEdits/Bash deny", ModeAcceptEdits, "Bash", "rm -rf /", DecisionAsk},
 		{"acceptEdits/Edit allow", ModeAcceptEdits, "Edit", "/any/file", DecisionAllow},
 		{"acceptEdits/Write allow", ModeAcceptEdits, "Write", "/any/file", DecisionAllow},
-		// plan — read-only tools allow, mutating tools ask (CC parity: prompt, don't hard-deny).
+		// plan — read-only tools allow, everything else is denied without prompting.
 		{"plan/Read allow", ModePlan, "Read", "/any/file", DecisionAllow},
 		{"plan/Glob allow", ModePlan, "Glob", "**/*.go", DecisionAllow},
-		{"plan/Edit ask", ModePlan, "Edit", "/any/file", DecisionAsk},
+		{"plan/Edit deny", ModePlan, "Edit", "/any/file", DecisionDeny},
 		{"plan/Bash git status allow", ModePlan, "Bash", "git status", DecisionAllow},
-		{"plan/Bash npm install ask", ModePlan, "Bash", "npm install", DecisionAsk},
+		{"plan/Bash npm install deny", ModePlan, "Bash", "npm install", DecisionDeny},
+		{"plan/Bash ls allow", ModePlan, "Bash", "ls", DecisionAllow},
+		{"plan/Bash touch deny", ModePlan, "Bash", "touch x", DecisionDeny},
+		{"plan/Write deny", ModePlan, "Write", "/any/file", DecisionDeny},
+		{"plan/Task allow", ModePlan, "Task", "{}", DecisionAllow},
+		{"council/Task deny", ModeCouncil, "Task", "{}", DecisionDeny},
 		// council — strictly read-only. Non-read-only tools are DENIED, not asked,
 		// so the model self-corrects to ExitPlanMode rather than prompting for writes.
 		{"council/Read allow", ModeCouncil, "Read", "/any/file", DecisionAllow},
@@ -323,8 +328,8 @@ func TestGate_ModeSemantics(t *testing.T) {
 		{"default/Bash discard redirect ask", ModeDefault, "Bash", "ls 2>/dev/null", DecisionAsk},
 		{"default/Bash pipe ask", ModeDefault, "Bash", "ls | grep go", DecisionAsk},
 		{"default/Bash sort -o ask", ModeDefault, "Bash", "sort -o /etc/hosts x", DecisionAsk},
-		{"plan/Bash git branch -D ask", ModePlan, "Bash", "git branch -D main", DecisionAsk},
-		{"plan/Bash fd -x ask", ModePlan, "Bash", "fd -x rm", DecisionAsk},
+		{"plan/Bash git branch -D deny", ModePlan, "Bash", "git branch -D main", DecisionDeny},
+		{"plan/Bash fd -x deny", ModePlan, "Bash", "fd -x rm", DecisionDeny},
 		{"council/Bash git config write deny", ModeCouncil, "Bash", "git config core.fsmonitor x", DecisionDeny},
 		{"council/Bash find exec deny", ModeCouncil, "Bash", "find . '-exec' rm {} +", DecisionDeny},
 	}

@@ -73,16 +73,25 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	// Children keep the parent's snapshot plus their own blocks; a refresh
 	// would rebuild the parent's base and drop those extras.
 	childCfg.RebuildSystem = nil
+	// The child's gate clamps spec.Mode to the parent's ceiling, so the mode
+	// the child ends up in, not the one requested, decides what it inherits.
+	var childGate *permissions.Gate
+	if childCfg.Gate != nil {
+		childGate = childCfg.Gate.Clone()
+	} else {
+		childGate = permissions.New("", nil, permissions.ModeDefault, nil, nil, nil)
+	}
+	if spec.Mode != "" {
+		childGate.SetMode(spec.Mode)
+	}
+	childCfg.Gate = childGate
+	childCfg.AskPermission = nil
 	// The parent's plan/council directive travels with the snapshot, after the
 	// base and before the child's own blocks, only when the child's own gate
 	// ends up in that mode. Background children and the output style never
 	// inherit it.
-	if !spec.Background && spec.Mode != permissions.ModeBypassPermissions {
-		effMode := spec.Mode
-		if effMode == "" && childCfg.Gate != nil {
-			effMode = childCfg.Gate.Mode()
-		}
-		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), inheritedModeBlocks(modeDirective, effMode)...)
+	if !spec.Background {
+		childCfg.System = append(append([]api.SystemBlock(nil), childCfg.System...), inheritedModeBlocks(modeDirective, childGate.Mode())...)
 	}
 	childCfg.Model = model
 	if spec.MaxTokens > 0 {
@@ -110,18 +119,6 @@ func (l *Loop) buildChildLoop(spec SubAgentSpec) (child *Loop, model string) {
 	if len(spec.ExtraTools) > 0 {
 		childReg = childReg.WithOverrides(spec.ExtraTools...)
 	}
-
-	var childGate *permissions.Gate
-	if childCfg.Gate != nil {
-		childGate = childCfg.Gate.Clone()
-	} else {
-		childGate = permissions.New("", nil, permissions.ModeDefault, nil, nil, nil)
-	}
-	if spec.Mode != "" {
-		childGate.SetMode(spec.Mode)
-	}
-	childCfg.Gate = childGate
-	childCfg.AskPermission = nil
 
 	child = &Loop{client: childClient, reg: childReg, cfg: childCfg, child: true, parentPromptID: l.currentPromptID()}
 	return child, model

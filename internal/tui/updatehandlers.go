@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -416,6 +417,63 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 
 const maxTodoAutoContinues = 2
 
+// questionMark matches a sentence-ending question mark, not one inside a URL
+// query or code such as a?b.
+var questionMark = regexp.MustCompile(`\?(?:$|[\s*_)\]"'”’])`)
+
+// lastAssistantAsksUser reports whether the final assistant message ends by
+// asking a question: one of its last two paragraphs of prose holds a
+// sentence-ending question mark. Code blocks are skipped.
+func lastAssistantAsksUser(history []api.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
+		if msg.Role != "assistant" {
+			continue
+		}
+		var text strings.Builder
+		for _, b := range msg.Content {
+			if b.Type == "text" {
+				text.WriteString(b.Text)
+				text.WriteString("\n\n")
+			}
+		}
+		if strings.TrimSpace(text.String()) == "" {
+			return false // ended on tool calls, not a message to the user
+		}
+		var paragraphs []string
+		inFence := false
+		var cur []string
+		for _, line := range strings.Split(text.String(), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "```") {
+				inFence = !inFence
+				continue
+			}
+			if inFence {
+				continue
+			}
+			if strings.TrimSpace(line) == "" {
+				if len(cur) > 0 {
+					paragraphs = append(paragraphs, strings.Join(cur, "\n"))
+					cur = nil
+				}
+				continue
+			}
+			cur = append(cur, line)
+		}
+		if len(cur) > 0 {
+			paragraphs = append(paragraphs, strings.Join(cur, "\n"))
+		}
+		// The question is often followed by one closing line ("Next: …").
+		for _, p := range paragraphs[max(0, len(paragraphs)-2):] {
+			if questionMark.MatchString(p) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 // autoPromptPrefix is prepended to synthetic todo-continue messages so the
 // submit handler can display a terse system notice instead of the raw
 // instruction text as a "You" message. Uses a Unicode private-use character
@@ -424,6 +482,11 @@ const autoPromptPrefix = "\uE000auto:"
 
 func (m Model) unfinishedTodoContinuePrompt() (string, bool) {
 	if _, usingMCPProvider := m.activeMCPProvider(); usingMCPProvider {
+		return "", false
+	}
+	// A turn that ends by asking the user something is waiting for the
+	// answer; continuing would act before the user replies.
+	if lastAssistantAsksUser(m.history) {
 		return "", false
 	}
 	todos := todowritetool.GetTodos()

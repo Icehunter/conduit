@@ -82,6 +82,30 @@ func TestHandleAgentDoneQueuesUnfinishedTodoContinuation(t *testing.T) {
 	}
 }
 
+func TestHandleAgentDoneWaitsWhenAskingUser(t *testing.T) {
+	cleanup := seedTodos(t, []todowritetool.Todo{
+		{ID: "1", Content: "finish the rename", Status: todowritetool.StatusInProgress},
+	})
+	defer cleanup()
+
+	m := idleModel()
+	m.turnID = 1
+	m.running = true
+	history := []api.Message{
+		{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "rename it"}}},
+		{Role: "assistant", Content: []api.ContentBlock{{Type: "text", Text: "Do you want me to finish the rename, or revert it?"}}},
+	}
+
+	m2, _ := m.handleAgentDone(agentDoneMsg{turnID: 1, history: history})
+
+	if m2.running || m2.input.Value() != "" || len(m2.pendingMessages) != 0 {
+		t.Fatalf("running=%v input=%q pending=%d; want it to wait for the answer", m2.running, m2.input.Value(), len(m2.pendingMessages))
+	}
+	if m2.todoAutoContinues != 0 {
+		t.Fatalf("todoAutoContinues = %d; want 0", m2.todoAutoContinues)
+	}
+}
+
 func TestApplyAPIRateLimitToPlanUsageMarksCurrentSessionFull(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CONDUIT_CONFIG_DIR", filepath.Join(dir, ".conduit"))

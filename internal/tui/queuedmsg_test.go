@@ -448,3 +448,32 @@ func TestPastedImagesPruneErrorShowsSystemRow(t *testing.T) {
 		t.Errorf("messages = %+v, want a system row carrying the prune error", got[before:])
 	}
 }
+
+func TestLastAssistantAsksUser(t *testing.T) {
+	asst := func(blocks ...api.ContentBlock) []api.Message {
+		return []api.Message{{Role: "user", Content: []api.ContentBlock{{Type: "text", Text: "go"}}}, {Role: "assistant", Content: blocks}}
+	}
+	text := func(s string) api.ContentBlock { return api.ContentBlock{Type: "text", Text: s} }
+	tests := []struct {
+		name    string
+		history []api.Message
+		want    bool
+	}{
+		{"ends with a question", asst(text("Seven places use the old name.\n\nDo you want me to finish the rename, or revert it?")), true},
+		{"question then a next line", asst(text("Done.\n\nShould I commit?\n\nNext: run the tests.")), true},
+		{"bold question", asst(text("**Finish or revert?**")), true},
+		{"status report", asst(text("Both tests are updated. I'll read those lines next.")), false},
+		{"question only early on", asst(text("Why did it fail?\n\nCause found.\n\nFixed it.\n\nTests pass.")), false},
+		{"url query", asst(text("See https://example.com/a?b=1 for details.")), false},
+		{"question inside code", asst(text("Done.\n\n```go\nx := a?b\n```")), false},
+		{"ended on a tool call", asst(api.ContentBlock{Type: "tool_use", Name: "Read"}), false},
+		{"no assistant message", []api.Message{{Role: "user", Content: []api.ContentBlock{text("hi?")}}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lastAssistantAsksUser(tt.history); got != tt.want {
+				t.Errorf("lastAssistantAsksUser = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

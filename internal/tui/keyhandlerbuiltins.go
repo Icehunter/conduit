@@ -234,7 +234,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.running = false
 			m.directTurn = false
 			m.cancelTurn = nil
-			m = m.reclaimSteer()
+			m = m.restoreQueueToInput()
 			m.shellID = ""            // a cancelled shell command no longer owns the turn
 			m.pendingQuestion = nil   // question from the cancelled turn; goroutine unblocks via ctx.Done()
 			m.pendingPermission = nil // same — permission goroutine unblocks via ctx.Done()

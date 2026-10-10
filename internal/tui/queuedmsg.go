@@ -77,6 +77,76 @@ func (m Model) reclaimSteer() Model {
 	return m
 }
 
+// restoreQueueToInput returns an undelivered steer and every queued message to
+// the input after a cancel. A cancel means stop: nothing typed during the
+// turn may start a new one until the user sends it again.
+func (m Model) restoreQueueToInput() Model {
+	var steer []api.ContentBlock
+	if m.cfg.Loop != nil {
+		steer = m.cfg.Loop.ClearSteer()
+	}
+	queued := m.pendingMessages
+	if len(steer) > 0 {
+		queued = append([]queuedMessage{{content: steer}}, queued...)
+	}
+	m.pendingMessages = nil
+	if len(queued) == 0 {
+		return m
+	}
+	var texts []string
+	var images []*attach.Image
+	var pdfs []*attach.PDF
+	for _, q := range queued {
+		text, imgs, docs := q.text, q.images, q.pdfs
+		if q.content != nil {
+			// Its row was shown at steer time, but the model never saw it.
+			text, imgs, docs = unpackUserContent(q.content)
+			m.removeUserRowWithText(text)
+		}
+		if strings.TrimSpace(text) != "" {
+			texts = append(texts, text)
+		}
+		images = append(images, imgs...)
+		pdfs = append(pdfs, docs...)
+	}
+	m.pendingImages = append(images, m.pendingImages...)
+	m.pendingPDFs = append(pdfs, m.pendingPDFs...)
+	if len(texts) > 0 {
+		m.restoreInput(strings.Join(texts, "\n"))
+	}
+	m.flashMsg = "interrupted — unsent message returned to the input"
+	return m
+}
+
+// unpackUserContent splits a built user turn back into its typed text and
+// attachments, dropping the system reminders the loop adds.
+func unpackUserContent(blocks []api.ContentBlock) (string, []*attach.Image, []*attach.PDF) {
+	var parts []string
+	var images []*attach.Image
+	var pdfs []*attach.PDF
+	for _, b := range blocks {
+		switch {
+		case b.Type == "text" && !isSystemReminderText(b.Text):
+			parts = append(parts, b.Text)
+		case b.Type == "image" && b.Source != nil:
+			images = append(images, &attach.Image{Data: b.Source.Data, MediaType: b.Source.MediaType})
+		case b.Type == "document" && b.Source != nil && b.Source.MediaType == "application/pdf":
+			pdfs = append(pdfs, &attach.PDF{Data: b.Source.Data, MediaType: b.Source.MediaType})
+		}
+	}
+	return strings.Join(parts, "\n"), images, pdfs
+}
+
+// removeUserRowWithText drops the newest user row showing text.
+func (m *Model) removeUserRowWithText(text string) {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Role == RoleUser && m.messages[i].Content == text {
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			return
+		}
+	}
+}
+
 // userRow builds the transcript row for a sent message and its attachments.
 func userRow(text string, images []*attach.Image, pdfs []*attach.PDF) Message {
 	atts := make([]attachmentRef, 0, len(images)+len(pdfs))

@@ -445,7 +445,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case councilChatDoneMsg:
 		m.running = false
 		m.directTurn = false
-		m = m.reclaimSteer()
+		if isCancelError(msg.err) {
+			m = m.restoreQueueToInput()
+		} else {
+			m = m.reclaimSteer()
+		}
 		m.cancelTurn = nil
 		m.councilCancel = nil
 		m.councilRound = 0

@@ -64,7 +64,7 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 		m.directTurn = false
 		m.cancelTurn = nil
 		m.cancelled = true
-		m = m.reclaimSteer()
+		m = m.restoreQueueToInput()
 		m.shellID = ""
 		m.flushThinking()
 		if m.streaming != "" {
@@ -337,9 +337,15 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		m.appendAssistantInfo(turnCostDelta)
 	}
 	m.promptRow = 0
-	// A steer the loop never delivered (sent during the final response, or
-	// left behind by a cancel) would leak into a later turn. Queue it first.
-	m = m.reclaimSteer()
+	// A steer the loop never delivered (sent during the final response)
+	// would leak into a later turn. Queue it first. After a cancel, queued
+	// messages go back to the input instead: a stop must not start a turn.
+	cancelled := msg.cancelled || isCancelError(msg.err)
+	if cancelled {
+		m = m.restoreQueueToInput()
+	} else {
+		m = m.reclaimSteer()
+	}
 	// Final assistant message just committed — refreshViewport's
 	// sticky-bottom honors a scrolled-up user. They explicitly
 	// scrolled away while results were streaming; don't yank them
@@ -663,7 +669,11 @@ func (m Model) handleLocalCallDone(msg localCallDoneMsg) (Model, tea.Cmd) {
 	m.running = false
 	m.directTurn = false
 	m.cancelTurn = nil
-	m = m.reclaimSteer()
+	if isCancelError(msg.err) {
+		m = m.restoreQueueToInput()
+	} else {
+		m = m.reclaimSteer()
+	}
 	if msg.err != nil {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Local call failed: %v", msg.err)})
 		if msg.chat && len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
@@ -891,24 +901,10 @@ func (m Model) dropBlockedPrompt(blocked *agent.PromptBlockedError) Model {
 	// A steer accepted for the turn that never ran would leak into the next
 	// one. Take it back and return its text to the input, after the prompt.
 	if steer := m.cfg.Loop.ClearSteer(); len(steer) > 0 {
-		var parts []string
-		for _, b := range steer {
-			switch {
-			case b.Type == "text" && !isSystemReminderText(b.Text):
-				parts = append(parts, b.Text)
-			case b.Type == "image" && b.Source != nil:
-				m.pendingImages = append(m.pendingImages, &attach.Image{Data: b.Source.Data, MediaType: b.Source.MediaType})
-			case b.Type == "document" && b.Source != nil && b.Source.MediaType == "application/pdf":
-				m.pendingPDFs = append(m.pendingPDFs, &attach.PDF{Data: b.Source.Data, MediaType: b.Source.MediaType})
-			}
-		}
-		text := strings.Join(parts, "\n")
-		for i := len(m.messages) - 1; i >= 0; i-- {
-			if m.messages[i].Role == RoleUser && m.messages[i].Content == text {
-				m.messages = append(m.messages[:i], m.messages[i+1:]...)
-				break
-			}
-		}
+		text, images, pdfs := unpackUserContent(steer)
+		m.pendingImages = append(m.pendingImages, images...)
+		m.pendingPDFs = append(m.pendingPDFs, pdfs...)
+		m.removeUserRowWithText(text)
 		m.restoreInput(text)
 	}
 	m.restoreInput(blocked.Prompt)

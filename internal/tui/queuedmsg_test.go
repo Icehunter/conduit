@@ -47,7 +47,6 @@ func TestHandleAgentDone_ReclaimsUndeliveredSteer(t *testing.T) {
 		draft string
 	}{
 		{"normal end", agentDoneMsg{}, ""},
-		{"cancelled", agentDoneMsg{cancelled: true}, ""},
 		{"error", agentDoneMsg{err: errors.New("boom")}, ""},
 		{"draft keeps it queued", agentDoneMsg{}, "typing"},
 	}
@@ -381,35 +380,63 @@ func TestHandleLocalCallDone_DrainsQueue(t *testing.T) {
 	}
 }
 
-func TestCancelReclaimsSteer(t *testing.T) {
-	steer := []api.ContentBlock{{Type: "text", Text: "steered"}}
+func TestCancelReturnsQueueToInput(t *testing.T) {
+	steer := []api.ContentBlock{
+		{Type: "image", Source: &api.ImageSource{Type: "base64", MediaType: "image/png", Data: "AAAA"}},
+		{Type: "text", Text: "stop"},
+	}
 	cancelled := func() context.CancelFunc { return func() {} }
-	t.Run("ctrl+c key", func(t *testing.T) {
-		m, lp := wakeModel(t)
-		m.running = true
-		m.cancelTurn = cancelled()
-		lp.InjectSteerContent(steer)
-		m2, _, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-		if len(m2.pendingMessages) != 1 || m2.pendingMessages[0].content == nil {
-			t.Fatalf("pending = %+v, want the steer reclaimed", m2.pendingMessages)
-		}
-		if lp.ClearSteer() != nil {
-			t.Error("steer still in the loop")
-		}
-	})
-	t.Run("interrupt", func(t *testing.T) {
-		m, lp := wakeModel(t)
-		m.running = true
-		m.cancelTurn = cancelled()
-		lp.InjectSteerContent(steer)
-		m2, _ := m.handleInterrupt(tea.InterruptMsg{})
-		if len(m2.pendingMessages) != 1 || m2.pendingMessages[0].content == nil {
-			t.Fatalf("pending = %+v, want the steer reclaimed", m2.pendingMessages)
-		}
-		if lp.ClearSteer() != nil {
-			t.Error("steer still in the loop")
-		}
-	})
+	tests := []struct {
+		name   string
+		cancel func(Model) Model
+	}{
+		{"ctrl+c key", func(m Model) Model {
+			m2, _, _ := m.handleKeyBuiltins(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+			return m2
+		}},
+		{"interrupt", func(m Model) Model {
+			m2, _ := m.handleInterrupt(tea.InterruptMsg{})
+			return m2
+		}},
+		{"cancelled turn ends", func(m Model) Model {
+			msg := agentDoneMsg{cancelled: true}
+			m.msgTurnID(&msg)
+			m2, _ := m.handleAgentDone(msg)
+			return m2
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, lp := wakeModel(t)
+			m.running = true
+			m.cancelTurn = cancelled()
+			m.messages = []Message{{Role: RoleUser, Content: "stop"}} // rendered at steer time
+			m.pendingMessages = []queuedMessage{{text: "and then this", images: []*attach.Image{testImage("")}}}
+			lp.InjectSteerContent(steer)
+
+			m2 := tt.cancel(m)
+			if lp.ClearSteer() != nil {
+				t.Error("steer still in the loop")
+			}
+			if m2.running || len(m2.pendingMessages) != 0 {
+				t.Fatalf("running=%v pending=%d, want nothing started or queued", m2.running, len(m2.pendingMessages))
+			}
+			if got := m2.input.Value(); got != "stop\nand then this" {
+				t.Errorf("input = %q, want the unsent text back in order", got)
+			}
+			if len(m2.pendingImages) != 2 {
+				t.Errorf("pending images = %d, want both back", len(m2.pendingImages))
+			}
+			if countUserRows(m2.messages) != 0 {
+				t.Error("the undelivered steer still shows as sent")
+			}
+			// The generic Update tail must not send it either.
+			next, _ := m2.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+			if nm := next.(Model); nm.running {
+				t.Error("a cancelled message started a turn")
+			}
+		})
+	}
 }
 
 func TestPastedImagesPruneErrorShowsSystemRow(t *testing.T) {

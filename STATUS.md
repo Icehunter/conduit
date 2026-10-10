@@ -287,7 +287,7 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | Exit resume hint | ✅ | Prints `conduit --resume <id>` after the TUI exits when the session has content |
 | Session model restore | 🔶 | The model is recorded as a `session_settings` entry and restored on in-session `/resume` (not on startup `--resume`, so `--model` keeps precedence); provider-routed sessions are not restored |
 | Mouse capture setting | ✅ | `disableMouse: true` in `conduit.json` leaves the mouse to the terminal (native selection over tmux/ssh); wheel scroll and click-to-expand are unavailable then. `ctrl+home` / `ctrl+end` jump to top / bottom |
-| Image/PDF paste & drag-drop | ✅ | |
+| Image/PDF paste & drag-drop | ✅ | Sent rows show each attachment as an OSC 8 file link (clipboard images are kept under `~/.conduit/pasted-images/`); attachments go with the message they were pasted with (steer, queue, council history); images-only sends are allowed; local MCP providers keep them pending with a notice. Council members are asked the text question only |
 | @file mention parsing | ✅ | Line ranges, dirs, base64 blocks |
 | Custom keybindings | ✅ | `~/.conduit/keybindings.json` |
 | Multi-account UI (`/account`) | ✅ | |

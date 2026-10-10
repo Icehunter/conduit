@@ -431,7 +431,8 @@ type Loop struct {
 	// steerMsg holds an optional user steering message to inject between
 	// tool-call rounds. Written by InjectSteerContent (TUI goroutine), read
 	// and cleared by Run (loop goroutine) via atomic.Pointer so no extra lock
-	// is needed. Semantics: last-write-wins (earlier messages are superseded).
+	// is needed. Semantics: appending (every steer is kept, in order, and
+	// delivered together).
 	steerMsg atomic.Pointer[[]api.ContentBlock]
 	// child marks a loop built for a sub-agent, teammate or side question. It
 	// never runs UserPromptSubmit hooks: its prompt is not the user's.
@@ -483,18 +484,29 @@ func (l *Loop) InjectSteerMessage(text string) {
 // InjectSteerContent queues a user steering message to be injected into the
 // conversation between the current tool-call batch and the next API request.
 // Content may carry images and documents alongside text. Safe to call from
-// any goroutine. Only the most recent call takes effect per batch — if the
-// user sends multiple messages quickly, the last one wins (earlier ones were
-// superseded). The loop clears the slot after consuming it.
+// any goroutine. Calls made before the loop consumes the slot accumulate in
+// order, so a message sent right after another is not lost. The loop clears
+// the slot after consuming it.
 func (l *Loop) InjectSteerContent(content []api.ContentBlock) {
 	if len(content) == 0 {
 		return
 	}
-	l.steerMsg.Store(&content)
+	for {
+		old := l.steerMsg.Load()
+		var merged []api.ContentBlock
+		if old != nil {
+			merged = make([]api.ContentBlock, 0, len(*old)+len(content))
+			merged = append(merged, *old...)
+		}
+		merged = append(merged, content...)
+		if l.steerMsg.CompareAndSwap(old, &merged) {
+			return
+		}
+	}
 }
 
 // InjectMessage appends text to the per-loop programmatic delivery queue.
-// Unlike InjectSteerMessage (last-write-wins), all injected messages are
+// Separate from the steer slot, all injected messages are
 // preserved in insertion order and delivered together at the next turn
 // boundary. Use this for agent-team mailbox delivery — every message must
 // arrive. Safe to call from any goroutine.
@@ -1404,7 +1416,7 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 		// Steering injection: if the user sent a message while tools were
 		// running, append it as a user turn now so the model sees it before
 		// the next API call — without interrupting the current turn.
-		// Last-write-wins: earlier steer messages are superseded by later ones.
+		// Steers sent before this point arrive together, in order.
 		if p := l.steerMsg.Swap(nil); p != nil && len(*p) > 0 {
 			msgs = append(msgs, api.Message{Role: "user", Content: *p})
 			userTurn = true

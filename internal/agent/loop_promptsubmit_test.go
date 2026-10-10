@@ -446,3 +446,38 @@ func TestLoop_UserPromptSubmitNoHooksConfigured(t *testing.T) {
 		t.Errorf("requests = %d, want 1", len(bodies()))
 	}
 }
+
+func TestLoop_UserPromptSubmitImagesOnly(t *testing.T) {
+	imageOnly := api.Message{Role: "user", Content: []api.ContentBlock{
+		{Type: "image", Source: &api.ImageSource{Type: "base64", MediaType: "image/png", Data: "AAAA"}},
+	}}
+	t.Run("hook runs and lets it through", func(t *testing.T) {
+		lp, bodies, fired := promptHookLoop(t, "true")
+		if _, err := lp.RunPrompt(context.Background(), UserPrompt{Typed: true}, []api.Message{imageOnly}, func(LoopEvent) {}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if fired() != 1 || len(bodies()) != 1 {
+			t.Errorf("fired=%d requests=%d, want 1 and 1", fired(), len(bodies()))
+		}
+	})
+	t.Run("blocking hook blocks", func(t *testing.T) {
+		lp, bodies, fired := promptHookLoop(t, "echo no >&2; exit 2")
+		hist, err := lp.RunPrompt(context.Background(), UserPrompt{Typed: true}, []api.Message{imageOnly}, func(LoopEvent) {})
+		var pb *PromptBlockedError
+		if !errors.As(err, &pb) {
+			t.Fatalf("err = %v, want *PromptBlockedError", err)
+		}
+		if fired() != 1 || len(bodies()) != 0 || len(hist) != 0 {
+			t.Errorf("fired=%d requests=%d history=%d, want 1, 0, 0", fired(), len(bodies()), len(hist))
+		}
+	})
+	t.Run("zero prompt still skips hooks", func(t *testing.T) {
+		lp, _, fired := promptHookLoop(t, "exit 2")
+		if _, err := lp.RunPrompt(context.Background(), UserPrompt{}, []api.Message{imageOnly}, func(LoopEvent) {}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if fired() != 0 {
+			t.Errorf("fired=%d, want 0", fired())
+		}
+	})
+}

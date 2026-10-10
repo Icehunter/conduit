@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/icehunter/conduit/internal/attach"
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/planusage"
 	"github.com/icehunter/conduit/internal/settings"
@@ -26,6 +27,7 @@ func (m Model) Init() tea.Cmd {
 			})
 		}
 	}
+	cmds = append(cmds, prunePastedImagesCmd)
 	if m.companionName != "" {
 		cmds = append(cmds, buddyTick())
 	}
@@ -184,4 +186,17 @@ func capitalize(s string) string {
 		return ""
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// pastedImagesPrunedMsg reports a failed prune so Update can show it as a
+// system row; writing to stderr would garble the TUI.
+type pastedImagesPrunedMsg struct{ err error }
+
+// prunePastedImagesCmd drops kept clipboard images older than a week, off the
+// Update goroutine. A failure never blocks startup.
+func prunePastedImagesCmd() tea.Msg {
+	if err := attach.PrunePastedImages(); err != nil {
+		return pastedImagesPrunedMsg{err: err}
+	}
+	return nil
 }

@@ -109,7 +109,7 @@ func TestShellModeIsATurn(t *testing.T) {
 
 	// A prompt typed meanwhile is queued, never steered into a (nonexistent) loop.
 	m2, _ := submit(t, m, "next question")
-	if len(m2.pendingMessages) != 1 || m2.pendingMessages[0] != "next question" {
+	if len(m2.pendingMessages) != 1 || m2.pendingMessages[0].text != "next question" {
 		t.Fatalf("pending = %v", m2.pendingMessages)
 	}
 	if steered {

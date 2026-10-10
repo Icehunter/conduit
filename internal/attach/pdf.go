@@ -17,6 +17,7 @@ var ErrNoPDF = errors.New("no PDF on clipboard")
 type PDF struct {
 	Data      string // base64-encoded PDF bytes
 	MediaType string // always "application/pdf"
+	Path      string // absolute path of the source file; empty for clipboard PDFs
 }
 
 // ReadClipboardPDF attempts to read a PDF from the system clipboard.

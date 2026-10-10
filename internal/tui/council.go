@@ -604,6 +604,7 @@ func (m Model) handleCouncilChat(msg councilChatMsg) (Model, tea.Cmd) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.councilCancel = cancel
+	m.directTurn = true
 
 	cmd := func() tea.Msg {
 		defer cancel()

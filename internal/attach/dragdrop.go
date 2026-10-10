@@ -103,6 +103,9 @@ func ReadImageFile(p string) (*Image, error) {
 		Data:      base64.StdEncoding.EncodeToString(data),
 		MediaType: "image/png",
 	}
+	if abs, err := filepath.Abs(p); err == nil {
+		img.Path = abs
+	}
 	ext := strings.ToLower(filepath.Ext(p))
 	switch ext {
 	case ".jpg", ".jpeg":
@@ -125,8 +128,12 @@ func ReadPDFFile(p string) (*PDF, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty file")
 	}
-	return &PDF{
+	pdf := &PDF{
 		Data:      base64.StdEncoding.EncodeToString(data),
 		MediaType: "application/pdf",
-	}, nil
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		pdf.Path = abs
+	}
+	return pdf, nil
 }

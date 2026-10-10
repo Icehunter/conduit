@@ -375,7 +375,7 @@ func (m Model) applyPromptResult(res commands.Result) (Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelTurn = cancel
 	// The hook sees what the user typed, "/cmd args", not the expanded prompt.
-	prompt := agent.UserPrompt{Raw: m.slashInput, Text: res.Text, Block: 1}
+	prompt := agent.UserPrompt{Raw: m.slashInput, Text: res.Text, Block: 1, Typed: true}
 	m.slashInput = ""
 	return m, m.runLoopCmd(ctx, m.turnID, prompt)
 }

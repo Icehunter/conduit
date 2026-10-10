@@ -220,6 +220,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if m.councilCancel != nil {
 			m.councilCancel()
 			m.councilCancel = nil
+			m.directTurn = false
 			m.councilRound = 0
 			m.councilSynthesizing = false
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Council cancelled."})
@@ -231,7 +232,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.cancelTurn()
 			m.cancelled = true
 			m.running = false
+			m.directTurn = false
 			m.cancelTurn = nil
+			m = m.reclaimSteer()
 			m.shellID = ""            // a cancelled shell command no longer owns the turn
 			m.pendingQuestion = nil   // question from the cancelled turn; goroutine unblocks via ctx.Done()
 			m.pendingPermission = nil // same — permission goroutine unblocks via ctx.Done()
@@ -447,6 +450,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "enter":
 		if m.running {
 			text := strings.TrimSpace(m.input.Value())
+			hasAttach := m.hasPendingAttachments()
 			// /btw is a side question on a copy of the history; it never
 			// touches the running turn, so it is the one slash command that
 			// works mid-turn.
@@ -457,17 +461,19 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 					return m2, cmd, true
 				}
 			}
-			if _, isShell := shellCommand(text); isShell || m.shellID != "" {
-				// A shell-mode turn has no agent loop to steer, and "!cmd" must
+			if _, isShell := shellCommand(text); isShell || m.shellID != "" || m.directTurn {
+				// A shell, local-MCP or council turn has no agent loop to steer, and "!cmd" must
 				// not reach the model as text: queue until the turn ends.
-				if text != "" && !strings.HasPrefix(text, "/") {
+				if (text != "" || hasAttach) && !strings.HasPrefix(text, "/") {
 					m = m.resetInput()
-					m.pendingMessages = append(m.pendingMessages, text)
+					var q queuedMessage
+					m, q = m.takeQueuedMessage(text)
+					m.pendingMessages = append(m.pendingMessages, q)
 					m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
 					return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
 				}
 			}
-			if text != "" && !strings.HasPrefix(text, "/") {
+			if (text != "" || hasAttach) && !strings.HasPrefix(text, "/") {
 				m = m.resetInput()
 				if m.cfg.SteerContent != nil {
 					// Inject mid-turn: the loop will append this as a user message
@@ -488,7 +494,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 						return m, m.screenPromptCmd(routeSteer, raw, content, typed+1, images, pdfs), true
 					}
 					m.cfg.SteerContent(content)
-					m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+					m.messages = append(m.messages, userRow(text, images, pdfs))
 					m.refreshViewport()
 					m.vp.GotoBottom()
 					m.flashMsg = "[steering → next tool round]"
@@ -496,8 +502,11 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 						m.flashMsg = fmt.Sprintf("[steering → next tool round · %d attachment(s)]", attachments)
 					}
 				} else {
-					// Fallback: queue for delivery after the turn ends.
-					m.pendingMessages = append(m.pendingMessages, text)
+					// Fallback: queue for delivery after the turn ends, with the
+					// attachments pasted alongside it.
+					var q queuedMessage
+					m, q = m.takeQueuedMessage(text)
+					m.pendingMessages = append(m.pendingMessages, q)
 					m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
 				}
 				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
@@ -510,8 +519,9 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 
-		// Not running, empty input: open agent log panel if recent sub-agents exist.
-		if strings.TrimSpace(m.input.Value()) == "" && len(subagent.Default.SnapshotAll()) > 0 {
+		// Not running, empty input: open agent log panel if recent sub-agents
+		// exist. Pending attachments make an empty input a send, not a probe.
+		if strings.TrimSpace(m.input.Value()) == "" && !m.hasPendingAttachments() && len(subagent.Default.SnapshotAll()) > 0 {
 			m = m.openSubagentPanel()
 			return m, tickSubagentPanel(), true
 		}
@@ -540,7 +550,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 
 		text := strings.TrimSpace(m.input.Value())
-		if text == "" {
+		if text == "" && !m.hasPendingAttachments() {
 			return m, nil, true
 		}
 
@@ -602,6 +612,12 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// so a block leaves the text and its attachments where they were.
 		// Triviality is judged on what was typed: a hook's rewrite must not
 		// route the replayed Enter differently from the one that was screened.
+		if usingMCPProvider && text == "" {
+			// Nothing to send: a local provider takes text only, so the
+			// pending attachments alone have no message to ride on.
+			m.flashMsg = fmt.Sprintf("images not supported by %s; still attached", activeMCP.Model)
+			return m, tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }), true
+		}
 		councilTrivial := isCouncilTrivial(text)
 		var hookContext string
 		if routeScreened := usingMCPProvider || (m.permissionMode == permissions.ModeCouncil && !councilTrivial); routeScreened && !isAutoPrompt && m.promptHooksActive() {
@@ -633,9 +649,17 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.promptRow = 0
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "↻ Continuing unfinished tasks…"})
 		} else {
-			m.rememberInput(text)
+			if text != "" {
+				m.rememberInput(text)
+			}
 			m.promptRow = len(m.messages) + 1
-			m.messages = append(m.messages, Message{Role: RoleUser, Content: text})
+			row := userRow(text, nil, nil)
+			if !usingMCPProvider {
+				// A local provider drops attachments (they stay pending), so
+				// its row must not claim they were sent.
+				row = m.pendingUserRow(text)
+			}
+			m.messages = append(m.messages, row)
 		}
 
 		// Council mode: bypass the agent loop entirely and ask all council
@@ -643,12 +667,17 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// Trivial inputs (greetings, single-word acks) fall through to the
 		// normal agent loop to avoid unnecessary latency and cost.
 		if m.permissionMode == permissions.ModeCouncil && !usingMCPProvider && !councilTrivial {
-			councilContent := []api.ContentBlock{{Type: "text", Text: m.expandPastePlaceholders(text)}}
+			// Attachments ride in the recorded turn; council members are
+			// asked the text question only.
+			var councilContent []api.ContentBlock
+			m, councilContent = m.takeAttachmentBlocks()
+			councilContent = append(councilContent, api.ContentBlock{Type: "text", Text: m.expandPastePlaceholders(text)})
 			if hookContext != "" {
 				councilContent = append(councilContent, api.ContentBlock{Type: "text", Text: hookContext})
 			}
 			m.history = append(m.history, api.Message{Role: "user", Content: councilContent})
 			m.running = true
+			m.directTurn = true
 			m.cancelled = false
 			m.streaming = ""
 			m.thinking = ""
@@ -661,8 +690,13 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if usingMCPProvider {
 			apiText := m.expandPastePlaceholders(text)
 			m.pastedBlocks = nil
-			m.pendingImages = nil
-			m.pendingPDFs = nil
+			var noticeCmd tea.Cmd
+			if m.hasPendingAttachments() {
+				noticeCmd = tea.Tick(3*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} })
+				// Dropping them silently would lose the user's files; they
+				// stay pending (badge visible) for a provider that takes them.
+				m.flashMsg = fmt.Sprintf("images not supported by %s; still attached", activeMCP.Model)
+			}
 			userContent := m.userTextContent(apiText)
 			if hookContext != "" {
 				userContent = append(userContent, api.ContentBlock{Type: "text", Text: hookContext})
@@ -673,6 +707,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			})
 			call := commands.NewLocalDirectCallWithTool(activeMCP.Server, activeMCP.DirectTool, localChatPromptFromContent(userContent, activeMCP.Model))
 			m.running = true
+			m.directTurn = true
 			m.cancelled = false
 			m.streaming = ""
 			m.thinking = ""
@@ -691,6 +726,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			manager := m.cfg.MCPManager
 			if manager == nil {
 				m.running = false
+				m.directTurn = false
 				m.cancelTurn = nil
 				m.messages = append(m.messages, Message{Role: RoleError, Content: "Local provider unavailable: MCP manager is not configured."})
 				m.refreshViewport()
@@ -699,12 +735,13 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			input, err := json.Marshal(call.Arguments)
 			if err != nil {
 				m.running = false
+				m.directTurn = false
 				m.cancelTurn = nil
 				m.messages = append(m.messages, Message{Role: RoleError, Content: "Local provider input invalid: " + err.Error()})
 				m.refreshViewport()
 				return m, nil, true
 			}
-			return m, tea.Batch(setWindowTitleCmd("conduit · working"), func() tea.Msg {
+			return m, tea.Batch(setWindowTitleCmd("conduit · working"), noticeCmd, func() tea.Msg {
 				return runLocalCall(ctx, manager, call, input, turnID, true)
 			}), true
 		}
@@ -712,7 +749,7 @@ func (m Model) handleKeyBuiltins(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		// images/PDFs prepended (accumulated on ctrl+v, sent on Enter), and
 		// @-mentions resolved.
 		var userContent []api.ContentBlock
-		rawPrompt := agent.UserPrompt{Raw: m.expandPastePlaceholders(text)}
+		rawPrompt := agent.UserPrompt{Raw: m.expandPastePlaceholders(text), Typed: true}
 		if isAutoPrompt {
 			rawPrompt = agent.UserPrompt{} // a nudge conduit wrote, not a prompt the user typed
 		}

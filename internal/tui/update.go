@@ -131,11 +131,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.permPrompt = m.newPermissionPrompt(*p)
 					m.refreshViewport()
 				}
-				if len(m.pendingMessages) > 0 && !m.running {
-					next := m.pendingMessages[0]
-					m.pendingMessages = m.pendingMessages[1:]
-					m.input.SetValue(next)
-					cmds = append(cmds, m.replaySubmit())
+				if !m.running {
+					var cmd tea.Cmd
+					var drained bool
+					if m, cmd, drained = m.drainPending(); drained {
+						cmds = append(cmds, cmd)
+					}
 				}
 			}
 			return m, tea.Batch(cmds...)
@@ -157,6 +158,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: RoleSystem, Content: "UserPromptSubmit hook could not rename the session: " + msg.err.Error()})
 			m.refreshViewport()
 		}
+		return m, nil
+
+	case pastedImagesPrunedMsg:
+		m.messages = append(m.messages, Message{Role: RoleSystem, Content: "Could not prune old pasted images: " + msg.err.Error()})
+		m.refreshViewport()
 		return m, nil
 
 	case compactSaveFailedMsg:
@@ -252,7 +258,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case diffReviewFollowupMsg:
 		// Enqueue the feedback message so it fires as the next user turn
 		// once the agent-done transition clears the running state.
-		m.pendingMessages = append(m.pendingMessages, msg.text)
+		m.pendingMessages = append(m.pendingMessages, queuedMessage{text: msg.text})
 		return m, nil
 
 	case mcpReconnectDoneMsg:
@@ -438,6 +444,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case councilChatDoneMsg:
 		m.running = false
+		m.directTurn = false
+		m = m.reclaimSteer()
 		m.cancelTurn = nil
 		m.councilCancel = nil
 		m.councilRound = 0
@@ -447,7 +455,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			m.vp.GotoBottom()
 			m.input.Focus()
-			return m, nil
+			m, cmd, _ := m.drainPending()
+			return m, cmd
 		}
 		if msg.synthesis != "" {
 			m.totalInputTokens += msg.usage.InputTokens
@@ -472,7 +481,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		m.vp.GotoBottom()
 		m.input.Focus()
-		return m, nil
+		m, cmd, _ := m.drainPending()
+		return m, cmd
 
 	case councilStartMsg:
 		return m.handleCouncilFlow(msg)

@@ -227,12 +227,13 @@ func TestLoop_InjectMessage_ConcurrentSafe(t *testing.T) {
 
 // ─── InjectSteerMessage unchanged semantics ───────────────────────────────────
 
-// InjectSteerMessage must remain last-write-wins (human responsiveness).
-// InjectMessage must NOT share this behavior — all messages must be preserved.
+// Steers sent before the loop consumes the slot accumulate in order, so a
+// quick second message does not erase the first. InjectMessage keeps its own
+// independent queue.
 func TestLoop_SteerVsInject_Independence(t *testing.T) {
 	lp := &Loop{}
 
-	// Three steer messages: only the last should win.
+	// Three steer messages: all kept, in order.
 	lp.InjectSteerMessage("steer-A")
 	lp.InjectSteerMessage("steer-B")
 	lp.InjectSteerMessage("steer-C")
@@ -242,10 +243,10 @@ func TestLoop_SteerVsInject_Independence(t *testing.T) {
 	lp.InjectMessage("inject-2")
 	lp.InjectMessage("inject-3")
 
-	// Drain steer: only last wins.
+	// Drain steer: appended in order.
 	p := lp.steerMsg.Swap(nil)
-	if p == nil || len(*p) != 1 || (*p)[0].Text != "steer-C" {
-		t.Errorf("steerMsg = %+v; want last-write-wins text %q", p, "steer-C")
+	if p == nil || len(*p) != 3 || (*p)[0].Text != "steer-A" || (*p)[2].Text != "steer-C" {
+		t.Errorf("steerMsg = %+v; want steer-A..steer-C appended in order", p)
 	}
 
 	// Drain inject queue: all three must be present.
@@ -259,5 +260,55 @@ func TestLoop_SteerVsInject_Independence(t *testing.T) {
 		if i >= len(queued) || queued[i] != want {
 			t.Errorf("queued[%d] = %q; want %q", i, queued[i], want)
 		}
+	}
+}
+
+func TestLoop_InjectSteerContent_Appends(t *testing.T) {
+	img := api.ContentBlock{Type: "image", Source: &api.ImageSource{Type: "base64", MediaType: "image/png", Data: "AAAA"}}
+	tests := []struct {
+		name  string
+		calls [][]api.ContentBlock
+		want  []string // block types, in order
+	}{
+		{"single", [][]api.ContentBlock{{{Type: "text", Text: "a"}}}, []string{"text"}},
+		{"text then image", [][]api.ContentBlock{{{Type: "text", Text: "a"}}, {img}}, []string{"text", "image"}},
+		{"empty ignored", [][]api.ContentBlock{{}, {{Type: "text", Text: "a"}}, nil}, []string{"text"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lp := &Loop{}
+			for _, c := range tt.calls {
+				lp.InjectSteerContent(c)
+			}
+			got := lp.ClearSteer()
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d blocks, want %d", len(got), len(tt.want))
+			}
+			for i, b := range got {
+				if b.Type != tt.want[i] {
+					t.Errorf("block %d = %s, want %s", i, b.Type, tt.want[i])
+				}
+			}
+			if again := lp.ClearSteer(); again != nil {
+				t.Errorf("second ClearSteer = %v, want nil", again)
+			}
+		})
+	}
+}
+
+func TestLoop_InjectSteerContent_Concurrent(t *testing.T) {
+	lp := &Loop{}
+	const n = 50
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lp.InjectSteerContent([]api.ContentBlock{{Type: "text", Text: "x"}})
+		}()
+	}
+	wg.Wait()
+	if got := lp.ClearSteer(); len(got) != n {
+		t.Errorf("got %d blocks, want %d (a concurrent steer was lost)", len(got), n)
 	}
 }

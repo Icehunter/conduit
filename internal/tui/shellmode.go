@@ -233,12 +233,6 @@ func (m Model) applyShellDone(msg shellDoneMsg) (Model, tea.Cmd) {
 		m.persistNewMessages(m.history)
 	}
 	m.refreshViewport()
-	var cmd tea.Cmd
-	if len(m.pendingMessages) > 0 && strings.TrimSpace(m.input.Value()) == "" {
-		next := m.pendingMessages[0]
-		m.pendingMessages = m.pendingMessages[1:]
-		m.input.SetValue(next)
-		cmd = m.replaySubmit()
-	}
+	m, cmd, _ := m.drainPending()
 	return m, cmd
 }

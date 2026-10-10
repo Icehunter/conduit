@@ -79,7 +79,7 @@ func (m Model) screenPromptCmd(route screenRoute, raw string, content []api.Cont
 	lp := m.cfg.Loop
 	return func() tea.Msg {
 		var events []agent.LoopEvent
-		out, err := lp.ScreenPrompt(context.Background(), agent.UserPrompt{Raw: raw, Block: typedBlock}, content, func(ev agent.LoopEvent) {
+		out, err := lp.ScreenPrompt(context.Background(), agent.UserPrompt{Raw: raw, Block: typedBlock, Typed: true}, content, func(ev agent.LoopEvent) {
 			events = append(events, ev)
 		})
 		msg := promptScreenedMsg{route: route, raw: raw, text: raw, content: out, events: events, err: err, images: images, pdfs: pdfs}
@@ -134,7 +134,7 @@ func (m Model) handlePromptScreened(msg promptScreenedMsg) (Model, tea.Cmd) {
 	if msg.route == routeSteer {
 		if m.running && m.cfg.SteerContent != nil {
 			m.cfg.SteerContent(msg.content)
-			m.messages = append(m.messages, Message{Role: RoleUser, Content: msg.raw})
+			m.messages = append(m.messages, userRow(msg.raw, msg.images, msg.pdfs))
 			m.flashMsg = "[steering → next tool round]"
 			cmds = append(cmds, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return clearFlash{} }))
 			m.refreshViewport()
@@ -144,14 +144,14 @@ func (m Model) handlePromptScreened(msg promptScreenedMsg) (Model, tea.Cmd) {
 		if m.busy() {
 			// Something else took the model while the hooks ran; the screened
 			// message waits as an ordinary queued one.
-			m.pendingMessages = append(m.pendingMessages, msg.text)
+			m.pendingMessages = append(m.pendingMessages, queuedMessage{text: msg.text, images: msg.images, pdfs: msg.pdfs})
 			m.flashMsg = fmt.Sprintf("[queued — %d pending]", len(m.pendingMessages))
 			m.refreshViewport()
 			return m, tea.Batch(cmds...)
 		}
 		// The turn ended while the hooks ran. The message is already screened
 		// (its context and images included), so it starts the next turn as is.
-		m.messages = append(m.messages, Message{Role: RoleUser, Content: msg.raw})
+		m.messages = append(m.messages, userRow(msg.raw, msg.images, msg.pdfs))
 		m.history = append(m.history, api.Message{Role: "user", Content: msg.content})
 		m.promptRow = 0
 		var turn tea.Cmd

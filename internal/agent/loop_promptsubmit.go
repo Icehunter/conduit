@@ -43,7 +43,14 @@ type UserPrompt struct {
 	// when the caller built the content and knows it. 0 means find the last
 	// text block equal to Text.
 	Block int
+	// Typed marks a prompt the user submitted even when Raw is empty (an
+	// images-only submit). Hooks run for it with an empty prompt. A zero
+	// UserPrompt, which is no prompt at all, has neither.
+	Typed bool
 }
+
+// active reports whether the user submitted this prompt, so hooks screen it.
+func (p UserPrompt) active() bool { return p.Typed || p.Raw != "" }
 
 func (p UserPrompt) target() string {
 	if p.Text != "" {
@@ -77,10 +84,10 @@ func hookPermissionMode(m permissions.Mode) string {
 // content to send: the typed-text block rewritten by updatedPrompt and hook
 // context appended as a system-reminder block. When a hook blocks or stops it
 // returns a *PromptBlockedError. Events (notices, a session title) go to
-// notify. Child loops, loops without hooks and an empty prompt return content
+// notify. Child loops, loops without hooks and a zero prompt return content
 // unchanged. content is never modified in place.
 func (l *Loop) ScreenPrompt(ctx context.Context, prompt UserPrompt, content []api.ContentBlock, notify func(LoopEvent)) ([]api.ContentBlock, error) {
-	if prompt.Raw == "" || !l.HasPromptHooks() {
+	if !prompt.active() || !l.HasPromptHooks() {
 		return content, nil
 	}
 	l.mu.RLock()
@@ -144,7 +151,7 @@ func (l *Loop) ScreenPrompt(ctx context.Context, prompt UserPrompt, content []ap
 // On a block the message is removed from the returned history.
 func (l *Loop) screenLastMessage(ctx context.Context, prompt UserPrompt, msgs []api.Message, notify func(LoopEvent)) ([]api.Message, error) {
 	last := len(msgs) - 1
-	if prompt.Raw == "" || last < 0 || msgs[last].Role != "user" {
+	if !prompt.active() || last < 0 || msgs[last].Role != "user" {
 		return msgs, nil
 	}
 	content, err := l.ScreenPrompt(ctx, prompt, msgs[last].Content, notify)

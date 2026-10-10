@@ -54,12 +54,9 @@ func (m Model) takeUserContent(text string) (Model, []api.ContentBlock, int) {
 	return m, content, attachments
 }
 
-// takeUserContentIdx is takeUserContent that also returns the index of the
-// content block holding the typed text, which UserPromptSubmit hooks rewrite.
-func (m Model) takeUserContentIdx(text string) (Model, []api.ContentBlock, int, int) {
-	apiText := m.expandPastePlaceholders(text)
-	m.pastedBlocks = nil
-
+// takeAttachmentBlocks turns the pending images and PDFs into content blocks
+// and clears them.
+func (m Model) takeAttachmentBlocks() (Model, []api.ContentBlock) {
 	content := make([]api.ContentBlock, 0, len(m.pendingImages)+len(m.pendingPDFs)+1)
 	for _, img := range m.pendingImages {
 		content = append(content, api.ContentBlock{
@@ -81,11 +78,27 @@ func (m Model) takeUserContentIdx(text string) (Model, []api.ContentBlock, int, 
 			},
 		})
 	}
-	attachments := len(content)
 	m.pendingImages = nil
 	m.pendingPDFs = nil
-	content = append(content, m.userTextContent(apiText)...)
-	typed := len(content) - 1 // userTextContent ends with the typed text
+	return m, content
+}
+
+// takeUserContentIdx is takeUserContent that also returns the index of the
+// content block holding the typed text, which UserPromptSubmit hooks rewrite.
+func (m Model) takeUserContentIdx(text string) (Model, []api.ContentBlock, int, int) {
+	apiText := m.expandPastePlaceholders(text)
+	m.pastedBlocks = nil
+
+	var content []api.ContentBlock
+	m, content = m.takeAttachmentBlocks()
+	attachments := len(content)
+	// typed is -1 when nothing was typed (images only): the API rejects empty
+	// text blocks, so none is emitted.
+	typed := -1
+	if apiText != "" {
+		content = append(content, m.userTextContent(apiText)...)
+		typed = len(content) - 1 // userTextContent ends with the typed text
+	}
 	// The Workflow tool is gated on explicit opt-in; the reminder is how the
 	// model learns the gate is open for this turn (or the whole session).
 	switch {

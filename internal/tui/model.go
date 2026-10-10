@@ -99,10 +99,13 @@ const (
 
 // Message is one entry in the displayed conversation.
 type Message struct {
-	Role     Role
-	Content  string
-	ToolName string
-	ToolID   string
+	Role    Role
+	Content string
+	// Attachments lists the files sent with a user message, encoded by
+	// encodeAttachments. A string keeps Message comparable (render cache key).
+	Attachments string
+	ToolName    string
+	ToolID      string
 
 	ToolInput    string
 	ToolStarted  time.Time
@@ -457,7 +460,7 @@ type Model struct {
 	turnAssistant      string                   // display label captured for the provider answering the current turn
 	turnProvider       string                   // provider/model captured for transcript display metadata
 	turnProviderKind   string                   // provider kind captured for transcript display metadata
-	pendingMessages    []string                 // messages typed while agent is running; drained after turn ends
+	pendingMessages    []queuedMessage          // messages typed while agent is running; drained after turn ends
 	questionAsk        *questionAskState        // non-nil when AskUserQuestion is waiting for user input
 	pendingQuestion    *questionAskMsg          // non-nil when a question arrived while user has unsent text
 	pendingPermission  *permissionAskMsg        // non-nil when a permission prompt arrived while user has unsent text
@@ -565,6 +568,10 @@ type Model struct {
 
 	// councilCancel cancels the in-flight council debate context (Esc or /stop).
 	councilCancel context.CancelFunc
+	// directTurn marks a running turn that bypasses the agent loop (a local
+	// MCP chat or a council debate). Nothing drains a steering slot during one,
+	// so Enter queues instead of steering.
+	directTurn bool
 
 	// Council progress state updated by councilRoundStartMsg for the badge.
 	councilRound        int

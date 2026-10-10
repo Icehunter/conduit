@@ -34,7 +34,16 @@ func renderMessage(msg Message, width int, verbose bool) string {
 		// Wrap user text at inner width minus the prefix width ("❯ You  " = 8 cols).
 		prefixStr := styleYouPrefix.Render(prefixYou) + surfaceSpaces(2)
 		prefixW := lipgloss.Width(prefixStr)
-		body := styleUserText.Width(inner - prefixW).Render(msg.Content)
+		var body string
+		if msg.Content != "" {
+			body = styleUserText.Width(inner - prefixW).Render(msg.Content)
+		}
+		if links := renderAttachmentLinks(msg.Attachments, inner-prefixW); links != "" {
+			if body != "" {
+				body += "\n" + surfaceSpaces(prefixW)
+			}
+			body += strings.ReplaceAll(links, "\n", "\n"+surfaceSpaces(prefixW))
+		}
 		return pad + prefixStr + body
 
 	case RoleAssistant:

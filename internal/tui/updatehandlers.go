@@ -61,8 +61,10 @@ func (m Model) handleInterrupt(_ tea.InterruptMsg) (Model, tea.Cmd) {
 	if m.running && m.cancelTurn != nil {
 		m.cancelTurn()
 		m.running = false
+		m.directTurn = false
 		m.cancelTurn = nil
 		m.cancelled = true
+		m = m.reclaimSteer()
 		m.shellID = ""
 		m.flushThinking()
 		if m.streaming != "" {
@@ -335,6 +337,9 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		m.appendAssistantInfo(turnCostDelta)
 	}
 	m.promptRow = 0
+	// A steer the loop never delivered (sent during the final response, or
+	// left behind by a cancel) would leak into a later turn. Queue it first.
+	m = m.reclaimSteer()
 	// Final assistant message just committed — refreshViewport's
 	// sticky-bottom honors a scrolled-up user. They explicitly
 	// scrolled away while results were streaming; don't yank them
@@ -346,7 +351,7 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 		if prompt, ok := m.unfinishedTodoContinuePrompt(); ok {
 			if m.todoAutoContinues < maxTodoAutoContinues {
 				m.todoAutoContinues++
-				m.pendingMessages = append(m.pendingMessages, prompt)
+				m.pendingMessages = append(m.pendingMessages, queuedMessage{text: prompt})
 				m.flashMsg = "continuing unfinished todo list"
 			} else {
 				m.messages = append(m.messages, Message{
@@ -373,11 +378,9 @@ func (m Model) handleAgentDone(msg agentDoneMsg) (Model, tea.Cmd) {
 	// the input is empty — if the user is mid-typing, leave their draft and
 	// the queue intact. The generic Update tail drains pending messages
 	// whenever the input empties (mirrors the pendingQuestion promotion).
-	if len(m.pendingMessages) > 0 && strings.TrimSpace(m.input.Value()) == "" {
-		next := m.pendingMessages[0]
-		m.pendingMessages = m.pendingMessages[1:]
-		m.input.SetValue(next)
-		cmds = append(cmds, m.replaySubmit())
+	if next, cmd, drained := m.drainPending(); drained {
+		m = next
+		cmds = append(cmds, cmd)
 	}
 
 	if m.wakePending {
@@ -658,7 +661,9 @@ func (m Model) handleLocalCallDone(msg localCallDoneMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.running = false
+	m.directTurn = false
 	m.cancelTurn = nil
+	m = m.reclaimSteer()
 	if msg.err != nil {
 		m.messages = append(m.messages, Message{Role: RoleError, Content: fmt.Sprintf("Local call failed: %v", msg.err)})
 		if msg.chat && len(m.history) > 0 && m.history[len(m.history)-1].Role == "user" {
@@ -687,7 +692,12 @@ func (m Model) handleLocalCallDone(msg localCallDoneMsg) (Model, tea.Cmd) {
 	m.refreshViewport()
 	m.vp.GotoBottom()
 	m.input.Focus()
-	return m, clearWindowTitleCmd()
+	cmds := []tea.Cmd{clearWindowTitleCmd()}
+	if next, cmd, drained := m.drainPending(); drained {
+		m = next
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // handleMCPApproval opens a 3-option picker for the first pending MCP server

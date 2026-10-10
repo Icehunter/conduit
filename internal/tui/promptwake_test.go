@@ -69,7 +69,7 @@ func TestAgentDone_QueuedMessageBeforeWake(t *testing.T) {
 	m, lp := wakeModel(t)
 	m.running = true
 	m.turnID = 1
-	m.pendingMessages = []string{"follow up"}
+	m.pendingMessages = []queuedMessage{{text: "follow up"}}
 	lp.InjectMessage(wakeNotif)
 	next, _ := m.Update(agentDoneMsg{turnID: 1, history: m.history})
 	nm := next.(Model)

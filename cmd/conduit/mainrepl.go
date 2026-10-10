@@ -178,23 +178,15 @@ func runREPL(continueMode bool, resumeID string) error {
 			}
 		}
 	} else if continueMode {
-		// Load the most recent session for this directory.
+		// Load the most recent session for this directory that has messages.
 		sessions, err := session.List(cwd)
-		if err == nil && len(sessions) > 0 {
-			most := sessions[0]
+		if err != nil {
+			warnf("Could not list sessions: %v", err)
+		}
+		if most, history, ok := latestSessionWithHistory(sessions, session.LoadMessages, warnf); ok {
 			sessionID = most.ID
 			resumeSourcePath = most.FilePath
-			filePath := most.FilePath
-			if writeSession, err := session.ImportForWrite(cwd, most.FilePath); err == nil {
-				filePath = writeSession.FilePath
-			} else {
-				warnf("Could not import latest session for writing: %v", err)
-			}
-			if history, err := session.LoadMessages(filePath); err == nil {
-				resumedHistory = history
-			} else {
-				warnf("Could not load latest session %q: %v", filepath.Base(filePath), err)
-			}
+			resumedHistory = history
 		}
 	}
 
@@ -546,7 +538,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// loaded. If we already resumed full history, re-injecting summary.md adds
 	// duplicate context cost on every turn.
 	priorSummary := ""
-	if continueMode && sess != nil && projectDir != "" && len(resumedHistory) == 0 {
+	if (continueMode || resumeID != "") && sess != nil && projectDir != "" && len(resumedHistory) == 0 {
 		priorSummary, _ = sessionmem.Load(sessionmem.Path(projectDir, sess.ID))
 		priorSummary = truncateResumeSummary(priorSummary, 6000)
 	}
@@ -566,7 +558,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// first request after a long-idle resume can trigger time-based
 	// microcompact without waiting for an additional assistant turn.
 	var lastAssistant time.Time
-	if continueMode && sess != nil {
+	if (continueMode || resumeID != "") && sess != nil {
 		if act, err := session.LoadActivity(sess.FilePath); err == nil {
 			lastAssistant = act.LastActivity
 		}
@@ -1048,7 +1040,7 @@ func runREPL(continueMode bool, resumeID string) error {
 		Profile:                   prof,
 		Session:                   sess,
 		ResumedHistory:            resumedHistory,
-		Resumed:                   continueMode && len(resumedHistory) > 0,
+		Resumed:                   len(resumedHistory) > 0,
 		MCPManager:                mcpManager,
 		EnterPlan:                 rOpts.EnterPlan,
 		ExitPlan:                  rOpts.ExitPlan,

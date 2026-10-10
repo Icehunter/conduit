@@ -152,7 +152,7 @@ type RegistryOpts struct {
 // BuildRegistry builds the tool registry, including MCP server tools. With a
 // manager it also installs the manager's change hook, so the registry's MCP
 // tools track servers as they connect and disconnect (see SyncMCPTools).
-func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *RegistryOpts, implementProvider func() *settings.ActiveProviderSettings) *tool.Registry {
+func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.Manager, rOpts *RegistryOpts, implementProviders func() []*settings.ActiveProviderSettings) *tool.Registry {
 	reg := tool.NewRegistry()
 	var sessionEnv map[string]string
 	var stager pendingedits.Stager
@@ -242,7 +242,7 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 		}
 	}
 	if mcpManager != nil {
-		followMCPTools(reg, mcpManager, implementProvider, implementOptions(rOpts)...)
+		followMCPTools(reg, mcpManager, implementProviders, implementOptions(rOpts)...)
 	}
 	return reg
 }
@@ -253,9 +253,9 @@ func BuildRegistry(client *api.Client, mcpManager *mcp.Manager, lspManager *lsp.
 // change. The hook goes in before the first sync so no change can land
 // between them unseen. This makes reg the registry that follows mgr; it
 // replaces any change hook mgr already had.
-func followMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings, implOpts ...localimplementtool.Option) {
-	mgr.SetOnChange(func() { SyncMCPTools(reg, mgr, implementProvider, implOpts...) })
-	SyncMCPTools(reg, mgr, implementProvider, implOpts...)
+func followMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProviders func() []*settings.ActiveProviderSettings, implOpts ...localimplementtool.Option) {
+	mgr.SetOnChange(func() { SyncMCPTools(reg, mgr, implementProviders, implOpts...) })
+	SyncMCPTools(reg, mgr, implementProviders, implOpts...)
 }
 
 // implementOptions wires LocalImplement to the session's guard and permission
@@ -304,7 +304,7 @@ var mcpSyncMu sync.Mutex
 // MCP tools are deferred behind ToolSearch, so their churn leaves the request's
 // tool list unchanged; the authenticate and Local* tools are always sent, and
 // adding or removing one changes the cached prompt prefix.
-func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func() *settings.ActiveProviderSettings, implOpts ...localimplementtool.Option) {
+func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProviders func() []*settings.ActiveProviderSettings, implOpts ...localimplementtool.Option) {
 	if reg == nil || mgr == nil {
 		return
 	}
@@ -323,7 +323,7 @@ func SyncMCPTools(reg *tool.Registry, mgr *mcp.Manager, implementProvider func()
 		want = append(want, mcptool.New(mgr, nt))
 	}
 	resolveImplement := func() (localimplementtool.Config, bool) {
-		return localimplementtool.ResolveConfig(mgr, resolveImplementProvider(implementProvider))
+		return localimplementtool.ResolveFirst(mgr, resolveImplementProviders(implementProviders))
 	}
 	if _, ok := resolveImplement(); ok {
 		want = append(want, localimplementtool.NewDynamic(mgr, resolveImplement, implOpts...))
@@ -344,7 +344,7 @@ func isMCPDerived(t tool.Tool) bool {
 	return mcpauthtool.IsAuthTool(t)
 }
 
-func resolveImplementProvider(fn func() *settings.ActiveProviderSettings) *settings.ActiveProviderSettings {
+func resolveImplementProviders(fn func() []*settings.ActiveProviderSettings) []*settings.ActiveProviderSettings {
 	if fn == nil {
 		return nil
 	}

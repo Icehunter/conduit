@@ -157,7 +157,7 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | ToolSearchTool | ✅ | Live registry search |
 | SyntheticOutputTool | ✅ | Coordinator signalling |
 | LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation. Apply mode: required `targets` (1-20 files), local-router writes them (needs `writeRoots`) and returns the diff; each target is gated as `Edit`; no draft fallback (`internal/tools/localimplementtool/`) |
-| Implement-role guard | ✅ | When the implement provider differs from the active one, the main model may Write/Edit only files recorded by LocalImplement (APPLIED) or CodingTask; file-writing Bash is denied; enforced in every permission mode and in sub-agents (`internal/implguard/`, `internal/shellsafe/writes.go`, `cmd/conduit/implguard.go`) |
+| Implement-role guard | ✅ | While the MCP implement provider is reachable (a connected server exposes its implement tool, re-checked on every call; any pool member counts), the main model may Write/Edit only files recorded by LocalImplement (APPLIED) or CodingTask, and raw `*implement*` MCP tools are refused. Bash and other tools go through the normal permission gate. When the implementer is unreachable the guard is inactive and the main model edits directly, with a one-time notice in the first edit result. Enforced in every permission mode and in sub-agents (`internal/implguard/`, `internal/agent/loopimplguard.go`, `cmd/conduit/implguard.go`) |
 | RecordDecision | ✅ | Conduit-original; decision journal |
 | CCRRetrieve | ✅ | Conduit-original; retrieves content-addressed originals from the CCR store; supports offset/limit line-range and pattern grep; output re-truncated via `truncate.Apply` |
 

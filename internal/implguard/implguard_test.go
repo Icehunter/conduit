@@ -114,3 +114,29 @@ func TestConcurrent(t *testing.T) {
 		t.Errorf("Touched() has %d entries, want 8", got)
 	}
 }
+
+func TestFallbackNoticeOncePerOutage(t *testing.T) {
+	var down bool
+	g := NewStatus(func() Status { return Status{Active: !down, Label: "x", Unreachable: down} })
+	steps := []struct {
+		down bool
+		want string
+	}{
+		{false, ""},
+		{true, FallbackNotice},
+		{true, ""},
+		{false, ""},
+		{true, FallbackNotice},
+	}
+	for i, st := range steps {
+		down = st.down
+		g.Active()
+		if got := g.TakeFallbackNotice(); got != st.want {
+			t.Fatalf("step %d: notice = %q, want %q", i, got, st.want)
+		}
+	}
+	var nilGuard *Guard
+	if nilGuard.TakeFallbackNotice() != "" {
+		t.Error("nil guard produced a notice")
+	}
+}

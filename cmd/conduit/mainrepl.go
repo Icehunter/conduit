@@ -463,7 +463,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	// Build interactive-tool stubs with nil callbacks; the TUI wires the real
 	// callbacks after prog.Start() via the same send-to-channel pattern used
 	// by SetAskPermission. Nil callbacks produce graceful error results.
-	implGuard := newImplementGuard(cwd, gate, codingEnabled)
+	implGuard := newImplementGuard(cwd, gate, codingEnabled, mcpManager)
 	// implAsk is bound to the loop's permission prompt once the loop exists;
 	// LocalImplement reads it at call time.
 	var implAsk func(context.Context, string, string) (bool, error)
@@ -494,16 +494,8 @@ func runREPL(continueMode bool, resumeID string) error {
 		SessionID:     sessionID,
 	}
 
-	reg := app.BuildRegistry(c, mcpManager, lspManager, rOpts, func() *settings.ActiveProviderSettings {
-		latest, err := settings.Load(cwd)
-		if err != nil {
-			return implementProvider
-		}
-		provider, ok := latest.ProviderForRole(settings.RoleImplement)
-		if !ok {
-			return implementProvider
-		}
-		return provider
+	reg := app.BuildRegistry(c, mcpManager, lspManager, rOpts, func() []*settings.ActiveProviderSettings {
+		return implementCandidatesFor(cwd, implementProvider)
 	})
 	modelName := internalmodel.Resolve()
 

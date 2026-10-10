@@ -126,19 +126,14 @@ func runPrint(args []string) error {
 		gate = permissions.New(cwd, nil, permissions.ModeDefault, merged.Allow, merged.Deny, merged.Ask)
 	}
 
-	implGuard := newImplementGuard(cwd, gate, verifiedCoding)
+	implGuard := newImplementGuard(cwd, gate, verifiedCoding, manager)
 	// LocalImplement writes through the same guard and permission gate as the
 	// REPL. Print mode has no prompt, so a write that needs approval is refused.
 	reg := app.BuildRegistry(c, manager, lsp.NewManager(), &app.RegistryOpts{
 		ImplGuard: implGuard,
 		Gate:      gate,
-	}, func() *settings.ActiveProviderSettings {
-		latest, err := settings.Load(cwd)
-		if err != nil {
-			return nil
-		}
-		provider, _ := latest.ProviderForRole(settings.RoleImplement)
-		return provider
+	}, func() []*settings.ActiveProviderSettings {
+		return implementCandidatesFor(cwd, nil)
 	})
 
 	// Print mode runs no tool hooks, but a UserPromptSubmit hook still gates

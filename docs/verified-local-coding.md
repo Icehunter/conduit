@@ -45,11 +45,14 @@ conduit code --file internal/example/example.go "Implement this bounded change"
 
 Requirements: the local-router instance must advertise `targets` (it does so only when `writeRoots` is configured) and `root`. If it does not, the call fails with an explicit error; there is no draft fallback. Router errors (for example `writeRoots` missing) are returned verbatim. Each target is permission-checked as `Edit` on its absolute path before the server is called, so deny rules, protected paths and approval prompts apply as for `CodingTask`.
 
-When the implement provider differs from the provider the agent is running on (an MCP implement provider always does), the implement guard is active:
+The guard is about routing code edits, not about locking the main model down. While an MCP implement provider is reachable:
 
-- The main model may edit only files the implementer touched in this session: `LocalImplement` targets that were APPLIED and files written by `CodingTask`.
-- Bash commands that write files are denied.
-- The guard holds in every permission mode (including auto and accept-edits) and in sub-agents.
+- Code edits go through `LocalImplement`. The main model may use Edit/Write/MultiEdit/HashEdit/NotebookEdit and AstGrep rewrites only on files the implementer touched in this session: `LocalImplement` targets that were APPLIED and files written by `CodingTask`.
+- Raw MCP implement tools (for example `mcp__local-coder__local_implement`) are refused; call `LocalImplement`.
+- Everything else is unchanged: the main model can still read files, run commands (Bash goes through the normal permission gate, so git add/commit/push, mkdir, `gofmt -w` and the like behave as in any session) and call other tools, subject to the usual permission rules.
+- The edit restriction holds in every permission mode (including auto and accept-edits) and in sub-agents.
+
+Reachability is evaluated on every tool call. An MCP implement provider counts as reachable when a connected MCP server currently exposes its implement tool (the same check that registers `LocalImplement`); with a `rolePools` pool for `implement`, any reachable member is enough. If the local implementer is not running, has not connected yet, or drops mid-session, the guard is inactive and the main model edits files directly. The first edit made during an outage carries a one-line notice in its tool result ("local implementer is unreachable"); it repeats only after the implementer has come back and gone down again. `CodingTask` uses the same implement role and the same check, so an unreachable provider never leaves it as the only path.
 
 When the implement provider is the one the agent runs on, or no implement role is configured, the guard is inactive.
 

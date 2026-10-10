@@ -23,6 +23,32 @@ func (m *Merged) ProviderForRole(role string) (*ActiveProviderSettings, bool) {
 	return nil, false
 }
 
+// ImplementCandidates lists, in resolution order, the providers that can serve
+// the implement role: the role's own provider first, then the other MCP
+// members of its role pool in pool order. It is nil when no implement provider
+// is configured.
+func (m *Merged) ImplementCandidates() []*ActiveProviderSettings {
+	impl, ok := m.ProviderForRole(RoleImplement)
+	if !ok {
+		return nil
+	}
+	out := []*ActiveProviderSettings{impl}
+	roleRef := m.Roles[RoleImplement]
+	pool, ok := m.ProviderPools[m.RolePools[RoleImplement]]
+	if !ok {
+		return out
+	}
+	for _, key := range pool.Members {
+		if key == roleRef {
+			continue
+		}
+		if p, ok := m.Providers[key]; ok && p.Kind == ProviderKindMCP {
+			out = append(out, &p)
+		}
+	}
+	return out
+}
+
 func (m *Merged) providerForRoleRef(role string) (*ActiveProviderSettings, bool) {
 	if m == nil {
 		return nil, false

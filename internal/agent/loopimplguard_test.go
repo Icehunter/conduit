@@ -70,10 +70,13 @@ func TestLoop_ImplGuard(t *testing.T) {
 		{"missing path denied", "Write", `{}`, permissions.ModeBypassPermissions, true, true},
 		{"notebook untouched denied", "NotebookEdit", `{"notebook_path":"` + other + `"}`, permissions.ModeBypassPermissions, true, true},
 		{"inactive guard has no effect", "Write", `{"file_path":"` + other + `"}`, permissions.ModeBypassPermissions, false, false},
-		{"bash redirect denied", "Bash", `{"command":"echo x > f"}`, permissions.ModeBypassPermissions, true, true},
-		{"bash tests allowed", "Bash", `{"command":"go test ./..."}`, permissions.ModeBypassPermissions, true, false},
-		{"bash redirect inactive allowed", "Bash", `{"command":"echo x > f"}`, permissions.ModeBypassPermissions, false, false},
-		{"repl denied", "REPL", `{}`, permissions.ModeBypassPermissions, true, true},
+		{"bash redirect reaches the gate", "Bash", `{"command":"echo x > f"}`, permissions.ModeBypassPermissions, true, false},
+		{"bash git commit reaches the gate", "Bash", `{"command":"git commit -m x"}`, permissions.ModeBypassPermissions, true, false},
+		{"bash heredoc reaches the gate", "Bash", `{"command":"cat > f <<EOF\nx\nEOF"}`, permissions.ModeBypassPermissions, true, false},
+		{"bash mkdir reaches the gate", "Bash", `{"command":"mkdir -p d"}`, permissions.ModeBypassPermissions, true, false},
+		{"bash gofmt -w reaches the gate", "Bash", `{"command":"gofmt -w ."}`, permissions.ModeBypassPermissions, true, false},
+		{"bash inactive allowed", "Bash", `{"command":"echo x > f"}`, permissions.ModeBypassPermissions, false, false},
+		{"repl reaches the gate", "REPL", `{}`, permissions.ModeBypassPermissions, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -141,55 +144,42 @@ func TestLoop_ImplGuardBindsSubAgents(t *testing.T) {
 	}
 }
 
-func TestImplGuardDenial_ToolAllowlist(t *testing.T) {
+func TestImplGuardDenial_Tools(t *testing.T) {
 	dir := t.TempDir()
-	g := guardOn(true)
-	l := &Loop{cfg: LoopConfig{ImplGuard: g, Cwd: dir}}
+	l := &Loop{cfg: LoopConfig{ImplGuard: guardOn(true), Cwd: dir}}
 	tests := []struct {
 		name       string
 		tool       string
-		readOnly   bool
 		input      map[string]any
 		wantDenied bool
 	}{
-		{"read tool", "Read", true, nil, false},
-		{"read-only mcp tool", "mcp__github__get_issue", true, nil, false},
-		{"mcp write tool", "mcp__github__create_file", false, nil, true},
-		{"raw local_implement", "mcp__local-coder__local_implement", false, nil, true},
-		{"raw local_implement marked read-only", "mcp__local-coder__local_implement", true, nil, true},
-		{"raw renamed implement tool", "mcp__qwen-router__qwen_implement", true, nil, true},
-		{"EnterWorktree", "EnterWorktree", false, nil, true},
-		{"ExitWorktree", "ExitWorktree", false, nil, true},
-		{"SkillManage write_file", "SkillManage", false, map[string]any{"action": "write_file", "name": "x"}, true},
-		{"SkillManage patch", "SkillManage", false, map[string]any{"action": "patch", "name": "x"}, true},
-		{"SkillManage list", "SkillManage", true, map[string]any{"action": "list"}, false},
-		{"REPL", "REPL", false, nil, true},
-		{"Workflow run", "Workflow", false, nil, true},
-		{"Config write", "Config", false, nil, true},
-		{"unknown future tool", "Frobnicate", false, nil, true},
-		{"LocalImplement", "LocalImplement", false, nil, false},
-		{"CodingTask", "CodingTask", false, nil, false},
-		{"Task sub-agent", "Task", false, nil, false},
-		{"TodoWrite", "TodoWrite", false, nil, false},
-		{"TaskCreate", "TaskCreate", false, nil, false},
-		{"TaskStop", "TaskStop", false, nil, false},
-		{"RecordDecision", "RecordDecision", false, nil, false},
-		{"AskUserQuestion", "AskUserQuestion", true, nil, false},
-		{"ExitPlanMode", "ExitPlanMode", true, nil, false},
-		{"AstGrep search", "AstGrep", true, map[string]any{"pattern": "x"}, false},
-		{"AstGrep dry run", "AstGrep", false, map[string]any{"pattern": "x", "rewrite": "y"}, false},
-		{"AstGrep rewrite no paths", "AstGrep", false, map[string]any{"pattern": "x", "rewrite": "y", "dry_run": false}, true},
-		{"Bash allowed", "Bash", true, map[string]any{"command": "go test ./..."}, false},
-		{"Bash heredoc", "Bash", false, map[string]any{"command": "bash /dev/stdin <<EOF\ntouch f\nEOF"}, true},
-		{"Shell redirect", "Shell", false, map[string]any{"command": "go test > out"}, true},
-		{"Shell runner", "Shell", false, map[string]any{"command": "go test ./..."}, false},
-		{"Write unrecorded", "Write", false, map[string]any{"file_path": filepath.Join(dir, "x.go")}, true},
+		{"read tool", "Read", nil, false},
+		{"mcp tool without readOnlyHint", "mcp__github__create_file", nil, false},
+		{"raw local_implement", "mcp__local-coder__local_implement", nil, true},
+		{"raw renamed implement tool", "mcp__qwen-router__qwen_implement", nil, true},
+		{"EnterWorktree", "EnterWorktree", nil, false},
+		{"SkillManage write_file", "SkillManage", map[string]any{"action": "write_file", "name": "x"}, false},
+		{"REPL", "REPL", nil, false},
+		{"unknown future tool", "Frobnicate", nil, false},
+		{"LocalImplement", "LocalImplement", nil, false},
+		{"CodingTask", "CodingTask", nil, false},
+		{"Task sub-agent", "Task", nil, false},
+		{"AstGrep search", "AstGrep", map[string]any{"pattern": "x"}, false},
+		{"AstGrep dry run", "AstGrep", map[string]any{"pattern": "x", "rewrite": "y"}, false},
+		{"AstGrep rewrite no paths", "AstGrep", map[string]any{"pattern": "x", "rewrite": "y", "dry_run": false}, true},
+		{"Bash git commit", "Bash", map[string]any{"command": "git commit -am x"}, false},
+		{"Bash heredoc", "Bash", map[string]any{"command": "bash /dev/stdin <<EOF\ntouch f\nEOF"}, false},
+		{"Bash env prefix", "Bash", map[string]any{"command": "FOO=1 make build"}, false},
+		{"Shell redirect", "Shell", map[string]any{"command": "go test > out"}, false},
+		{"Write unrecorded", "Write", map[string]any{"file_path": filepath.Join(dir, "x.go")}, true},
+		{"Edit unrecorded", "Edit", map[string]any{"file_path": filepath.Join(dir, "x.go")}, true},
+		{"MultiEdit unrecorded", "MultiEdit", map[string]any{"file_path": filepath.Join(dir, "x.go")}, true},
+		{"HashEdit unrecorded", "HashEdit", map[string]any{"file_path": filepath.Join(dir, "x.go")}, true},
+		{"NotebookEdit unrecorded", "NotebookEdit", map[string]any{"notebook_path": filepath.Join(dir, "x.ipynb")}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ft := &fakeTool{name: tt.tool, readOnly: tt.readOnly}
-			raw, _ := json.Marshal(tt.input)
-			msg := l.implGuardDenial(ft, tt.tool, raw, tt.input, dir)
+			msg := l.implGuardDenial(tt.tool, tt.input, dir)
 			if (msg != "") != tt.wantDenied {
 				t.Fatalf("denial = %q, wantDenied %v", msg, tt.wantDenied)
 			}
@@ -197,6 +187,68 @@ func TestImplGuardDenial_ToolAllowlist(t *testing.T) {
 				t.Errorf("denial should name the provider, got %q", msg)
 			}
 		})
+	}
+}
+
+// TestImplGuard_AvailabilityTransitions drives one guard through connected,
+// dropped and reconnected states, as an MCP server does mid-session.
+func TestImplGuard_AvailabilityTransitions(t *testing.T) {
+	dir := t.TempDir()
+	var up atomic.Bool
+	g := implguard.NewStatus(func() implguard.Status {
+		if up.Load() {
+			return implguard.Status{Active: true, Label: "mcp.local-coder"}
+		}
+		return implguard.Status{Label: "mcp.local-coder", Unreachable: true}
+	})
+	l := &Loop{cfg: LoopConfig{ImplGuard: g, Cwd: dir}}
+	edit := map[string]any{"file_path": filepath.Join(dir, "x.go")}
+	steps := []struct {
+		name       string
+		up         bool
+		wantDenied bool
+		wantNote   bool
+	}{
+		{"connected denies untouched edit", true, true, false},
+		{"dropped: edit proceeds with a notice", false, false, true},
+		{"still dropped: no second notice", false, false, false},
+		{"reconnected denies again", true, true, false},
+		{"dropped again: notice again", false, false, true},
+		{"still dropped: quiet", false, false, false},
+	}
+	for _, st := range steps {
+		up.Store(st.up)
+		msg := l.implGuardDenial("Edit", edit, dir)
+		if (msg != "") != st.wantDenied {
+			t.Fatalf("%s: denial = %q, wantDenied %v", st.name, msg, st.wantDenied)
+		}
+		note := l.implGuardFallbackNote("Edit", edit, dir)
+		if (note != "") != st.wantNote {
+			t.Fatalf("%s: note = %q, wantNote %v", st.name, note, st.wantNote)
+		}
+	}
+	// A non-edit call never consumes the notice.
+	up.Store(false)
+	l.implGuardDenial("Bash", map[string]any{"command": "git status"}, dir)
+	if n := l.implGuardFallbackNote("Bash", map[string]any{"command": "git status"}, dir); n != "" {
+		t.Errorf("Bash consumed the notice: %q", n)
+	}
+}
+
+func TestLoop_ImplGuardFallbackNoticeInResult(t *testing.T) {
+	dir := t.TempDir()
+	g := implguard.NewStatus(func() implguard.Status {
+		return implguard.Status{Label: "mcp.local-coder", Unreachable: true}
+	})
+	cfg := LoopConfig{Gate: permissions.New(dir, nil, permissions.ModeBypassPermissions, nil, nil, nil), Cwd: dir, ImplGuard: g}
+	input := `{"file_path":"` + filepath.Join(dir, "x.go") + `"}`
+	_, first, runs := runGuarded(t, "Write", input, cfg)
+	if runs != 1 || !strings.Contains(first, implguard.FallbackNotice) {
+		t.Fatalf("first edit: runs = %d, result %q; want it to run with the fallback notice", runs, first)
+	}
+	_, second, _ := runGuarded(t, "Write", input, cfg)
+	if strings.Contains(second, implguard.FallbackNotice) {
+		t.Fatalf("second edit repeated the notice: %q", second)
 	}
 }
 
@@ -222,15 +274,14 @@ func TestImplGuardDenial_ConduitStorageAndKillTools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := map[string]any{"file_path": tt.path}
-			raw, _ := json.Marshal(in)
-			msg := l.implGuardDenial(&fakeTool{name: tt.tool}, tt.tool, raw, in, dir)
+			msg := l.implGuardDenial(tt.tool, in, dir)
 			if (msg != "") != tt.wantDenied {
 				t.Fatalf("denial = %q, wantDenied %v", msg, tt.wantDenied)
 			}
 		})
 	}
 	for _, name := range []string{"KillShell", "KillBash"} {
-		if msg := l.implGuardDenial(&fakeTool{name: name}, name, json.RawMessage(`{}`), map[string]any{}, dir); msg != "" {
+		if msg := l.implGuardDenial(name, map[string]any{}, dir); msg != "" {
 			t.Errorf("%s denied: %q", name, msg)
 		}
 	}
@@ -254,8 +305,7 @@ func TestImplGuardDenial_StorageSymlinkIntoRepoDenied(t *testing.T) {
 		filepath.Join(storage, "memory.md"):       false,
 	} {
 		in := map[string]any{"file_path": path}
-		raw, _ := json.Marshal(in)
-		msg := l.implGuardDenial(&fakeTool{name: "Write"}, "Write", raw, in, dir)
+		msg := l.implGuardDenial("Write", in, dir)
 		if (msg != "") != wantDenied {
 			t.Errorf("%s: denial = %q, wantDenied %v", path, msg, wantDenied)
 		}

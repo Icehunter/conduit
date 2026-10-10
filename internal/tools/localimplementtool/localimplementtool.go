@@ -124,15 +124,17 @@ func (t *Tool) Description() string {
 	}
 	desc := "Offload a small, bounded implementation to the configured local/private model (" + target + "). " +
 		"The model writes the change and the server applies it directly to the files listed in \"targets\" " +
-		"(created if missing); the tool returns the applied diff. Review the diff. You may fix only those target files afterward; " +
-		"other files cannot be edited while the implement role is delegated. "
+		"(created if missing); the tool returns the applied diff. Review the diff. Code edits go through this tool while it is available; " +
+		"until then you may still read files, run commands and use git, and you may fix the target files afterward. " +
+		"If the local implementer is unreachable this tool is withdrawn and you edit files directly. "
 	if ok && cfg.SupportsFiles {
 		desc += "The server reads files itself: pass repository-relative paths in \"files\" instead of pre-reading them. " +
 			"Only inline excerpts in \"context\" for content that doesn't live in a file. "
 	} else {
 		desc += "Read any required files first and include the relevant context in the prompt. "
 	}
-	desc += "Include non-goals and keep the request narrow. " +
+	desc += "Do not specify an output format in the prompt; the server chooses it. " +
+		"Include non-goals and keep the request narrow. " +
 		"Do not use it for broad architecture, ambiguous product decisions, or work that requires hidden conversation context."
 	return desc
 }
@@ -151,7 +153,7 @@ func (*Tool) InputSchema() json.RawMessage {
 			},
 			"prompt": {
 				"type": "string",
-				"description": "Specific implementation request and acceptance criteria for the local model."
+				"description": "Specific implementation request and acceptance criteria for the local model. Describe what the code must do, not how to format the reply: the server sets the output format, and instructions like \"output only the script\" or \"reply in a code block\" make it discard the answer."
 			},
 			"context": {
 				"type": "string",
@@ -433,6 +435,23 @@ func ResolveConfig(manager *mcp.Manager, provider *settings.ActiveProviderSettin
 			SupportsTargets: toolSupportsTargets(srv, defaultImplementTool),
 			SupportedTasks:  toolTasks(srv, defaultImplementTool),
 		}, true
+	}
+	return Config{}, false
+}
+
+// ResolveFirst resolves the first candidate, in order, whose server is
+// connected and exposes the implement tool. Both LocalImplement's registration
+// and the implement guard resolve through it, so they cannot disagree about
+// whether an implementer is reachable. No candidates resolves like a nil
+// provider (any connected server exposing local_implement).
+func ResolveFirst(manager *mcp.Manager, candidates []*settings.ActiveProviderSettings) (Config, bool) {
+	if len(candidates) == 0 {
+		return ResolveConfig(manager, nil)
+	}
+	for _, p := range candidates {
+		if cfg, ok := ResolveConfig(manager, p); ok {
+			return cfg, true
+		}
 	}
 	return Config{}, false
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/icehunter/conduit/internal/mcp"
 	"github.com/icehunter/conduit/internal/mcp/mcptest"
+	"github.com/icehunter/conduit/internal/settings"
 	"github.com/icehunter/conduit/internal/tool"
 	"github.com/icehunter/conduit/internal/tools/localhelpertool"
 	"github.com/icehunter/conduit/internal/tools/localimplementtool"
@@ -287,5 +288,63 @@ func TestChildRegistriesFollowLateMCPConnect(t *testing.T) {
 				t.Errorf("child's ToolSearch offers mcp__docs__search = %v, but the child can call it = %v", offered, callable)
 			}
 		})
+	}
+}
+
+// With a rolePools pool for implement, LocalImplement follows the first
+// member whose server is up: the role provider when it is, else another
+// member, and it is withdrawn only when every member is down. The registry
+// re-resolves on each connect and disconnect.
+func TestSyncMCPTools_LocalImplementFollowsImplementPool(t *testing.T) {
+	cwd := mcptest.IsolateConfig(t)
+	a := mcptest.NewServer(t, defs("local_implement")...)
+	b := mcptest.NewServer(t, defs("local_implement")...)
+	servers := map[string]mcp.ServerConfig{"coder-b": {Type: "http", URL: b.URL}}
+	mcptest.WriteUserServers(t, servers)
+
+	merged := &settings.Merged{
+		Providers: map[string]settings.ActiveProviderSettings{
+			"mcp.a": {Kind: settings.ProviderKindMCP, Server: "coder-a"},
+			"mcp.b": {Kind: settings.ProviderKindMCP, Server: "coder-b"},
+		},
+		Roles:         map[string]string{settings.RoleImplement: "mcp.a"},
+		ProviderPools: map[string]settings.ProviderPoolSettings{"coders": {Members: []string{"mcp.a", "mcp.b"}}},
+		RolePools:     map[string]string{settings.RoleImplement: "coders"},
+	}
+	candidates := func() []*settings.ActiveProviderSettings { return merged.ImplementCandidates() }
+
+	ctx := context.Background()
+	mgr := mcp.NewManager()
+	reg := tool.NewRegistry()
+	followMCPTools(reg, mgr, candidates)
+	implementServer := func() (string, bool) {
+		cfg, ok := localimplementtool.ResolveFirst(mgr, candidates())
+		_, registered := reg.Lookup("LocalImplement")
+		if ok != registered {
+			t.Fatalf("resolves=%v but registered=%v", ok, registered)
+		}
+		return cfg.Server, registered
+	}
+
+	if err := mgr.ConnectAll(ctx, cwd, true); err != nil {
+		t.Fatal(err)
+	}
+	if srv, ok := implementServer(); !ok || srv != "coder-b" {
+		t.Errorf("role provider down: server=%q registered=%v, want coder-b", srv, ok)
+	}
+
+	servers["coder-a"] = mcp.ServerConfig{Type: "http", URL: a.URL}
+	mcptest.WriteUserServers(t, servers)
+	if err := mgr.Reconnect(ctx, "coder-a", cwd, true); err != nil {
+		t.Fatal(err)
+	}
+	if srv, ok := implementServer(); !ok || srv != "coder-a" {
+		t.Errorf("role provider up: server=%q registered=%v, want coder-a", srv, ok)
+	}
+
+	mgr.DisconnectServer("coder-a")
+	mgr.DisconnectServer("coder-b")
+	if srv, ok := implementServer(); ok {
+		t.Errorf("all members down: server=%q, want LocalImplement withdrawn", srv)
 	}
 }

@@ -26,6 +26,9 @@ type toolTask struct {
 	tool     tool.Tool // nil if tool not found or permission denied
 	denied   bool
 	denyMsg  string
+	// note is appended to the tool result, e.g. the implement-guard fallback
+	// notice.
+	note string
 }
 
 // toolResult holds the outcome of one tool execution.
@@ -175,12 +178,13 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		// When another provider owns code changes, the main model may not
 		// write files the implementer has not touched. Checked ahead of the
 		// gate so bypassPermissions cannot skip it.
-		if msg := l.implGuardDenial(t, block.Name, task.rawInput, block.Input, loopCwd); msg != "" {
+		if msg := l.implGuardDenial(block.Name, block.Input, loopCwd); msg != "" {
 			task.denied = true
 			task.denyMsg = msg
 			tasks = append(tasks, task)
 			continue
 		}
+		task.note = l.implGuardFallbackNote(block.Name, block.Input, loopCwd)
 
 		// --- Permission gate check ---
 		// Read-only tools are auto-approved in default and plan modes — they cannot
@@ -386,6 +390,9 @@ func (l *Loop) executeTools(ctx context.Context, assistantBlocks []api.ContentBl
 		// transcript get it with secrets masked.
 		if redact && !returnsFileBytes(task.block.Name, task.block.Input) {
 			tr.text = redactResult(tr.text)
+		}
+		if task.note != "" {
+			tr.text += "\n\n" + task.note
 		}
 		handler(LoopEvent{
 			Type:       EventToolResult,

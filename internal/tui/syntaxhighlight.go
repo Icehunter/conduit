@@ -203,7 +203,9 @@ func tokenizeLine(line, lang string) string {
 			quote := ch
 			j := i + 1
 			for j < n && runes[j] != quote {
-				if runes[j] == '\\' {
+				// A trailing backslash has nothing to escape; skipping past it
+				// would put j beyond the line.
+				if runes[j] == '\\' && j+1 < n {
 					j++
 				}
 				j++

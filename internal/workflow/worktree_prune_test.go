@@ -129,11 +129,13 @@ func TestPruneStale(t *testing.T) {
 			t.Errorf("%s worktree must survive", name)
 		}
 	}
+	// Match on the directory name: git prints forward slashes (and on Windows
+	// may use a different path spelling), so full-path matching is not portable.
 	list := gitRun(t, repo, "worktree", "list", "--porcelain")
-	if strings.Contains(list, gone.Path) {
+	if strings.Contains(list, filepath.Base(gone.Path)) {
 		t.Error("admin entry of vanished conduit worktree should be dropped")
 	}
-	if !strings.Contains(list, outside) {
+	if !strings.Contains(list, "elsewhere") {
 		t.Error("admin entry of a vanished non-conduit worktree must be left alone")
 	}
 }

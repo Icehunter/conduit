@@ -200,7 +200,8 @@ func lockedWorktrees(ctx context.Context, root string) map[string]string {
 	for _, line := range strings.Split(string(out), "\n") {
 		switch {
 		case strings.HasPrefix(line, "worktree "):
-			cur = strings.TrimPrefix(line, "worktree ")
+			// git prints forward slashes; callers look up native paths.
+			cur = filepath.FromSlash(strings.TrimPrefix(line, "worktree "))
 		case line == "locked" || strings.HasPrefix(line, "locked "):
 			locked[cur] = strings.TrimSpace(strings.TrimPrefix(line, "locked"))
 		}

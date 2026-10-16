@@ -82,14 +82,33 @@ const (
 	CompactThresholdPct = 95
 )
 
-// ContextWindowFor returns the context window for the named model (200K default,
-// 1M only when the name ends with "[1m]").
+// reportedWindows holds per-model context windows reported by the provider's
+// own model-listing API (Anthropic GET /v1/models max_input_tokens), keyed by
+// lowercase model ID. Replaced wholesale by SetReportedWindows.
+var reportedWindows atomic.Pointer[map[string]int]
+
+// SetReportedWindows installs the provider-reported context window per model
+// ID. Non-positive entries are dropped; nil or empty clears the table.
+func SetReportedWindows(windows map[string]int) {
+	m := make(map[string]int, len(windows))
+	for id, w := range windows {
+		if w > 0 {
+			m[strings.ToLower(id)] = w
+		}
+	}
+	reportedWindows.Store(&m)
+}
+
+// ContextWindowFor returns the context window for the named model.
+//
+// Resolution order: an explicit "[1m]" name suffix (1M), then the window the
+// provider reported for the model ID (SetReportedWindows), then 200K.
 //
 // Conduit intentionally diverges from CC here: CC auto-promotes sonnet-4 and
-// opus-4 to 1M, which delays compaction until ~800K tokens. Conduit defaults to
-// 200K so the 80% micro-compact threshold fires at ~160K, preventing runaway
-// context growth. Users who need 1M append "[1m]" to the model name (e.g.
-// "claude-sonnet-4-6[1m]"). See COMPATIBILITY.md § Intentional divergences.
+// opus-4 to 1M regardless of what the account allows. Conduit only trusts the
+// suffix or the provider-reported limit, and the compaction trigger stays
+// capped (DefaultAutoCompactTriggerCap) so a 1M window does not delay
+// compaction until ~800K tokens. See COMPATIBILITY.md § Intentional divergences.
 //
 // The CLAUDE_CODE_AUTO_COMPACT_WINDOW env var can further cap the returned value.
 func ContextWindowFor(name string) int {
@@ -97,6 +116,10 @@ func ContextWindowFor(name string) int {
 	window := ContextWindowDefault
 	if strings.HasSuffix(n, "[1m]") {
 		window = ContextWindow1M
+	} else if t := reportedWindows.Load(); t != nil {
+		if w, ok := (*t)[n]; ok {
+			window = w
+		}
 	}
 	if cap := contextWindowOverride(); cap > 0 && cap < window {
 		return cap

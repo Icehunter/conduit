@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/icehunter/conduit/internal/agent"
+	internalmodel "github.com/icehunter/conduit/internal/model"
 	"github.com/icehunter/conduit/internal/tools/planmodetool"
 	"github.com/icehunter/conduit/internal/tools/tasktool"
 	"github.com/icehunter/conduit/internal/tui/workinganim"
@@ -418,6 +419,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashMsg = "Catalog refresh failed: " + msg.err.Error()
 		} else if msg.cat != nil {
 			m.catalogData = msg.cat
+			internalmodel.SetReportedWindows(msg.cat.LiveContextWindows())
 			m.refreshModelCommandProviders()
 			m.flashMsg = fmt.Sprintf("Model catalog updated — %d models", len(msg.cat.Models))
 		}

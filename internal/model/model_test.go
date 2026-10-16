@@ -197,3 +197,25 @@ func TestResolveContextWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestContextWindowForReported(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
+	t.Cleanup(func() { SetReportedWindows(nil) })
+	SetReportedWindows(map[string]int{"Claude-Sonnet-5-5": 1_000_000, "claude-haiku-5-5": 200_000, "bad": 0})
+
+	tests := []struct {
+		name string
+		want int
+	}{
+		{"claude-sonnet-5-5", 1_000_000},
+		{"claude-haiku-5-5", 200_000},
+		{"claude-opus-5-5", ContextWindowDefault},
+		{"claude-opus-5-5[1m]", ContextWindow1M},
+		{"bad", ContextWindowDefault},
+	}
+	for _, tt := range tests {
+		if got := ContextWindowFor(tt.name); got != tt.want {
+			t.Errorf("ContextWindowFor(%q) = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}

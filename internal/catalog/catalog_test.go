@@ -495,3 +495,18 @@ func TestFetch_localFile_badJSON(t *testing.T) {
 		t.Errorf("Fetch fallback: got source %q, want builtin", cat.Source)
 	}
 }
+
+func TestLiveContextWindows(t *testing.T) {
+	c := &Catalog{Models: []ModelInfo{
+		{ID: "claude-sonnet-5-5", ContextWindow: 1_000_000, Origin: "live"},
+		{ID: "anthropic/claude-x", ContextWindow: 200_000},
+		{ID: "claude-zero", Origin: "live"},
+	}}
+	got := c.LiveContextWindows()
+	if len(got) != 1 || got["claude-sonnet-5-5"] != 1_000_000 {
+		t.Errorf("LiveContextWindows() = %v", got)
+	}
+	if (*Catalog)(nil).LiveContextWindows() != nil {
+		t.Error("nil catalog should return nil")
+	}
+}

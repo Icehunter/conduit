@@ -35,6 +35,22 @@ type Catalog struct {
 	Source    string      `json:"source"` // "builtin" | "openrouter" | "cache"
 }
 
+// LiveContextWindows returns model ID -> context window for entries fetched
+// from a provider's own model-listing API (Origin "live"). OpenRouter and
+// builtin entries are excluded: their windows are not account-specific.
+func (c *Catalog) LiveContextWindows() map[string]int {
+	if c == nil {
+		return nil
+	}
+	out := make(map[string]int)
+	for _, m := range c.Models {
+		if m.Origin == "live" && m.ContextWindow > 0 {
+			out[m.ID] = m.ContextWindow
+		}
+	}
+	return out
+}
+
 // Lookup returns the ModelInfo for the given model ID (exact or fuzzy match).
 // Handles provider-prefixed IDs ("anthropic/claude-opus-4-8"), picker keys
 // ("provider:openai-compatible.work.gpt-5.5"), case differences, and dot/dash

@@ -1003,6 +1003,7 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	// Load the model capability catalog from disk (best-effort; never blocks startup).
 	initialCatalog := catalog.Load(settings.ConduitDir())
+	internalmodel.SetReportedWindows(initialCatalog.LiveContextWindows())
 
 	// Lead inbox pump: drain messages sent to "lead" from teammates and inject
 	// them into the lead loop as programmatic user turns.

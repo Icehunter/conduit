@@ -405,3 +405,56 @@ func TestEnsureFresh_RefreshesAndPersists(t *testing.T) {
 		t.Errorf("persisted AccessToken = %q", again.AccessToken)
 	}
 }
+
+func TestRefreshRejected(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	valid := now.Add(6 * time.Hour)
+
+	newClient := func(t *testing.T, calls *int) *TokenClient {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*calls++
+			_, _ = io.WriteString(w, `{"access_token":"NEW_AT","refresh_token":"NEW_RT","expires_in":28800,"token_type":"bearer"}`)
+		}))
+		t.Cleanup(srv.Close)
+		cfg := ProdConfig
+		cfg.TokenURL = srv.URL + "/v1/oauth/token"
+		return NewTokenClient(cfg, srv.Client())
+	}
+
+	t.Run("forces a refresh when the unexpired token was rejected", func(t *testing.T) {
+		isolateClaudeDir(t)
+		var calls int
+		tc := newClient(t, &calls)
+		s := secure.NewMemoryStorage()
+		_ = SaveForEmail(s, PersistedTokens{AccessToken: "REVOKED_AT", RefreshToken: "RT", ExpiresAt: valid}, testEmail)
+
+		out, err := RefreshRejected(context.Background(), s, tc, testEmail, "REVOKED_AT", now, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("RefreshRejected: %v", err)
+		}
+		if out.AccessToken != "NEW_AT" || calls != 1 {
+			t.Errorf("AccessToken = %q, token calls = %d; want NEW_AT and 1", out.AccessToken, calls)
+		}
+		saved, _ := LoadForEmail(s, testEmail)
+		if saved.RefreshToken != "NEW_RT" {
+			t.Errorf("rotated refresh token not persisted: %q", saved.RefreshToken)
+		}
+	})
+
+	t.Run("adopts a credential another process already rotated", func(t *testing.T) {
+		isolateClaudeDir(t)
+		var calls int
+		tc := newClient(t, &calls)
+		s := secure.NewMemoryStorage()
+		_ = SaveForEmail(s, PersistedTokens{AccessToken: "PEER_AT", RefreshToken: "PEER_RT", ExpiresAt: valid}, testEmail)
+
+		out, err := RefreshRejected(context.Background(), s, tc, testEmail, "REVOKED_AT", now, 5*time.Minute)
+		if err != nil {
+			t.Fatalf("RefreshRejected: %v", err)
+		}
+		if out.AccessToken != "PEER_AT" || calls != 0 {
+			t.Errorf("AccessToken = %q, token calls = %d; want PEER_AT and 0", out.AccessToken, calls)
+		}
+	})
+}

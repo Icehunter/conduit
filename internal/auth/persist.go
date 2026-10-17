@@ -135,3 +135,23 @@ func ensureFreshOnce(ctx context.Context, s secure.Storage, c *TokenClient, emai
 	}
 	return fresh, nil
 }
+
+// forceRefreshSkew is large enough that any stored expiry counts as "within
+// skew", which makes EnsureFresh exchange the refresh token unconditionally.
+const forceRefreshSkew = 100 * 365 * 24 * time.Hour
+
+// RefreshRejected recovers from a 401 on an access token that was thought to
+// be valid. It first adopts whatever is stored (another conduit window may
+// have rotated the credential already); only if the stored access token is the
+// one the API just rejected does it exchange the refresh token, regardless of
+// the recorded expiry. Concurrency and cross-process rules are EnsureFresh's.
+func RefreshRejected(ctx context.Context, s secure.Storage, c *TokenClient, email, rejected string, now time.Time, skew time.Duration) (PersistedTokens, error) {
+	latest, err := EnsureFresh(ctx, s, c, email, now, skew)
+	if err != nil {
+		return PersistedTokens{}, err
+	}
+	if latest.AccessToken != rejected {
+		return latest, nil
+	}
+	return EnsureFresh(ctx, s, c, email, now, forceRefreshSkew)
+}

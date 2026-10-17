@@ -2,7 +2,10 @@ package tui
 
 import (
 	"image"
+	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -73,5 +76,24 @@ func TestFloatingRectAboveAnchorsToBottom(t *testing.T) {
 	}
 	if rect.Min.X != 30 {
 		t.Fatalf("rect.Min.X = %d, want centered at 30", rect.Min.X)
+	}
+}
+
+func TestApplyLayout_ChatViewportIgnoresHorizontalScroll(t *testing.T) {
+	m := Model{width: 80, height: 30}
+	m.input = textarea.New()
+	m.input.SetHeight(1)
+	m = m.applyLayout()
+	m.vp.SetContent(strings.Repeat("x", 200))
+
+	msgs := []tea.MouseWheelMsg{
+		{Button: tea.MouseWheelRight},
+		{Button: tea.MouseWheelDown, Mod: tea.ModShift},
+	}
+	for _, msg := range msgs {
+		m.vp, _ = m.vp.Update(msg)
+		if got := m.vp.XOffset(); got != 0 {
+			t.Fatalf("%v scrolled chat viewport horizontally: XOffset = %d, want 0", msg.Button, got)
+		}
 	}
 }

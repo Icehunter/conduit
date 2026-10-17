@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.294` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.302` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.128.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -81,6 +81,15 @@ regression appears.
 ---
 
 ## Wire sync log
+
+### 2.1.294 → 2.1.302 (2026-10-17)
+
+| Item | Action |
+|------|--------|
+| `Version` / `BillingVersion` / `BillingHeader` | Bumped to `2.1.302`. SDK, client ID, OAuth, billing suffix algorithm and model IDs are unchanged. |
+| `mid-conversation-system-2026-04-07` beta | New in the registry, gated behind a CC feature flag. Not adopted; conduit does not send mid-conversation system messages. |
+| New headers | `anthropic-client-request-reason` (session-list requests), `x-claude-code-upload-lane` (attachment upload) and `x-claude-code-wiggly-dove` (internal sentinel). None are sent on `/v1/messages`; not adopted. |
+| `LSP` tool | Dropped from CC's default tool list. Conduit keeps its `LSP` tool. |
 
 ### 2.1.293 → 2.1.294 (2026-10-08)
 
@@ -243,7 +252,10 @@ triaged.
    in `internal/app/auth.go`.
 5. If new wire headers appeared, add them to `KNOWN_HEADERS` in `extract.mjs`.
 6. Record any intentional divergences in the table above.
-7. Run `make verify` — must pass.
+7. Mirror the change in the Node port: bump `src/anthropic/wire.ts` in
+   `../local-claude-router`, then run `npx vitest run tests/anthropic/wire-drift.test.ts`
+   there (it reads this repo's Go constants and fails on drift).
+8. Run `make verify` — must pass.
 
 ---
 

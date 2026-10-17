@@ -45,6 +45,10 @@ func (m Model) applyLayout() Model {
 		// explicitly via Shift+Up/Down/PgUp/PgDn in handleKey.
 		m.vp.KeyMap = viewport.KeyMap{} // disable built-in key bindings
 		m.vp.MouseWheelEnabled = true   // handle tea.MouseWheelMsg for trackpad/wheel
+		// Chat content is wrapped to the viewport width, so horizontal scroll
+		// only hides the left columns. A sideways trackpad swipe or Shift+wheel
+		// would otherwise shift every line and clip the first characters.
+		m.vp.SetHorizontalStep(0)
 		m.ready = true
 	} else {
 		m.vp.SetWidth(m.width)

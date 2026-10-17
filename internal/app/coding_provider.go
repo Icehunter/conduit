@@ -51,7 +51,7 @@ func NewExecutionClient(p settings.ActiveProviderSettings, store secure.Storage,
 			if (p.Kind == settings.ProviderKindClaudeSubscription && kind != auth.AccountKindClaudeAI) || (p.Kind == settings.ProviderKindAnthropicAPI && kind != auth.AccountKindAnthropicConsole) {
 				return nil, errors.New("coding provider: account kind does not match provider")
 			}
-			return NewAPIClient(tokens, wireVersion), nil
+			return NewAPIClientForAccount(tokens, wireVersion, p.Account), nil
 		}
 		key, err := settings.LoadProviderCredential(store, p.Credential)
 		if err != nil {

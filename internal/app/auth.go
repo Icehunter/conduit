@@ -23,6 +23,13 @@ import (
 // credentials. Claude.ai uses OAuth bearer auth; Anthropic Console uses the
 // minted API key when available.
 func NewAPIClient(tok auth.PersistedTokens, wireVersion string) *api.Client {
+	return NewAPIClientForAccount(tok, wireVersion, "")
+}
+
+// NewAPIClientForAccount is NewAPIClient for tokens loaded from a specific
+// account. account names the credential to renew when the API rejects the
+// access token; empty means whichever account is active at that moment.
+func NewAPIClientForAccount(tok auth.PersistedTokens, wireVersion, account string) *api.Client {
 	entrypoint := os.Getenv("CLAUDE_CODE_ENTRYPOINT")
 	if entrypoint == "" {
 		entrypoint = "sdk-cli"
@@ -63,8 +70,39 @@ func NewAPIClient(tok auth.PersistedTokens, wireVersion string) *api.Client {
 			"X-Stainless-Timeout":                       "600",
 		},
 	}
+	if apiKey != "" {
+		// Console accounts authenticate with a minted API key, which has no refresh token.
+		return api.NewClientWithProxy(cfg)
+	}
+
+	// The access token is fixed when the client is built, so a session that
+	// outlives it would fail every turn. Refresh on 401 and swap the bearer in
+	// place; the failed request is retried once by the client.
+	var client *api.Client
+	rejected := tok.AccessToken
+	cfg.OnAuth401 = func(ctx context.Context) error {
+		latest, err := refreshRejectedClaudeToken(ctx, account, rejected)
+		if err != nil {
+			return err
+		}
+		rejected = latest.AccessToken
+		client.SetAuthToken(latest.AccessToken)
+		return nil
+	}
 	// Use a proxy-aware transport when HTTPS_PROXY / HTTP_PROXY env vars are set.
-	return api.NewClientWithProxy(cfg)
+	client = api.NewClientWithProxy(cfg)
+	return client
+}
+
+// refreshRejectedClaudeToken renews the active Claude account's credential
+// after the API rejected the access token rejected. An empty account means
+// the active one.
+func refreshRejectedClaudeToken(ctx context.Context, account, rejected string) (auth.PersistedTokens, error) {
+	if account == "" {
+		account = auth.ActiveEmail()
+	}
+	tc := auth.NewTokenClient(auth.ProdConfig, nil)
+	return auth.RefreshRejected(ctx, secure.NewDefault(), tc, account, rejected, time.Now(), 5*time.Minute)
 }
 
 // modelVisionCatalog is the catalog consulted for image support, loaded once.

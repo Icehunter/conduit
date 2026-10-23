@@ -3,10 +3,12 @@ package lsp
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -106,6 +108,13 @@ type Manager struct {
 	clients   map[string]*Client        // langKey → client
 	status    sync.Map                  // langKey → ServerStatus
 	overrides map[string]ServerOverride // langKey → override
+
+	// everConnected latches true once any language server has connected. It
+	// backs the LSP tool's isEnabled gate: the tool is only offered after a
+	// server has connected at least once (mirrors Claude Code's
+	// LSPManager.hasEverConnected). Set via a CompareAndSwap so it is
+	// irreversible for the lifetime of the Manager.
+	everConnected atomic.Bool
 }
 
 // NewManager creates an empty Manager with no server overrides.
@@ -123,6 +132,19 @@ func NewManagerWithOverrides(overrides map[string]ServerOverride) *Manager {
 		clients:   make(map[string]*Client),
 		overrides: overrides,
 	}
+}
+
+// HasEverConnected reports whether any language server has connected on this
+// manager since it was created. Mirrors Claude Code's LSPManager.hasEverConnected
+// getter, which gates the LSP tool's isEnabled.
+func (m *Manager) HasEverConnected() bool {
+	return m.everConnected.Load()
+}
+
+// latchConnected records that a server connected for the first time. Idempotent
+// and safe to call from concurrent goroutines.
+func (m *Manager) latchConnected() {
+	m.everConnected.CompareAndSwap(false, true)
 }
 
 // ServerFor returns the running LSP client for the given file path, launching
@@ -188,6 +210,9 @@ func (m *Manager) ServerFor(ctx context.Context, filePath string) (*Client, erro
 
 	m.clients[langKey] = cl
 	m.status.Store(langKey, StatusConnected)
+	// Record that a server has connected at least once so the LSP tool's
+	// isEnabled gate (HasEverConnected) is satisfied.
+	m.latchConnected()
 
 	// Watch for unexpected server exit.
 	go func() {
@@ -260,6 +285,79 @@ func (m *Manager) Close() {
 		// Timeout: some LSP servers didn't shut down cleanly.
 		// Continue anyway to avoid blocking the user.
 	}
+}
+
+// WarmUp starts language servers for file types present in the workspace so the
+// LSP tool's enabled gate (HasEverConnected) is satisfied as soon as possible,
+// independent of any tool call. Without this the LSP tool would be permanently
+// disabled: it is only offered once a server has connected, but servers only
+// connect through the tool — a circular dependency. WarmUp breaks the cycle by
+// starting servers at session start, mirroring Claude Code's LSP manager
+// warming up servers from the workspace at session initialization.
+//
+// It never blocks the caller: the workspace scan is synchronous (file names
+// only, no reads) but server startup runs in the background. Servers that fail
+// to start (missing binary, disabled override) are silently ignored; only a
+// successful connection flips the latch.
+func (m *Manager) WarmUp(cwd string) {
+	if cwd == "" {
+		return
+	}
+	exts := m.scanWorkspaceExtensions(cwd)
+	if len(exts) == 0 {
+		return
+	}
+	// Start each server in the background. ServerFor guards all shared state
+	// with m.mu, so concurrent calls are safe; only the first per langKey
+	// actually launches a server.
+	for ext := range exts {
+		go func(ext string) {
+			// A synthetic path carrying the target extension drives ServerFor to
+			// the same langKey resolution a real file of that type would.
+			_, _ = m.ServerFor(context.Background(), "warmup"+ext)
+		}(ext)
+	}
+}
+
+// scanWorkspaceExtensions returns the set of known file extensions present in
+// the workspace, walking up to a bounded depth. It inspects only file names —
+// never file contents — so it stays cheap even in large projects.
+func (m *Manager) scanWorkspaceExtensions(cwd string) map[string]bool {
+	exts := make(map[string]bool)
+	const maxDepth = 3 // bound directory traversal to stay responsive
+	var walk func(dir string, depth int) error
+	walk = func(dir string, depth int) error {
+		if depth > maxDepth {
+			return nil
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() {
+				// Skip noisy directories to bound traversal.
+				if name == ".git" || name == "node_modules" || name == ".venv" || name == "vendor" {
+					continue
+				}
+				if err := walk(filepath.Join(dir, name), depth+1); err != nil {
+					return err
+				}
+				continue
+			}
+			if e.Type().IsRegular() {
+				if ext := strings.ToLower(filepath.Ext(name)); ext != "" {
+					if _, ok := extToSpec[ext]; ok {
+						exts[ext] = true
+					}
+				}
+			}
+		}
+		return nil
+	}
+	_ = walk(cwd, 0)
+	return exts
 }
 
 // languageKey maps an extension to a stable language key.

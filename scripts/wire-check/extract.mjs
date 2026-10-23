@@ -355,6 +355,13 @@ const KNOWN_HEADERS = new Set([
   "anthropic-sans",
   "anthropic-serif",
   "x-claude-code-keep-branch",
+  // 2.1.309 confirmed intentional / benign, not part of conduit's /v1/messages shape.
+  "anthropic-client-request-reason", // session-list endpoint only; not the messages API
+  "x-claude-code-upload-lane", // attachment upload path, not /v1/messages
+  "anthropic-client-os", // Grove account-settings endpoints only
+  "anthropic-signed-key-rest", // NOT a header — false positive: redaction-rule `id` in the secret scanner (1867_pci.js)
+  "x-claude-code-wiggly-dove", // internal sentinel, not a wire header
+  "x-claude-code-route-final-answer", // response header, remote routing (1673_B1t.js) — read by CC, not sent by conduit
 ]);
 
 // Header prefix patterns to suppress entirely — too noisy or well-understood.

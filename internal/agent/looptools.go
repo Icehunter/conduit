@@ -569,6 +569,11 @@ func buildToolDefsFor(reg *tool.Registry, model string) []api.ToolDef {
 	if modelPrefersPlainEdit(model) {
 		all = slices.DeleteFunc(all, func(t tool.Tool) bool { return t.Name() == "HashEdit" })
 	}
+	// Exclude tools whose Enabled() returns false (e.g. LSP before any language
+	// server has connected). Such tools are absent from the request entirely,
+	// so they are filtered out before the deferral check and never counted as
+	// deferred.
+	all = slices.DeleteFunc(all, func(t tool.Tool) bool { return !tool.IsEnabled(t) })
 	if len(all) == 0 {
 		return nil
 	}
@@ -597,11 +602,20 @@ func buildToolDefsFor(reg *tool.Registry, model string) []api.ToolDef {
 		}
 		var schema map[string]any
 		_ = json.Unmarshal(t.InputSchema(), &schema)
-		defs = append(defs, api.ToolDef{
+		def := api.ToolDef{
 			Name:        t.Name(),
 			Description: toolAPIDescription(t),
 			InputSchema: schema,
-		})
+		}
+		// Attach the tool's declared output schema (e.g. the LSP tool) via Extra
+		// so it serialises into the request as `output_schema`.
+		if os, ok := t.(tool.OutputSchemaProvider); ok {
+			var outSchema map[string]any
+			if err := json.Unmarshal(os.OutputSchema(), &outSchema); err == nil {
+				def.Extra = map[string]any{"output_schema": outSchema}
+			}
+		}
+		defs = append(defs, def)
 	}
 
 	if countSetter != nil {

@@ -30,6 +30,8 @@ const BETAS_DELIBERATELY_NOT_SENT = {
     "intentional: scoped to the OIDC federation token exchange (grant_type=jwt-bearer with federation_rule_id/organization_id, upstream oidcFederationProvider). Conduit authenticates with the Max/Pro PKCE flow and never calls that path, so sending it on the messages API would be wrong.",
   "ccr-byoc-2025-07-29":
     "intentional: bring-your-own-cloud gate for Bedrock/Vertex customer-hosted deployments. Conduit only authenticates via Max/Pro OAuth and never exercises that path (COMPATIBILITY.md, 2.1.259 sync).",
+  "mid-conversation-system-2026-04-07":
+    "intentional: feature-gated mid-conversation system-prompt beta (behind an upstream flag, not adopted). Conduit does not send it; sending it would change the system-block shape the model expects.",
 };
 
 // Upstream tools conduit deliberately does not port. Reported as DIVERGED with

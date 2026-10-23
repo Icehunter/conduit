@@ -77,11 +77,20 @@ func (t *Tool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, err
 				if strings.EqualFold(tl.Name(), name) {
 					var schema map[string]any
 					_ = json.Unmarshal(tl.InputSchema(), &schema)
-					matches = append(matches, map[string]any{
+					match := map[string]any{
 						"name":         tl.Name(),
 						"description":  tl.Description(),
 						"input_schema": schema,
-					})
+					}
+					// Include the declared output schema when present (e.g. LSP),
+					// mirroring the full tool definition CC returns on select.
+					if os, ok := tl.(tool.OutputSchemaProvider); ok {
+						var outSchema map[string]any
+						if err := json.Unmarshal(os.OutputSchema(), &outSchema); err == nil {
+							match["output_schema"] = outSchema
+						}
+					}
+					matches = append(matches, match)
 					break
 				}
 			}

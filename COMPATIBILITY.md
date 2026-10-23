@@ -23,7 +23,7 @@ and any feature that does not touch the above.
 
 | Constant | File | Current value |
 |----------|------|---------------|
-| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.302` |
+| `Version` (Claude Code version claim) | `cmd/conduit/main.go` | `2.1.309` |
 | `SDKPackageVersion` | `internal/api/client.go` | `0.128.0` |
 | `anthropic-version` header | `internal/api/client.go` | `2023-06-01` |
 | OAuth client ID | `internal/auth/flow.go` | see source |
@@ -81,6 +81,14 @@ regression appears.
 ---
 
 ## Wire sync log
+
+### 2.1.302 → 2.1.309 (2026-10-22)
+
+| Item | Action |
+|------|--------|
+| `Version` / `BillingVersion` / `BillingHeader` | Bumped to `2.1.309`. SDK, client ID, OAuth and billing suffix algorithm unchanged. |
+| `LSP` tool | Re-adopted by CC with a new wire schema (see PARITY.md). Conduit's `LSP` tool rewritten: canonical ops (`goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`), `filePath` field, 1-based `line`/`character` (subtracted internally), structured `{operation,result,filePath,resultCount,fileCount}` result, `output_schema` attached, `Deferrable`, and gated on a server having connected (`HasEverConnected`) — warmed up at session start. `diagnostics` op dropped from the wire enum. |
+| `mid-conversation-system-2026-04-07` beta | Already baselined (not adopted). |
 
 ### 2.1.294 → 2.1.302 (2026-10-17)
 
@@ -253,8 +261,10 @@ triaged.
 5. If new wire headers appeared, add them to `KNOWN_HEADERS` in `extract.mjs`.
 6. Record any intentional divergences in the table above.
 7. Mirror the change in the Node port: bump `src/anthropic/wire.ts` in
-   `../local-claude-router`, then run `npx vitest run tests/anthropic/wire-drift.test.ts`
-   there (it reads this repo's Go constants and fails on drift).
+   `../local-claude-router`, then run `npx vitest run` there to sanity-check the
+   suite. (There is no `tests/anthropic/wire-drift.test.ts`; the Node port has no
+   test that reads this repo's Go constants — the versions are kept in lockstep by
+   hand per this step.)
 8. Run `make verify` — must pass.
 
 ---

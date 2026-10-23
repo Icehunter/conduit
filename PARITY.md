@@ -175,7 +175,7 @@
 | GrepTool | `tools/GrepTool/` | — | `internal/tools/greptool/` | ✅ | rg backend |
 | ListMcpResources | `tools/ListMcpResourcesTool/` | — | `internal/tools/mcpresourcetool/` | ✅ | Lists from all connected servers |
 | LocalImplement | — | — | `internal/tools/localimplementtool/` | ✅ | conduit-only wrapper; exposes configured MCP `local_implement` as a bounded implementation offload tool |
-| LSPTool | `tools/LSPTool/` | — | `internal/tools/lsp/`, `internal/lsp/` | ✅ | hover, definition, references, diagnostics; JSON-RPC/stdio; auto-detects gopls/typescript-language-server/pylsp/rust-analyzer |
+| LSPTool | `tools/LSPTool/` | — | `internal/tools/lsp/`, `internal/lsp/` | ✅ | Canonical ops (goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls); `filePath` + 1-based `line`/`character` (subtracted internally); structured `{operation,result,filePath,resultCount,fileCount}` result; `output_schema`; Deferrable; gated on a server having connected (`Manager.HasEverConnected`), warmed up at session start; JSON-RPC/stdio; auto-detects gopls/typescript-language-server/pylsp/rust-analyzer |
 | McpAuthTool | `tools/McpAuthTool/` | — | `internal/tools/mcpauthtool/` + `internal/commands/mcp.go` | ✅ | Per-server pseudo-tool registered for needs-auth servers (mcp__<name>__authenticate) + manual /mcp auth <name> |
 | MCPTool | `tools/MCPTool/` | — | `internal/tools/mcptool/` | ✅ | MCP tool proxy |
 | NotebookEditTool | `tools/NotebookEditTool/` | — | `internal/tools/notebookedittool/` | ✅ | |
@@ -368,7 +368,7 @@
 | MCP resource reading | `tools/ReadMcpResourceTool/` | — | `internal/mcp/manager.go`, `internal/tools/mcpresourcetool/` | ✅ | resources/read JSON-RPC |
 | MCP WebSocket transport | `utils/mcpWebSocketTransport.ts` | — | `internal/mcp/clientws.go` | ✅ | nhooyr.io/websocket; type="ws"\|"websocket" in server config |
 | MCP instructions delta | `utils/mcpInstructionsDelta.ts` | — | `internal/mcp/manager.go` + `cmd/conduit/main.go` | ✅ | Server instructions from initialize response injected into system prompt |
-| LSP integration | `services/lsp/` (7 files) | — | `internal/lsp/` | 🟡 | Client, Manager, language→server auto-detect; 6 tests exist in `internal/tools/lsp/lsp_test.go` (tool wrapper); `internal/lsp/` package itself has zero unit tests |
+| LSP integration | `services/lsp/` (7 files) | — | `internal/lsp/` | 🟡 | Client, Manager, language→server auto-detect; `Manager` latches `HasEverConnected()` on first connect (backs the LSP tool `isEnabled`), and `WarmUp(cwd)` starts servers for workspace file-types at session start to break the tool-disabled-before-first-connect cycle; tests in `internal/tools/lsp/lsp_test.go` (tool wrapper) cover all canonical ops; `internal/lsp/` package itself has zero unit tests |
 
 ---
 

@@ -234,6 +234,7 @@ type CallHierarchyItem struct {
 	URI            string     `json:"uri"`
 	Range          Range      `json:"range"`
 	SelectionRange Range      `json:"selectionRange"`
+	Detail         string     `json:"detail,omitempty"`
 }
 
 // CallHierarchyPrepareParams is the params for callHierarchy/prepare.

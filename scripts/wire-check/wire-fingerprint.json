@@ -1,8 +1,8 @@
 {
-  "extracted_at": "2026-10-17T08:18:32.605Z",
-  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.302",
-  "binary_version": "2.1.302",
-  "version": "2.1.302",
+  "extracted_at": "2026-10-23T05:46:50.405Z",
+  "decoded_dir": "/Volumes/Engineering/Icehunter/bun-demincer/decoded-2.1.309",
+  "binary_version": "2.1.309",
+  "version": "2.1.309",
   "cch": "<<bun-macro>>",
   "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
   "oauth_beta_header": "oauth-2025-04-20",
@@ -51,6 +51,7 @@
     "GetTask",
     "Glob",
     "Grep",
+    "LSP",
     "ListAgents",
     "ListMcpResourcesTool",
     "Monitor",
@@ -88,11 +89,7 @@
     "memory_read",
     "memory_write"
   ],
-  "discovered_headers": [
-    "anthropic-client-request-reason",
-    "x-claude-code-upload-lane",
-    "x-claude-code-wiggly-dove"
-  ],
+  "discovered_headers": [],
   "cch_note": "Per-request native substitution — not reproducible from the decoded bundle; source literal is 00000 (Vertex value). API accepts 00000 from conduit (see COMPATIBILITY.md).",
-  "billing_template": "x-anthropic-billing-header: cc_version=2.1.302.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.302\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
+  "billing_template": "x-anthropic-billing-header: cc_version=2.1.309.SHA256(\"59cf53e54c78\"+msg[4,7,20]+\"2.1.309\")[0:3]; cc_entrypoint=<entrypoint>; cch=<<bun-macro>>;"
 }

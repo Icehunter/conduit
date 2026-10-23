@@ -153,7 +153,7 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | MCPTool | ✅ | MCP tool proxy; registered and removed live as servers connect, reconnect, finish OAuth, or are disabled/added/removed (`app.SyncMCPTools`) |
 | ListMcpResources / ReadMcpResource | ✅ | |
 | SkillTool | ✅ | |
-| LSPTool | ✅ | hover, definition, references, diagnostics, documentSymbol, workspaceSymbol, implementation, callHierarchy; `internal/tools/lsp/lsp_test.go` |
+| LSPTool | ✅ | Canonical ops (goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls); `filePath` + 1-based `line`/`character` (subtracted internally); structured `{operation,result,filePath,resultCount,fileCount}` result; `output_schema`; Deferrable; gated on a server having connected, warmed up at session start; `internal/tools/lsp/lsp_test.go` |
 | ToolSearchTool | ✅ | Live registry search |
 | SyntheticOutputTool | ✅ | Coordinator signalling |
 | LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation. Apply mode: required `targets` (1-20 files), local-router writes them (needs `writeRoots`) and returns the diff; each target is gated as `Edit`; no draft fallback (`internal/tools/localimplementtool/`) |
@@ -170,14 +170,15 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | JSON-RPC/stdio client | ✅ | `internal/lsp/client.go` |
 | Server auto-detect (Go, TS/JS, Python, Rust) | ✅ | `internal/lsp/manager.go` |
 | pylsp → pyright fallback | ✅ | |
-| hover / definition / references / diagnostics | ✅ | |
-| Tool-level tests (C-O1) | ✅ | `internal/tools/lsp/lsp_test.go` — 6 tests covering existing operations |
+| hover / goToDefinition / findReferences / goToImplementation / documentSymbol / workspaceSymbol / prepareCallHierarchy / incomingCalls / outgoingCalls | ✅ | `diagnostics` op dropped from wire enum (kept as internal `cl.Diagnostics()` API) |
+| Tool-level tests (C-O1) | ✅ | `internal/tools/lsp/lsp_test.go` — 10 tests covering canonical ops + 1-based coordinate handling + structured result envelope |
 | Package unit tests (C-O1) | ✅ | `internal/lsp/client_test.go`, `manager_test.go` — client behavior + server-matching |
 | Expanded server registry (C-O1) | ✅ | 15+ langs: Vue, Svelte, Astro, YAML, Lua, C#, Java, Bash, Dockerfile, Terraform, Nix + Go/TS/JS/Py/Rust |
 | Config overrides (C-O1) | ✅ | `conduit.json` `lspServers` map; `NewManagerWithOverrides`; cmd/args/env/disabled |
 | documentSymbol / workspaceSymbol (C-O1) | ✅ | Tree + flat form; workspace/symbol query |
 | implementation / call hierarchy (C-O1) | ✅ | `implementation`, `callHierarchyIncoming`, `callHierarchyOutgoing` |
 | ServerStatus API (C-O1) | ✅ | `Manager.Status(langKey)` → unknown/connecting/connected/broken/disabled |
+| Warm-up + enabled gate (2.1.309) | ✅ | `Manager.HasEverConnected()` latches on first connect; `WarmUp(cwd)` scans the workspace (depth 3, skips .git/node_modules/.venv/vendor) and starts servers per present file-type at session start — breaks the tool-disabled-before-first-connect cycle. LSP tool `Enabled()` returns `Manager.HasEverConnected()` |
 | LSP status surfaced in TUI (C-O1) | ✅ | Status tab shows per-language server health via `m.lspManager.Statuses()`; "none active" when idle |
 | Focused restart / diagnostics tool actions (C-O1) | 🔲 | Evaluated; deferred — current broad LSP surface is sufficient for now |
 | Auto-download language servers | 🚫 | Intentionally excluded; prefer installed binaries or explicit config |

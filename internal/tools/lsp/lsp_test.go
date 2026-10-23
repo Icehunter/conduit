@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -199,9 +200,9 @@ func TestLSPTool_Hover(t *testing.T) {
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "hover",
-		"file":      goFile,
-		"line":      0,
-		"character": 0,
+		"filePath":  goFile,
+		"line":      1,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -237,10 +238,10 @@ func TestLSPTool_Definition(t *testing.T) {
 	tt := New(mgr)
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
-		"operation": "definition",
-		"file":      goFile,
-		"line":      0,
-		"character": 5,
+		"operation": "goToDefinition",
+		"filePath":  goFile,
+		"line":      1,
+		"character": 6,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -276,10 +277,10 @@ func TestLSPTool_References(t *testing.T) {
 	tt := New(mgr)
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
-		"operation": "references",
-		"file":      goFile,
-		"line":      0,
-		"character": 0,
+		"operation": "findReferences",
+		"filePath":  goFile,
+		"line":      1,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -288,52 +289,8 @@ func TestLSPTool_References(t *testing.T) {
 		t.Fatalf("IsError: %v", res.Content)
 	}
 	text := res.Content[0].Text
-	if !strings.Contains(text, "References (2)") {
-		t.Errorf("expected 'References (2)'; got: %s", text)
-	}
-}
-
-func TestLSPTool_Diagnostics(t *testing.T) {
-	dir := t.TempDir()
-	goFile := filepath.Join(dir, "main.go")
-	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
-		return nil, nil
-	})
-
-	// Inject diagnostics directly into the client cache.
-	fileURI := "file://" + filepath.ToSlash(goFile)
-	cl.StoreDiagnostics(fileURI, []lspclient.Diagnostic{
-		{
-			Range:    lspclient.Range{Start: lspclient.Position{Line: 2, Character: 0}},
-			Severity: lspclient.SeverityError,
-			Message:  "undefined: foo",
-			Source:   "gopls",
-		},
-	})
-
-	mgr := &stubManager{cl: cl}
-	tt := New(mgr)
-
-	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
-		"operation": "diagnostics",
-		"file":      goFile,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("IsError: %v", res.Content)
-	}
-	text := res.Content[0].Text
-	if !strings.Contains(text, "undefined: foo") {
-		t.Errorf("expected diagnostic message; got: %s", text)
-	}
-	if !strings.Contains(text, "error") {
-		t.Errorf("expected severity 'error'; got: %s", text)
+	if !strings.Contains(text, "Found 2 references across 1 files:") {
+		t.Errorf("expected 'Found 2 references across 1 files:'; got: %s", text)
 	}
 }
 
@@ -344,15 +301,19 @@ func TestLSPTool_UnknownServerGraceful(t *testing.T) {
 	// Use a file extension that has no known server.
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "hover",
-		"file":      "/some/file.unknown_ext_xyz",
-		"line":      0,
-		"character": 0,
+		"filePath":  "/some/file.unknown_ext_xyz",
+		"line":      1,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal("Execute must not return a Go error; got:", err)
 	}
-	if !res.IsError {
-		t.Fatal("expected IsError=true for unknown extension")
+	if res.IsError {
+		t.Fatalf("Claude Code never returns a tool-level error for a missing server; got IsError: %s", res.Content)
+	}
+	want := "No LSP server available for file type: .unknown_ext_xyz"
+	if res.Content[0].Text != want {
+		t.Errorf("expected exact message %q; got: %s", want, res.Content[0].Text)
 	}
 }
 
@@ -374,9 +335,9 @@ func TestLSPTool_GoplsIntegration(t *testing.T) {
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "hover",
-		"file":      goFile,
-		"line":      2,
-		"character": 5,
+		"filePath":  goFile,
+		"line":      3,
+		"character": 6,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -396,6 +357,8 @@ type stubManager struct {
 func (s *stubManager) ServerFor(_ context.Context, _ string) (*lspclient.Client, error) {
 	return s.cl, nil
 }
+
+func (s *stubManager) HasEverConnected() bool { return true }
 
 // managerInterface is what Tool.Execute uses — defined in lsp.go.
 // We verify stubManager satisfies it.
@@ -428,7 +391,7 @@ func TestLSPTool_DocumentSymbol(t *testing.T) {
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "documentSymbol",
-		"file":      goFile,
+		"filePath":  goFile,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +432,7 @@ func TestLSPTool_WorkspaceSymbol(t *testing.T) {
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "workspaceSymbol",
-		"file":      goFile,
+		"filePath":  goFile,
 		"query":     "Manager",
 	}))
 	if err != nil {
@@ -503,10 +466,10 @@ func TestLSPTool_Implementation(t *testing.T) {
 	tt := New(mgr)
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
-		"operation": "implementation",
-		"file":      goFile,
-		"line":      0,
-		"character": 5,
+		"operation": "goToImplementation",
+		"filePath":  goFile,
+		"line":      1,
+		"character": 6,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -514,8 +477,9 @@ func TestLSPTool_Implementation(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("IsError: %v", res.Content)
 	}
-	if !strings.Contains(res.Content[0].Text, "Implementation") {
-		t.Errorf("expected 'Implementation' in result; got: %s", res.Content[0].Text)
+	// goToImplementation reuses the goToDefinition (Et) formatter.
+	if !strings.Contains(res.Content[0].Text, "Defined in ") {
+		t.Errorf("expected 'Defined in ' in result; got: %s", res.Content[0].Text)
 	}
 }
 
@@ -550,10 +514,10 @@ func TestLSPTool_CallHierarchyIncoming(t *testing.T) {
 	tt := New(mgr)
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
-		"operation": "callHierarchyIncoming",
-		"file":      goFile,
-		"line":      2,
-		"character": 0,
+		"operation": "incomingCalls",
+		"filePath":  goFile,
+		"line":      3,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -597,10 +561,10 @@ func TestLSPTool_CallHierarchyOutgoing(t *testing.T) {
 	tt := New(mgr)
 
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
-		"operation": "callHierarchyOutgoing",
-		"file":      goFile,
-		"line":      4,
-		"character": 0,
+		"operation": "outgoingCalls",
+		"filePath":  goFile,
+		"line":      5,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -610,5 +574,222 @@ func TestLSPTool_CallHierarchyOutgoing(t *testing.T) {
 	}
 	if !strings.Contains(res.Content[0].Text, "Bar") {
 		t.Errorf("expected callee 'Bar'; got: %s", res.Content[0].Text)
+	}
+}
+
+// TestLSPTool_HoverNullNoInfo locks the exact Claude Code message when the LSP
+// server returns no hover (null result).
+func TestLSPTool_HoverNullNoInfo(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "textDocument/hover" {
+			return nil, nil
+		}
+		return nil, nil // null result
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "hover",
+		"filePath":  goFile,
+		"line":      1,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	want := "No hover information available. This may occur if the cursor is not on a symbol, or if the LSP server has not fully indexed the file."
+	if res.Content[0].Text != want {
+		t.Errorf("expected exact hover message; got: %s", res.Content[0].Text)
+	}
+}
+
+// TestLSPTool_CallHierarchyNoItem locks the exact Claude Code message when no
+// call-hierarchy item exists at the position.
+func TestLSPTool_CallHierarchyNoItem(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "textDocument/prepareCallHierarchy" {
+			return nil, nil
+		}
+		return nil, nil // no items
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "incomingCalls",
+		"filePath":  goFile,
+		"line":      1,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	want := "No call hierarchy item found at this position"
+	if res.Content[0].Text != want {
+		t.Errorf("expected exact message; got: %s", res.Content[0].Text)
+	}
+}
+
+// TestLSPTool_FileTooLarge locks the Claude Code 10MB file-size gate.
+func TestLSPTool_FileTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	big := bytes.Repeat([]byte("x"), 11*1024*1024) // 11MB > 10MB limit
+	if err := os.WriteFile(goFile, big, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A mock server is provided so ServerFor succeeds, but the size gate must
+	// fire before any LSP request is made.
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		t.Errorf("mock server should not be called for a too-large file")
+		return nil, nil
+	})
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "hover",
+		"filePath":  goFile,
+		"line":      1,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	if !strings.Contains(res.Content[0].Text, "File too large for LSP analysis") {
+		t.Errorf("expected file-too-large message; got: %s", res.Content[0].Text)
+	}
+}
+
+// TestLSPTool_ReferencesExact locks the exact grouped output for references
+// spanning two files.
+func TestLSPTool_ReferencesExact(t *testing.T) {
+	dir1 := t.TempDir()
+	file1 := filepath.Join(dir1, "a.go")
+	if err := os.WriteFile(file1, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dir2 := t.TempDir()
+	file2 := filepath.Join(dir2, "b.go")
+	if err := os.WriteFile(file2, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "textDocument/references" {
+			return nil, nil
+		}
+		return []lspclient.Location{
+			{URI: "file://" + filepath.ToSlash(file1), Range: lspclient.Range{Start: lspclient.Position{Line: 0, Character: 0}}},
+			{URI: "file://" + filepath.ToSlash(file2), Range: lspclient.Range{Start: lspclient.Position{Line: 3, Character: 4}}},
+		}, nil
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "findReferences",
+		"filePath":  file1,
+		"line":      1,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	text := res.Content[0].Text
+	if !strings.Contains(text, "Found 2 references across 2 files:") {
+		t.Errorf("expected two-file grouping header; got: %s", text)
+	}
+	if !strings.Contains(text, filepath.ToSlash(file1)) {
+		t.Errorf("expected first file path in result; got: %s", text)
+	}
+	if !strings.Contains(text, filepath.ToSlash(file2)) {
+		t.Errorf("expected second file path in result; got: %s", text)
+	}
+	if !strings.Contains(text, "  Line 1:1") {
+		t.Errorf("expected 1-based line formatting; got: %s", text)
+	}
+	if !strings.Contains(text, "  Line 4:5") {
+		t.Errorf("expected 1-based line formatting for second ref; got: %s", text)
+	}
+}
+
+// TestLSPTool_WorkspaceSymbolPlural locks the pluralization and grouping for a
+// workspace search spanning two files.
+func TestLSPTool_WorkspaceSymbolPlural(t *testing.T) {
+	dir1 := t.TempDir()
+	file1 := filepath.Join(dir1, "a.go")
+	if err := os.WriteFile(file1, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dir2 := t.TempDir()
+	file2 := filepath.Join(dir2, "b.go")
+	if err := os.WriteFile(file2, []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cl := startMockServer(t, func(method string, _ json.RawMessage) (any, error) {
+		if method != "workspace/symbol" {
+			return nil, nil
+		}
+		return []lspclient.SymbolInformation{
+			{Name: "Manager", Kind: lspclient.SymbolFunction, ContainerName: "pkg",
+				Location: lspclient.Location{URI: "file://" + filepath.ToSlash(file1), Range: lspclient.Range{Start: lspclient.Position{Line: 2, Character: 0}}}},
+			{Name: "Manager", Kind: lspclient.SymbolFunction, ContainerName: "pkg",
+				Location: lspclient.Location{URI: "file://" + filepath.ToSlash(file2), Range: lspclient.Range{Start: lspclient.Position{Line: 5, Character: 0}}}},
+		}, nil
+	})
+
+	mgr := &stubManager{cl: cl}
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "workspaceSymbol",
+		"query":     "Manager",
+		"filePath":  file1,
+		"line":      1,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %v", res.Content)
+	}
+	text := res.Content[0].Text
+	if !strings.Contains(text, "Found 2 symbols in workspace:") {
+		t.Errorf("expected plural 'symbols'; got: %s", text)
+	}
+	if !strings.Contains(text, " in pkg") {
+		t.Errorf("expected container name suffix; got: %s", text)
 	}
 }

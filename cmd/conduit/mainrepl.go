@@ -386,6 +386,14 @@ func runREPL(continueMode bool, resumeID string) error {
 
 	lspManager := lsp.NewManagerWithOverrides(lspOverrides)
 
+	// Warm up language servers for file types present in the workspace so the
+	// LSP tool's enabled gate (HasEverConnected) is satisfied as soon as the
+	// session starts, independent of any tool call. Without this the LSP tool
+	// would be permanently disabled: it is only offered once a server has
+	// connected, but servers only connect through the tool. WarmUp scans the
+	// workspace (fast, names only) and starts servers in the background.
+	lspManager.WarmUp(cwd)
+
 	// Load plugins (non-fatal — missing plugins don't block startup).
 	loadedPlugins, _ := plugins.LoadAll(cwd)
 

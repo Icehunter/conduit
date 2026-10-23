@@ -94,6 +94,38 @@ type NotDeferrable struct{}
 // Deferrable always returns false — the tool is always sent to the model.
 func (NotDeferrable) Deferrable() bool { return false }
 
+// EnabledChecker is an optional extension of Tool. When a tool implements this
+// interface and Enabled() returns false, the tool is excluded from the API
+// request entirely — the model never sees it and cannot call it. Mirrors
+// Tool.ts:isEnabled(); a tool whose precondition is unmet (e.g. the LSP tool
+// before any language server has connected) is simply not offered.
+type EnabledChecker interface {
+	// Enabled reports whether the tool should be included in the API request's
+	// tools array. Return false to hide the tool until its precondition is met.
+	Enabled() bool
+}
+
+// IsEnabled reports whether t should be included in the API request. Tools that
+// do not implement EnabledChecker are always enabled (true by default), so
+// existing tools require no changes.
+func IsEnabled(t Tool) bool {
+	if e, ok := t.(EnabledChecker); ok {
+		return e.Enabled()
+	}
+	return true
+}
+
+// OutputSchemaProvider is an optional extension of Tool. When a tool implements
+// this interface, its OutputSchema() JSON Schema is sent in the API request as
+// the tool's output_schema, so the model returns structured results conforming
+// to it. Mirrors Tool.ts:outputSchema. Tools that do not implement it declare no
+// output schema.
+type OutputSchemaProvider interface {
+	// OutputSchema returns the JSON Schema for the tool's result. Returned bytes
+	// must be a complete {"type":"object", ...} object.
+	OutputSchema() json.RawMessage
+}
+
 // Result is what a tool returns to the agent loop. The agent envelopes
 // this into a `tool_result` content block on the next turn.
 type Result struct {

@@ -736,6 +736,26 @@ Previously listed as missing but now ✅ implemented (2026-05): CLAUDE.md loadin
 
 ---
 
+## LSP Tool Divergences from CC 2.1.309
+
+### InputSchema wording
+CC's `gi` schema includes a longer description for `query`: *"The symbol name or partial name to search for (workspaceSymbol only). Most language servers return no results for an empty query, so always provide it when using workspaceSymbol."* — conduit now matches this. Other CC description fields that differ from older conduit wording (filePath "absolute or relative" vs "absolute path to the file to query"; line "1-based, as shown in editors") are aligned.
+
+### CC validateInput fast paths
+CC's `validateInput` has two stat-skip fast paths:
+- `Ae(r.filePath, p)` — true when the raw input or absolute path matches "special" path forms (minified `zs` checks: `qn(t) && !Dl(t)`, `iy` checks: `Ya(t)||xM(t)||Uw(t)||OS(t)`, likely UNC/network paths). Skips validation entirely.
+- `JJo(vm(s, p))` — a synchronous vetting pass using `lstatSync`/`readlinkSync`/`openDirNoFollowSync`; if it returns a non-sentinel value, the async `stat` is skipped.
+
+Conduit always does a single `os.Stat(absFile)`. Behavior is identical for normal local files; for those special path forms conduit may stat (and error) where CC skips. Porting these would require decoding the minified `zs`/`iy`/`vm` functions — low value for the local-first target platform.
+
+### Error codes unencoded
+CC's `validateInput` returns `errorCode` integers (1=File does not exist, 2=Path is not a file, 3=Invalid input, 4=Cannot access file) which CC's framework maps to tool_result `is_error:true`. Conduit's `tool.ErrorResult` does not carry error codes. The error messages themselves are faithful.
+
+### `mapToolResultToToolResultBlockParam`
+CC's mapping function sends `content: _(e.result)` — only the formatted `result` string. Conduit's `tool.TextResult(formatted)` matches this faithfully; no JSON envelope is emitted.
+
+---
+
 ## Conduit-Only Features (No CC Counterpart)
 
 | Feature | Package | Notes |

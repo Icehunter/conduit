@@ -295,13 +295,44 @@ func TestLSPTool_References(t *testing.T) {
 }
 
 func TestLSPTool_UnknownServerGraceful(t *testing.T) {
+	// Non-existent file with unknown extension: CC validates file existence
+	// first (in validateInput), so we get "File does not exist" before the
+	// no-server check fires.
 	mgr := lspclient.NewManager()
 	tt := New(mgr)
 
-	// Use a file extension that has no known server.
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "hover",
 		"filePath":  "/some/file.unknown_ext_xyz",
+		"line":      1,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal("Execute must not return a Go error; got:", err)
+	}
+	if !res.IsError {
+		t.Fatalf("Expected error for non-existent file; got IsError=false, content: %s", res.Content[0].Text)
+	}
+	want := "File does not exist: /some/file.unknown_ext_xyz"
+	if res.Content[0].Text != want {
+		t.Errorf("expected exact error message %q; got: %s", want, res.Content[0].Text)
+	}
+}
+
+func TestLSPTool_UnknownServerNoServer(t *testing.T) {
+	// Existing file with unknown extension: ServerFor fails, returns a
+	// non-error TextResult mirroring CC's no-server envelope.
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "sample.unknown_ext_xyz")
+	if err := os.WriteFile(testFile, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := lspclient.NewManager()
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "hover",
+		"filePath":  testFile,
 		"line":      1,
 		"character": 1,
 	}))
@@ -314,6 +345,40 @@ func TestLSPTool_UnknownServerGraceful(t *testing.T) {
 	want := "No LSP server available for file type: .unknown_ext_xyz"
 	if res.Content[0].Text != want {
 		t.Errorf("expected exact message %q; got: %s", want, res.Content[0].Text)
+	}
+}
+
+func TestLSPTool_InvalidInput_LineCharacterPositive(t *testing.T) {
+	mgr := lspclient.NewManager()
+	tt := New(mgr)
+
+	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "hover",
+		"filePath":  "/some/file.go",
+		"line":      0,
+		"character": 1,
+	}))
+	if err != nil {
+		t.Fatal("Execute must not return a Go error; got:", err)
+	}
+	if !res.IsError {
+		t.Fatalf("Expected error for non-positive line; got IsError=false")
+	}
+	if !strings.Contains(res.Content[0].Text, "line and character must be positive") {
+		t.Errorf("expected positivity error; got: %s", res.Content[0].Text)
+	}
+
+	res, err = tt.Execute(context.Background(), mkInput(t, map[string]any{
+		"operation": "hover",
+		"filePath":  "/some/file.go",
+		"line":      1,
+		"character": 0,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatalf("Expected error for non-positive character; got IsError=false")
 	}
 }
 
@@ -392,6 +457,8 @@ func TestLSPTool_DocumentSymbol(t *testing.T) {
 	res, err := tt.Execute(context.Background(), mkInput(t, map[string]any{
 		"operation": "documentSymbol",
 		"filePath":  goFile,
+		"line":      1,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -434,6 +501,8 @@ func TestLSPTool_WorkspaceSymbol(t *testing.T) {
 		"operation": "workspaceSymbol",
 		"filePath":  goFile,
 		"query":     "Manager",
+		"line":      1,
+		"character": 1,
 	}))
 	if err != nil {
 		t.Fatal(err)

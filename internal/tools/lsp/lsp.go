@@ -88,7 +88,7 @@ type input struct {
 
 // InputSchema implements tool.Tool, mirroring Claude Code's gi input schema.
 func (*Tool) InputSchema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"filePath":{"type":"string","description":"The absolute path to the file to query."},"line":{"type":"integer","description":"The 1-based line number of the symbol to query."},"character":{"type":"integer","description":"The 1-based character (column) number of the symbol to query."},"query":{"type":"string","description":"The symbol name to search for in the workspace."},"operation":{"type":"string","enum":["goToDefinition","findReferences","hover","documentSymbol","workspaceSymbol","goToImplementation","prepareCallHierarchy","incomingCalls","outgoingCalls"],"description":"The LSP operation to perform."}},"required":["operation","filePath"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"filePath":{"type":"string","description":"The absolute or relative path to the file"},"line":{"type":"integer","description":"The line number (1-based, as shown in editors)"},"character":{"type":"integer","description":"The character offset (1-based, as shown in editors)"},"query":{"type":"string","description":"The symbol name or partial name to search for (workspaceSymbol only). Most language servers return no results for an empty query, so always provide it when using workspaceSymbol."},"operation":{"type":"string","enum":["goToDefinition","findReferences","hover","documentSymbol","workspaceSymbol","goToImplementation","prepareCallHierarchy","incomingCalls","outgoingCalls"],"description":"The LSP operation to perform."}},"required":["operation","filePath","line","character"]}`)
 }
 
 // OutputSchema implements tool.OutputSchemaProvider, mirroring Claude Code's yi
@@ -132,25 +132,20 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	if in.FilePath == "" {
 		return tool.ErrorResult("missing required field: filePath"), nil
 	}
+	if in.Line < 1 || in.Character < 1 {
+		return tool.ErrorResult("invalid input: line and character must be positive integers (1-based)"), nil
+	}
 
 	absFile, err := filepath.Abs(tool.ResolvePath(ctx, in.FilePath))
 	if err != nil {
 		return tool.ErrorResult(fmt.Sprintf("cannot resolve path %q: %v", in.FilePath, err)), nil
 	}
 
-	// Obtain the language server for this file before validating input.
-	// Claude Code never returns a tool-level error for a missing server;
-	// it returns the structured envelope's result text, so mirror that
-	// with a plain TextResult.  Checking ServerFor first also means that
-	// files with unknown extensions (no server) get the graceful message
-	// rather than a file-existence error if the path is synthetic.
-	cl, err := t.Manager.ServerFor(ctx, absFile)
-	if err != nil {
-		return tool.TextResult(fmt.Sprintf("No LSP server available for file type: %s", filepath.Ext(absFile))), nil
-	}
-
 	// validateInput mirrors Claude Code's create().validateInput: check the
-	// file exists and is a regular file before making the LSP call.
+	// file exists and is a regular file before resolving the server.
+	// CC's validateInput runs the stat check first; "No LSP server available"
+	// only fires inside call() when sendRequest returns undefined (no server).
+	// https://github.com/anthropics/claude-code/blob/main/src/frontend-embeddings/src/tools/lsp/
 	info, err := os.Stat(absFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -160,6 +155,14 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, e
 	}
 	if !info.Mode().IsRegular() {
 		return tool.ErrorResult(fmt.Sprintf("Path is not a file: %s", absFile)), nil
+	}
+
+	// Obtain the language server for this file. Claude Code never returns a
+	// tool-level error for a missing server; it returns the structured
+	// envelope's result text, so mirror that with a plain TextResult.
+	cl, err := t.Manager.ServerFor(ctx, absFile)
+	if err != nil {
+		return tool.TextResult(fmt.Sprintf("No LSP server available for file type: %s", filepath.Ext(absFile))), nil
 	}
 
 	// Validate the operation is known before dispatching to the LSP.

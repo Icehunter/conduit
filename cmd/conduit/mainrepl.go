@@ -429,7 +429,7 @@ func runREPL(continueMode bool, resumeID string) error {
 	}
 
 	c := app.NewAPIClient(tok, Version)
-	if codingEnabled && defaultProvider != nil {
+	if codingEnabled && defaultProvider != nil && defaultProvider.Kind != "mcp" {
 		var clientErr error
 		c, clientErr = app.NewExecutionClient(*defaultProvider, secure.NewDefault(), Version)
 		if clientErr != nil {

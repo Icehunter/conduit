@@ -24,7 +24,7 @@ coming, and what's intentionally out of scope.
 
 | Capability | Status | Notes |
 |-----------|--------|-------|
-| Repository definition of done and bounded local repair | ✅ | `internal/verification`, `internal/coding`, `internal/app/coding.go`; opt-in TUI/print completion gate and `conduit code`; frozen checks, explicit permissions, stale-source/workspace checks, independent optional review; single-endpoint Qwen3.8-27B MCP failure→repair smoke passed 2026-10-08 ([evidence](docs/verified-local-live-smoke.md)) |
+| Repository definition of done and bounded local repair | ✅ | `internal/verification`, `internal/coding`, `internal/app/coding.go`; opt-in TUI/print completion gate and `conduit code`; frozen checks, explicit permissions, stale-source/workspace checks, independent optional review; the gate applies to coding turns only — a no-tool chat turn, and a tool turn whose workspace fingerprint is unchanged from before its first tool batch (read-only investigation), end without verification, per the spec's "natural completed coding turn" contract; single-endpoint Qwen3.8-27B MCP failure→repair smoke passed 2026-10-08 ([evidence](docs/verified-local-live-smoke.md)) |
 | Endpoint pools and review role | ✅ | Stable endpoint IDs, SQLite session/role affinity and expiring request leases for bounded implement/review; streaming role pools and external-router load telemetry are unsupported |
 | Privacy-controlled episodes and SFT/DPO export | ✅ | Separate append-only JSONL; explicit source/content opt-in; strict provenance and human labeling; incomplete/redacted/evaluation traces excluded. Opt-in local-router v1 traces capture actual expanded messages/parameters; strict input/output/model binding and upstream endpoint identity; legacy MCP context stays ineligible. Live Qwen trace→SFT export smoke passed 2026-10-08 ([details](docs/mcp-request-traces.md)) |
 | Held-out evaluation | ✅ | Pinned local checkout, immutable fixtures, authorized checks, enforced wall time and validated external-runner usage; not an OS sandbox |
@@ -61,6 +61,7 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | Manual provider entry (URL + key) | ✅ | Settings Providers tab |
 | Provider validation on save | ✅ | Test-call before persisting |
 | Model picker (`/model`) | ✅ | Grouped by provider; Ctrl+M assigns roles; type to filter model rows while retaining matching provider headers |
+| Live model discovery (unknown endpoints) | ✅ | OpenAI-compatible providers with no known catalog slug (llama.cpp, LM Studio, vLLM) get a 3-second `GET /v1/models` fallback in the picker (`catalogModelIDsForProvider`); base URLs with a trailing `/v1` are normalized for discovery only. llama.cpp `status.args` parses as either a space-separated string (older builds) or a JSON array (newer builds) — `jsonArgs` in `internal/api/models.go` |
 | Model capability display | ✅ | Context window, cost, tool-use, vision, thinking — shown in model picker with `?` key toggle |
 | Catalog fetch/cache package (C-O2) | ✅ | `internal/catalog/` — OpenRouter fetch + 24h disk cache + built-in Anthropic snapshot |
 | Catalog refresh command (C-O2) | ✅ | `/models --refresh` fetches & caches; shows count flash on completion |
@@ -153,7 +154,7 @@ Configuration and limitations: [`docs/verified-local-coding.md`](docs/verified-l
 | MCPTool | ✅ | MCP tool proxy; registered and removed live as servers connect, reconnect, finish OAuth, or are disabled/added/removed (`app.SyncMCPTools`) |
 | ListMcpResources / ReadMcpResource | ✅ | |
 | SkillTool | ✅ | |
-| LSPTool | ✅ | Canonical ops (goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls); `filePath` + 1-based `line`/`character` (subtracted internally); structured `{operation,result,filePath,resultCount,fileCount}` result; `output_schema`; Deferrable; gated on a server having connected, warmed up at session start; `internal/tools/lsp/lsp_test.go` |
+| LSPTool | ✅ | Canonical ops (goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, prepareCallHierarchy, incomingCalls, outgoingCalls); `filePath` + 1-based `line`/`character` (subtracted internally); structured `{operation,result,filePath,resultCount,fileCount}` result; `output_schema` declared client-side only, never sent on the wire (matches CC); Deferrable; gated on a server having connected, warmed up at session start; `internal/tools/lsp/lsp_test.go` |
 | ToolSearchTool | ✅ | Live registry search |
 | SyntheticOutputTool | ✅ | Coordinator signalling |
 | LocalImplement | ✅ | Conduit-original; MCP-backed bounded implementation. Apply mode: required `targets` (1-20 files), local-router writes them (needs `writeRoots`) and returns the diff; each target is gated as `Edit`; no draft fallback (`internal/tools/localimplementtool/`) |

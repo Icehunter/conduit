@@ -328,6 +328,9 @@ func (r *CodingRuntime) Completion(prepare func(context.Context) error, active f
 		return nil
 	}
 	return &agent.CompletionConfig{Active: active, PrepareCompletion: prepare, MaxRepairAttempts: r.policies.DefinitionOfDone.MaxRepairAttempts, TotalTimeout: time.Duration(r.policies.DefinitionOfDone.TotalTimeoutSeconds) * time.Second,
+		WorkspaceDigest: func(ctx context.Context) (string, error) {
+			return verification.WorkspaceFingerprint(ctx, r.opts.Root)
+		},
 		Verify: func(ctx context.Context, _ agent.CompletionCandidate) (agent.CompletionDecision, error) {
 			if !r.mu.TryLock() {
 				return agent.CompletionDecision{Status: agent.CompletionBlocked, Feedback: "A coding task is still active."}, nil

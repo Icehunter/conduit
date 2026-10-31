@@ -1,10 +1,14 @@
 package commands
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/icehunter/conduit/internal/api"
 	"github.com/icehunter/conduit/internal/catalog"
 	"github.com/icehunter/conduit/internal/coordinator"
 	"github.com/icehunter/conduit/internal/mcp"
@@ -87,7 +91,15 @@ func RegisterModelCommand(
 		if args == "" {
 			accountProviders := currentAccountProviders(getAccountProviders)
 			provider := firstAccountProvider(accountProviders)
-			localItems := localModelPickerItems(manager, providers)
+			// Only show MCP items when the current provider is MCP-kind.
+			// Detect this by checking if the current model value is a
+			// "local:" selector (setModel stores the raw picker value).
+			curModel := getModel()
+			hasMCP := strings.HasPrefix(curModel, "local:")
+			var localItems []PickerOption
+			if hasMCP {
+				localItems = localModelPickerItems(manager, providers, settings.ProviderKindMCP)
+			}
 			customItems := customModelPickerItems(providers, modelCatalog)
 			items := make([]PickerOption, 0, len(accountProviders)*4+len(localItems)+len(customItems))
 			for _, provider := range accountProviders {
@@ -291,6 +303,18 @@ func configuredProviderByKey(providers map[string]settings.ActiveProviderSetting
 	if provider, ok := catalogProviderByKey(providers, key, modelCatalog); ok {
 		return provider, true
 	}
+	// Fallback for discovered-model keys: try stripping the model suffix.
+	// A discovered model key looks like "openai-compatible.5090.nail-35b-a3b",
+	// and the stored provider key is "openai-compatible.5090".
+	if dot := strings.LastIndex(key, "."); dot > 0 {
+		parentKey := key[:dot]
+		if p, ok := configuredProviderByKey(providers, parentKey, modelCatalog); ok {
+			if p.Kind == settings.ProviderKindOpenAICompatible {
+				p.Model = key[dot+1:]
+				return p, true
+			}
+		}
+	}
 	return settings.ActiveProviderSettings{}, false
 }
 
@@ -362,16 +386,15 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 				group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(next), Label: modelID})
 				group.seen[modelID] = true
 			}
-			if provider.Model == "" {
-				continue
+			if provider.Model != "" {
+				if !group.seen[provider.Model] {
+					group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
+					group.seen[provider.Model] = true
+				}
 			}
-			if group.seen[provider.Model] {
-				continue
-			}
-			group.items = append(group.items, PickerOption{Value: "provider:" + settings.ProviderKey(provider), Label: provider.Model})
-			group.seen[provider.Model] = true
 			continue
 		}
+		// Non-OpenAI-compatible providers.
 		if provider.Model == "" {
 			continue
 		}
@@ -390,17 +413,38 @@ func customModelPickerItems(providers map[string]settings.ActiveProviderSettings
 }
 
 func catalogModelIDsForProvider(provider settings.ActiveProviderSettings, modelCatalog *catalog.Catalog) []string {
-	if modelCatalog == nil {
-		return nil
-	}
 	slug := catalogSlugForProvider(provider)
-	if slug == "" {
+
+	// Known slug: use the catalog.
+	if slug != "" {
+		if modelCatalog == nil {
+			return nil
+		}
+		return modelIDsFromCatalog(modelCatalog, slug)
+	}
+
+	// Unknown endpoint (e.g. local llama.cpp, LM Studio, vLLM).
+	// Fall back to the live server to discover models.
+	if provider.Kind != settings.ProviderKindOpenAICompatible || provider.BaseURL == "" {
 		return nil
 	}
-	ids := make([]string, 0, len(modelCatalog.Models))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	infos, err := api.ListModelsForOpenAICompatible(ctx, provider.BaseURL, http.DefaultClient)
+	if err != nil || len(infos) == 0 {
+		return nil
+	}
+	return modelIDsFromList(infos)
+}
+
+func modelIDsFromCatalog(catalog *catalog.Catalog, slug string) []string {
+	if catalog == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(catalog.Models))
 	seen := map[string]bool{}
 	if slug == "openrouter" {
-		for _, info := range modelCatalog.Models {
+		for _, info := range catalog.Models {
 			id := strings.TrimSpace(info.ID)
 			if id == "" || seen[id] {
 				continue
@@ -411,7 +455,7 @@ func catalogModelIDsForProvider(provider settings.ActiveProviderSettings, modelC
 		sort.Strings(ids)
 		return ids
 	}
-	for _, info := range modelCatalog.ForProvider(slug) {
+	for _, info := range catalog.ForProvider(slug) {
 		id := strings.TrimSpace(info.ID)
 		if id == "" {
 			continue
@@ -419,6 +463,21 @@ func catalogModelIDsForProvider(provider settings.ActiveProviderSettings, modelC
 		if _, rest, ok := strings.Cut(id, "/"); ok {
 			id = rest
 		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func modelIDsFromList(infos []catalog.ModelInfo) []string {
+	ids := make([]string, 0, len(infos))
+	seen := map[string]bool{}
+	for _, info := range infos {
+		id := strings.TrimSpace(info.ID)
 		if id == "" || seen[id] {
 			continue
 		}

@@ -136,6 +136,27 @@ func TestCodingRuntimeRepairsChecksReviewsAndExports(t *testing.T) {
 	}
 }
 
+// Completion exposes a workspace fingerprint so the loop can skip the gate
+// for turns that leave the workspace unchanged.
+func TestCompletionWorkspaceDigestTracksWorkspace(t *testing.T) {
+	rt, _, root := codingFixture(t, false)
+	cfg := rt.Completion(nil, nil)
+	if cfg == nil || cfg.WorkspaceDigest == nil {
+		t.Fatal("completion config lacks a workspace digest")
+	}
+	first, err := cfg.WorkspaceDigest(context.Background())
+	if err != nil || first == "" {
+		t.Fatalf("digest=%q err=%v", first, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := cfg.WorkspaceDigest(context.Background())
+	if err != nil || second == first {
+		t.Fatalf("digest did not change: first=%q second=%q err=%v", first, second, err)
+	}
+}
+
 func TestCodingRuntimeReadDenyPreventsModelDisclosure(t *testing.T) {
 	rt, calls, _ := codingFixture(t, true)
 	_, err := rt.Run(context.Background(), coding.Task{Prompt: "fix", Files: []string{"answer.txt"}})

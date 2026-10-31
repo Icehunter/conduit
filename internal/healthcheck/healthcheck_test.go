@@ -136,7 +136,10 @@ func TestRun_Timeout(t *testing.T) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	// -c commit.gpgsign=false: tests must not depend on the host's global
+	// git signing config (SSH/1Password signing agents break commits in
+	// temp repos).
+	cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)

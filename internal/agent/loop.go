@@ -1341,6 +1341,19 @@ func (l *Loop) RunPrompt(ctx context.Context, prompt UserPrompt, messages []api.
 				handler(LoopEvent{Type: EventText, Text: completion.text.String()})
 			}
 			completion.text.Reset()
+			// Reaching this point means the response carries tool_use blocks
+			// (handleStop returns stopTools only then): the turn did work and
+			// the completion gate applies to it.
+			completion.worked = true
+			if !completion.baselineSet && completion.cfg.WorkspaceDigest != nil {
+				// Fingerprint before the first tool batch runs so the gate can
+				// tell a read-only turn from one that changed the workspace.
+				// A capture failure is conservative: the gate still applies.
+				if digest, err := completion.cfg.WorkspaceDigest(ctx); err == nil {
+					completion.baselineDigest = digest
+					completion.baselineSet = true
+				}
+			}
 		}
 		toolResults, toolDurations, stopTurn, err := l.executeTools(ctx, res.Blocks, res.InvalidTools, handler)
 		prevToolDurations = api.FormatToolDurations(toolDurations)

@@ -50,12 +50,22 @@ type CompletionDecision struct {
 }
 
 // CompletionConfig is opt-in and snapshotted at Run entry. Active lets the
-// host exclude planning/read-only turns. Verify must establish machine evidence;
-// assistant claims alone are not a successful decision. Callbacks must honor ctx.
+// host exclude planning/read-only turns. A turn that executes no tool call is
+// not a coding turn and ends without running Verify. Likewise, when
+// WorkspaceDigest is provided, a turn whose workspace is unchanged from
+// before its first tool batch (read-only investigation) is not a coding turn.
+// Verify must establish machine evidence; assistant claims alone are not a
+// successful decision. Callbacks must honor ctx.
 type CompletionConfig struct {
 	Active            func() bool
 	PrepareCompletion func(context.Context) error
-	Verify            func(context.Context, CompletionCandidate) (CompletionDecision, error)
+	// WorkspaceDigest fingerprints the workspace. It is captured before the
+	// turn's first tool batch and compared again at check time; an identical
+	// digest means the turn made no coding change and the gate is skipped.
+	// Nil keeps the conservative behavior: every tool turn gates. Capture or
+	// compare errors fall back to running the gate.
+	WorkspaceDigest func(context.Context) (string, error)
+	Verify          func(context.Context, CompletionCandidate) (CompletionDecision, error)
 	// Repair optionally invokes a pinned implementer. Returned messages are
 	// appended to the parent history before it generates a new candidate.
 	// Nil feeds the failure back through this same loop and client instead.
@@ -106,7 +116,17 @@ type completionRun struct {
 	cfg      CompletionConfig
 	repairs  int
 	finished bool
-	text     strings.Builder
+	// worked is set once the turn executes a tool call. A turn with no tool
+	// calls cannot have changed the workspace, so it is not a coding turn and
+	// the gate never applies to it.
+	worked bool
+	// baselineDigest is the workspace fingerprint captured before the turn's
+	// first tool batch (baselineSet records a successful capture). If the
+	// workspace is unchanged at check time, the turn made no coding change
+	// and the gate does not apply, like a no-tool turn.
+	baselineDigest string
+	baselineSet    bool
+	text           strings.Builder
 }
 
 func (l *Loop) beginCompletion(ctx context.Context) (context.Context, context.CancelFunc, *completionRun, error) {
@@ -146,6 +166,26 @@ func (c *completionRun) incomplete(handler func(LoopEvent), status CompletionSta
 func (c *completionRun) check(ctx context.Context, msgs []api.Message, handler func(LoopEvent)) ([]api.Message, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return msgs, false, err
+	}
+	if !c.worked {
+		// No tool call ran this turn, so the workspace is unchanged and there
+		// is no coding work to verify. Completion is established only for
+		// coding turns; a chat turn ends without running the gate.
+		c.finished = true
+		return msgs, false, nil
+	}
+	if c.baselineSet {
+		if current, err := c.cfg.WorkspaceDigest(ctx); err == nil && current == c.baselineDigest {
+			// Tools ran but the workspace is identical to how it was before
+			// the first tool batch: read-only investigation is not a coding
+			// turn, so end like a no-tool turn (no events, no gate).
+			c.finished = true
+			return msgs, false, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return msgs, false, err
+		}
+		// A fingerprint failure is conservative: the gate still runs.
 	}
 	c.emit(handler, CompletionVerifying, "Verifying repository checks…")
 	if c.cfg.PrepareCompletion != nil {

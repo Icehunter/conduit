@@ -65,7 +65,7 @@ func TestLoop_WireHints_Root(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_GATEWAY_HINT_HEADERS", "1")
 	reg := tool.NewRegistry()
 	reg.Register(&fakeTool{name: "Echo", result: "ok"})
-	rec := &hintRecorder{bodies: []string{toolCallOnlySSE("Echo", "toolu_1"), textOnlySSE("done")}}
+	rec := &hintRecorder{bodies: []string{toolCallOnlySSE("Echo"), textOnlySSE("done")}}
 	srv := httptest.NewServer(rec)
 	defer srv.Close()
 

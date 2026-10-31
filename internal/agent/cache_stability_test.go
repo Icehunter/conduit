@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/icehunter/conduit/internal/api"
@@ -71,6 +72,42 @@ func TestBuildToolDefs_DeterministicOrder(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// outputSchemaFakeTool is a namedFakeTool that also declares an output schema,
+// like the LSP tool does via tool.OutputSchemaProvider.
+type outputSchemaFakeTool struct {
+	namedFakeTool
+}
+
+func (o *outputSchemaFakeTool) OutputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"}},"required":["operation"]}`)
+}
+
+// TestBuildToolDefs_DoesNotSendOutputSchemaOnWire guards against regressing
+// into attaching a tool's declared output schema to the request's tools
+// array. CC keeps output schemas client-side only; a strict Anthropic-wire
+// server rejects the extra field with
+// `tools.<i>.custom.output_schema: Extra inputs are not permitted` (400).
+func TestBuildToolDefs_DoesNotSendOutputSchemaOnWire(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(&outputSchemaFakeTool{namedFakeTool{name: "LSP"}})
+
+	defs := buildToolDefs(reg)
+	if len(defs) != 1 {
+		t.Fatalf("got %d defs, want 1", len(defs))
+	}
+	if defs[0].Extra != nil {
+		t.Fatalf("Extra = %#v, want nil (output_schema must not be sent on the wire)", defs[0].Extra)
+	}
+
+	wire, err := json.Marshal(defs[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(wire), "output_schema") {
+		t.Errorf("marshalled tool def contains output_schema: %s", wire)
 	}
 }
 

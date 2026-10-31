@@ -54,7 +54,7 @@ func (m Model) Init() tea.Cmd {
 		client := m.cfg.APIClient
 		conduitDir := settings.ConduitDir()
 		cmds = append(cmds, func() tea.Msg {
-			cat, err := catalogFetch(client, conduitDir)
+			cat, err := catalogFetch(client, m.providers, conduitDir)
 			return catalogRefreshedMsg{cat: cat, err: err}
 		})
 	}

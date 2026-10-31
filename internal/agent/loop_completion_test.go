@@ -33,7 +33,8 @@ func TestCompletionFailureRepairPassPublishesOnlyVerifiedText(t *testing.T) {
 			return CompletionDecision{Status: CompletionVerified}, nil
 		},
 	}
-	lp, srv := newTestLoopWithConfig(t, []string{textOnlySSE("premature done"), textOnlySSE("verified done")}, tool.NewRegistry(), LoopConfig{Completion: config})
+	// The leading tool call makes this a coding turn, so the gate applies.
+	lp, srv := newTestLoopWithConfig(t, []string{toolCallOnlySSE("Bash"), textOnlySSE("premature done"), textOnlySSE("verified done")}, tool.NewRegistry(), LoopConfig{Completion: config})
 	defer srv.Close()
 	_, err := lp.Run(context.Background(), []api.Message{user("implement")}, func(ev LoopEvent) {
 		if ev.Type == EventText {
@@ -57,7 +58,8 @@ func TestCompletionContinuationPreservesTextUntilVerified(t *testing.T) {
 			cutoff := func(text string) string {
 				return strings.ReplaceAll(textOnlySSE(text), `"stop_reason":"end_turn"`, `"stop_reason":"max_tokens"`)
 			}
-			responses := []string{cutoff("Complete "), textOnlySSE("candidate.")}
+			// The leading tool call makes this a coding turn, so the gate applies.
+			responses := []string{toolCallOnlySSE("Bash"), cutoff("Complete "), textOnlySSE("candidate.")}
 			if repair {
 				responses = append(responses, cutoff("Fixed "), textOnlySSE("candidate."))
 			}
@@ -112,7 +114,8 @@ func TestCompletionExternalRepairAndBudget(t *testing.T) {
 					return []api.Message{nudgeMessage("local implementer repaired")}, nil
 				}
 			}
-			lp, srv := newTestLoopWithConfig(t, []string{textOnlySSE("one"), textOnlySSE("two")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
+			// The leading tool call makes this a coding turn, so the gate applies.
+			lp, srv := newTestLoopWithConfig(t, []string{toolCallOnlySSE("Bash"), textOnlySSE("one"), textOnlySSE("two")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
 			defer srv.Close()
 			var text string
 			_, err := lp.Run(context.Background(), []api.Message{user("implement")}, func(ev LoopEvent) {
@@ -127,6 +130,131 @@ func TestCompletionExternalRepairAndBudget(t *testing.T) {
 				t.Fatalf("repairs=%d", repairs)
 			}
 		})
+	}
+}
+
+// A turn that makes no tool call is not a coding turn: the gate must not run
+// (no flush, no verify, no completion events) and the text publishes as-is.
+func TestCompletionNoWorkTurnSkipsGate(t *testing.T) {
+	var published strings.Builder
+	var completionEvents []CompletionStatus
+	flushes, verifies := 0, 0
+	cfg := &CompletionConfig{
+		PrepareCompletion: func(context.Context) error { flushes++; return nil },
+		Verify: func(context.Context, CompletionCandidate) (CompletionDecision, error) {
+			verifies++
+			return CompletionDecision{Status: CompletionVerified}, nil
+		},
+	}
+	lp, srv := newTestLoopWithConfig(t, []string{textOnlySSE("hi there")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
+	defer srv.Close()
+	_, err := lp.Run(context.Background(), []api.Message{user("hi")}, func(ev LoopEvent) {
+		switch ev.Type {
+		case EventText:
+			published.WriteString(ev.Text)
+		case EventCompletion:
+			completionEvents = append(completionEvents, ev.CompletionStatus)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if flushes != 0 || verifies != 0 {
+		t.Fatalf("gate ran on a no-work turn: flushes=%d verifies=%d", flushes, verifies)
+	}
+	if len(completionEvents) != 0 {
+		t.Fatalf("completion events on a no-work turn: %v", completionEvents)
+	}
+	if published.String() != "hi there" {
+		t.Fatalf("published=%q", published.String())
+	}
+}
+
+// A turn that executes tools but leaves the workspace byte-identical is not
+// a coding turn: the gate must not run (no flush, no verify, no completion
+// events) and the text publishes as-is.
+func TestCompletionUnchangedWorkspaceSkipsGate(t *testing.T) {
+	var published strings.Builder
+	var completionEvents []CompletionStatus
+	flushes, verifies := 0, 0
+	cfg := &CompletionConfig{
+		PrepareCompletion: func(context.Context) error { flushes++; return nil },
+		WorkspaceDigest:   func(context.Context) (string, error) { return "unchanged", nil },
+		Verify: func(context.Context, CompletionCandidate) (CompletionDecision, error) {
+			verifies++
+			return CompletionDecision{Status: CompletionVerified}, nil
+		},
+	}
+	lp, srv := newTestLoopWithConfig(t, []string{toolCallOnlySSE("Bash"), textOnlySSE("investigation only")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
+	defer srv.Close()
+	_, err := lp.Run(context.Background(), []api.Message{user("investigate")}, func(ev LoopEvent) {
+		switch ev.Type {
+		case EventText:
+			published.WriteString(ev.Text)
+		case EventCompletion:
+			completionEvents = append(completionEvents, ev.CompletionStatus)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if flushes != 0 || verifies != 0 || len(completionEvents) != 0 {
+		t.Fatalf("gate ran on an unchanged-workspace turn: flushes=%d verifies=%d events=%v", flushes, verifies, completionEvents)
+	}
+	if published.String() != "investigation only" {
+		t.Fatalf("published=%q", published.String())
+	}
+}
+
+// A turn whose tools changed the workspace still runs the gate.
+func TestCompletionChangedWorkspaceRunsGate(t *testing.T) {
+	digestCalls, verifies := 0, 0
+	cfg := &CompletionConfig{
+		WorkspaceDigest: func(context.Context) (string, error) {
+			digestCalls++
+			if digestCalls == 1 {
+				return "before", nil // baseline captured before the first tool batch
+			}
+			return "after", nil // the turn's tools changed the workspace
+		},
+		Verify: func(context.Context, CompletionCandidate) (CompletionDecision, error) {
+			verifies++
+			return CompletionDecision{Status: CompletionVerified}, nil
+		},
+	}
+	lp, srv := newTestLoopWithConfig(t, []string{toolCallOnlySSE("Bash"), textOnlySSE("changed")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
+	defer srv.Close()
+	var text string
+	_, err := lp.Run(context.Background(), []api.Message{user("implement")}, func(ev LoopEvent) {
+		if ev.Type == EventText {
+			text += ev.Text
+		}
+	})
+	if err != nil || verifies != 1 || text != "changed" {
+		t.Fatalf("verifies=%d text=%q err=%v", verifies, text, err)
+	}
+}
+
+// A workspace fingerprint failure is conservative: the gate still applies.
+func TestCompletionDigestFailureKeepsGate(t *testing.T) {
+	verifies := 0
+	cfg := &CompletionConfig{
+		WorkspaceDigest: func(context.Context) (string, error) { return "", errors.New("git unavailable") },
+		Verify: func(context.Context, CompletionCandidate) (CompletionDecision, error) {
+			verifies++
+			return CompletionDecision{Status: CompletionVerified}, nil
+		},
+	}
+	lp, srv := newTestLoopWithConfig(t, []string{toolCallOnlySSE("Bash"), textOnlySSE("done")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
+	defer srv.Close()
+	var text string
+	_, err := lp.Run(context.Background(), []api.Message{user("implement")}, func(ev LoopEvent) {
+		if ev.Type == EventText {
+			text += ev.Text
+		}
+	})
+	if err != nil || verifies != 1 || text != "done" {
+		t.Fatalf("verifies=%d text=%q err=%v", verifies, text, err)
 	}
 }
 
@@ -179,7 +307,8 @@ func TestCompletionCancellationAndFlushError(t *testing.T) {
 				}
 				return errors.New("unapplied edits")
 			}}
-			lp, srv := newTestLoopWithConfig(t, []string{textOnlySSE("done")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
+			// The leading tool call makes this a coding turn, so the gate applies.
+			lp, srv := newTestLoopWithConfig(t, []string{toolCallOnlySSE("Bash"), textOnlySSE("done")}, tool.NewRegistry(), LoopConfig{Completion: cfg})
 			defer srv.Close()
 			_, err := lp.Run(ctx, []api.Message{user("implement")}, func(ev LoopEvent) {
 				if ev.Type == EventText {

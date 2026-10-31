@@ -116,9 +116,13 @@ func IsEnabled(t Tool) bool {
 }
 
 // OutputSchemaProvider is an optional extension of Tool. When a tool implements
-// this interface, its OutputSchema() JSON Schema is sent in the API request as
-// the tool's output_schema, so the model returns structured results conforming
-// to it. Mirrors Tool.ts:outputSchema. Tools that do not implement it declare no
+// this interface, its OutputSchema() JSON Schema declares the shape of the
+// tool's result for client-side consumers (e.g. ToolSearch select results).
+// It is deliberately NOT sent in API requests: CC keeps output schemas
+// client-side and never serialises them into the tools array, and a strict
+// Anthropic-wire server rejects the extra field
+// (`tools.<i>.custom.output_schema: Extra inputs are not permitted`).
+// Mirrors Tool.ts:outputSchema. Tools that do not implement it declare no
 // output schema.
 type OutputSchemaProvider interface {
 	// OutputSchema returns the JSON Schema for the tool's result. Returned bytes

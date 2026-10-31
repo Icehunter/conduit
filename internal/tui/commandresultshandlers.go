@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/icehunter/conduit/internal/agent"
+	"net/http"
 	"os"
+
+	"github.com/icehunter/conduit/internal/agent"
 	"strings"
 	"time"
 
@@ -803,11 +805,14 @@ func (m Model) applyRewind(res commands.Result) (Model, tea.Cmd) {
 // goroutine. Fetches the OpenRouter-sourced catalog (all providers) and, when
 // client is non-nil, also calls the real Anthropic GET /v1/models endpoint
 // and merges its result in as the authoritative Claude model list — pricing
-// (which that endpoint doesn't return) filled in from api.PricePer1M. A
-// failure in the live-Anthropic half (no account configured, network error,
-// ...) is not fatal to the whole refresh: it just leaves the Claude slice at
-// whatever OpenRouter/builtin already had, same as before this existed.
-func catalogFetch(client *api.Client, conduitDir string) (*catalog.Catalog, error) {
+// (which that endpoint doesn't return) filled in from api.PricePer1M.
+//
+// For OpenAI-compatible providers, it also fetches their /v1/models endpoint
+// to discover context windows from status.args (llama.cpp) or context_window
+// fields (standard OpenAI). A failure in any live fetch (Anthropic or
+// OpenAI-compatible) is non-fatal: it just leaves that slice at whatever
+// OpenRouter/builtin already had.
+func catalogFetch(client *api.Client, providers map[string]settings.ActiveProviderSettings, conduitDir string) (*catalog.Catalog, error) {
 	ctx := context.Background()
 	base, err := catalog.Fetch(ctx)
 	// err from Fetch is non-fatal — base is already the builtin fallback in
@@ -827,6 +832,25 @@ func catalogFetch(client *api.Client, conduitDir string) (*catalog.Catalog, erro
 		}
 	}
 
+	// Fetch from OpenAI-compatible providers to discover context windows.
+	if providers != nil {
+		for _, provider := range providers {
+			if provider.Kind != settings.ProviderKindOpenAICompatible {
+				continue
+			}
+			if provider.BaseURL == "" {
+				continue
+			}
+			if live, liveErr := api.ListModelsForOpenAICompatible(ctx, provider.BaseURL, http.DefaultClient); liveErr == nil && len(live) > 0 {
+				for i := range live {
+					live[i].Origin = "live"
+				}
+				base = catalog.Merge(base, live)
+			}
+			// Non-fatal: a custom provider that's down shouldn't block the refresh.
+		}
+	}
+
 	if saveErr := catalog.SaveCache(conduitDir, base); saveErr != nil && err == nil {
 		err = fmt.Errorf("catalog: save cache: %w", saveErr)
 	}
@@ -840,7 +864,7 @@ func (m Model) applyCatalogRefresh() (Model, tea.Cmd) {
 	conduitDir := settings.ConduitDir()
 	client := m.cfg.APIClient
 	return m, func() tea.Msg {
-		cat, err := catalogFetch(client, conduitDir)
+		cat, err := catalogFetch(client, m.providers, conduitDir)
 		return catalogRefreshedMsg{cat: cat, err: err}
 	}
 }

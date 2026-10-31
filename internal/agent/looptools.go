@@ -607,14 +607,12 @@ func buildToolDefsFor(reg *tool.Registry, model string) []api.ToolDef {
 			Description: toolAPIDescription(t),
 			InputSchema: schema,
 		}
-		// Attach the tool's declared output schema (e.g. the LSP tool) via Extra
-		// so it serialises into the request as `output_schema`.
-		if os, ok := t.(tool.OutputSchemaProvider); ok {
-			var outSchema map[string]any
-			if err := json.Unmarshal(os.OutputSchema(), &outSchema); err == nil {
-				def.Extra = map[string]any{"output_schema": outSchema}
-			}
-		}
+		// Note: a tool's declared output schema (tool.OutputSchemaProvider,
+		// e.g. the LSP tool) is NOT sent on the wire. CC keeps output schemas
+		// client-side (result validation/display) and never serialises them
+		// into the request's tools array; a strict Anthropic-wire server
+		// rejects the extra field with
+		// `tools.<i>.custom.output_schema: Extra inputs are not permitted`.
 		defs = append(defs, def)
 	}
 

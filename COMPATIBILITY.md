@@ -87,7 +87,7 @@ regression appears.
 | Item | Action |
 |------|--------|
 | `Version` / `BillingVersion` / `BillingHeader` | Bumped to `2.1.309`. SDK, client ID, OAuth and billing suffix algorithm unchanged. |
-| `LSP` tool | Re-adopted by CC with a new wire schema (see PARITY.md). Conduit's `LSP` tool rewritten: canonical ops (`goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`), `filePath` field, 1-based `line`/`character` (subtracted internally), structured `{operation,result,filePath,resultCount,fileCount}` result, `output_schema` attached, `Deferrable`, and gated on a server having connected (`HasEverConnected`) — warmed up at session start. `diagnostics` op dropped from the wire enum. |
+| `LSP` tool | Re-adopted by CC with a new wire schema (see PARITY.md). Conduit's `LSP` tool rewritten: canonical ops (`goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`), `filePath` field, 1-based `line`/`character` (subtracted internally), structured `{operation,result,filePath,resultCount,fileCount}` result, `output_schema` declared client-side only (never sent in the request `tools` array — CC does not serialise tool output schemas on the wire and strict servers 400 on the extra field), `Deferrable`, and gated on a server having connected (`HasEverConnected`) — warmed up at session start. `diagnostics` op dropped from the wire enum. |
 | `mid-conversation-system-2026-04-07` beta | Already baselined (not adopted). |
 
 ### 2.1.294 → 2.1.302 (2026-10-17)

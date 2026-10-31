@@ -94,6 +94,7 @@ func (*Tool) InputSchema() json.RawMessage {
 // OutputSchema implements tool.OutputSchemaProvider, mirroring Claude Code's yi
 // output schema. It is the envelope (operation, result, filePath, resultCount,
 // fileCount); the tool_result content is the formatted `result` string only.
+// Like CC, it is client-side only — never sent on the API wire.
 func (*Tool) OutputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string","enum":["goToDefinition","findReferences","hover","documentSymbol","workspaceSymbol","goToImplementation","prepareCallHierarchy","incomingCalls","outgoingCalls"],"description":"The LSP operation that was performed"},"result":{"type":"string","description":"The formatted result of the LSP operation"},"filePath":{"type":"string","description":"The file path the operation was performed on"},"resultCount":{"type":"integer","description":"Number of results (definitions, references, symbols)"},"fileCount":{"type":"integer","description":"Number of files containing results"}},"required":["operation","result","filePath"]}`)
 }

@@ -2,6 +2,8 @@ package commands
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -95,21 +97,11 @@ func TestRegisterModelCommand_ModelsAliasOpensPicker(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Text), &got); err != nil {
 		t.Fatalf("unmarshal picker: %v", err)
 	}
-	if len(got.Items) < 6 {
-		t.Fatalf("picker items len = %d, want grouped Claude and MCP items", len(got.Items))
+	if len(got.Items) < 5 {
+		t.Fatalf("picker items len = %d, want at least Claude subscription section and models", len(got.Items))
 	}
 	if !got.Items[0].Section || got.Items[0].Label != "Claude Subscription" {
 		t.Fatalf("first picker item = %#v, want Claude Subscription section", got.Items[0])
-	}
-	foundMCPSection := false
-	for _, item := range got.Items {
-		if item.Section && item.Label == "MCP local-router" {
-			foundMCPSection = true
-			break
-		}
-	}
-	if !foundMCPSection {
-		t.Fatalf("picker items missing MCP local-router section: %#v", got.Items)
 	}
 }
 
@@ -129,9 +121,6 @@ func TestRegisterModelCommand_ModelsOmitsAccountSectionWithoutAccount(t *testing
 		if item.Section && (item.Label == "Claude Subscription" || item.Label == "Anthropic API") {
 			t.Fatalf("picker items include stale account section: %#v", got.Items)
 		}
-	}
-	if !got.Items[0].Section || got.Items[0].Label != "MCP local-router" {
-		t.Fatalf("first picker item = %#v, want MCP local-router section", got.Items[0])
 	}
 }
 
@@ -194,7 +183,8 @@ func TestRegisterModelCommand_ConfiguredLocalTargets(t *testing.T) {
 			ImplementTool: "implement",
 		},
 	}
-	RegisterModelCommand(r, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
+	// getModel returns a local: value → MCP items should appear
+	RegisterModelCommand(r, func() string { return "local:fast-router" }, func(string) {}, nil, nil, providers, nil)
 
 	result, ok := r.Dispatch("/models")
 	if !ok {
@@ -499,6 +489,59 @@ func TestRegisterModelCommand_ModelsShowsOpenAICompatibleProviders(t *testing.T)
 	}
 	if !foundSection || !foundModel {
 		t.Fatalf("picker openai-compatible section=%v model=%v items=%#v", foundSection, foundModel, got.Items)
+	}
+}
+
+// TestRegisterModelCommand_DiscoversLiveOpenAICompatibleModels reproduces the
+// llama.cpp scenario: a provider configured with a /v1-suffixed base URL and
+// no configured model. The picker must fetch the live model list and show it.
+func TestRegisterModelCommand_DiscoversLiveOpenAICompatibleModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"dirk-27b","object":"model","owned_by":"llamacpp"},
+			{"id":"nail-35b-a3b","object":"model","owned_by":"llamacpp"}
+		]}`))
+	}))
+	defer srv.Close()
+
+	// User's config has a /v1/ suffix, as tools like LM Studio display.
+	baseURL := strings.TrimSuffix(srv.URL, "/") + "/v1/"
+	provider := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "5090",
+		BaseURL:    baseURL,
+	}
+	providers := map[string]settings.ActiveProviderSettings{
+		settings.ProviderKey(provider): provider,
+	}
+	reg := New()
+	RegisterModelCommand(reg, func() string { return "claude-sonnet-4-6" }, func(string) {}, nil, nil, providers, nil)
+
+	picker, ok := reg.Dispatch("/model")
+	if !ok {
+		t.Fatal("expected /model to dispatch")
+	}
+	var got pickerPayload
+	if err := json.Unmarshal([]byte(picker.Text), &got); err != nil {
+		t.Fatalf("unmarshal picker: %v", err)
+	}
+
+	foundDirk, foundNail := false, false
+	for _, item := range got.Items {
+		switch item.Value {
+		case "provider:openai-compatible.5090.dirk-27b":
+			foundDirk = true
+		case "provider:openai-compatible.5090.nail-35b-a3b":
+			foundNail = true
+		}
+	}
+	if !foundDirk || !foundNail {
+		t.Fatalf("discovered models missing dirk=%v nail=%v items=%#v", foundDirk, foundNail, got.Items)
 	}
 }
 
@@ -1130,5 +1173,92 @@ func TestNormalizeProviderRole(t *testing.T) {
 		if got := normalizeProviderRole(tt.in); got != tt.want {
 			t.Errorf("normalizeProviderRole(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestCatalogModelIDsForProvider_UnknownSlugReturnsNil(t *testing.T) {
+	cat := &catalog.Catalog{Models: []catalog.ModelInfo{
+		{ID: "openai/fake-model", Provider: "openai"},
+	}}
+
+	// OpenAI-compatible with unknown, unreachable endpoint → the live
+	// discovery fallback fails and the result is nil.
+	provider := settings.ActiveProviderSettings{
+		Kind:    settings.ProviderKindOpenAICompatible,
+		BaseURL: "http://127.0.0.1:1/",
+	}
+	if got := catalogModelIDsForProvider(provider, cat); got != nil {
+		t.Errorf("unreachable endpoint = %#v, want nil", got)
+	}
+
+	// Known slug → returns from catalog
+	provider2 := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindOpenAICompatible,
+		Credential: "openai",
+		BaseURL:    "https://api.openai.com/v1/",
+	}
+	if got := catalogModelIDsForProvider(provider2, cat); len(got) != 1 || got[0] != "fake-model" {
+		t.Errorf("known openai slug = %#v, want [fake-model]", got)
+	}
+
+	// Non-OpenAI-compatible unknown → nil
+	provider3 := settings.ActiveProviderSettings{
+		Kind:       settings.ProviderKindAnthropicAPI,
+		Credential: "custom",
+	}
+	if got := catalogModelIDsForProvider(provider3, cat); got != nil {
+		t.Errorf("unknown non-OpenAI = %#v, want nil", got)
+	}
+
+	// Nil catalog with known slug → nil
+	if got := catalogModelIDsForProvider(provider2, nil); got != nil {
+		t.Errorf("nil catalog = %#v, want nil", got)
+	}
+}
+
+func TestLocalModelPickerItems_FiltersNonMCP(t *testing.T) {
+	providers := map[string]settings.ActiveProviderSettings{
+		"openai-compatible.llama.cpp": {
+			Kind:    settings.ProviderKindOpenAICompatible,
+			BaseURL: "http://192.168.0.71:1234/",
+		},
+	}
+
+	// Non-MCP provider kind → nil
+	items := localModelPickerItems(nil, providers, settings.ProviderKindOpenAICompatible)
+	if items != nil {
+		t.Errorf("non-MCP kind returned %#v, want nil", items)
+	}
+
+	// MCP provider kind → returns default fallback (no manager, no MCP providers)
+	items = localModelPickerItems(nil, providers, settings.ProviderKindMCP)
+	if items == nil || len(items) == 0 {
+		t.Errorf("MCP kind returned nil/empty, want default MCP section")
+	} else if !items[0].Section || items[0].Label != "MCP "+defaultLocalServer {
+		t.Errorf("first item = %#v, want MCP default section", items[0])
+	}
+
+	// With an actual MCP provider configured → returns that provider
+	mcpProviders := map[string]settings.ActiveProviderSettings{
+		"mcp.fast-router": {
+			Kind:          settings.ProviderKindMCP,
+			Server:        "fast-router",
+			Model:         "llama-fast",
+			DirectTool:    "direct",
+			ImplementTool: "implement",
+		},
+	}
+	items = localModelPickerItems(nil, mcpProviders, settings.ProviderKindMCP)
+	if items == nil {
+		t.Fatal("MCP providers should return items")
+	}
+	foundSection := false
+	for _, item := range items {
+		if item.Section && item.Label == "MCP fast-router" {
+			foundSection = true
+		}
+	}
+	if !foundSection {
+		t.Errorf("MCP section for fast-router not found in %#v", items)
 	}
 }

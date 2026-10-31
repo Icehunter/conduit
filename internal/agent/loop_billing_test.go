@@ -48,7 +48,7 @@ func TestLoop_BillingContext(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		switch call {
 		case 1:
-			_, _ = w.Write([]byte(toolCallOnlySSE("Echo", "toolu_1")))
+			_, _ = w.Write([]byte(toolCallOnlySSE("Echo")))
 		default:
 			_, _ = w.Write([]byte(textOnlySSE("done")))
 		}
@@ -144,9 +144,9 @@ func extractField(line, key string) string {
 }
 
 // toolCallOnlySSE is one assistant turn that calls a tool and stops.
-func toolCallOnlySSE(toolName, toolID string) string {
+func toolCallOnlySSE(toolName string) string {
 	return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
-		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"" + toolID + "\",\"name\":\"" + toolName + "\",\"input\":{}}}\n\n" +
+		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"" + toolName + "\",\"input\":{}}}\n\n" +
 		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n" +
 		"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
 		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n" +

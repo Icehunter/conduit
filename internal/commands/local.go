@@ -227,7 +227,10 @@ func localStatusResult(manager *mcp.Manager, providers map[string]settings.Activ
 	return Result{Type: "text", Text: strings.TrimRight(sb.String(), "\n")}
 }
 
-func localModelPickerItems(manager *mcp.Manager, providers map[string]settings.ActiveProviderSettings) []PickerOption {
+func localModelPickerItems(manager *mcp.Manager, providers map[string]settings.ActiveProviderSettings, providerKind string) []PickerOption {
+	if providerKind != settings.ProviderKindMCP {
+		return nil
+	}
 	targets := localTargets(manager, providers)
 	items := make([]PickerOption, 0, len(targets)*2)
 	for _, target := range targets {

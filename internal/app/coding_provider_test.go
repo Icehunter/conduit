@@ -73,6 +73,47 @@ func TestRoleFailureCannotInheritFallback(t *testing.T) {
 	}
 }
 
+func TestDistinctReview(t *testing.T) {
+	make := func(providers map[string]settings.ActiveProviderSettings, roles map[string]string, pools map[string]settings.ProviderPoolSettings, rolePools map[string]string, fallback string) *CodingProviderResolver {
+		return &CodingProviderResolver{Settings: &settings.Merged{Providers: providers, Roles: roles, ProviderPools: pools, RolePools: rolePools}, Credentials: secure.NewMemoryStorage(), FallbackClient: api.NewClient(api.Config{BaseURL: "http://localhost"}, nil), FallbackModel: fallback}
+	}
+	p := func(model string) settings.ActiveProviderSettings {
+		return settings.ActiveProviderSettings{Kind: settings.ProviderKindOpenAICompatible, Model: model, BaseURL: "http://localhost"}
+	}
+	main, other := p("main-model"), p("reviewer")
+	impl, reviewer := p("qwen"), p("review-model")
+	pool := func(refs ...string) map[string]settings.ProviderPoolSettings {
+		return map[string]settings.ProviderPoolSettings{"pool": {Members: refs}}
+	}
+	tests := []struct {
+		name      string
+		providers map[string]settings.ActiveProviderSettings
+		roles     map[string]string
+		pools     map[string]settings.ProviderPoolSettings
+		rolePools map[string]string
+		fallback  string
+		want      bool
+	}{
+		{"single model falls back to main", map[string]settings.ActiveProviderSettings{"main": main}, map[string]string{settings.RoleMain: "main"}, nil, nil, "main-model", false},
+		{"implement and review distinct", map[string]settings.ActiveProviderSettings{"implement": impl, "reviewer": reviewer}, map[string]string{settings.RoleImplement: "implement", settings.RoleReview: "reviewer"}, nil, nil, "qwen", true},
+		{"review same as implement", map[string]settings.ActiveProviderSettings{"implement": impl, "reviewer": impl}, map[string]string{settings.RoleImplement: "implement", settings.RoleReview: "reviewer"}, nil, nil, "qwen", false},
+		{"implement and review same, main different", map[string]settings.ActiveProviderSettings{"main": other, "implement": impl}, map[string]string{settings.RoleMain: "main", settings.RoleImplement: "implement", settings.RoleReview: "implement"}, nil, nil, "main-model", false},
+		{"implement unconfigured, review distinct", map[string]settings.ActiveProviderSettings{"main": main, "reviewer": other}, map[string]string{settings.RoleMain: "main", settings.RoleReview: "reviewer"}, nil, nil, "main-model", false},
+		{"no roles configured", map[string]settings.ActiveProviderSettings{"main": main}, nil, nil, nil, "main-model", false},
+		{"unconfigured review falls back to session model", map[string]settings.ActiveProviderSettings{"implement": impl}, map[string]string{settings.RoleImplement: "implement"}, nil, nil, "main-model", true},
+		{"review pool distinct from implement", map[string]settings.ActiveProviderSettings{"implement": impl, "reviewer": reviewer}, map[string]string{settings.RoleImplement: "implement"}, pool("reviewer"), map[string]string{settings.RoleReview: "pool"}, "qwen", true},
+		{"review pool same as implement", map[string]settings.ActiveProviderSettings{"implement": impl, "reviewer": impl}, map[string]string{settings.RoleImplement: "implement"}, pool("reviewer"), map[string]string{settings.RoleReview: "pool"}, "qwen", false},
+		{"review pool mixed with implement", map[string]settings.ActiveProviderSettings{"implement": impl, "reviewer": reviewer}, map[string]string{settings.RoleImplement: "implement"}, pool("implement", "reviewer"), map[string]string{settings.RoleReview: "pool"}, "qwen", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := make(tt.providers, tt.roles, tt.pools, tt.rolePools, tt.fallback).DistinctReview(); got != tt.want {
+				t.Fatalf("DistinctReview() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPoolWaitCancelledAndCapacityReleased(t *testing.T) {
 	s, err := routing.Open(filepath.Join(t.TempDir(), "routes.db"))
 	if err != nil {

@@ -52,16 +52,17 @@ type CodingOptions struct {
 }
 
 type CodingRuntime struct {
-	opts       CodingOptions
-	policies   settings.CodingPolicies
-	verifier   *verification.Runner
-	providers  CodingProviderResolver
-	routes     *routing.Store
-	recorder   *episodes.Recorder
-	lockPath   string
-	mu         sync.Mutex
-	lastTask   *coding.Task
-	lastDigest string
+	opts           CodingOptions
+	policies       settings.CodingPolicies
+	distinctReview bool
+	verifier       *verification.Runner
+	providers      CodingProviderResolver
+	routes         *routing.Store
+	recorder       *episodes.Recorder
+	lockPath       string
+	mu             sync.Mutex
+	lastTask       *coding.Task
+	lastDigest     string
 }
 
 // RepositoryRoot resolves the Git worktree without changing cwd.
@@ -149,6 +150,7 @@ func NewCodingRuntime(opts CodingOptions) (*CodingRuntime, error) {
 		return nil, err
 	}
 	rt.providers = CodingProviderResolver{Settings: opts.Settings, Policies: p, Routing: rt.routes, SessionID: opts.SessionID, WireVersion: opts.WireVersion, Credentials: opts.Secure, MCP: opts.MCP, FallbackClient: opts.Client, FallbackModel: opts.Model}
+	rt.distinctReview = rt.providers.DistinctReview()
 	ep := episodes.Config{Dir: filepath.Join(opts.StateDir, "episodes"), RepositoryRoot: opts.Root, SessionID: opts.SessionID}
 	if p.Episodes != nil {
 		ep.Enabled = p.Episodes.Enabled
@@ -359,7 +361,7 @@ func (r *CodingRuntime) Completion(prepare func(context.Context) error, active f
 				return agent.CompletionDecision{Status: agent.CompletionFailed, Feedback: evidence.Feedback}, nil
 			}
 			reviewed := r.lastDigest == evidence.WorkspaceDigest
-			if r.policies.DefinitionOfDone.RequireReview && !reviewed {
+			if r.policies.DefinitionOfDone.RequireReview && r.distinctReview && !reviewed {
 				return agent.CompletionDecision{Status: agent.CompletionBlocked, Feedback: "Checks passed, but this workspace has no matching independent review. Use CodingTask."}, nil
 			}
 			if r.opts.HasActiveWriters != nil && r.opts.HasActiveWriters() {

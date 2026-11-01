@@ -136,6 +136,107 @@ func TestCodingRuntimeRepairsChecksReviewsAndExports(t *testing.T) {
 	}
 }
 
+// A single-model setup (review falls back to the main model) has no independent
+// reviewer, so the completion gate treats passing checks as sufficient even when
+// no CodingTask run verified the workspace — the custom-model completion path.
+func TestCompletionGateSkipsReviewWithoutDistinctReviewer(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_SANDBOXED", "1")
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s: %v", out, err)
+	}
+	for name, content := range map[string]string{"answer.txt": "correct", "expected.txt": "correct"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := secure.NewMemoryStorage()
+	if err := settings.SaveProviderCredential(store, "fixture", "none"); err != nil {
+		t.Fatal(err)
+	}
+	p := settings.ActiveProviderSettings{Kind: settings.ProviderKindOpenAICompatible, Credential: "fixture", Model: "qwen", BaseURL: "http://localhost", EndpointID: "main"}
+	merged := &settings.Merged{Providers: map[string]settings.ActiveProviderSettings{"main": p}, Roles: map[string]string{settings.RoleMain: "main"}}
+	policies := settings.CodingPolicies{DefinitionOfDone: &settings.DefinitionOfDoneSettings{Enabled: true, MaxRepairAttempts: 1, RequireReview: true, Checks: []settings.VerificationCheck{{ID: "answer", Command: "git diff --no-index expected.txt answer.txt"}}, ProtectedPaths: []string{"expected.txt"}}}
+	gate := permissions.New(root, nil, permissions.ModeDefault, []string{"Read", "Edit", "Bash"}, nil, nil)
+	rt, err := NewCodingRuntime(CodingOptions{Root: root, SessionID: "fixture", Model: "qwen", Settings: merged, Policies: &policies, Gate: gate, Secure: store, StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.Close() })
+	if rt.distinctReview {
+		t.Fatal("expected no distinct reviewer for a single-model setup")
+	}
+	decision, err := rt.Completion(nil, nil).Verify(context.Background(), agent.CompletionCandidate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Status != agent.CompletionVerified {
+		t.Fatalf("completion=%+v (single-model setup with no distinct reviewer should not block on review)", decision)
+	}
+}
+
+// A distinct reviewer still requires a CodingTask run to have verified the
+// current workspace; inline edits alone must not satisfy the requirement.
+func TestCompletionGateRequiresReviewMatchWithDistinctReviewer(t *testing.T) {
+	rt, _, root := codingFixture(t, false)
+	if !rt.distinctReview {
+		t.Fatal("expected a distinct reviewer for the multi-model fixture")
+	}
+	// Make the check pass without a CodingTask run so the gate reaches the
+	// independent-review requirement.
+	if err := os.WriteFile(filepath.Join(root, "answer.txt"), []byte("correct"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := rt.Completion(nil, nil).Verify(context.Background(), agent.CompletionCandidate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Status != agent.CompletionBlocked {
+		t.Fatalf("completion=%+v (distinct reviewer without a verified workspace should block)", decision)
+	}
+}
+
+// When the implementer and reviewer are pinned to the same model, no
+// independent reviewer exists even though both roles are configured, so the
+// gate must not demand a review match that a CodingTask run can never
+// produce (the journal rejects a same-model review on every attempt).
+func TestCompletionGateSkipsReviewWhenReviewerMatchesImplementer(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_SANDBOXED", "1")
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s: %v", out, err)
+	}
+	for name, content := range map[string]string{"answer.txt": "correct", "expected.txt": "correct"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := secure.NewMemoryStorage()
+	if err := settings.SaveProviderCredential(store, "fixture", "none"); err != nil {
+		t.Fatal(err)
+	}
+	cloud := settings.ActiveProviderSettings{Kind: settings.ProviderKindOpenAICompatible, Credential: "fixture", Model: "cloud-model", BaseURL: "http://localhost", EndpointID: "cloud"}
+	local := settings.ActiveProviderSettings{Kind: settings.ProviderKindOpenAICompatible, Credential: "fixture", Model: "qwen", BaseURL: "http://localhost", EndpointID: "local"}
+	merged := &settings.Merged{Providers: map[string]settings.ActiveProviderSettings{"cloud": cloud, "local": local}, Roles: map[string]string{settings.RoleMain: "cloud", settings.RoleImplement: "local", settings.RoleReview: "local"}}
+	policies := settings.CodingPolicies{DefinitionOfDone: &settings.DefinitionOfDoneSettings{Enabled: true, MaxRepairAttempts: 1, RequireReview: true, Checks: []settings.VerificationCheck{{ID: "answer", Command: "git diff --no-index expected.txt answer.txt"}}, ProtectedPaths: []string{"expected.txt"}}}
+	gate := permissions.New(root, nil, permissions.ModeDefault, []string{"Read", "Edit", "Bash"}, nil, nil)
+	rt, err := NewCodingRuntime(CodingOptions{Root: root, SessionID: "fixture", Model: "cloud-model", Settings: merged, Policies: &policies, Gate: gate, Secure: store, StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.Close() })
+	if rt.distinctReview {
+		t.Fatal("expected no distinct reviewer when implementer and reviewer share a model")
+	}
+	decision, err := rt.Completion(nil, nil).Verify(context.Background(), agent.CompletionCandidate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Status != agent.CompletionVerified {
+		t.Fatalf("completion=%+v (same-model reviewer should not block on a review match)", decision)
+	}
+}
+
 // Completion exposes a workspace fingerprint so the loop can skip the gate
 // for turns that leave the workspace unchanged.
 func TestCompletionWorkspaceDigestTracksWorkspace(t *testing.T) {

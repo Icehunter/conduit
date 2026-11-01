@@ -124,6 +124,54 @@ func (r *CodingProviderResolver) reviewRole() string {
 	return settings.RoleReview
 }
 
+// roleModels lists the models a role can resolve to. A pool-backed role uses
+// its pool members (matching WithProvider); otherwise the role assignment's
+// model. An unresolvable role yields no models.
+func (r *CodingProviderResolver) roleModels(role string) []string {
+	if r.Settings == nil {
+		return nil
+	}
+	pools, rolePools := r.pools()
+	if id := rolePools[role]; id != "" {
+		var out []string
+		for _, ref := range pools[id].Members {
+			if p, ok := r.Settings.Providers[ref]; ok && p.Model != "" {
+				out = append(out, p.Model)
+			}
+		}
+		return out
+	}
+	if p, err := r.provider(role); err == nil && p.Model != "" {
+		return []string{p.Model}
+	}
+	return nil
+}
+
+// DistinctReview reports whether the review role can resolve to a model
+// different from the implement role's model. The completion gate's
+// independent-review requirement is only satisfiable when a CodingTask run can
+// include an independent review; the journal rejects a review whose model
+// matches the implementer, so when every review resolution matches the
+// implementer — the single-model / custom-model case — there is no
+// independent reviewer and passing checks are treated as sufficient.
+func (r *CodingProviderResolver) DistinctReview() bool {
+	impl := r.roleModels(settings.RoleImplement)
+	if len(impl) == 0 {
+		return false
+	}
+	review := r.roleModels(r.reviewRole())
+	if len(review) == 0 && r.FallbackModel != "" {
+		// An unconfigured review role falls back to the session model.
+		review = []string{r.FallbackModel}
+	}
+	for _, m := range review {
+		if !slices.Contains(impl, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveRole resolves a single agent-loop role. An absent review role falls
 // back to main/default; a configured broken role never falls back. It cannot
 // reserve a lease across streaming, so pool-backed roles return an explicit error.
